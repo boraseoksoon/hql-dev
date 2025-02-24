@@ -1,0 +1,12 @@
+;; util.hql
+(def ut (import "./util2.js"))
+(def adv (import "./util_advance.hql"))
+(def moment (import "https://esm.sh/moment"))
+(defn utilProcess (data)
+  (+ data (utFunc data) (moment.duration data "seconds").asMilliseconds())
+)
+(defn utilAdvanced (data)
+  (- data (utFunc data))
+)
+(export "utilProcess" utilProcess)
+(export "utilAdvanced" utilAdvanced)

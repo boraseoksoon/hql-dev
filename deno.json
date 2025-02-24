@@ -1,0 +1,6 @@
+{
+"tasks": {
+    "test": "deno run --allow-read --allow-write cli/compile.ts test/simple.hql && deno run -A ./transpiled.js"
+    }
+}
+  
