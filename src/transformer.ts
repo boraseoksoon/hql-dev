@@ -1,21 +1,45 @@
-// src/transformer.ts
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./ast.ts";
+import { bundleFile } from "./bundler.ts";
+import { join } from "https://deno.land/std@0.170.0/path/mod.ts";
 
+// We'll track local aliases for inlined modules.
+const localAliases = new Set<string>();
+
+export async function transformAST(nodes: HQLNode[], currentDir: string, visited: Set<string>): Promise<string> {
+  const parts = await Promise.all(nodes.map(node => transformNode(node, currentDir, visited)));
+  return parts.filter(part => part.trim() !== "").join("\n");
+}
+
+async function transformNode(node: HQLNode, currentDir: string, visited: Set<string>): Promise<string> {
+  switch (node.type) {
+    case "literal":
+      return JSON.stringify((node as LiteralNode).value);
+    case "symbol":
+      return transformSymbol(node as SymbolNode);
+    case "list":
+      return await transformList(node as ListNode, currentDir, visited);
+    default:
+      throw new Error("Unknown node type");
+  }
+}
+
+// Updated transformSymbol: if symbol has dot and its prefix is a local alias, output only the property.
 function transformSymbol(sym: SymbolNode): string {
+  if (sym.name.includes(".")) {
+    const [alias, prop] = sym.name.split(".");
+    if (localAliases.has(alias)) {
+      return prop;
+    }
+  }
   return sym.name;
 }
 
-function transformLiteral(lit: LiteralNode): string {
-  return JSON.stringify(lit.value);
-}
-
-function transformList(node: ListNode): string {
+async function transformList(node: ListNode, currentDir: string, visited: Set<string>): Promise<string> {
   if (node.elements.length === 0) return "";
-
   const head = node.elements[0];
   
-// Inside transformList, when handling a remote import definition:
-if (head.type === "symbol" && (head as SymbolNode).name === "def") {
+  // Handle remote or local import definitions.
+  if (head.type === "symbol" && (head as SymbolNode).name === "def") {
     if (node.elements.length === 3) {
       const varNode = node.elements[1];
       const importCall = node.elements[2];
@@ -23,7 +47,7 @@ if (head.type === "symbol" && (head as SymbolNode).name === "def") {
         varNode.type === "symbol" &&
         importCall.type === "list" &&
         (importCall as ListNode).elements.length >= 2 &&
-        ((importCall as ListNode).elements[0] as SymbolNode).name === "import"
+        (((importCall as ListNode).elements[0]) as SymbolNode).name === "import"
       ) {
         const importArg = (importCall as ListNode).elements[1];
         if (
@@ -31,29 +55,36 @@ if (head.type === "symbol" && (head as SymbolNode).name === "def") {
           typeof (importArg as LiteralNode).value === "string"
         ) {
           const url = (importArg as LiteralNode).value;
-          // GENERIC: do not modify the URL; import as default.
+          // If URL starts with a dot, it's local; inline it.
+          if (url.startsWith(".")) {
+            const fullPath = join(currentDir, url);
+            // Record the alias so that references to mod.sayHi become sayHi.
+            localAliases.add((varNode as SymbolNode).name);
+            return await bundleFile(fullPath, visited);
+          }
+          // Otherwise, remote import: output a default import.
           return `import ${varNode.name} from ${JSON.stringify(url)};`;
         }
       }
     }
   }
   
-  // Handle built-in "str": convert (str a b c) into a + b + c.
+  // Handle built-in "str": (str a b c) -> a + b + c.
   if (head.type === "symbol" && (head as SymbolNode).name === "str") {
-    const parts = node.elements.slice(1).map(transformNode);
+    const parts = await Promise.all(node.elements.slice(1).map(e => transformNode(e, currentDir, visited)));
     return parts.join(" + ");
   }
   
-  // Handle "print": transform (print expr) into console.log(expr);
+  // Handle "print": (print expr) -> console.log(expr);
   if (head.type === "symbol" && (head as SymbolNode).name === "print") {
-    const args = node.elements.slice(1).map(transformNode).join(", ");
-    return `console.log(${args});`;
+    const args = await Promise.all(node.elements.slice(1).map(e => transformNode(e, currentDir, visited)));
+    return `console.log(${args.join(", ")});`;
   }
   
-  // Handle "get": transform (get obj "prop") into obj.prop.
+  // Handle "get": (get obj "prop") -> obj.prop.
   if (head.type === "symbol" && (head as SymbolNode).name === "get") {
     if (node.elements.length >= 3) {
-      const objCode = transformNode(node.elements[1]);
+      const objCode = await transformNode(node.elements[1], currentDir, visited);
       const propNode = node.elements[2];
       if (propNode.type === "literal") {
         const propName = (propNode as LiteralNode).value;
@@ -62,53 +93,37 @@ if (head.type === "symbol" && (head as SymbolNode).name === "def") {
     }
   }
   
-  // Handle "list": transform (list 1 2 3) into [1, 2, 3].
+  // Handle "list": (list 1 2 3) -> [1, 2, 3].
   if (head.type === "symbol" && (head as SymbolNode).name === "list") {
-    const items = node.elements.slice(1).map(transformNode).join(", ");
-    return `[${items}]`;
+    const items = await Promise.all(node.elements.slice(1).map(e => transformNode(e, currentDir, visited)));
+    return `[${items.join(", ")}]`;
   }
   
-  // Handle function definition.
+  // Handle function definition: (defn name (args) body...)
   if (head.type === "symbol" && (head as SymbolNode).name === "defn") {
-    const name = transformNode(node.elements[1]);
+    const name = await transformNode(node.elements[1], currentDir, visited);
     const argsNode = node.elements[2] as ListNode;
-    const args = argsNode.elements.map(transformNode).join(", ");
-    const body = node.elements.slice(3).map(transformNode).join(";\n");
+    const args = (await Promise.all(argsNode.elements.map(e => transformNode(e, currentDir, visited)))).join(", ");
+    const body = (await Promise.all(node.elements.slice(3).map(e => transformNode(e, currentDir, visited)))).join(";\n");
     return `function ${name}(${args}) { return ${body}; }`;
   }
   
-  // Handle export.
+  // Handle export: (export "name" value) -> export { value as name };
   if (head.type === "symbol" && (head as SymbolNode).name === "export") {
-    let exportName = transformNode(node.elements[1]).replace(/"/g, "");
-    const value = transformNode(node.elements[2]);
+    let exportName = await transformNode(node.elements[1], currentDir, visited);
+    exportName = exportName.replace(/"/g, "");
+    const value = await transformNode(node.elements[2], currentDir, visited);
     return `export { ${value} as ${exportName} };`;
   }
   
-  // Handle addition operator.
+  // Handle addition: (+ x y) -> x + y.
   if (head.type === "symbol" && (head as SymbolNode).name === "+") {
-    const terms = node.elements.slice(1).map(transformNode).join(" + ");
-    return terms;
+    const terms = await Promise.all(node.elements.slice(1).map(e => transformNode(e, currentDir, visited)));
+    return terms.join(" + ");
   }
   
-  // Default: function call.
-  const func = transformNode(head);
-  const args = node.elements.slice(1).map(transformNode).join(", ");
-  return `${func}(${args})`;
-}
-
-function transformNode(node: HQLNode): string {
-  switch (node.type) {
-    case "literal":
-      return transformLiteral(node as LiteralNode);
-    case "symbol":
-      return transformSymbol(node as SymbolNode);
-    case "list":
-      return transformList(node as ListNode);
-    default:
-      throw new Error("Unknown node type");
-  }
-}
-
-export function transformAST(nodes: HQLNode[]): string {
-  return nodes.map(transformNode).join("\n");
+  // Otherwise, treat as a function call.
+  const func = await transformNode(head, currentDir, visited);
+  const args = await Promise.all(node.elements.slice(1).map(e => transformNode(e, currentDir, visited)));
+  return `${func}(${args.join(", ")})`;
 }

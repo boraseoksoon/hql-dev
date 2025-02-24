@@ -9,12 +9,9 @@ function tokenize(input: string): string[] {
   const tokens: string[] = [];
   let current = "";
   let inString = false;
-  // Split input by newline first to remove comment lines.
-  const lines = input.split("\n");
+  // Remove comment lines (lines starting with ";;")
+  const lines = input.split("\n").filter(line => !line.trim().startsWith(";;"));
   for (const line of lines) {
-    // Skip comment lines starting with ";;"
-    if (line.trim().startsWith(";;")) continue;
-    // Process the remaining part of the line.
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (inString) {
@@ -26,32 +23,20 @@ function tokenize(input: string): string[] {
         }
       } else {
         if (ch === '"') {
-          if (current.length > 0) {
-            tokens.push(current);
-            current = "";
-          }
+          if (current.length > 0) { tokens.push(current); current = ""; }
           current += ch;
           inString = true;
         } else if (ch === "(" || ch === ")") {
-          if (current.length > 0) {
-            tokens.push(current);
-            current = "";
-          }
+          if (current.length > 0) { tokens.push(current); current = ""; }
           tokens.push(ch);
         } else if (isWhitespace(ch)) {
-          if (current.length > 0) {
-            tokens.push(current);
-            current = "";
-          }
+          if (current.length > 0) { tokens.push(current); current = ""; }
         } else {
           current += ch;
         }
       }
     }
-    if (current.length > 0) {
-      tokens.push(current);
-      current = "";
-    }
+    if (current.length > 0) { tokens.push(current); current = ""; }
   }
   return tokens;
 }
@@ -59,7 +44,6 @@ function tokenize(input: string): string[] {
 export function parse(input: string): HQLNode[] {
   const tokens = tokenize(input);
   let pos = 0;
-
   function parseExpression(): HQLNode {
     if (pos >= tokens.length) throw new Error("Unexpected end of input");
     const token = tokens[pos++];
@@ -74,7 +58,6 @@ export function parse(input: string): HQLNode[] {
     } else if (token === ")") {
       throw new Error("Unexpected ')'");
     } else if (token.startsWith('"')) {
-      // Remove surrounding quotes; for simplicity, no escaping is handled.
       return { type: "literal", value: token.slice(1, token.length - 1) } as LiteralNode;
     } else if (!isNaN(Number(token))) {
       return { type: "literal", value: Number(token) } as LiteralNode;
@@ -86,7 +69,6 @@ export function parse(input: string): HQLNode[] {
       return { type: "symbol", name: token } as SymbolNode;
     }
   }
-  
   const expressions: HQLNode[] = [];
   while (pos < tokens.length) {
     expressions.push(parseExpression());

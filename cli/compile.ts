@@ -3,6 +3,7 @@ import { parse } from "../src/parser.ts";
 import { expandMacros } from "../src/macro.ts";
 import { transformAST } from "../src/transformer.ts";
 import { generateCode } from "../src/codegen.ts";
+import { dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
 
 if (import.meta.main) {
   if (Deno.args.length < 1) {
@@ -13,7 +14,9 @@ if (import.meta.main) {
   const source = await Deno.readTextFile(inputFile);
   const ast = parse(source);
   const expanded = expandMacros(ast);
-  const transformed = transformAST(expanded);
+  const currentDir = dirname(await Deno.realPath(inputFile));
+  const visited = new Set<string>();
+  const transformed = await transformAST(expanded, currentDir, visited);
   const finalCode = generateCode(transformed);
   const outputFile = "transpiled.js";
   await Deno.writeTextFile(outputFile, finalCode);

@@ -1,9 +1,13 @@
+function sayBye(name) { return "Bye, " + name + "!"; }
+function sayHi(name) { return "Hi, " + name + "! " + sayBye(name); }
+function greet(name) { return sayHi(name) + " Welcome to HQL."; }
+console.log(greet("Alice"));
 import strUtil from "https://esm.sh/lodash";
-function greet(name) { return strUtil.upperCase("Hello, ") + name + "!"; }
-function greetTwice(name) { return greet(name) + " " + greet(name); }
+function greetRemote(name) { return strUtil.upperCase("Hello, ") + name + "!"; }
+function greetTwice(name) { return greetRemote(name) + " " + greetRemote(name); }
 function add(x, y) { return x + y; }
 function complexGreeting(name, x, y) { return greetTwice(name) + " The sum is: " + add(x, y); }
-console.log(greet("jss"));
+console.log(greetRemote("jss"));
 import chalk from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
 console.log(chalk.blue("hello hql!"));
 import chalk2 from "jsr:@nothing628/chalk";
