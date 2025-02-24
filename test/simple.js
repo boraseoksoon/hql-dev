@@ -1,2 +1,2 @@
-import { sayHello } from "./chalk.js";
+import { sayHello } from "./chalk.hql"
 console.log(sayHello());

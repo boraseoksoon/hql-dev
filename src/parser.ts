@@ -9,7 +9,6 @@ function tokenize(input: string): string[] {
   const tokens: string[] = [];
   let current = "";
   let inString = false;
-  // Remove comment lines (lines starting with ";;")
   const lines = input.split("\n").filter(line => !line.trim().startsWith(";;"));
   for (const line of lines) {
     for (let i = 0; i < line.length; i++) {
@@ -61,10 +60,6 @@ export function parse(input: string): HQLNode[] {
       return { type: "literal", value: token.slice(1, token.length - 1) } as LiteralNode;
     } else if (!isNaN(Number(token))) {
       return { type: "literal", value: Number(token) } as LiteralNode;
-    } else if (token === "true" || token === "false") {
-      return { type: "literal", value: token === "true" } as LiteralNode;
-    } else if (token === "nil") {
-      return { type: "literal", value: null } as LiteralNode;
     } else {
       return { type: "symbol", name: token } as SymbolNode;
     }
