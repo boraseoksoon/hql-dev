@@ -1,0 +1,22 @@
+{
+  "name": "your-package-name",
+  "version": "0.1.0",
+  "description": "A Node-compatible bundle converted from Deno code.",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./esm/esm.js",
+      "require": "./script/esm.js"
+    }
+  },
+  "dependencies": {
+    "@deno/shim-deno": "~0.18.0",
+    "your-package-name": "file:your-package-name-0.1.0.tgz"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0"
+  },
+  "_generatedBy": "dnt@dev"
+}
