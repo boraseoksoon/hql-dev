@@ -17,7 +17,7 @@ function printUsageAndExit(): void {
 
 /**
  * Determine the output file path based on the input file and optional output argument.
- * 
+ *
  * 1. If no output argument is provided, return "transpiled.js" in the same directory as input.
  * 2. If an output argument is provided and it contains a directory separator:
  *    - If it ends with ".js", assume it's a full file path.
@@ -31,20 +31,15 @@ function printUsageAndExit(): void {
 function determineOutputFile(inputAbs: string, outputArg?: string): string {
   const inputDir = dirname(inputAbs);
   if (!outputArg) {
-    // Case 3: Nothing provided → output "transpiled.js" in input directory.
     return join(inputDir, "transpiled.js");
   } else {
-    // If the outputArg contains a directory separator.
     if (outputArg.includes("/") || outputArg.includes("\\")) {
       if (outputArg.endsWith(".js")) {
-        // Case 1: Full output file path specified.
         return resolve(outputArg);
       } else {
-        // Case 2: Output directory provided only; use "transpiled.js" inside it.
         return join(resolve(outputArg), "transpiled.js");
       }
     } else {
-      // Case 4: Output name provided without directory → output file in same directory as input.
       return join(inputDir, outputArg);
     }
   }

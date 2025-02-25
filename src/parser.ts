@@ -1,15 +1,44 @@
-// src/parser.ts
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./ast.ts";
 
 function isWhitespace(ch: string): boolean {
   return /\s/.test(ch);
 }
 
+/**
+ * Remove inline comments from a line.
+ * A simple strategy: if a semicolon appears outside of a string,
+ * treat the rest of the line as a comment.
+ */
+function removeInlineComments(line: string): string {
+  let inString = false;
+  let result = "";
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"' && (i === 0 || line[i - 1] !== "\\")) {
+      inString = !inString;
+    }
+    if (!inString && ch === ";") {
+      // Once a semicolon is found outside a string, ignore the rest of the line.
+      break;
+    }
+    result += ch;
+  }
+  return result;
+}
+
 function tokenize(input: string): string[] {
+  // Split input into lines.
+  // Filter out lines that start with a semicolon (ignoring leading whitespace).
+  const rawLines = input.split("\n");
+  const lines = rawLines
+    .map(line => line.trim())
+    .filter(line => line !== "" && !line.startsWith(";"))
+    .map(removeInlineComments);
+  
   const tokens: string[] = [];
   let current = "";
   let inString = false;
-  const lines = input.split("\n").filter(line => !line.trim().startsWith(";;"));
+  
   for (const line of lines) {
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
@@ -22,20 +51,32 @@ function tokenize(input: string): string[] {
         }
       } else {
         if (ch === '"') {
-          if (current.length > 0) { tokens.push(current); current = ""; }
+          if (current.length > 0) { 
+            tokens.push(current);
+            current = "";
+          }
           current += ch;
           inString = true;
         } else if (ch === "(" || ch === ")") {
-          if (current.length > 0) { tokens.push(current); current = ""; }
+          if (current.length > 0) { 
+            tokens.push(current);
+            current = "";
+          }
           tokens.push(ch);
         } else if (isWhitespace(ch)) {
-          if (current.length > 0) { tokens.push(current); current = ""; }
+          if (current.length > 0) { 
+            tokens.push(current);
+            current = "";
+          }
         } else {
           current += ch;
         }
       }
     }
-    if (current.length > 0) { tokens.push(current); current = ""; }
+    if (current.length > 0) { 
+      tokens.push(current); 
+      current = "";
+    }
   }
   return tokens;
 }

@@ -27,13 +27,12 @@ export async function bundleJSModule(filePath: string, visited = new Set<string>
   let modifiedSource = source;
   let match;
   while ((match = regex.exec(source)) !== null) {
-      const importSpecifier = match[2];
-      const fullPath = join(dirname(filePath), importSpecifier);
-      // Compile the HQL module as an ES module (inModule = false)
-      const compiledCode = await bundleFile(fullPath, visited, false);
-      const base64 = btoa(compiledCode);
-      const dataUrl = `data:text/javascript;base64,${base64}`;
-      modifiedSource = modifiedSource.replace(importSpecifier, dataUrl);
+    const importSpecifier = match[2];
+    const fullPath = join(dirname(filePath), importSpecifier);
+    const compiledCode = await bundleFile(fullPath, visited, false);
+    const base64 = btoa(compiledCode);
+    const dataUrl = `data:text/javascript;base64,${base64}`;
+    modifiedSource = modifiedSource.replace(importSpecifier, dataUrl);
   }
   return modifiedSource;
 }
