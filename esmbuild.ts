@@ -5,7 +5,7 @@ await esbuild.build({
   entryPoints: ["./test/transpiled.js"],
   bundle: true,
   outfile: "esm.js",
-  format: "esm", // Change to "iife" if you need a self-invoking bundle
+  format: "esm",
   plugins: denoPlugins(),
 });
 

@@ -39,8 +39,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 var _DateTimeFormatter_format, _b;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.syncMinus = exports.syncAdd = exports.minus2 = exports.add2 = void 0;
+exports.calculateArea = calculateArea;
+exports.calculateTotal = calculateTotal;
+exports.complexMath = complexMath;
+exports.formatName = formatName;
 exports.greet = greet;
 exports.greetTwice = greetTwice;
+exports.processData = processData;
 const dntShim = __importStar(require("./_dnt.shims.js"));
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -11900,16 +11905,19 @@ function addN(x, y) {
     return x + y;
 }
 console.log(addN(2, 3));
-function minus(x, y) {
+function minus(params) {
+    const { x, y } = params;
     return x - y;
 }
 console.log(minus({ x: 100, y: 20 }));
 console.log("====== Sync/Async Exports ======");
-var syncAdd = function (x, y) {
+var syncAdd = function (params) {
+    const { x, y } = params;
     return x + y;
 };
 exports.syncAdd = syncAdd;
-var syncMinus = function (x, y) {
+var syncMinus = function (params) {
+    const { x, y } = params;
     return x - y;
 };
 exports.syncMinus = syncMinus;
@@ -11922,10 +11930,12 @@ var minus2 = function (x, y) {
 };
 exports.minus2 = minus2;
 var Destination = { hlvm: "hlvm", macos: "macos", ios: "ios" };
-function send(message, to) {
+function send(params) {
+    const { message, to } = params;
     return message;
 }
-function send2(message, to) {
+function send2(params) {
+    const { message, to } = params;
     return message;
 }
 console.log(send({ message: "hello1", to: "hlvm" }));
@@ -11934,6 +11944,48 @@ console.log("====== String Interpolation Demo ======");
 var name = "Charlie";
 var greeting = `hello my name is ${name} and welcome!`;
 console.log(greeting);
+console.log("====== Named Parameter Tests ======");
+function calculateArea(params) {
+    const { width, height } = params;
+    return width * height;
+}
+console.log("Area of 5x10 rectangle: ", calculateArea({ width: 5, height: 10 }));
+function formatName(params) {
+    const { first, last, title } = params;
+    return title + " " + first + " " + last;
+}
+console.log("Formatted name: ", formatName({ first: "Jane", last: "Doe", title: "Dr." }));
+function point3d(x, y, z) {
+    return [x, y, z];
+}
+console.log("3D Point: ", point3d(10, 20, 30));
+function applyTax(params) {
+    const { amount, rate } = params;
+    return amount * 1 + rate / 100;
+}
+function calculateTotal(params) {
+    const { price, qty, taxRate } = params;
+    return applyTax({ amount: price * qty, rate: taxRate });
+}
+console.log("Total price with tax: ", calculateTotal({ price: 19.99, qty: 3, taxRate: 8.5 }));
+function makeAdder(params) {
+    const { increment } = params;
+    return function (x) {
+        return x + increment;
+    };
+}
+var add5 = makeAdder({ increment: 5 });
+console.log("Result of add5(10): ", add5(10));
+function complexMath(params) {
+    const { a, b, c } = params;
+    return a * b + c / a + b;
+}
+console.log("Complex math result: ", complexMath({ a: 5, b: 3, c: 30 }));
+function processData(params) {
+    const { data, options } = params;
+    return data * options.factor;
+}
+console.log("Processed data: ", processData({ data: 100, options: { [":factor"]: 1.5 } }));
 /*! Bundled license information:
 
 lodash/lodash.js:

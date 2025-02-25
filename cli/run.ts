@@ -8,13 +8,39 @@ import {
 import { bundleFile } from "../src/bundler.ts";
 
 /**
+ * Convert hyphenated identifiers to valid JavaScript identifiers.
+ * e.g., "calculate-area" -> "calculateArea"
+ */
+function convertToValidJSIdentifier(name: string): string {
+  // Replace hyphens followed by a character with the uppercase version of that character
+  return name.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
+}
+
+/**
+ * Ensure all function definitions in the JavaScript code use valid identifiers
+ * (without hyphens)
+ */
+function ensureValidIdentifiers(jsCode: string): string {
+  // Fix any function definitions with hyphens
+  // e.g., "function point-3d(" -> "function point3d("
+  return jsCode.replace(/function ([a-zA-Z0-9_-]+)\(/g, (match, name) => {
+    const validName = convertToValidJSIdentifier(name);
+    return `function ${validName}(`;
+  });
+}
+
+/**
  * For an HQL file:
  *   - Compile it in memory (in ES module mode)
  *   - Create a data URL from the compiled JS
  *   - Dynamically import that data URL to execute it
  */
 async function runHQL(targetPath: string): Promise<void> {
-  const compiledJS = await bundleFile(targetPath, new Set(), false);
+  let compiledJS = await bundleFile(targetPath, new Set(), false);
+  
+  // Ensure the generated JavaScript has valid identifiers
+  compiledJS = ensureValidIdentifiers(compiledJS);
+  
   const dataUrl = "data:application/javascript;module;base64," + btoa(compiledJS);
 
   await import(dataUrl);
@@ -35,7 +61,11 @@ async function runJS(targetPath: string): Promise<void> {
   while ((match = regex.exec(content)) !== null) {
     const [fullMatch, imported, specifier] = match;
     const hqlFilePath = resolve(targetDir, specifier);
-    const compiledJS = await bundleFile(hqlFilePath, new Set(), false);
+    let compiledJS = await bundleFile(hqlFilePath, new Set(), false);
+    
+    // Ensure the generated JavaScript has valid identifiers
+    compiledJS = ensureValidIdentifiers(compiledJS);
+    
     const dataUrl = "data:application/javascript;module;base64," + btoa(compiledJS);
     const newImport = `import ${imported} from "${dataUrl}"`;
     content = content.replace(fullMatch, newImport);

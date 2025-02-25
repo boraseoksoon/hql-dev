@@ -118,3 +118,53 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (export "greet" greet)
 (export "greetTwice" greetTwice)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Section 4: Named Parameter Tests (APPENDED)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(print "====== Named Parameter Tests ======")
+
+;; Test 1: Basic named parameter usage
+(defn calculate-area (width: Number height: Number) (-> Number)
+  (* width height))
+(print "Area of 5x10 rectangle: " (calculate-area width: 5 height: 10))
+
+;; Test 2: Named parameters with default arguments
+(defn format-name (first: String last: String title: String)
+  (str title " " first " " last))
+(print "Formatted name: " (format-name first: "Jane" last: "Doe" title: "Dr."))
+
+;; Test 3: Mixed positional and named arguments (for functions that support it)
+(defn point3d (x y z)
+  (vector x y z))
+(print "3D Point: " (point3d 10 20 30))
+
+;; Test 4: Function composition with named parameters
+(defn apply-tax (amount: Number rate: Number) (-> Number)
+  (* amount (+ 1 (/ rate 100))))
+(defn calculate-total (price: Number qty: Number tax-rate: Number) (-> Number)
+  (apply-tax amount: (* price qty) rate: tax-rate))
+(print "Total price with tax: " (calculate-total price: 19.99 qty: 3 tax-rate: 8.5))
+
+;; Test 5: Higher-order functions with named parameters
+(defn make-adder (increment: Number) (-> (-> Number Number))
+  (fn (x) (+ x increment)))
+(def add5 (make-adder increment: 5))
+(print "Result of add5(10): " (add5 10))
+
+;; Test 6: Multi-operation arithmetic with different operators
+(defn complex-math (a: Number b: Number c: Number) (-> Number)
+  (+ (* a b) (/ c (+ a b))))
+(print "Complex math result: " (complex-math a: 5 b: 3 c: 30))
+
+;; Test 7: More complex nested call with named parameters
+(defn process-data (data: Number options: Object) (-> Number)
+  (* data (get options "factor")))
+(print "Processed data: " (process-data data: 100 options: (hash-map (keyword "factor") 1.5)))
+
+;; Export test functions
+(export "calculateArea" calculate-area)
+(export "formatName" format-name)
+(export "calculateTotal" calculate-total)
+(export "complexMath" complex-math)
+(export "processData" process-data)

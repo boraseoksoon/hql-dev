@@ -6,6 +6,28 @@ import { generateCode } from "../src/codegen.ts";
 import { dirname, resolve, join } from "https://deno.land/std@0.170.0/path/mod.ts";
 
 /**
+ * Convert hyphenated identifiers to valid JavaScript identifiers.
+ * e.g., "calculate-area" -> "calculateArea"
+ */
+function convertToValidJSIdentifier(name: string): string {
+  // Replace hyphens followed by a character with the uppercase version of that character
+  return name.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
+}
+
+/**
+ * Ensure all function definitions in the JavaScript code use valid identifiers
+ * (without hyphens)
+ */
+function ensureValidIdentifiers(jsCode: string): string {
+  // Fix any function definitions with hyphens
+  // e.g., "function point-3d(" -> "function point3d("
+  return jsCode.replace(/function ([a-zA-Z0-9_-]+)\(/g, (match, name) => {
+    const validName = convertToValidJSIdentifier(name);
+    return `function ${validName}(`;
+  });
+}
+
+/**
  * Print usage information and exit.
  */
 function printUsageAndExit(): void {
@@ -59,7 +81,11 @@ async function compileHQL(inputFile: string, outputFile: string): Promise<void> 
   const expanded = expandMacros(ast);
   const visited = new Set<string>();
   const transformed = await transformAST(expanded, inputDir, visited);
-  const finalCode = generateCode(transformed);
+  let finalCode = generateCode(transformed);
+  
+  // Ensure all identifiers in the generated code are valid JavaScript identifiers
+  finalCode = ensureValidIdentifiers(finalCode);
+  
   await Deno.writeTextFile(outputFile, finalCode);
   console.log(`Compilation complete. Output written to ${outputFile}`);
 }

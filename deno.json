@@ -1,8 +1,10 @@
 {
-"tasks": {
-    "test": "deno task run-test && deno task transpile-test && deno task node-test",
-    "run-test": "deno run --allow-read --allow-write -A cli/run.ts test/simple.hql && deno run -A cli/run.ts ./test/js/simple.js && deno run -A cli/run.ts ./test/js/chalk.hql",
-    "transpile-test": "deno run --allow-read --allow-write cli/compile.ts test/simple.hql && deno run -A test/transpiled.js", 
-    "node-test": "deno run --allow-read --allow-write cli/compile.ts test/simple.hql && deno run -A test/transpiled.js && deno run -A esmbuild.ts && deno run -A --unstable dnt.ts && (cd npm && npm pack) && cd .. && (cd node && npm install ../npm/your-package-name-0.1.0.tgz && node index.mjs)",
+    "tasks": {
+      "test": "deno task parser-test && deno task transformer-test && deno task run-test && deno task transpile-test && deno task node-test",
+      "run-test": "deno run --allow-read --allow-write -A cli/run.ts test/simple.hql && deno run -A cli/run.ts ./test/js/simple.js && deno run -A cli/run.ts ./test/js/chalk.hql",
+      "transpile-test": "deno run --allow-read --allow-write cli/compile.ts test/simple.hql && deno run -A test/transpiled.js",
+      "node-test": "deno run --allow-read --allow-write cli/compile.ts test/simple.hql && deno run -A test/transpiled.js && deno run -A esmbuild.ts && deno run -A --unstable dnt.ts && (cd npm && npm pack) && cd .. && (cd node && npm install ../npm/your-package-name-0.1.0.tgz && node index.mjs)",
+      "parser-test": "deno test --allow-all test/parser_test.ts",
+      "transformer-test": "deno test --allow-all test/transformer_test.ts"
     }
-}
+  }
