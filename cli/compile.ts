@@ -1,111 +1,175 @@
-// cli/compile.ts
 import { parse } from "../src/parser.ts";
-import { expandMacros } from "../src/macro.ts";
 import { transformAST } from "../src/transformer.ts";
-import { generateCode } from "../src/codegen.ts";
-import { dirname, resolve, join } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
 
-/**
- * Convert hyphenated identifiers to valid JavaScript identifiers.
- * e.g., "calculate-area" -> "calculateArea"
- */
-function convertToValidJSIdentifier(name: string): string {
-  // Replace hyphens followed by a character with the uppercase version of that character
-  return name.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
+// Configurable options for compilation
+interface CompileOptions {
+  outputPath?: string;
+  // Log level: 0 = errors only, 1 = warnings, 2 = info, 3 = verbose
+  logLevel?: number;
 }
 
-/**
- * Ensure all function definitions in the JavaScript code use valid identifiers
- * (without hyphens)
- */
-function ensureValidIdentifiers(jsCode: string): string {
-  // Fix any function definitions with hyphens
-  // e.g., "function point-3d(" -> "function point3d("
-  return jsCode.replace(/function ([a-zA-Z0-9_-]+)\(/g, (match, name) => {
-    const validName = convertToValidJSIdentifier(name);
-    return `function ${validName}(`;
+// Result of compilation
+interface CompileResult {
+  code: string;
+  warnings: string[];
+  stats: {
+    inputSize: number;
+    outputSize: number;
+    parseTime: number;
+    transformTime: number;
+    totalTime: number;
+  };
+}
+
+// Simple logger factory based on the log level
+function createLogger(logLevel: number) {
+  return (level: number, message: string) => {
+    if (level <= logLevel) {
+      console.log(message);
+    }
+  };
+}
+
+// Step 1: Read the source file
+async function readSourceFile(path: string, log: (level: number, msg: string) => void): Promise<string> {
+  log(3, "Reading source file...");
+  try {
+    const source = await Deno.readTextFile(path);
+    log(3, "Source file read successfully.");
+    return source;
+  } catch (error) {
+    throw new Error(`Failed to read source file: ${error.message}`);
+  }
+}
+
+// Step 2: Parse the source to an AST
+function parseSource(source: string, inputPath: string, log: (level: number, msg: string) => void): { ast: any, parseTime: number } {
+  log(3, "Parsing HQL to AST...");
+  const parseStart = performance.now();
+  let ast;
+  try {
+    ast = parse(source);
+  } catch (error) {
+    if (error.location) {
+      const { line, column } = error.location;
+      const lines = source.split("\n");
+      const errorLine = lines[line - 1] || "";
+      const pointer = " ".repeat(column - 1) + "^";
+      throw new Error(
+        `Parse error at ${inputPath}:${line}:${column}\n${errorLine}\n${pointer}\n${error.message}`
+      );
+    }
+    throw new Error(`Parse error: ${error.message}`);
+  }
+  const parseTime = performance.now() - parseStart;
+  log(3, `Parsing completed in ${parseTime.toFixed(2)}ms`);
+  return { ast, parseTime };
+}
+
+// Step 3: Transform the AST to JavaScript code
+async function transformToJS(ast: any, inputPath: string, log: (level: number, msg: string) => void): Promise<{ code: string, transformTime: number }> {
+  log(3, "Transforming AST to JavaScript...");
+  const transformStart = performance.now();
+  let code: string;
+  try {
+    const currentDir = dirname(inputPath);
+    const visited = new Set<string>();
+    code = await transformAST(ast, currentDir, visited);
+  } catch (error) {
+    throw new Error(`Transform error: ${error.message}`);
+  }
+  const transformTime = performance.now() - transformStart;
+  log(3, `Transformation completed in ${transformTime.toFixed(2)}ms`);
+  return { code, transformTime };
+}
+
+// Step 4: Write the transformed code to the output file
+async function writeOutputFile(outputPath: string, code: string, log: (level: number, msg: string) => void): Promise<void> {
+  log(3, "Writing output file...");
+  try {
+    const outputDir = dirname(outputPath);
+    try {
+      await Deno.mkdir(outputDir, { recursive: true });
+    } catch (error) {
+      if (!(error instanceof Deno.errors.AlreadyExists)) {
+        throw error;
+      }
+    }
+    await Deno.writeTextFile(outputPath, code);
+  } catch (error) {
+    throw new Error(`Failed to write output: ${error.message}`);
+  }
+}
+
+// Main compile function that ties all steps together
+export async function compile(inputPath: string, options: CompileOptions = {}): Promise<CompileResult> {
+  const startTime = performance.now();
+  const warnings: string[] = [];
+  const logLevel = options.logLevel ?? 1;
+  const log = createLogger(logLevel);
+  const outputPath = options.outputPath ?? inputPath.replace(/\.hql$/, ".js");
+
+  try {
+    log(2, `Compiling ${inputPath} to ${outputPath}`);
+
+    const source = await readSourceFile(inputPath, log);
+    const { ast, parseTime } = parseSource(source, inputPath, log);
+    const { code, transformTime } = await transformToJS(ast, inputPath, log);
+    await writeOutputFile(outputPath, code, log);
+
+    const totalTime = performance.now() - startTime;
+    const inputSize = source.length;
+    log(2, `Source size: ${inputSize} bytes`);
+    log(2, `Successfully compiled ${inputPath} -> ${outputPath}`);
+    log(2, `Compilation completed in ${totalTime.toFixed(2)}ms`);
+
+    return {
+      code,
+      warnings,
+      stats: {
+        inputSize,
+        outputSize: code.length,
+        parseTime,
+        transformTime,
+        totalTime
+      }
+    };
+  } catch (error) {
+    console.error(`Compilation failed: ${error.message}`);
+    throw error;
+  }
+}
+
+// Command-line execution when run directly
+if (import.meta.main) {
+  const args = Deno.args;
+
+  if (args.length < 1) {
+    console.error("Usage: deno run -A compile.ts <input.hql> [output.js]");
+    Deno.exit(1);
+  }
+
+  const inputPath = args[0];
+  const outputPath = args[1] || inputPath.replace(/\.hql$/, ".js");
+  const verbose = args.includes("--verbose") || args.includes("-v");
+
+  compile(inputPath, {
+    outputPath,
+    logLevel: verbose ? 3 : 2
+  }).then(async (result) => {
+    // If the call was made with --v or --version, remove the written output file.
+    if (args.includes("--v") || args.includes("--version")) {
+      try {
+        await Deno.remove(outputPath);
+        console.log("Temporary output file removed.");
+      } catch (error) {
+        console.error(`Failed to remove temporary file: ${error.message}`);
+      }
+    }
+  }).catch(() => {
+    Deno.exit(1);
   });
 }
 
-/**
- * Print usage information and exit.
- */
-function printUsageAndExit(): void {
-  console.error(
-    "Usage: deno run --allow-read --allow-write cli/compile.ts <input.hql> [<output>]"
-  );
-  Deno.exit(1);
-}
-
-/**
- * Determine the output file path based on the input file and optional output argument.
- *
- * 1. If no output argument is provided, return "transpiled.js" in the same directory as input.
- * 2. If an output argument is provided and it contains a directory separator:
- *    - If it ends with ".js", assume it's a full file path.
- *    - Otherwise, assume it's a directory and output "transpiled.js" in that directory.
- * 3. If the output argument is provided without a directory, use it as the file name in the input file's directory.
- *
- * @param inputAbs Absolute path to the input file.
- * @param outputArg Optional output argument.
- * @returns The full path for the output file.
- */
-function determineOutputFile(inputAbs: string, outputArg?: string): string {
-  const inputDir = dirname(inputAbs);
-  if (!outputArg) {
-    return join(inputDir, "transpiled.js");
-  } else {
-    if (outputArg.includes("/") || outputArg.includes("\\")) {
-      if (outputArg.endsWith(".js")) {
-        return resolve(outputArg);
-      } else {
-        return join(resolve(outputArg), "transpiled.js");
-      }
-    } else {
-      return join(inputDir, outputArg);
-    }
-  }
-}
-
-/**
- * Compile an HQL file using the shared compilation pipeline and write output to the given file.
- *
- * @param inputFile The input HQL file path.
- * @param outputFile The output file path.
- */
-async function compileHQL(inputFile: string, outputFile: string): Promise<void> {
-  const inputAbs = await Deno.realPath(inputFile);
-  const inputDir = dirname(inputAbs);
-  const hql = await Deno.readTextFile(inputAbs);
-  const ast = parse(hql);
-  const expanded = expandMacros(ast);
-  const visited = new Set<string>();
-  const transformed = await transformAST(expanded, inputDir, visited);
-  let finalCode = generateCode(transformed);
-  
-  // Ensure all identifiers in the generated code are valid JavaScript identifiers
-  finalCode = ensureValidIdentifiers(finalCode);
-  
-  await Deno.writeTextFile(outputFile, finalCode);
-  console.log(`Compilation complete. Output written to ${outputFile}`);
-}
-
-/**
- * Main entry point.
- */
-if (import.meta.main) {
-  if (Deno.args.length < 1) {
-    printUsageAndExit();
-  }
-  const inputFile = Deno.args[0];
-  const outputArg = Deno.args[1];
-  let inputAbs: string;
-  try {
-    inputAbs = await Deno.realPath(inputFile);
-  } catch (err) {
-    console.error(`Error: Unable to resolve input file ${inputFile}: ${err.message}`);
-    Deno.exit(1);
-  }
-  const outputFile = determineOutputFile(inputAbs, outputArg);
-  await compileHQL(inputFile, outputFile);
-}
+export default compile;

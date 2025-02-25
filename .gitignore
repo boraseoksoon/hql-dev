@@ -1,5 +1,6 @@
 # Node modules (installed by npm)
 node_modules/
+npm/
 
 # Build output directories (if you generate bundles or compiled files)
 dist/

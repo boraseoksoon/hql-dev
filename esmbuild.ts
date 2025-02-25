@@ -2,7 +2,7 @@ import * as esbuild from "npm:esbuild";
 import { denoPlugins } from "jsr:@luca/esbuild-deno-loader";
 
 await esbuild.build({
-  entryPoints: ["./test/transpiled.js"],
+  entryPoints: ["./test/simple.js"],
   bundle: true,
   outfile: "esm.js",
   format: "esm",

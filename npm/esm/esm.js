@@ -9991,7 +9991,7 @@ var chalkStderr2 = createChalk2({
     level: stderrColor2 ? stderrColor2.level : 0
 });
 var mod_default = chalk2;
-// test/transpiled.js
+// test/simple.js
 var import_npm_lodash = __toESM(require_lodash());
 // https://deno.land/std@0.170.0/_util/os.ts
 var osType = (() => {
@@ -11806,7 +11806,7 @@ function sayHello() {
 }
 // data:application/javascript;base64,Ly8gaW50ZXJvcC5qcwppbXBvcnQgeyBzYXlIZWxsbyB9IGZyb20gImRhdGE6dGV4dC9qYXZhc2NyaXB0O2Jhc2U2NCxhVzF3YjNKMElHTm9ZV3hySUdaeWIyMGdJbWgwZEhCek9pOHZaR1Z1Ynk1c1lXNWtMM2d2WTJoaGJHdGZaR1Z1YjBCMk5DNHhMakV0WkdWdWJ5OXpiM1Z5WTJVdmFXNWtaWGd1YW5NaU93cG1kVzVqZEdsdmJpQnpZWGxJWld4c2J5Z3BJSHNnY21WMGRYSnVJR05vWVd4ckxtSnNkV1VvSWtobGJHeHZJR1p5YjIwZ1NsTWlLVHNnZlFwbGVIQnZjblFnZXlCellYbElaV3hzYnlCaGN5QnpZWGxJWld4c2J5QjlPdz09IjsKY29uc29sZS5sb2coc2F5SGVsbG8oKSk7CmV4cG9ydCB7IHNheUhlbGxvIH07Cg==
 console.log(sayHello());
-// test/transpiled.js
+// test/simple.js
 var mod = function () {
     let exports = {};
     const mod3 = function () {
