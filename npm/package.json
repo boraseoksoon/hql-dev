@@ -1,10 +1,9 @@
 {
   "name": "your-package-name",
   "version": "0.1.0",
-  "description": "A Node-compatible bundle converted from Deno code.",
-  "main": "index.js",
-  "module": "index.js",
-  "types": "index.d.ts",
+  "description": "",
+  "main": "./script/esm.js",
+  "module": "./esm/esm.js",
   "exports": {
     ".": {
       "import": "./esm/esm.js",
@@ -12,8 +11,7 @@
     }
   },
   "dependencies": {
-    "@deno/shim-deno": "~0.18.0",
-    "your-package-name": "file:your-package-name-0.1.0.tgz"
+    "@deno/shim-deno": "~0.18.0"
   },
   "devDependencies": {
     "@types/node": "^20.9.0"

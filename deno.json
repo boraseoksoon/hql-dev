@@ -1,6 +1,7 @@
 {
 "tasks": {
-    "test": "deno run --allow-read --allow-write cli/compile.ts test/simple.hql && deno run -A ./transpiled.js"
+    "run-test": "deno run --allow-read --allow-write -A cli/run.ts test/simple.hql && deno run -A cli/run.ts ./test/js/simple.js && deno run -A cli/run.ts ./test/js/chalk.hql",
+    "transpile-test": "deno run --allow-read --allow-write cli/compile.ts test/simple.hql && deno run -A ./transpiled.js", 
+    "node-test": "deno run --allow-read --allow-write cli/compile.ts test/simple.hql && deno run -A ./transpiled.js && deno run -A esmbuild.ts && deno run -A --unstable dnt.ts && (cd npm && npm pack) && cd .. && (cd node && npm install ../npm/your-package-name-0.1.0.tgz && node index.mjs)",
     }
 }
-  
