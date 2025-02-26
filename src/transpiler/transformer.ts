@@ -1,10 +1,10 @@
 // src/transformer.ts
-import { HQLNode } from "./ast.ts";
+import { HQLNode } from "./hql_ast.ts";
 import { transformToIR } from "./hql-to-ir.ts";
 import { convertIRToTSAST, ASTConversionOptions } from "./ir-to-ts-ast.ts";
 import { generateTypeScript, CodeGenerationOptions } from "./ts-ast-to-code.ts";
 import { join } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { bundleFile, bundleJSModule } from "./bundler.ts";
+import { bundleFile, bundleJSModule } from "../bundler/bundler.ts";
 
 /**
  * Options for transforming HQL to JavaScript/TypeScript

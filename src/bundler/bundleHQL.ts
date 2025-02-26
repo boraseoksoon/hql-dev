@@ -1,5 +1,5 @@
 // src/bundleHQL.ts
-import { transpileHQL } from "./transpileHQL.ts";
+import { transpile } from "../transpiler/compiler.ts";
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 
 // Regex to match HQL import statements, e.g. (import "./other.hql")
@@ -26,7 +26,7 @@ export async function processFile(
 
   // Read and transpile the HQL file
   const source = await Deno.readTextFile(realPath);
-  const jsCode = await transpileHQL(source, realPath);
+  const jsCode = await transpile(source, realPath);
   modules.set(realPath, jsCode);
 
   // Process all HQL imports in this file

@@ -1,5 +1,5 @@
 // cli/compile.ts
-import { compile as compileSource, compileFile, writeOutput, CompilerOptions, CompilerResult } from "../src/compiler.ts";
+import { compile as compileSource, compileFile, writeOutput, CompilerOptions, CompilerResult } from "../src/transpiler/compiler.ts";
 import { dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
 
 // CLI-specific options that extend the compiler options

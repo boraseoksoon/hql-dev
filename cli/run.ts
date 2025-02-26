@@ -1,7 +1,6 @@
 // run.ts
 import { resolve, extname } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { processFile, createBundle } from "../src/bundleHQL.ts";
-import { bundleFile } from "../src/bundler.ts";
+import { bundleFile } from "../src/bundler/bundler.ts";
 
 /**
  * Bundles an HQL file and its dependencies, writes the resulting JavaScript

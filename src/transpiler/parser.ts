@@ -1,4 +1,4 @@
-import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./ast.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 
 // Position tracking for better error messages
 interface Position {

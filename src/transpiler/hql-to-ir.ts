@@ -1,7 +1,6 @@
 // src/hql-to-ir.ts
-import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./ast.ts";
-import * as IR from "./ir.ts";
-import { join, isAbsolute } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
+import * as IR from "./hql_ir.ts";
 
 export function transformToIR(nodes: HQLNode[], currentDir: string): IR.IRProgram {
   const program: IR.IRProgram = {

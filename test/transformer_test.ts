@@ -1,5 +1,5 @@
 // test/transformer_test.ts
-import { parse } from "../src/parser.ts";
+import { parse } from "../src/transpiler/parser.ts";
 import { transformAST } from "../src/transformer.ts";
 import { assertEquals } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 

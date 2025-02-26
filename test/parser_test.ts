@@ -1,5 +1,5 @@
 // test/parser_test.ts
-import { parse, ParseError } from "../src/parser.ts";
+import { parse, ParseError } from "../src/transpiler/parser.ts";
 import { assertEquals, assertThrows } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 
 Deno.test("Basic syntax parsing", () => {

@@ -1,7 +1,7 @@
 // src/bundler.ts
-import { parse } from "./parser.ts";
-import { expandMacros } from "./macro.ts";
-import { transformAST } from "./transformer.ts";
+import { parse } from "../transpiler/parser.ts";
+import { expandMacros } from "../macro.ts";
+import { transformAST } from "../transpiler/transformer.ts";
 import { dirname, join } from "https://deno.land/std@0.170.0/path/mod.ts";
 
 /**

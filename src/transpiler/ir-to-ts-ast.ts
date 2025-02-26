@@ -1,5 +1,5 @@
 // src/ir-to-ts-ast.ts
-import * as IR from "./ir.ts";
+import * as IR from "./hql_ir.ts";
 
 // Define a simplified TypeScript AST
 // In a real implementation, you'd use the TypeScript compiler API
