@@ -8,6 +8,8 @@ import {
   relative as stdRelative,
 } from "jsr:@std/path@1.0.8";
 
+export { exists } from "jsr:@std/fs@1.0.13";
+
 export function cwd(): string {
   return Deno.cwd();
 }
