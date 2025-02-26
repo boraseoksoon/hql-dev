@@ -1,25 +1,29 @@
-import { parse } from "../src/parser.ts";
-import { transformAST } from "../src/transformer.ts";
+// cli/compile.ts
+import { compile as compileSource, compileFile, writeOutput, CompilerOptions, CompilerResult } from "../src/compiler.ts";
 import { dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
 
-// Configurable options for compilation
-interface CompileOptions {
+// CLI-specific options that extend the compiler options
+interface CLICompileOptions extends CompilerOptions {
+  /**
+   * The output file path.
+   */
   outputPath?: string;
-  // Log level: 0 = errors only, 1 = warnings, 2 = info, 3 = verbose
+  
+  /**
+   * Log level:
+   * - 0: errors only
+   * - 1: warnings
+   * - 2: info
+   * - 3: verbose
+   * Default: 1
+   */
   logLevel?: number;
-}
-
-// Result of compilation
-interface CompileResult {
-  code: string;
-  warnings: string[];
-  stats: {
-    inputSize: number;
-    outputSize: number;
-    parseTime: number;
-    transformTime: number;
-    totalTime: number;
-  };
+  
+  /**
+   * Whether to watch for file changes and recompile automatically.
+   * Default: false
+   */
+  watch?: boolean;
 }
 
 // Simple logger factory based on the log level
@@ -31,145 +35,160 @@ function createLogger(logLevel: number) {
   };
 }
 
-// Step 1: Read the source file
-async function readSourceFile(path: string, log: (level: number, msg: string) => void): Promise<string> {
-  log(3, "Reading source file...");
-  try {
-    const source = await Deno.readTextFile(path);
-    log(3, "Source file read successfully.");
-    return source;
-  } catch (error) {
-    throw new Error(`Failed to read source file: ${error.message}`);
-  }
-}
-
-// Step 2: Parse the source to an AST
-function parseSource(source: string, inputPath: string, log: (level: number, msg: string) => void): { hqlAST: any, parseTime: number } {
-  log(3, "Parsing HQL to AST...");
-  const parseStart = performance.now();
-  let ast;
-  try {
-    ast = parse(source);
-  } catch (error) {
-    if (error.location) {
-      const { line, column } = error.location;
-      const lines = source.split("\n");
-      const errorLine = lines[line - 1] || "";
-      const pointer = " ".repeat(column - 1) + "^";
-      throw new Error(
-        `Parse error at ${inputPath}:${line}:${column}\n${errorLine}\n${pointer}\n${error.message}`
-      );
-    }
-    throw new Error(`Parse error: ${error.message}`);
-  }
-  const parseTime = performance.now() - parseStart;
-  log(3, `Parsing completed in ${parseTime.toFixed(2)}ms`);
-  return { hqlAST, parseTime };
-}
-
-// Step 3: Transform the AST to JavaScript code
-async function transformToJS(ast: any, inputPath: string, log: (level: number, msg: string) => void): Promise<{ javascript: string, transformTime: number }> {
-  log(3, "Transforming AST to JavaScript...");
-  const transformStart = performance.now();
-  let javascript: string;
-  try {
-    const currentDir = dirname(inputPath);
-    const visited = new Set<string>();
-    javascript = await transformAST(ast, currentDir, visited);
-  } catch (error) {
-    throw new Error(`Transform error: ${error.message}`);
-  }
-  const transformTime = performance.now() - transformStart;
-  log(3, `Transformation completed in ${transformTime.toFixed(2)}ms`);
-  return { javascript, transformTime };
-}
-
-// Step 4: Write the transformed code to the output file
-async function write(code: string, outputPath: string, log: (level: number, msg: string) => void): Promise<void> {
-  log(3, "Writing output file...");
-  try {
-    const outputDir = dirname(outputPath);
-    try {
-      await Deno.mkdir(outputDir, { recursive: true });
-    } catch (error) {
-      if (!(error instanceof Deno.errors.AlreadyExists)) {
-        throw error;
-      }
-    }
-    await Deno.writeTextFile(outputPath, code);
-  } catch (error) {
-    throw new Error(`Failed to write output: ${error.message}`);
-  }
-}
-
 // Main compile function that ties all steps together
-export async function compile(inputPath: string, options: CompileOptions = {}): Promise<CompileResult> {
+export async function compile(inputPath: string, options: CLICompileOptions = {}): Promise<CompilerResult> {
   const startTime = performance.now();
-  const warnings: string[] = [];
   const logLevel = options.logLevel ?? 1;
   const log = createLogger(logLevel);
-  const outputPath = options.outputPath ?? inputPath.replace(/\.hql$/, ".js");
-
+  const outputPath = options.outputPath ?? inputPath.replace(/\.hql$/, options.format === 'ts' ? '.ts' : '.js');
+  
   try {
     log(2, `Compiling ${inputPath} to ${outputPath}`);
-
-    const hql = await readSourceFile(inputPath, log);
-    const { hqlAST, parseTime } = parseSource(hql, inputPath, log);
-    const { javascript, transformTime } = await transformToJS(hqlAST, inputPath, log);
-    await write(javascript, outputPath, log);
-
-    const totalTime = performance.now() - startTime;
-    const inputSize = hql.length;
-    log(2, `Source size: ${inputSize} bytes`);
+    
+    // Compile the file
+    const result = await compileFile(inputPath, {
+      format: options.format,
+      sourceMap: options.sourceMap,
+      declaration: options.declaration,
+      optimizationLevel: options.optimizationLevel,
+      typeCheck: options.typeCheck,
+      bundle: options.bundle,
+      target: options.target,
+      module: options.module
+    });
+    
+    // Write the output
+    await writeOutput(result, outputPath);
+    
+    // Log results
+    log(2, `Source size: ${result.stats.inputSize} bytes`);
+    log(2, `Output size: ${result.stats.outputSize} bytes`);
+    log(3, `Parse time: ${result.stats.parseTime.toFixed(2)}ms`);
+    log(3, `IR generation time: ${result.stats.irGenTime.toFixed(2)}ms`);
+    log(3, `Code generation time: ${result.stats.codeGenTime.toFixed(2)}ms`);
     log(2, `Successfully compiled ${inputPath} -> ${outputPath}`);
-    log(2, `Compilation completed in ${totalTime.toFixed(2)}ms`);
-
-    return {
-      javascript,
-      warnings,
-      stats: {
-        inputSize,
-        outputSize: javascript.length,
-        parseTime,
-        transformTime,
-        totalTime
-      }
-    };
+    log(2, `Compilation completed in ${result.stats.totalTime.toFixed(2)}ms`);
+    
+    // Display warnings if any
+    for (const warning of result.warnings) {
+      log(1, `Warning: ${warning}`);
+    }
+    
+    return result;
   } catch (error) {
     console.error(`Compilation failed: ${error.message}`);
     throw error;
   }
 }
 
+// Simple watch function implementation
+async function watchFile(inputPath: string, options: CLICompileOptions): Promise<void> {
+  const log = createLogger(options.logLevel ?? 1);
+  log(2, `Watching ${inputPath} for changes...`);
+  
+  try {
+    // Initial compilation
+    await compile(inputPath, options);
+    
+    // Set up file watcher
+    const watcher = Deno.watchFs(inputPath);
+    
+    for await (const event of watcher) {
+      if (event.kind === 'modify') {
+        try {
+          log(2, `File changed, recompiling...`);
+          await compile(inputPath, options);
+        } catch (error) {
+          console.error(`Compilation failed: ${error.message}`);
+        }
+      }
+    }
+  } catch (error) {
+    console.error(`Watch error: ${error.message}`);
+    Deno.exit(1);
+  }
+}
+
 // Command-line execution when run directly
 if (import.meta.main) {
   const args = Deno.args;
-
+  
   if (args.length < 1) {
-    console.error("Usage: deno run -A compile.ts <input.hql> [output.js]");
+    console.error("Usage: deno run -A compile.ts <input.hql> [output.js] [options]");
+    console.error("Options:");
+    console.error("  --format=ts|js    Output format (default: js)");
+    console.error("  --source-map      Generate source map");
+    console.error("  --declaration     Generate declaration file (for ts format)");
+    console.error("  --optimize=0|1|2  Optimization level (default: 1)");
+    console.error("  --type-check      Include runtime type checking");
+    console.error("  --bundle          Bundle all imports into a single file");
+    console.error("  --target=<ver>    Target JavaScript version (default: es2020)");
+    console.error("  --module=<type>   Module system (default: esm)");
+    console.error("  --watch           Watch for file changes and recompile");
+    console.error("  --verbose, -v     Verbose logging");
     Deno.exit(1);
   }
-
+  
   const inputPath = args[0];
-  const outputPath = args[1] || inputPath.replace(/\.hql$/, ".js");
-  const verbose = args.includes("--verbose") || args.includes("-v");
-
-  compile(inputPath, {
-    outputPath,
-    logLevel: verbose ? 3 : 2
-  }).then(async (result) => {
-    // If the call was made with --v or --version, remove the written output file.
-    if (args.includes("--v") || args.includes("--version")) {
-      try {
-        await Deno.remove(outputPath);
-        console.log("Temporary output file removed.");
-      } catch (error) {
-        console.error(`Failed to remove temporary file: ${error.message}`);
+  
+  // Parse options
+  const options: CLICompileOptions = {};
+  
+  // Check if the second argument is an output path (no -- prefix)
+  if (args.length > 1 && !args[1].startsWith('--')) {
+    options.outputPath = args[1];
+  }
+  
+  // Parse the remaining arguments
+  for (const arg of args) {
+    if (arg === '--verbose' || arg === '-v') {
+      options.logLevel = 3;
+    } else if (arg.startsWith('--format=')) {
+      const format = arg.split('=')[1];
+      if (format === 'ts' || format === 'js') {
+        options.format = format;
+      } else {
+        console.error(`Invalid format: ${format}. Must be 'ts' or 'js'.`);
+        Deno.exit(1);
       }
+    } else if (arg === '--source-map') {
+      options.sourceMap = true;
+    } else if (arg === '--declaration') {
+      options.declaration = true;
+    } else if (arg.startsWith('--optimize=')) {
+      const level = parseInt(arg.split('=')[1]);
+      if (level >= 0 && level <= 2) {
+        options.optimizationLevel = level as 0 | 1 | 2;
+      } else {
+        console.error(`Invalid optimization level: ${level}. Must be 0, 1, or 2.`);
+        Deno.exit(1);
+      }
+    } else if (arg === '--type-check') {
+      options.typeCheck = true;
+    } else if (arg === '--bundle') {
+      options.bundle = true;
+    } else if (arg.startsWith('--target=')) {
+      const target = arg.split('=')[1];
+      options.target = target as any;
+    } else if (arg.startsWith('--module=')) {
+      const module = arg.split('=')[1];
+      if (['esm', 'commonjs', 'umd', 'amd'].includes(module)) {
+        options.module = module as any;
+      } else {
+        console.error(`Invalid module type: ${module}. Must be 'esm', 'commonjs', 'umd', or 'amd'.`);
+        Deno.exit(1);
+      }
+    } else if (arg === '--watch') {
+      options.watch = true;
     }
-  }).catch(() => {
-    Deno.exit(1);
-  });
+  }
+  
+  // Run the compiler (or watcher)
+  if (options.watch) {
+    watchFile(inputPath, options).catch(() => Deno.exit(1));
+  } else {
+    compile(inputPath, options).catch(() => Deno.exit(1));
+  }
 }
 
 export default compile;

@@ -8,7 +8,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Local module (if needed)
-(def mod (import "./simple2.hql"))
+;; (def mod (import "./simple2.hql"))
 
 ;; Remote modules
 (def strUtil (import "https://esm.sh/lodash"))
@@ -48,8 +48,8 @@
 
 ;; Part 4: Import a JS module that itself imports an HQL module.
 ;; (Assumes that interop.js is a valid JS module exporting a function sayHello.)
-(def simple (import "./interop.js"))
-(print simple.sayHello)
+;; (def simple (import "./interop.js"))
+;; (print simple.sayHello)
 
 ;; Data Structures: using JS arrays and objects
 (print "====== Data Structures ======")
