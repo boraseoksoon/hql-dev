@@ -44,7 +44,7 @@ async function readSourceFile(path: string, log: (level: number, msg: string) =>
 }
 
 // Step 2: Parse the source to an AST
-function parseSource(source: string, inputPath: string, log: (level: number, msg: string) => void): { ast: any, parseTime: number } {
+function parseSource(source: string, inputPath: string, log: (level: number, msg: string) => void): { hqlAST: any, parseTime: number } {
   log(3, "Parsing HQL to AST...");
   const parseStart = performance.now();
   let ast;
@@ -64,28 +64,28 @@ function parseSource(source: string, inputPath: string, log: (level: number, msg
   }
   const parseTime = performance.now() - parseStart;
   log(3, `Parsing completed in ${parseTime.toFixed(2)}ms`);
-  return { ast, parseTime };
+  return { hqlAST, parseTime };
 }
 
 // Step 3: Transform the AST to JavaScript code
-async function transformToJS(ast: any, inputPath: string, log: (level: number, msg: string) => void): Promise<{ code: string, transformTime: number }> {
+async function transformToJS(ast: any, inputPath: string, log: (level: number, msg: string) => void): Promise<{ javascript: string, transformTime: number }> {
   log(3, "Transforming AST to JavaScript...");
   const transformStart = performance.now();
-  let code: string;
+  let javascript: string;
   try {
     const currentDir = dirname(inputPath);
     const visited = new Set<string>();
-    code = await transformAST(ast, currentDir, visited);
+    javascript = await transformAST(ast, currentDir, visited);
   } catch (error) {
     throw new Error(`Transform error: ${error.message}`);
   }
   const transformTime = performance.now() - transformStart;
   log(3, `Transformation completed in ${transformTime.toFixed(2)}ms`);
-  return { code, transformTime };
+  return { javascript, transformTime };
 }
 
 // Step 4: Write the transformed code to the output file
-async function writeOutputFile(outputPath: string, code: string, log: (level: number, msg: string) => void): Promise<void> {
+async function write(code: string, outputPath: string, log: (level: number, msg: string) => void): Promise<void> {
   log(3, "Writing output file...");
   try {
     const outputDir = dirname(outputPath);
@@ -113,23 +113,23 @@ export async function compile(inputPath: string, options: CompileOptions = {}): 
   try {
     log(2, `Compiling ${inputPath} to ${outputPath}`);
 
-    const source = await readSourceFile(inputPath, log);
-    const { ast, parseTime } = parseSource(source, inputPath, log);
-    const { code, transformTime } = await transformToJS(ast, inputPath, log);
-    await writeOutputFile(outputPath, code, log);
+    const hql = await readSourceFile(inputPath, log);
+    const { hqlAST, parseTime } = parseSource(hql, inputPath, log);
+    const { javascript, transformTime } = await transformToJS(hqlAST, inputPath, log);
+    await write(javascript, outputPath, log);
 
     const totalTime = performance.now() - startTime;
-    const inputSize = source.length;
+    const inputSize = hql.length;
     log(2, `Source size: ${inputSize} bytes`);
     log(2, `Successfully compiled ${inputPath} -> ${outputPath}`);
     log(2, `Compilation completed in ${totalTime.toFixed(2)}ms`);
 
     return {
-      code,
+      javascript,
       warnings,
       stats: {
         inputSize,
-        outputSize: code.length,
+        outputSize: javascript.length,
         parseTime,
         transformTime,
         totalTime

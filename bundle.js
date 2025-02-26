@@ -1,3 +1,6 @@
+// Bundled output generated from HQL sources
+
+// --- Module: /Users/seoksoonjang/Desktop/hql/test/simple.hql
 const mod = (function(){
 let exports = {};
 const mod3 = (function(){
@@ -25,7 +28,7 @@ console.log(greetRemote("jss"));
 console.log(chalk.blue("hello hql!"));
 console.log(chalk2.red("hello hql?"));
 console.log(lodash.chunk([1, 2, 3, 4, 5, 6], 2));
-import simple from "./test/interop.js";
+import * as simple from "data:application/javascript;base64,Ly8gaW50ZXJvcC5qcwppbXBvcnQgeyBzYXlIZWxsbyB9IGZyb20gImRhdGE6dGV4dC9qYXZhc2NyaXB0O2Jhc2U2NCxhVzF3YjNKMElHTm9ZV3hySUdaeWIyMGdJbWgwZEhCek9pOHZaR1Z1Ynk1c1lXNWtMM2d2WTJoaGJHdGZaR1Z1YjBCMk5DNHhMakV0WkdWdWJ5OXpiM1Z5WTJVdmFXNWtaWGd1YW5NaU93cG1kVzVqZEdsdmJpQnpZWGxJWld4c2J5Z3BJSHNnY21WMGRYSnVJR05vWVd4ckxtSnNkV1VvSWtobGJHeHZJR1p5YjIwZ1NsTWlLVHNnZlFwbGVIQnZjblFnZXlCellYbElaV3hzYnlCaGN5QnpZWGxJWld4c2J5QjlPdz09IjsKY29uc29sZS5sb2coc2F5SGVsbG8oKSk7CmV4cG9ydCB7IHNheUhlbGxvIH07Cg==";
 console.log(simple.sayHello);
 console.log("====== Data Structures ======");
 const myvec = [10, 20, 30, 40];
@@ -96,3 +99,14 @@ export { formatName as formatName };
 export { calculateTotal as calculateTotal };
 export { complexMath as complexMath };
 export { processData as processData };
+
+// --- Module: /Users/seoksoonjang/Desktop/hql/test/simple2.hql
+const mod3 = (function(){
+let exports = {};
+function sayBye(name) { return "Bye, " + name + "!"; }
+exports.sayBye = sayBye;
+return exports;
+})();
+function sayHi(name) { return "Hi, " + name + "! " + mod3.sayBye(name); }
+export { sayHi as sayHi };
+
