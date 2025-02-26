@@ -3,7 +3,7 @@ import { build, emptyDir } from "jsr:@deno/dnt";
 await emptyDir("./npm");
 
 await build({
-  entryPoints: ["./esm.js"],
+  entryPoints: ["./test/simple.js"],
   outDir: "./npm",
   shims: {
     deno: true,
