@@ -11,14 +11,14 @@ function showHelp() {
 HQL Publish Tool - Publish HQL modules to NPM or JSR
 
 USAGE:
-  hql_publish [options] [platform] [directory] [name] [version]
+  hql_publish [options] [platform] [directory|file.hql] [name] [version]
 
 PLATFORMS:
   jsr     Publish to JSR (default)
   npm     Publish to NPM
 
 OPTIONS:
-  -what, -w      Directory or file to publish (defaults to current directory)
+  -what, -w      Directory or HQL file to publish (defaults to current directory)
   -name, -n      Package name (defaults to directory name)
   -version, -v   Package version (defaults to auto-increment)
   -where         Target platform: 'npm' or 'jsr' (defaults to 'jsr')
@@ -29,13 +29,16 @@ EXAMPLES:
   # Publish current directory to JSR with auto-generated name and version
   hql_publish
 
+  # Publish a specific HQL file to JSR
+  hql_publish ./my-module/main.hql
+
   # Publish to NPM with specified name
   hql_publish npm -name my-package
 
   # Publish specific directory to JSR with specified version
-  hql_publish jsr ./my-module -version 1.2.3
+  hql_publish ./my-module -version 1.2.3
 
-  # Publish using positional arguments: platform, directory, name, version
+  # Publish using positional arguments: platform, directory/file, name, version
   hql_publish npm ./my-module my-awesome-package 0.1.0
 `);
 }
@@ -52,7 +55,7 @@ async function main() {
       h: "help",
       w: "what",
       n: "name",
-      v: "verbose"
+      v: "version"
     },
     // This allows parsing single-dash options
     prefix: "-"
@@ -67,6 +70,11 @@ async function main() {
   try {
     // Print a nice banner
     console.log("\n✨ HQL Publish Tool ✨\n");
+    
+    // Force JSR login check skip for development environments
+    if (Deno.env.get("HQL_DEV") === "1") {
+      Deno.env.set("SKIP_LOGIN_CHECK", "1");
+    }
     
     // Pass the raw args to the publish function
     await publish(args);

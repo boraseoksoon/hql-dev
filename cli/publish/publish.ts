@@ -1,6 +1,5 @@
-// cli/publish.ts
+// cli/publish/publish.ts
 import { parseArgs } from "jsr:@std/cli@1.0.13/parse-args";
-import { basename } from "jsr:@std/path@1.0.8";
 import { cwd, exit } from "../../src/platform/platform.ts";
 import { publishNpm } from "./publish_npm.ts";
 import { publishJSR } from "./publish_jsr.ts";
@@ -13,200 +12,160 @@ export interface PublishOptions {
   verbose?: boolean;
 }
 
-// Normalize flag formats to consistent format.
-// Now we accept both single and double dash formats for all options
-function normalizeArgs(args: string[]): string[] {
-  // List of allowed option names (without dashes)
-  const allowed = new Set(["what", "name", "version", "where", "verbose", "v", "w", "n", "h", "help"]);
-  
-  return args.map(arg => {
-    if (arg.startsWith("-") && !arg.startsWith("--")) {
-      const key = arg.slice(1);
-      if (allowed.has(key)) {
-        // Keep it as single dash as the user prefers
-        return arg;
-      }
-    }
-    // If it's a double dash option that should be single dash, convert it
-    if (arg.startsWith("--")) {
-      const key = arg.slice(2);
-      if (allowed.has(key)) {
-        return `-${key}`;
-      }
-    }
-    return arg;
-  });
+/** Show help information */
+function showHelp() {
+  console.log(`
+HQL Publish Tool - Publish HQL modules to NPM or JSR
+
+USAGE:
+  hql_publish [options] <what> [platform] [name] [version]
+
+EXAMPLES:
+  # 1) Publish ./my-module to JSR (default) with auto name/version
+  hql_publish ./my-module
+
+  # 2) Publish ./my-module to NPM
+  hql_publish ./my-module npm
+
+  # 3) Publish ./my-module to JSR with an explicit package name
+  hql_publish ./my-module jsr my-awesome-package
+
+  # 4) Publish ./my-module to JSR with an explicit version
+  hql_publish ./my-module jsr my-awesome-package 1.2.3
+
+  # 5) Use flags instead of positional arguments:
+  hql_publish ./my-module -where=jsr -name=my-awesome-package -version=1.2.3
+
+OPTIONS:
+  -what, -w      Directory or HQL file to publish (defaults to current directory)
+  -where         Target platform: 'npm' or 'jsr' (defaults to 'jsr')
+  -name, -n      Package name (defaults to auto-generated)
+  -version, -v   Package version (defaults to auto-increment or prompt)
+  -verbose       Enable verbose logging
+  -help, -h      Show this help message
+`);
 }
 
 /**
-* Parses publish arguments.
-*
-* For JSR:
-*    If the positional parameters are ["jsr", <targetDir>] then package name is undefined
-*    and will default to `@username/<basename(targetDir)>`.
-*    If they are ["jsr", <targetDir>, <packageName>], then <packageName> is used.
-*
-* For npm, similar logic applies.
-*/
+ * Parses the command-line arguments to produce a PublishOptions object.
+ * 
+ * New ordering:
+ *   pos[0] => <what> (path)
+ *   pos[1] => [platform] ("jsr" or "npm")
+ *   pos[2] => [name]
+ *   pos[3] => [version]
+ * 
+ * The flags (-where, -name, -version) override the positional arguments.
+ */
 function parsePublishArgs(args: string[]): PublishOptions {
-  // Don't normalize args - use them as is
   const parsed = parseArgs(args, {
-    string: ["what", "name", "version", "where"],
+    string: ["what", "where", "name", "version"],
     boolean: ["verbose", "help"],
     alias: {
-      v: "verbose",
       w: "what",
       n: "name",
-      h: "help"
+      v: "version",
+      h: "help",
     },
-    // Single-dash prefix
-    prefix: "-"
   });
-  
-  // Accept both forms of flags without validation error
-  const allowedFlags = new Set(["what", "name", "version", "where", "verbose", "help", "v", "w", "n", "h", "_"]);
-  for (const key of Object.keys(parsed)) {
-    if (!allowedFlags.has(key)) {
-      console.error(`Unknown flag: -${key}. Allowed flags: -what, -name, -version, -where, -verbose, -help`);
-      exit(1);
-    }
+
+  // Check for help
+  if (parsed.help) {
+    showHelp();
+    exit(0);
   }
-  
-  if (parsed.version && !/^\d+\.\d+\.\d+$/.test(parsed.version)) {
-    console.error(`Invalid version format: ${parsed.version}. Expected format: X.Y.Z`);
-    exit(1);
-  }
-  
-  let platform: "jsr" | "npm" = "npm"; // Default to npm
+
+  // By default, platform is "jsr"
+  let platform: "jsr" | "npm" = "jsr";
+  // If user used -where, parse that
   if (parsed.where) {
-    const whereVal = String(parsed.where).toLowerCase();
-    if (whereVal === "npm" || whereVal === "jsr") {
-      platform = whereVal as "jsr" | "npm";
+    const w = String(parsed.where).toLowerCase();
+    if (w === "npm" || w === "jsr") {
+      platform = w as "jsr" | "npm";
     } else {
-      console.error("Invalid value for -where flag. Must be 'npm' or 'jsr'.");
+      console.error(`Invalid value for -where: "${parsed.where}". Must be 'npm' or 'jsr'.`);
       exit(1);
     }
   }
-  
-  if (parsed.version && !/^\d+\.\d+\.\d+$/.test(parsed.version)) {
-    console.error(`Invalid version format: ${parsed.version}. Expected format: X.Y.Z`);
-    exit(1);
-  }
-  
-  if (parsed.where) {
-    const whereVal = String(parsed.where).toLowerCase();
-    if (whereVal === "npm" || whereVal === "jsr") {
-      platform = whereVal as "jsr" | "npm";
-    } else {
-      console.error("Invalid value for -where flag. Must be 'npm' or 'jsr'.");
-      exit(1);
-    }
-  }
-  
+
+  // Positional arguments
   const pos = parsed._;
-  let what = pos.length > 0 ? String(pos[0]) : cwd();
-  
-  // If the first positional argument is a platform flag, adjust accordingly.
-  if (pos.length > 0 && ["npm", "jsr"].includes(String(pos[0]).toLowerCase())) {
-    platform = String(pos[0]).toLowerCase() as "jsr" | "npm";
-    what = pos.length > 1 ? String(pos[1]) : cwd();
+
+  // pos[0] => <what>
+  let what = parsed.what || "";
+  if (!what && pos.length > 0) {
+    what = String(pos[0]);
   }
-  
-  if (parsed.what) {
-    what = String(parsed.what);
-  }
-  
   if (!what) {
     what = cwd();
   }
-  
-  let name: string | undefined;
-  if (parsed.name) {
-    name = String(parsed.name);
-  } else {
-    if (platform === "jsr") {
-      // Only use a positional package name if explicitly provided as the third parameter.
-      if (pos.length >= 3) {
-        name = String(pos[2]);
-      }
-    } else if (platform === "npm") {
-      if (pos.length >= 3 && !["npm", "jsr"].includes(String(pos[0]).toLowerCase())) {
-        name = String(pos[2]);
-      } else if (pos.length >= 4) {
-        name = String(pos[3]);
-      }
+
+  // pos[1] => [platform], but only if -where wasn't used
+  if (!parsed.where && pos.length > 1) {
+    const maybePlatform = String(pos[1]).toLowerCase();
+    if (maybePlatform === "npm" || maybePlatform === "jsr") {
+      platform = maybePlatform as "jsr" | "npm";
+    } else {
+      // If the user typed something that isn't "jsr" or "npm" as second arg, throw an error
+      console.error(`Invalid platform: "${pos[1]}". Must be "npm" or "jsr".`);
+      exit(1);
     }
   }
-  
-  let version: string | undefined;
-  if (parsed.version) {
-    version = String(parsed.version);
-  } else {
-    if (platform === "jsr") {
-      if (pos.length >= 4) {
-        version = String(pos[3]);
-      }
-    } else if (platform === "npm") {
-      if (pos.length >= 3 && !["npm", "jsr"].includes(String(pos[0]).toLowerCase())) {
-        version = String(pos[3]);
-      } else if (pos.length >= 4) {
-        version = String(pos[4]);
-      }
-    }
+
+  // Next positions for name & version:
+  // If pos[1] was recognized as a platform, name is pos[2], version is pos[3]
+  // If pos[1] doesn't exist or was invalid, we already errored out above
+  let name: string | undefined = parsed.name;
+  let version: string | undefined = parsed.version;
+
+  // If we recognized pos[1] as the platform, then pos[2] is name, pos[3] is version
+  if (!name && pos.length > 2) {
+    name = String(pos[2]);
   }
-  
-  return { 
-    platform, 
-    what, 
-    name, 
+  if (!version && pos.length > 3) {
+    version = String(pos[3]);
+  }
+
+  // Validate version format if provided
+  if (version && !/^\d+\.\d+\.\d+$/.test(version)) {
+    console.error(`Invalid version format: ${version}. Expected "X.Y.Z"`);
+    exit(1);
+  }
+
+  return {
+    platform,
+    what,
+    name,
     version,
-    verbose: parsed.verbose 
+    verbose: parsed.verbose,
   };
 }
 
-/**
-* Main publish mediator.
-*/
+/** Main function that calls publishNpm or publishJSR based on platform. */
 export async function publish(args: string[]): Promise<void> {
   const options = parsePublishArgs(args);
-  
+
   if (options.verbose) {
-    console.log("Running with verbose logging enabled");
+    console.log("Running with verbose logging enabled\n");
   }
-  
+
+  console.log(`Publishing ${options.platform.toUpperCase()} package with:
+  Directory (what): ${options.what}
+  Name: ${options.name ?? "(auto-generated)"}
+  Version: ${options.version ?? "(auto-incremented)"}
+`);
+
   if (options.platform === "npm") {
-    console.log(`Publishing npm package with:
-  Directory: ${options.what}
-  Package Name: ${options.name ?? "(auto-generated)"}
-  Version: ${options.version ?? "(auto-incremented)"}`);
-    
-    await publishNpm({ 
-      what: options.what, 
-      name: options.name, 
-      version: options.version,
-      verbose: options.verbose
-    });
+    await publishNpm(options);
   } else {
-    console.log(`Publishing JSR package with:
-  Directory: ${options.what}
-  Package Name: ${options.name ?? "(auto-generated)"}
-  Version: ${options.version ?? "(auto-incremented)"}`);
-    
-    await publishJSR({ 
-      what: options.what, 
-      name: options.name, 
-      version: options.version,
-      verbose: options.verbose 
-    });
+    await publishJSR(options);
   }
 }
 
-// Run the publish command if executed directly
+// If invoked directly:
 if (import.meta.main) {
-  publish(Deno.args).catch(error => {
-    console.error("Failed to publish:", error);
+  publish(Deno.args).catch((err) => {
+    console.error("Publish failed:", err);
     exit(1);
   });
 }
-
-export default publish;

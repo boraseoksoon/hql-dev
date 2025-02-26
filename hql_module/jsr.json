@@ -1,0 +1,13 @@
+{
+  "name": "@boraseoksoon/hql-module17",
+  "version": "0.0.1",
+  "exports": "./esm/index.js",
+  "publish": {
+    "include": [
+      "README.md",
+      "esm/**/*",
+      "types/**/*",
+      "jsr.json"
+    ]
+  }
+}

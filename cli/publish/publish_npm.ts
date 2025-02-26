@@ -9,143 +9,193 @@ import {
   exit,
   getEnv,
   basename,
+  dirname,
 } from "../../src/platform/platform.ts";
-
 import { exists } from "jsr:@std/fs@1.0.13";
 import { buildJsModule } from "./build_js_module.ts";
-import { getNpmUsername, getNextVersionInDir } from "./publish_common.ts";
+
+/** Simple helper: reads a line from stdin, returns default if empty. */
+async function prompt(question: string, defaultValue = ""): Promise<string> {
+  Deno.stdout.writeSync(new TextEncoder().encode(`${question} `));
+  const buf = new Uint8Array(1024);
+  const n = <number>await Deno.stdin.read(buf);
+  if (n <= 0) return defaultValue;
+  const input = new TextDecoder().decode(buf.subarray(0, n)).trim();
+  return input === "" ? defaultValue : input;
+}
+
+/** Increments the patch part of X.Y.Z -> X.Y.(Z+1). */
+function incrementPatch(version: string): string {
+  const parts = version.split(".");
+  if (parts.length !== 3) return "0.0.1";
+  const [major, minor, patch] = parts;
+  const newPatch = parseInt(patch, 10) + 1;
+  return `${major}.${minor}.${newPatch}`;
+}
 
 /**
- * Publishes the npm/ folder to npm.
- * Steps:
- * 1. Build the npm/ folder using buildJsModule().
- * 2. Run dnt.ts to create the npm package
- * 3. Update package.json with a proper package name.
- * 4. Run "npm publish" from within npm/ folder.
+ * Publishes a module to npm, using ONLY package.json for version/name.
+ * No references to jsr.json or a VERSION file.
  */
 export async function publishNpm(options: {
   what: string;
-  name?: string;
-  version?: string;
+  name?: string;     // CLI-specified package name
+  version?: string;  // CLI-specified version
   verbose?: boolean;
 }): Promise<void> {
-  const outDir = resolve(options.what);
-  await mkdir(outDir, { recursive: true });
-  
-  if (options.verbose) {
-    console.log(`Building JS module from ${outDir}...`);
-  }
-  
-  // Build the JS module
-  const jsModuleDir = await buildJsModule(outDir);
-  
-  // Check if the compiled JavaScript has ESM.sh imports
-  // If it does, we might want to skip DNT and use our manual package creation
-  let skipDnt = false;
+  const inputPath = resolve(options.what);
+
+  // Determine if "what" is a file or directory
+  let isFile = false;
+  let baseDir = inputPath;
   try {
-    const esmFile = join(outDir, ".build", "esm.js");
-    if (await exists(esmFile)) {
-      const content = await readTextFile(esmFile);
-      if (content.includes("https://esm.sh/")) {
-        console.log("⚠️ Detected ESM.sh imports that may cause DNT to fail");
-        console.log("Creating manual package to ensure compatibility...");
-        skipDnt = true;
-      }
+    const stat = await Deno.stat(inputPath);
+    isFile = stat.isFile;
+    if (isFile) {
+      baseDir = dirname(inputPath);
     }
   } catch (error) {
-    console.warn("Could not check for problematic imports:", error);
+    console.error(`Error checking input path: ${error.message}`);
+    exit(1);
   }
-  
-  // 2. Only run DNT if we haven't decided to skip it
-  if (!skipDnt) {
-    console.log("Running dnt script to create npm package...");
-    
-    try {
-      // Execute dnt.ts script
-      const dntCmd = new Deno.Command(Deno.execPath(), {
-        args: ["run", "-A", "./dnt.ts"],
-        stdout: "piped",
-        stderr: "piped",
-      });
-      
-      const output = await dntCmd.output();
-      
-      if (!output.success) {
-        const errorStr = new TextDecoder().decode(output.stderr);
-        console.error("DNT execution failed:", errorStr);
-        console.log("Creating a manual npm package as fallback...");
-        
-        // Create a fallback npm package manually
-        await createManualNpmPackage(outDir, options.name, options.version);
-      }
-    } catch (error) {
-      console.error("Error running dnt script:", error);
-      console.log("Creating a manual npm package as fallback...");
-      
-      // Create a fallback npm package manually
-      await createManualNpmPackage(outDir, options.name, options.version);
-    }
-  } else {
-    // Skip DNT entirely and use our manual package creation
-    await createManualNpmPackage(outDir, options.name, options.version);
-  }
-  
-  // Update the package.json if needed
-  const npmDistDir = join(outDir, "npm");
+
+  // Build the JS module => creates "npm/" folder
+  const npmDistDir = await buildJsModule(inputPath);
+
+  // Attempt to read or create package.json
   const pkgJsonPath = join(npmDistDir, "package.json");
-  
+  let pkg: Record<string, any> = {};
+  let pkgExists = false;
+
   if (await exists(pkgJsonPath)) {
-    // Read and update the package.json
-    let pkg = JSON.parse(await readTextFile(pkgJsonPath));
-    
-    // Update version if specified
-    if (options.version) {
-      pkg.version = options.version;
-    } else {
-      // Auto-increment the version
-      const newVersion = await getNextVersionInDir(outDir, undefined);
-      pkg.version = newVersion;
+    pkgExists = true;
+    try {
+      const content = await readTextFile(pkgJsonPath);
+      pkg = JSON.parse(content);
+    } catch (error) {
+      console.warn("Warning: Could not parse existing package.json:", error.message);
+      // Start fresh if parse fails
+      pkg = {};
     }
-    
-    // Update package name if specified
-    if (options.name) {
-      pkg.name = options.name.startsWith("@")
-        ? options.name
-        : await getFormattedPackageName(options.name);
-    }
-    
-    // Write updated package.json
-    await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
-    console.log(`Updated package.json in npm/ with name=${pkg.name} version=${pkg.version}`);
-  } else {
-    console.error("package.json not found in npm/. DNT execution might have failed.");
-    return;
   }
-  
+
+  // 1. Determine package name
+  //    Priority: CLI --name > existing package.json > prompt user
+  if (options.name) {
+    pkg.name = options.name;
+  } else if (!pkg.name) {
+    // No existing name in package.json => prompt user
+    const dirName = basename(baseDir);
+    const defaultName = dirName.toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+    console.log(`\nEnter npm package name (default: "${defaultName}"):`);
+    const userName = await prompt("", defaultName);
+    pkg.name = userName || defaultName;
+    console.log(`Using package name: ${pkg.name}`);
+  } else {
+    console.log(`Using existing package name: ${pkg.name}`);
+  }
+
+  // 2. Determine package version
+  //    Priority: CLI --version > existing package.json > prompt user (brand-new) or auto-increment
+  if (options.version) {
+    // If CLI overrides version
+    pkg.version = options.version;
+  } else if (pkg.version) {
+    // If there's an existing version, auto-increment it
+    pkg.version = incrementPatch(pkg.version);
+    console.log(`Incremented version to: ${pkg.version}`);
+  } else {
+    // Brand-new: prompt user
+    const defaultVersion = "0.0.1";
+    const userVer = await prompt(
+      `\nEnter version (default: "${defaultVersion}"):`,
+      defaultVersion
+    );
+    pkg.version = userVer || defaultVersion;
+    console.log(`Using version: ${pkg.version}`);
+  }
+
+  // Provide some default fields if missing
+  if (!pkg.description) {
+    pkg.description = `HQL module: ${pkg.name}`;
+  }
+  if (!pkg.module) {
+    pkg.module = "./esm/index.js";
+  }
+  if (!pkg.types) {
+    pkg.types = "./types/index.d.ts";
+  }
+  if (!pkg.files) {
+    pkg.files = ["esm", "types", "README.md"];
+  }
+
+  // Write updated package.json
+  await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
+  console.log(`\nUpdated package.json with name=${pkg.name} version=${pkg.version}`);
+
   // Ensure README.md exists
   const readmePath = join(npmDistDir, "README.md");
   if (!(await exists(readmePath))) {
-    const pkgName = options.name || "hql-package";
-    await writeTextFile(readmePath, `# ${pkgName}\n\nAuto-generated README for the HQL module.`);
+    await writeTextFile(
+      readmePath,
+      `# ${pkg.name}\n\nAuto-generated README for the HQL module.\n`
+    );
   }
-  
-  // Publish to npm if not in dry run mode
+
+  // Create "esm/" and "types/" directories
+  const esmDir = join(npmDistDir, "esm");
+  const typesDir = join(npmDistDir, "types");
+
+  try {
+    await mkdir(esmDir, { recursive: true });
+  } catch (e) {
+    if (!(e instanceof Deno.errors.AlreadyExists)) throw e;
+  }
+  try {
+    await mkdir(typesDir, { recursive: true });
+  } catch (e) {
+    if (!(e instanceof Deno.errors.AlreadyExists)) throw e;
+  }
+
+  // Copy the ESM file
+  try {
+    const esmFile = join(baseDir, ".build", "esm.js");
+    const esmContent = await Deno.readTextFile(esmFile);
+    await writeTextFile(join(esmDir, "index.js"), esmContent);
+  } catch (error) {
+    console.error(`Error copying ESM file: ${error.message}`);
+    // fallback stub
+    await writeTextFile(join(esmDir, "index.js"), `export default { name: "${pkg.name}" };\n`);
+  }
+
+  // Create a simple type definition
+  await writeTextFile(
+    join(typesDir, "index.d.ts"),
+    `declare const _default: any;\nexport default _default;\n`
+  );
+
+  // Finally, publish to npm
+  console.log(`\nPublishing package ${pkg.name}@${pkg.version} to npm...`);
+
+  // If environment variable DRY_RUN_PUBLISH is set, do a dry run
   const dryRun = getEnv("DRY_RUN_PUBLISH");
   const publishCmd = dryRun
-    ? ["npm", "publish", "--dry-run", "--access", "public"]
-    : ["npm", "publish", "--access", "public"];
-  
-  console.log(`Publishing package to npm from ${npmDistDir}...`);
+    ? ["npm", "publish", "--dry-run", "--access", "public", "--force"]
+    : ["npm", "publish", "--access", "public", "--force"];
+
   const proc = runCmd({
     cmd: publishCmd,
     cwd: npmDistDir,
     stdout: "inherit",
     stderr: "inherit",
   });
-  
+
   const status = await proc.status();
   proc.close();
-  
+
   if (!status.success) {
     console.error(`
 npm publish failed with exit code ${status.code}. 
@@ -156,194 +206,9 @@ Possible issues:
 `);
     exit(status.code);
   }
-  
+
   console.log(`
 ✅ Package published successfully to npm!
-📦 View it at: https://www.npmjs.com/package/${options.name || "your-package-name"}`);
-}
-
-/**
- * Format a package name for npm, ensuring it follows npm naming conventions.
- */
-async function getFormattedPackageName(name: string): Promise<string> {
-  const npmUser = await getNpmUsername();
-  
-  // Format the name to be npm-compatible
-  const formattedName = name.toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-") // Replace invalid chars with hyphens
-    .replace(/-+/g, "-")         // Replace multiple hyphens with single one
-    .replace(/^-|-$/g, "");      // Remove leading/trailing hyphens
-  
-  // Add the user's scope if available
-  if (npmUser) {
-    return `@${npmUser}/${formattedName}`;
-  }
-  
-  return formattedName;
-}
-
-/**
- * Create a manual NPM package when DNT fails
- */
-async function createManualNpmPackage(
-  outDir: string,
-  name?: string,
-  version?: string
-): Promise<void> {
-  // Define paths
-  const npmDir = join(outDir, "npm");
-  const esmDir = join(npmDir, "esm");
-  const scriptDir = join(npmDir, "script");
-  const typesDir = join(npmDir, "types");
-  
-  // Create directories
-  await mkdir(npmDir, { recursive: true });
-  await mkdir(esmDir, { recursive: true });
-  await mkdir(scriptDir, { recursive: true });
-  await mkdir(typesDir, { recursive: true });
-  
-  // Format the package name
-  const packageName = name || basename(outDir);
-  
-  // Get version
-  const packageVersion = version || await getNextVersionInDir(outDir, undefined);
-  
-  // Find the esm.js file
-  const esmFile = join(outDir, ".build", "esm.js");
-  let sourceContent = "";
-  
-  try {
-    sourceContent = await readTextFile(esmFile);
-    
-    // Check for and handle remote imports
-    if (sourceContent.includes("https://esm.sh/")) {
-      console.log("Processing ESM.sh imports for npm compatibility...");
-      // Convert ESM.sh imports to npm imports
-      sourceContent = sourceContent.replace(
-        /import\s+([^"']+)\s+from\s+["']https:\/\/esm\.sh\/([^"']+)["'];/g, 
-        'import $1 from "$2";'
-      );
-    }
-  } catch (error) {
-    console.error(`Error reading ESM file: ${error.message}`);
-    sourceContent = `export default { name: "${packageName}" };\n`;
-  }
-  
-  // Create ESM version
-  await writeTextFile(join(esmDir, "index.js"), sourceContent);
-  
-  // Create declarations file
-  await writeTextFile(join(typesDir, "index.d.ts"), `// Type definitions
-declare const _default: {
-  name: string;
-  [key: string]: any;
-};
-export default _default;
+📦 View it at: https://www.npmjs.com/package/${pkg.name}
 `);
-  
-  // Create CommonJS version
-  const cjsContent = convertToCommonJS(sourceContent);
-  await writeTextFile(join(scriptDir, "index.js"), cjsContent);
-  
-  // Create package.json with dependencies for any remote imports
-  const dependencies: Record<string, string> = {};
-  
-  // Extract dependencies from imports
-  const importRegex = /import\s+[^"']+\s+from\s+["']([^"']+)["'];/g;
-  let importMatch: RegExpExecArray | null;
-  
-  while ((importMatch = importRegex.exec(sourceContent)) !== null) {
-    const importPath = importMatch[1];
-    
-    // Handle npm packages (converted from esm.sh)
-    if (!importPath.startsWith("https://") && !importPath.startsWith("./") && !importPath.startsWith("../")) {
-      // Remove version specifiers and scope paths
-      let pkgName = importPath;
-      if (pkgName.startsWith("npm:")) {
-        pkgName = pkgName.substring(4);
-      }
-      
-      // Remove path specifiers (e.g., lodash/fp)
-      const mainPackage = pkgName.split("/")[0];
-      dependencies[mainPackage] = "latest";
-    }
-  }
-  
-  // Create package.json
-  const packageJson = {
-    name: packageName,
-    version: packageVersion,
-    description: `HQL module: ${packageName}`,
-    main: "./script/index.js",
-    module: "./esm/index.js",
-    types: "./types/index.d.ts",
-    files: ["esm", "script", "types", "README.md"],
-    dependencies: Object.keys(dependencies).length > 0 ? dependencies : undefined,
-    repository: {
-      type: "git",
-      url: "https://github.com/username/repo.git"
-    },
-    engines: {
-      node: ">=14.0.0"
-    }
-  };
-  
-  await writeTextFile(
-    join(npmDir, "package.json"),
-    JSON.stringify(packageJson, null, 2)
-  );
-  
-  // Create README.md
-  await writeTextFile(
-    join(npmDir, "README.md"),
-    `# ${packageName}
-
-Generated from HQL module.
-
-## Installation
-
-\`\`\`bash
-npm install ${packageName}
-\`\`\`
-`
-  );
-  
-  console.log(`Created manual NPM package in ${npmDir}`);
-}
-
-/**
- * Convert ESM format to CommonJS
- */
-function convertToCommonJS(sourceContent: string): string {
-  // Replace export statements with variable declarations
-  let cjsContent = sourceContent.replace(/export\s+const\s+(\w+)/g, "const $1");
-  cjsContent = cjsContent.replace(/export\s+function\s+(\w+)/g, "function $1");
-  cjsContent = cjsContent.replace(/export\s+class\s+(\w+)/g, "class $1");
-  
-  // Collect all exported names
-  const exportedNames: string[] = [];
-  const exportRegex = /export\s+(?:const|function|class|let|var)\s+(\w+)/g;
-  let match;
-  while ((match = exportRegex.exec(sourceContent)) !== null) {
-    exportedNames.push(match[1]);
-  }
-  
-  // Handle default export
-  let defaultExport = "";
-  const defaultExportMatch = sourceContent.match(/export\s+default\s+([^;]+)/);
-  if (defaultExportMatch) {
-    cjsContent = cjsContent.replace(/export\s+default\s+([^;]+);/, "");
-    defaultExport = `\nmodule.exports.default = ${defaultExportMatch[1]};`;
-  }
-  
-  // Add exports
-  const exportsStatement = exportedNames.length > 0 
-    ? exportedNames.map(name => `module.exports.${name} = ${name};`).join("\n")
-    : "";
-  
-  return `// CommonJS version (converted from ESM)
-${cjsContent}
-
-${exportsStatement}${defaultExport}
-`;
 }

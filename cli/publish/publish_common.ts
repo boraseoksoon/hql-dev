@@ -148,6 +148,30 @@ export async function getNpmUsername(): Promise<string | undefined> {
 }
 
 /**
+ * Get the current user's JSR username.
+ * Attempts to read from ~/.deno/registries.json if it exists,
+ * otherwise falls back to a default.
+ */
+export async function getJsrUsername(): Promise<string> {
+  try {
+    const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || "";
+    const registriesPath = join(homeDir, ".deno", "registries.json");
+    
+    if (await exists(registriesPath)) {
+      const registries = JSON.parse(await readTextFile(registriesPath));
+      if (registries.jsr && registries.jsr.user && registries.jsr.user.name) {
+        return registries.jsr.user.name;
+      }
+    }
+  } catch (error) {
+    console.warn("Could not read JSR username:", error.message);
+  }
+  
+  // Fallback to a default username
+  return "username";
+}
+
+/**
  * Check if NPM and Deno are installed and properly configured
  */
 export async function checkEnvironment(publishTarget: "npm" | "jsr"): Promise<boolean> {
