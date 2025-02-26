@@ -171,56 +171,72 @@ function transformDef(node: ListNode, currentDir: string): IR.IRVariableDeclarat
   };
 }
 
-function transformDefImport(node: ListNode, currentDir: string): IR.IRVariableDeclaration {
-  const varNode = node.elements[1] as SymbolNode;
-  const importCall = node.elements[2] as ListNode;
-  
-  if (importCall.elements.length < 2 || 
-      importCall.elements[1].type !== "literal" ||
-      typeof (importCall.elements[1] as LiteralNode).value !== "string") {
-    throw new Error("Import path must be a string literal");
+// Helper: determines whether a module should be imported as a namespace.
+function shouldUseNamespaceImportForModule(importPath: string): boolean {
+    return importPath.startsWith("https://deno.land/std@") ||
+           importPath.startsWith("https://deno.land/std/");
   }
   
-  const importPath = (importCall.elements[1] as LiteralNode).value as string;
-  const isLocal = importPath.startsWith("./") || importPath.startsWith("../");
-  const shouldUseNamedImport = shouldUseNamedImportForModule(importPath);
+  function transformDefImport(node: ListNode, currentDir: string): IR.IRVariableDeclaration {
+    const varNode = node.elements[1] as SymbolNode;
+    const importCall = node.elements[2] as ListNode;
   
-  // Create an import declaration
-  const importDecl: IR.IRImportDeclaration = {
-    type: IR.IRNodeType.ImportDeclaration,
-    source: {
-      type: IR.IRNodeType.StringLiteral,
-      value: importPath
-    },
-    specifiers: [],
-    isLocal
-  };
+    if (importCall.elements.length < 2 ||
+        importCall.elements[1].type !== "literal" ||
+        typeof (importCall.elements[1] as LiteralNode).value !== "string") {
+      throw new Error("Import path must be a string literal");
+    }
   
-  if (shouldUseNamedImport) {
-    // Use named import (import { name } from "module")
-    importDecl.specifiers = [{
-      imported: {
-        type: IR.IRNodeType.Identifier,
-        name: getNamedImportName(importPath)
+    const importPath = (importCall.elements[1] as LiteralNode).value as string;
+    const isLocal = importPath.startsWith("./") || importPath.startsWith("../");
+  
+    // Create an import declaration node.
+    const importDecl: IR.IRImportDeclaration = {
+      type: IR.IRNodeType.ImportDeclaration,
+      source: {
+        type: IR.IRNodeType.StringLiteral,
+        value: importPath
       },
-      local: transformSymbol(varNode)
-    }];
-  } else {
-    // Use default import (import name from "module")
-    importDecl.specifiers = [{
-      imported: null, // Default import
-      local: transformSymbol(varNode)
-    }];
+      specifiers: [],
+      isLocal
+    };
+  
+    if (shouldUseNamespaceImportForModule(importPath)) {
+      // For Deno std modules, generate a namespace import:
+      // e.g. import * as localName from "https://deno.land/std@0.170.0/path/mod.ts";
+      importDecl.specifiers = [{
+        // Use "*" as a marker to indicate a namespace import.
+        imported: {
+          type: IR.IRNodeType.Identifier,
+          name: "*"
+        },
+        local: transformSymbol(varNode)
+      }];
+    } else if (shouldUseNamedImportForModule(importPath)) {
+      // Use named import syntax (import { name } from "module")
+      importDecl.specifiers = [{
+        imported: {
+          type: IR.IRNodeType.Identifier,
+          name: getNamedImportName(importPath)
+        },
+        local: transformSymbol(varNode)
+      }];
+    } else {
+      // Use default import syntax (import localName from "module")
+      importDecl.specifiers = [{
+        imported: null, // Default import marker.
+        local: transformSymbol(varNode)
+      }];
+    }
+  
+    return {
+      type: IR.IRNodeType.VariableDeclaration,
+      id: transformSymbol(varNode),
+      init: importDecl as any,
+      kind: "const"
+    };
   }
   
-  // Return as a variable declaration
-  return {
-    type: IR.IRNodeType.VariableDeclaration,
-    id: transformSymbol(varNode),
-    init: importDecl as any, // Type casting as we're embedding a declaration
-    kind: "const"
-  };
-}
 
 // Helper function to determine if a module should use named imports
 function shouldUseNamedImportForModule(importPath: string): boolean {
@@ -250,29 +266,29 @@ function transformDefn(node: ListNode, currentDir: string): IR.IRFunctionDeclara
     if (node.elements.length < 4) {
       throw new Error("defn form requires at least 3 arguments: name, params, body");
     }
-    
+  
     const nameNode = node.elements[1];
     if (nameNode.type !== "symbol") {
       throw new Error("Function name must be a symbol");
     }
-    
+  
     const paramsNode = node.elements[2];
     if (paramsNode.type !== "list") {
       throw new Error("Function parameters must be a list");
     }
-    
-    const { params: originalParams, isNamedParams, returnType, bodyStartIndex } = 
+  
+    const { params: originalParams, isNamedParams, returnType, bodyStartIndex } =
       processParametersAndReturnType(paramsNode as ListNode, node.elements.slice(3), currentDir);
-    
-    // Process body nodes
+  
+    // Process the body nodes.
     const bodyNodes = node.elements
       .slice(3 + bodyStartIndex)
       .map(n => transformNode(n, currentDir))
       .filter(Boolean) as IR.IRNode[];
-    
-    // Ensure the last statement is a return if it's an expression
+  
+    // Wrap the last expression in a return statement if needed.
     const lastIndex = bodyNodes.length - 1;
-    if (lastIndex >= 0 && 
+    if (lastIndex >= 0 &&
         bodyNodes[lastIndex].type !== IR.IRNodeType.ReturnStatement &&
         bodyNodes[lastIndex].type !== IR.IRNodeType.ExpressionStatement) {
       bodyNodes[lastIndex] = {
@@ -280,74 +296,57 @@ function transformDefn(node: ListNode, currentDir: string): IR.IRFunctionDeclara
         argument: bodyNodes[lastIndex]
       };
     }
-    
-// Special handling for object parameters
-const functionName = (nameNode as SymbolNode).name;
-const shouldUseObjectParams = isObjectParameterFunction(functionName) || isNamedParams;
-
-let params: IR.IRParameter[];
-let body: IR.IRBlock;
-
-if (shouldUseObjectParams) {
-  // For object parameters, we use a single 'params' parameter and destructure
-  params = [{
-    type: IR.IRNodeType.Parameter,
-    id: { type: IR.IRNodeType.Identifier, name: "params" }
-  }];
   
-  // Add destructuring at the beginning of the function body if needed
-  if (params.length > 0) {
-    // Create destructuring for object parameters
-    const destructuringNode: IR.IRNode = {
-      type: IR.IRNodeType.VariableDeclaration,
-      id: {
-        type: IR.IRNodeType.ObjectPattern,
-        properties: originalParams.map(p => ({
-          type: IR.IRNodeType.Property,
-          key: { 
-            type: IR.IRNodeType.Identifier, 
-            name: p.id.name  // Keep the original parameter name
-          },
-          value: p.id,       // Assign to the same name
-          computed: false
-        }))
-      },
-      init: {
-        type: IR.IRNodeType.Identifier,
-        name: "params"
-      },
-      kind: "const"
-    };
-    
-    body = {
-      type: IR.IRNodeType.Block,
-      body: [destructuringNode, ...bodyNodes]
-    };
-  } else {
-    body = {
-      type: IR.IRNodeType.Block,
-      body: bodyNodes
-    };
-  }
-} else {
-  // Regular function parameters
-  params = originalParams;
-  body = {
-    type: IR.IRNodeType.Block,
-    body: bodyNodes
-  };
-}
-    
+    let params: IR.IRParameter[];
+    let body: IR.IRBlock;
+  
+    if (isNamedParams) {
+      // For named parameters, we create a single parameter "params".
+      params = [{
+        type: IR.IRNodeType.Parameter,
+        id: { type: IR.IRNodeType.Identifier, name: "params" }
+      }];
+      // Create an object pattern for destructuring the named parameters.
+      const properties = originalParams.map(p => ({
+        type: IR.IRNodeType.Property,
+        key: { type: IR.IRNodeType.Identifier, name: p.id.name },
+        value: { type: IR.IRNodeType.Identifier, name: p.id.name },
+        computed: false
+      }));
+      const destructuringNode: IR.IRVariableDeclaration = {
+        type: IR.IRNodeType.VariableDeclaration,
+        id: {
+          type: IR.IRNodeType.ObjectPattern,
+          properties
+        },
+        init: { type: IR.IRNodeType.Identifier, name: "params" },
+        kind: "const"
+      };
+      // Prepend the destructuring node to the function body.
+      body = {
+        type: IR.IRNodeType.Block,
+        body: [destructuringNode, ...bodyNodes]
+      };
+    } else {
+      // Regular (positional) parameters.
+      params = originalParams;
+      body = {
+        type: IR.IRNodeType.Block,
+        body: bodyNodes
+      };
+    }
+  
     return {
       type: IR.IRNodeType.FunctionDeclaration,
       id: transformSymbol(nameNode as SymbolNode),
-      params: params,
+      params,
       body,
       returnType,
       isAnonymous: false,
-      isNamedParams: shouldUseObjectParams
+      isNamedParams: isNamedParams
     };
   }
+  
 
 function transformFn(node: ListNode, currentDir: string): IR.IRFunctionDeclaration {
     if (node.elements.length < 3) {

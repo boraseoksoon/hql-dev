@@ -54,7 +54,10 @@ export enum TSNodeType {
   
   // Other
   Token,
-  EndOfFileToken
+  EndOfFileToken, 
+
+  ObjectBindingPattern,
+  BindingElement
 }
 
 export interface TSNode {
@@ -348,15 +351,14 @@ export function convertIRToTSAST(program: IR.IRProgram, options: Partial<ASTConv
 function convertObjectPattern(node: IR.IRObjectPattern, options: ASTConversionOptions): TSObjectLiteralExpression {
     return {
       type: TSNodeType.ObjectLiteralExpression,
-      properties: node.properties.map(prop => {
-        return {
-          type: TSNodeType.PropertyAssignment,
-          name: convertIRNodeToTS(prop.key, options) as TSNode,
-          initializer: convertIRNodeToTS(prop.value, options) as TSNode
-        };
-      })
+      properties: node.properties.map(prop => ({
+        type: TSNodeType.PropertyAssignment,
+        name: convertIRNodeToTS(prop.key, options) as TSNode,
+        initializer: convertIRNodeToTS(prop.value, options) as TSNode
+      }))
     };
   }
+  
 
 function convertIRNodeToTS(node: IR.IRNode, options: ASTConversionOptions): TSNode | TSNode[] | null {
     switch (node.type) {
@@ -404,29 +406,85 @@ function convertIRNodeToTS(node: IR.IRNode, options: ASTConversionOptions): TSNo
     }
   }
 
-function convertVariableDeclaration(node: IR.IRVariableDeclaration, options: ASTConversionOptions): TSVariableStatement {
-  // Special handling for import
-  if (node.init.type === IR.IRNodeType.ImportDeclaration) {
-    return convertImportDeclaration(node.init as IR.IRImportDeclaration, options);
+  function convertVariableDeclaration(
+    node: IR.IRVariableDeclaration,
+    options: ASTConversionOptions
+  ): TSVariableStatement {
+    // If the initializer is an import declaration, handle that specially.
+    if (node.init.type === IR.IRNodeType.ImportDeclaration) {
+      return convertImportDeclaration(node.init as IR.IRImportDeclaration, options);
+    }
+  
+    // 1) Convert the declaration's "id" properly
+    let name: TSNode;
+    if (node.id.type === IR.IRNodeType.ObjectPattern) {
+      // If it's an object pattern, convert to a TS object binding pattern
+      name = convertIRObjectPatternToTSBinding(node.id as IR.IRObjectPattern, options);
+    } else {
+      // Otherwise, treat as an identifier
+      name = convertIdentifier(node.id as IR.IRIdentifier, options);
+    }
+  
+    // 2) Convert the initializer
+    const initializer = convertIRNodeToTS(node.init, options) as TSNode;
+  
+    // 3) Build the TS variable declaration
+    const declaration: TSVariableDeclaration = {
+      type: TSNodeType.VariableDeclaration,
+      name,
+      initializer
+    };
+  
+    const declarationList: TSVariableDeclarationList = {
+      type: TSNodeType.VariableDeclarationList,
+      declarations: [declaration],
+      flags: getVariableFlags(node.kind)
+    };
+  
+    return {
+      type: TSNodeType.VariableStatement,
+      declarationList
+    };
+  }
+
+  // A new node type in your TS AST:
+    export interface TSObjectBindingPattern extends TSNode {
+    type: TSNodeType.ObjectBindingPattern;
+    elements: TSBindingElement[];
+  }
+    export interface TSBindingElement extends TSNode {
+    type: TSNodeType.BindingElement;
+    name: TSIdentifier;
+  }
+
+  function convertIRObjectPatternToTSBinding(
+    pattern: IR.IRObjectPattern,
+    options: ASTConversionOptions
+  ): TSNode {
+    // In TypeScript AST, destructuring at variable level is typically
+    // something like "const { message, to } = params;"
+    //
+    // But if your TS AST does not have a "TSObjectBindingPattern" node,
+    // you can produce a "TSObjectLiteralExpression" in the "name" field
+    // only if your code generator knows how to interpret that as destructuring.
+    //
+    // The more correct approach is to define a TS node type for object binding:
+    // e.g. { type: TSNodeType.ObjectBindingPattern, elements: [ ... ] }
+    // then in your code generator, handle that by printing "const { message, to } = ..."
+  
+    // For simplicity, here's a pseudo approach if your code generator
+    // doesn't support an official binding pattern node:
+    return {
+      type: TSNodeType.ObjectLiteralExpression,
+      properties: pattern.properties.map(prop => ({
+        type: TSNodeType.PropertyAssignment,
+        name: convertIRNodeToTS(prop.key, options) as TSNode,
+        initializer: convertIRNodeToTS(prop.value, options) as TSNode
+      }))
+    };
   }
   
-  const declaration: TSVariableDeclaration = {
-    type: TSNodeType.VariableDeclaration,
-    name: convertIdentifier(node.id, options),
-    initializer: convertIRNodeToTS(node.init, options) as TSNode
-  };
   
-  const declarationList: TSVariableDeclarationList = {
-    type: TSNodeType.VariableDeclarationList,
-    declarations: [declaration],
-    flags: getVariableFlags(node.kind)
-  };
-  
-  return {
-    type: TSNodeType.VariableStatement,
-    declarationList
-  };
-}
 
 function getVariableFlags(kind: string): VariableFlags {
   switch (kind) {
@@ -517,59 +575,82 @@ function convertEnumDeclaration(node: IR.IREnumDeclaration, options: ASTConversi
   };
 }
 
+// Updated convertImportDeclaration in ir-to-ts-ast.ts
+
+// In your IR-to-TS AST conversion (e.g. in convertImportDeclaration):
+
 function convertImportDeclaration(node: IR.IRImportDeclaration, options: ASTConversionOptions): TSImportDeclaration {
-  const moduleSpecifier: TSStringLiteral = {
-    type: TSNodeType.StringLiteral,
-    text: JSON.stringify(node.source.value) // Ensure path is properly quoted
-  };
-  
-  let importClause: TSImportClause | undefined;
-  
-  if (node.specifiers.length > 0) {
-    const spec = node.specifiers[0];
-    
-    if (spec.imported === null) {
-      // Default import
-      importClause = {
-        type: TSNodeType.ImportClause,
-        name: {
-          type: TSNodeType.Identifier,
-          text: spec.local.name
+    // Check if the first specifier indicates a namespace import.
+    if (node.specifiers.length > 0 && node.specifiers[0].imported && node.specifiers[0].imported.name === "*") {
+      // Generate a namespace import:
+      //    import * as localName from "module";
+      return {
+        type: TSNodeType.ImportDeclaration,
+        importClause: {
+          type: TSNodeType.ImportClause,
+          // Use the new NamespaceImport node type.
+          namedBindings: {
+            type: TSNodeType.NamespaceImport, // (Ensure TSNodeType.NamespaceImport is defined in your enum)
+            name: {
+              type: TSNodeType.Identifier,
+              text: node.specifiers[0].local.name
+            }
+          },
+          isTypeOnly: false
         },
-        isTypeOnly: false
+        moduleSpecifier: {
+          type: TSNodeType.StringLiteral,
+          text: JSON.stringify(node.source.value)
+        }
       };
-    } else {
-      // Named import
-      importClause = {
-        type: TSNodeType.ImportClause,
-        namedBindings: {
-          type: TSNodeType.NamedImports,
-          elements: [
-            {
+    } else if (node.specifiers.length > 0 && node.specifiers[0].imported !== null) {
+      // Named import (e.g. import { foo as bar } from "module")
+      return {
+        type: TSNodeType.ImportDeclaration,
+        importClause: {
+          type: TSNodeType.ImportClause,
+          namedBindings: {
+            type: TSNodeType.NamedImports,
+            elements: node.specifiers.map(spec => ({
               type: TSNodeType.ImportSpecifier,
               name: {
                 type: TSNodeType.Identifier,
                 text: spec.local.name
               },
-              propertyName: {
+              propertyName: spec.imported ? {
                 type: TSNodeType.Identifier,
                 text: spec.imported.name
-              },
+              } : undefined,
               isTypeOnly: false
-            }
-          ]
+            }))
+          },
+          isTypeOnly: false
         },
-        isTypeOnly: false
+        moduleSpecifier: {
+          type: TSNodeType.StringLiteral,
+          text: JSON.stringify(node.source.value)
+        }
+      };
+    } else {
+      // Default import (e.g. import localName from "module")
+      return {
+        type: TSNodeType.ImportDeclaration,
+        importClause: {
+          type: TSNodeType.ImportClause,
+          name: {
+            type: TSNodeType.Identifier,
+            text: node.specifiers[0].local.name
+          },
+          isTypeOnly: false
+        },
+        moduleSpecifier: {
+          type: TSNodeType.StringLiteral,
+          text: JSON.stringify(node.source.value)
+        }
       };
     }
   }
   
-  return {
-    type: TSNodeType.ImportDeclaration,
-    importClause,
-    moduleSpecifier
-  };
-}
 
 function convertExportDeclaration(node: IR.IRExportDeclaration, options: ASTConversionOptions): TSExportDeclaration {
   if (node.declaration) {

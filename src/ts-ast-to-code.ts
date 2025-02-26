@@ -1,5 +1,9 @@
 // src/ts-ast-to-code.ts
 import * as TS from "./ir-to-ts-ast.ts";
+import {
+    TSNodeType,
+    TSObjectBindingPattern,
+  } from "./ir-to-ts-ast.ts"
 
 /**
  * Options for code generation
@@ -132,11 +136,23 @@ function generateNode(node: TS.TSNode, context: GenerationContext): void {
     case TS.TSNodeType.NewExpression:
       generateNewExpression(node as TS.TSNewExpression, context);
       break;
+    case TSNodeType.ObjectBindingPattern:
+      generateObjectBindingPattern(node as TSObjectBindingPattern, context);
+      break;
     default:
       console.warn(`Unhandled node type: ${node.type}`);
       break;
   }
 }
+
+function generateObjectBindingPattern(node: TSObjectBindingPattern, context: GenerationContext) {
+    context.code += "{ ";
+    node.elements.forEach((elem, i) => {
+      generateNode(elem.name, context);
+      if (i < node.elements.length - 1) context.code += ", ";
+    });
+    context.code += " }";
+  }
 
 function generateVariableStatement(node: TS.TSVariableStatement, context: GenerationContext): void {
     const list = node.declarationList;
@@ -330,54 +346,55 @@ function generateEnumDeclaration(node: TS.TSEnumDeclaration, context: Generation
   }
 }
 
+// In your ts-ast-to-code.ts file, update generateImportDeclaration:
+
 function generateImportDeclaration(node: TS.TSImportDeclaration, context: GenerationContext): void {
-  context.code += addIndent(context);
-  context.code += 'import ';
-  
-  if (node.importClause) {
-    if (node.importClause.name) {
-      generateNode(node.importClause.name, context);
+    context.code += addIndent(context);
+    context.code += 'import ';
+    
+    if (node.importClause) {
+      if (node.importClause.name) {
+        generateNode(node.importClause.name, context);
+        if (node.importClause.namedBindings) {
+          context.code += ', ';
+        }
+      }
       
       if (node.importClause.namedBindings) {
-        context.code += ', ';
-      }
-    }
-    
-    if (node.importClause.namedBindings) {
-      if (node.importClause.namedBindings.type === TS.TSNodeType.NamedImports) {
-        const namedImports = node.importClause.namedBindings as TS.TSNamedImports;
-        
-        context.code += '{ ';
-        
-        for (let i = 0; i < namedImports.elements.length; i++) {
-          const element = namedImports.elements[i];
-          
-          if (element.propertyName) {
-            generateNode(element.propertyName, context);
-            context.code += ' as ';
-          }
-          
-          generateNode(element.name, context);
-          
-          if (i < namedImports.elements.length - 1) {
-            context.code += ', ';
-          }
+        // Check for namespace import
+        if (node.importClause.namedBindings.type === TS.TSNodeType.NamespaceImport) {
+          // Emit: * as localName
+          context.code += '* as ';
+          // Generate the local identifier
+          generateNode((node.importClause.namedBindings as any).name, context);
         }
-        
-        context.code += ' }';
-      } else {
-        // Namespace import
-        context.code += '* as ';
-        generateNode(node.importClause.namedBindings as any, context);
+        else if (node.importClause.namedBindings.type === TS.TSNodeType.NamedImports) {
+          const namedImports = node.importClause.namedBindings as TS.TSNamedImports;
+          context.code += '{ ';
+          for (let i = 0; i < namedImports.elements.length; i++) {
+            const element = namedImports.elements[i];
+            if (element.propertyName) {
+              generateNode(element.propertyName, context);
+              context.code += ' as ';
+            }
+            generateNode(element.name, context);
+            if (i < namedImports.elements.length - 1) {
+              context.code += ', ';
+            }
+          }
+          context.code += ' }';
+        } else {
+          // Fallback
+          generateNode(node.importClause.namedBindings, context);
+        }
       }
+      context.code += ' from ';
     }
     
-    context.code += ' from ';
+    generateNode(node.moduleSpecifier, context);
+    context.code += ';';
   }
   
-  generateNode(node.moduleSpecifier, context);
-  context.code += ';';
-}
 
 function generateExportDeclaration(node: TS.TSExportDeclaration, context: GenerationContext): void {
   context.code += addIndent(context);

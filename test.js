@@ -1,3 +1,2 @@
-const name = "jss"
-const greeting = `hello my name is ${name} and welcome!`;
-console.log(greeting); 
+import * as pathModule from "https://deno.land/std@0.170.0/path/mod.ts";
+console.log(pathModule.join("foo", "bar", "baz.txt"));

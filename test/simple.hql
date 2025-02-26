@@ -8,7 +8,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Local module (if needed)
-;; (def mod (import "./simple2.hql"))
+(def mod (import "./simple2.hql"))
 
 ;; Remote modules
 (def strUtil (import "https://esm.sh/lodash"))

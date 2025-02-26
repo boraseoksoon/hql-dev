@@ -6,6 +6,7 @@
     "node-test": "deno run --allow-read --allow-write cli/compile.ts test/simple.hql && deno run -A test/simple.js && deno run -A esmbuild.ts && deno run -A --unstable dnt.ts && (cd npm && npm pack) && cd .. && (cd node && npm install ../npm/your-package-name-0.1.0.tgz && node index.mjs)",
     "parser-test": "deno test --allow-all test/parser_test.ts",
     "transformer-test": "deno test --allow-all test/transformer_test.ts",
-    "compile-test": "deno test --allow-all test/compile_test.ts"
+    "compile-test": "deno test --allow-all test/compile_test.ts",
+    "temp-test": "deno run -A ./cli/compile.ts ./test/simple.hql && deno run -A ./test/simple.js"
   }
 }

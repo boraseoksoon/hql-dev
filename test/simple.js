@@ -1,10 +1,28 @@
+const mod = (function(){
+const exports = {};
+const mod3 = (function(){
+const exports = {};
+function sayBye(name) {
+  return "Bye, " + name + "!";
+}
+exports.sayBye = sayBye;
+
+return exports;
+})();
+function sayHi(name) {
+  return "Hi, " + name + "! " + mod3.sayBye(name);
+}
+exports.sayHi = sayHi;
+
+return exports;
+})();
 import strUtil from "https://esm.sh/lodash";
 import chalk from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
 import chalk2 from "jsr:@nothing628/chalk";
 import lodash from "npm:lodash";
-import { join as pathModule } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { format as datetime } from "https://deno.land/std@0.170.0/datetime/mod.ts";
-import { v4 as uuidModule } from "https://deno.land/std@0.170.0/uuid/mod.ts";
+import * as pathModule from "https://deno.land/std@0.170.0/path/mod.ts";
+import * as datetime from "https://deno.land/std@0.170.0/datetime/mod.ts";
+import * as uuidModule from "https://deno.land/std@0.170.0/uuid/mod.ts";
 function greet(name) {
   return mod.sayHi(name) + " Welcome to HQL.";
 }
@@ -51,18 +69,17 @@ function addN(x, y) {
 }
 console.log(addN(2, 3));
 function minus(params) {
-  const { x, y } = arguments[0];
-  const undefined = params;
+  const { x: x, y: y } = params;
   return x - y;
 }
 console.log(minus({ x: 100, y: 20 }));
 console.log("====== Sync/Async Exports ======");
 const syncAdd = function(params) {
-  const undefined = params;
+  const { x: x, y: y } = params;
   return x + y;
 };
 const syncMinus = function(params) {
-  const undefined = params;
+  const { x: x, y: y } = params;
   return x - y;
 };
 export { syncAdd };
@@ -77,11 +94,11 @@ export { add2 };
 export { minus2 };
 const Destination = { hlvm: "hlvm", macos: "macos", ios: "ios" };
 function send(params) {
-  const undefined = params;
+  const { message: message, to: to } = params;
   return message;
 }
 function send2(params) {
-  const undefined = params;
+  const { message: message, to: to } = params;
   return message;
 }
 console.log(send({ message: "hello1", to: "hlvm" }));
@@ -94,14 +111,16 @@ export { greet };
 export { greetTwice };
 console.log("====== Named Parameter Tests ======");
 function calculateArea(params) {
-  const { width, height } = arguments[0];
-  const undefined = params;
+  const { width: width, height: height } = params;
   return width * height;
 }
 console.log("Area of 5x10 rectangle: ", calculateArea({ width: 5, height: 10 }));
 function formatName(params) {
-  const { first, last, title } = arguments[0];
-  const undefined = params;
+  const {
+    first: first,
+    last: last,
+    title: title
+  } = params;
   return title + " " + first + " " + last;
 }
 console.log("Formatted name: ", formatName({
@@ -114,13 +133,15 @@ function point3d(x, y, z) {
 }
 console.log("3D Point: ", point3d(10, 20, 30));
 function applyTax(params) {
-  const { amount, rate } = arguments[0];
-  const undefined = params;
+  const { amount: amount, rate: rate } = params;
   return amount * 1 + rate / 100;
 }
 function calculateTotal(params) {
-  const { price, qty, taxRate } = arguments[0];
-  const undefined = params;
+  const {
+    price: price,
+    qty: qty,
+    taxRate: taxRate
+  } = params;
   return applyTax({ amount: price * qty, rate: taxRate });
 }
 console.log("Total price with tax: ", calculateTotal({
@@ -129,8 +150,7 @@ console.log("Total price with tax: ", calculateTotal({
   taxRate: 8.5
 }));
 function makeAdder(params) {
-  const { increment } = arguments[0];
-  const undefined = params;
+  const { increment: increment } = params;
   return function(x) {
     return x + increment;
   };
@@ -138,8 +158,11 @@ function makeAdder(params) {
 const add5 = makeAdder({ increment: 5 });
 console.log("Result of add5(10): ", add5(10));
 function complexMath(params) {
-  const { a, b, c } = arguments[0];
-  const undefined = params;
+  const {
+    a: a,
+    b: b,
+    c: c
+  } = params;
   return a * b + c / a + b;
 }
 console.log("Complex math result: ", complexMath({
@@ -148,8 +171,7 @@ console.log("Complex math result: ", complexMath({
   c: 30
 }));
 function processData(params) {
-  const { data, options } = arguments[0];
-  const undefined = params;
+  const { data: data, options: options } = params;
   return data * options.factor;
 }
 console.log("Processed data: ", processData({ data: 100, options: { [":factor"]: 1.5 } }));
