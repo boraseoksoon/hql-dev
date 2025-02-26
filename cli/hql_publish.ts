@@ -1,17 +1,16 @@
 #!/usr/bin/env -S deno run -A
-// cli/hql_publish.ts - CLI utility for publishing HQL modules to NPM or JSR
+// cli/hql_publish.ts - CLI utility for publishing HQL modules
 
 import { publish } from "./publish/publish.ts";
 import { parseArgs } from "jsr:@std/cli@1.0.13/parse-args";
 import { exit } from "../src/platform/platform.ts";
 
-// Show help information
 function showHelp() {
   console.log(`
 HQL Publish Tool - Publish HQL modules to NPM or JSR
 
 USAGE:
-  hql_publish [options] [platform] [directory|file.hql] [name] [version]
+  hql_publish [options] <what> [platform] [name] [version]
 
 PLATFORMS:
   jsr     Publish to JSR (default)
@@ -19,64 +18,37 @@ PLATFORMS:
 
 OPTIONS:
   -what, -w      Directory or HQL file to publish (defaults to current directory)
-  -name, -n      Package name (defaults to directory name)
+  -name, -n      Package name (defaults to auto-generated)
   -version, -v   Package version (defaults to auto-increment)
   -where         Target platform: 'npm' or 'jsr' (defaults to 'jsr')
   -verbose       Enable verbose logging
   -help, -h      Show this help message
 
 EXAMPLES:
-  # Publish current directory to JSR with auto-generated name and version
-  hql_publish
-
-  # Publish a specific HQL file to JSR
-  hql_publish ./my-module/main.hql
-
-  # Publish to NPM with specified name
-  hql_publish npm -name my-package
-
-  # Publish specific directory to JSR with specified version
-  hql_publish ./my-module -version 1.2.3
-
-  # Publish using positional arguments: platform, directory/file, name, version
-  hql_publish npm ./my-module my-awesome-package 0.1.0
+  hql_publish ./my-module
+  hql_publish ./my-module npm
+  hql_publish ./my-module jsr my-awesome-package 1.2.3
+  hql_publish ./my-module -where=jsr -name=my-awesome-package -version=1.2.3
 `);
 }
 
-// Main function
 async function main() {
   const args = Deno.args;
-  
-  // Parse the arguments to check for help flag
   const parsedArgs = parseArgs(args, {
     boolean: ["help", "verbose"],
     string: ["what", "name", "version", "where"],
-    alias: {
-      h: "help",
-      w: "what",
-      n: "name",
-      v: "version"
-    },
-    // This allows parsing single-dash options
-    prefix: "-"
+    alias: { h: "help", w: "what", n: "name", v: "version" },
+    prefix: "-",
   });
-  
-  // If help flag is present, show help and exit
   if (parsedArgs.help) {
     showHelp();
     exit(0);
   }
-  
+  console.log("\n✨ HQL Publish Tool ✨\n");
+  if (Deno.env.get("HQL_DEV") === "1") {
+    Deno.env.set("SKIP_LOGIN_CHECK", "1");
+  }
   try {
-    // Print a nice banner
-    console.log("\n✨ HQL Publish Tool ✨\n");
-    
-    // Force JSR login check skip for development environments
-    if (Deno.env.get("HQL_DEV") === "1") {
-      Deno.env.set("SKIP_LOGIN_CHECK", "1");
-    }
-    
-    // Pass the raw args to the publish function
     await publish(args);
   } catch (error) {
     console.error("\n❌ Publishing failed:", error.message);
@@ -84,9 +56,8 @@ async function main() {
   }
 }
 
-// Run the main function if this file is executed directly
 if (import.meta.main) {
-  main().catch(error => {
+  main().catch((error) => {
     console.error("Unhandled error:", error);
     exit(1);
   });
