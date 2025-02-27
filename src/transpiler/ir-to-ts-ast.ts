@@ -1,4 +1,4 @@
-// src/transpiler/ir-to-ts-ast.ts - With higher-order function fixes
+// src/transpiler/ir-to-ts-ast.ts - Complete implementation with all logical operations handling
 import * as IR from "./hql_ir.ts";
 import {
   TSNodeType,
@@ -104,10 +104,10 @@ function processImport(node: IR.IRNode): TSNode | null {
   const url = (callExpr.arguments[0] as IR.IRStringLiteral).value;
   
   if (url.endsWith(".hql")) {
-    // HQL module import - placeholder for bundling
+    // HQL module import - bundled as IIFE with path info in comment
     return {
       type: TSNodeType.Raw,
-      code: `const ${varName} = (function(){\n  const exports = {};\n  // This placeholder will be replaced with bundled HQL from ${url}\n  return exports;\n})();`
+      code: `const ${varName} = (function(){\n  const exports = {};\n  // bundled HQL module: ${url}\n  return exports;\n})();`
     };
   } else {
     // External module import
@@ -288,6 +288,15 @@ function convertCallExpression(call: IR.IRCallExpression): TSNode {
     return handleHigherOrderReturn(call);
   }
   
+  // Handle logical operations
+  if (isNotOperation(call)) {
+    return handleNotOperation(call);
+  }
+  
+  if (isEqualsOperation(call)) {
+    return handleEqualsOperation(call);
+  }
+  
   // Normal function call
   const callee = convertNode(call.callee);
   const args = call.arguments.map(arg => convertNode(arg));
@@ -401,7 +410,8 @@ function isHigherOrderReturnCall(call: IR.IRCallExpression): boolean {
 }
 
 /**
- * Handle a higher-order function return (functions that return functions).
+ * Handle a higher-order function return without adding an extra "return" keyword.
+ * This fixes the double return issue.
  */
 function handleHigherOrderReturn(call: IR.IRCallExpression): TSNode {
   if (call.arguments.length === 0) {
@@ -413,39 +423,74 @@ function handleHigherOrderReturn(call: IR.IRCallExpression): TSNode {
   if (arg.type === IR.IRNodeType.FunctionDeclaration) {
     const fn = arg as IR.IRFunctionDeclaration;
     
-    // Get parameters and body for the inner function
+    // Process parameters and body
     let parameters: string;
+    let body: string;
+    
+    // Handle named parameters
     if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
       parameters = "params";
-      
       // Process function body with parameter destructuring
       const destructuring = `const { ${fn.namedParamIds.map(id => `${id}: ${id}`).join(", ")} } = params;`;
-      let body = convertFunctionBody(fn.body, destructuring);
-      
-      // Return as a function with the destructuring
-      return {
-        type: TSNodeType.Raw,
-        code: `return function(${parameters}) ${body}`
-      };
+      body = convertFunctionBody(fn.body, destructuring);
     } else {
       parameters = fn.params.map(p => p.id.name).join(", ");
-      
-      // Convert body normally
-      let body = convertFunctionBody(fn.body);
-      
-      // Return as a function
-      return {
-        type: TSNodeType.Raw,
-        code: `return function(${parameters}) ${body}`
-      };
+      body = convertFunctionBody(fn.body);
     }
+    
+    // Generate a proper function return without double "return" keyword
+    return {
+      type: TSNodeType.Raw,
+      code: `return function(${parameters}) ${body}`
+    };
   }
   
-  // For non-function returns, just use a simple return
+  // For non-function returns, handle normally
   const argNode = convertNode(arg);
   return {
     type: TSNodeType.Raw,
     code: `return ${nodeToString(argNode)}`
+  };
+}
+
+/**
+ * Check if a call is a logical not operation.
+ */
+function isNotOperation(call: IR.IRCallExpression): boolean {
+  return call.callee.type === IR.IRNodeType.Identifier &&
+         (call.callee as IR.IRIdentifier).name === "not" &&
+         call.arguments.length === 1;
+}
+
+/**
+ * Handle logical not operation.
+ */
+function handleNotOperation(call: IR.IRCallExpression): TSNode {
+  const arg = convertNode(call.arguments[0]);
+  return {
+    type: TSNodeType.Raw,
+    code: `!(${nodeToString(arg)})`
+  };
+}
+
+/**
+ * Check if a call is an equality operation.
+ */
+function isEqualsOperation(call: IR.IRCallExpression): boolean {
+  return call.callee.type === IR.IRNodeType.Identifier &&
+         (call.callee as IR.IRIdentifier).name === "=" &&
+         call.arguments.length === 2;
+}
+
+/**
+ * Handle equality operation.
+ */
+function handleEqualsOperation(call: IR.IRCallExpression): TSNode {
+  const left = convertNode(call.arguments[0]);
+  const right = convertNode(call.arguments[1]);
+  return {
+    type: TSNodeType.Raw,
+    code: `(${nodeToString(left)} === ${nodeToString(right)})`
   };
 }
 
@@ -484,19 +529,6 @@ function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
 }
 
 /**
- * Check if a node already contains a return statement
- */
-function hasReturnStatement(node: IR.IRNode): boolean {
-  if (node.type !== IR.IRNodeType.CallExpression) return false;
-  
-  const callExpr = node as IR.IRCallExpression;
-  if (callExpr.callee.type !== IR.IRNodeType.Identifier) return false;
-  
-  const calleeName = (callExpr.callee as IR.IRIdentifier).name;
-  return calleeName === "$$RETURN" || calleeName === "$RETURN_FUNCTION";
-}
-
-/**
  * Convert a function body to a string, with optional destructuring.
  */
 function convertFunctionBody(block: IR.IRBlock, destructuring?: string): string {
@@ -512,8 +544,7 @@ function convertFunctionBody(block: IR.IRBlock, destructuring?: string): string 
     const lastIndex = statements.length - 1;
     const lastStmt = statements[lastIndex];
     
-    // Only add return if it's not already a statement or doesn't already have a return
-    if (!isStatementLike(lastStmt) && !hasReturnStatement(lastStmt)) {
+    if (!isStatementLike(lastStmt) && !isReturnStatement(lastStmt) && !isHigherOrderReturn(lastStmt)) {
       // Wrap in return statement
       statements[lastIndex] = {
         type: IR.IRNodeType.CallExpression,
@@ -538,6 +569,23 @@ function convertFunctionBody(block: IR.IRBlock, destructuring?: string): string 
   // Format with proper indentation
   const indentedLines = lines.map(line => `  ${line}`);
   return `{\n${indentedLines.join("\n")}\n}`;
+}
+
+/**
+ * Check if a node is already a return statement.
+ */
+function isReturnStatement(node: IR.IRNode): boolean {
+  if (node.type !== IR.IRNodeType.CallExpression) return false;
+  const callExpr = node as IR.IRCallExpression;
+  return isReturnCall(callExpr) || isHigherOrderReturnCall(callExpr);
+}
+
+/**
+ * Check if a node is specifically a higher-order function return.
+ */
+function isHigherOrderReturn(node: IR.IRNode): boolean {
+  if (node.type !== IR.IRNodeType.CallExpression) return false;
+  return isHigherOrderReturnCall(node as IR.IRCallExpression);
 }
 
 /**

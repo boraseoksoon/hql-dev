@@ -1,4 +1,4 @@
-// src/transpiler/hql-to-ir.ts
+// src/transpiler/hql-to-ir.ts - Complete implementation with logical operations
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
 
@@ -84,6 +84,10 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "*":
       case "/":
         return transformArithmetic(list, currentDir);
+      case "not":
+        return transformNot(list, currentDir);
+      case "=":
+        return transformEquals(list, currentDir);
       default:
         break;
     }
@@ -128,12 +132,11 @@ function transformDefn(list: ListNode, currentDir: string): IR.IRFunctionDeclara
   const { params, namedParamIds } = transformParams(paramList);
   
   // Check if this is a higher-order function (last expression in body is an anonymous function)
-  // If so, ensure it gets a return statement
   if (bodyNodes.length > 0) {
     const lastNode = bodyNodes[bodyNodes.length - 1];
     if (lastNode.type === IR.IRNodeType.FunctionDeclaration && 
         (lastNode as IR.IRFunctionDeclaration).isAnonymous) {
-      // Replace last node with a return statement wrapping the function
+      // Replace last node with a special higher-order function return marker
       bodyNodes[bodyNodes.length - 1] = {
         type: IR.IRNodeType.CallExpression,
         callee: { type: IR.IRNodeType.Identifier, name: "$RETURN_FUNCTION" },
@@ -162,6 +165,9 @@ function transformFn(list: ListNode, currentDir: string): IR.IRFunctionDeclarati
     .map(n => transformNode(n, currentDir))
     .filter(Boolean) as IR.IRNode[];
   const { params, namedParamIds } = transformParams(paramList);
+  
+  // Do NOT add $RETURN_FUNCTION here - the higher-order function handling 
+  // happens when this function is returned from another function
   return {
     type: IR.IRNodeType.FunctionDeclaration,
     id: { type: IR.IRNodeType.Identifier, name: "$anonymous" },
@@ -340,6 +346,33 @@ function transformArithmetic(list: ListNode, currentDir: string): IR.IRNode {
     } as IR.IRBinaryExpression;
   }
   return expr;
+}
+
+/** (not x) => logical negation */
+function transformNot(list: ListNode, currentDir: string): IR.IRCallExpression {
+  if (list.elements.length !== 2) throw new Error("not requires exactly one argument");
+  const arg = transformNode(list.elements[1], currentDir);
+  
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: { type: IR.IRNodeType.Identifier, name: "not" },
+    arguments: [arg!],
+    isNamedArgs: false
+  } as IR.IRCallExpression;
+}
+
+/** (= a b) => equality comparison */
+function transformEquals(list: ListNode, currentDir: string): IR.IRCallExpression {
+  if (list.elements.length !== 3) throw new Error("= requires exactly two arguments");
+  const left = transformNode(list.elements[1], currentDir);
+  const right = transformNode(list.elements[2], currentDir);
+  
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: { type: IR.IRNodeType.Identifier, name: "=" },
+    arguments: [left!, right!],
+    isNamedArgs: false
+  } as IR.IRCallExpression;
 }
 
 /** Fallback: treat list as a function call. If arguments are named (keys ending in ":"), fold them into an object. */
