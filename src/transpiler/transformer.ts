@@ -3,7 +3,7 @@ import { HQLNode } from "./hql_ast.ts";
 import { transformToIR } from "./hql-to-ir.ts";
 import { convertIRToTSAST } from "./ir-to-ts-ast.ts";
 import { generateTypeScript, CodeGenerationOptions } from "./ts-ast-to-code.ts";
-import { join } from "jsr:@std/path@1.0.8";
+import { join, resolve } from "jsr:@std/path@1.0.8";
 import { bundleFile, bundleJSModule } from "../bundler/bundler.ts";
 
 export interface TransformOptions {
@@ -63,15 +63,43 @@ async function postProcessGeneratedCode(
   useCommonJS: boolean
 ): Promise<string> {
   let processed = code;
+  
+  // First fix higher-order function handling and special placeholders
+  processed = fixHigherOrderFunctions(processed);
+  
+  // Process HQL imports
   processed = await processHQLImports(processed, currentDir, visited);
+  
+  // Process JS imports
   processed = await processJSImports(processed, currentDir, visited);
   
+  // Format exports based on module type
   if (useCommonJS) {
     processed = formatExportsForCommonJS(processed);
   }
   
   // Fix common issues
   processed = fixCommonIssues(processed);
+  
+  return processed;
+}
+
+/**
+ * Fix higher-order function handling to replace special function placeholders
+ */
+function fixHigherOrderFunctions(code: string): string {
+  // Replace $RETURN_FUNCTION(function() {...}) with function() {...}
+  // when it's already in a return statement
+  let processed = code.replace(
+    /return\s+\$RETURN_FUNCTION\s*\(\s*(function\s*\([^)]*\)\s*\{[\s\S]*?\})\s*\)/g,
+    'return $1'
+  );
+  
+  // Handle any standalone instances with a return statement
+  processed = processed.replace(
+    /\$RETURN_FUNCTION\s*\(\s*(function\s*\([^)]*\)\s*\{[\s\S]*?\})\s*\)/g,
+    'return $1'
+  );
   
   return processed;
 }
@@ -93,21 +121,41 @@ async function processHQLImports(
   const regex = /import\s+(\w+)\s+from\s+["']([^"']+\.hql)["'];/g;
   let match: RegExpExecArray | null;
   let processed = code;
-  const replacements: { from: string; to: string }[] = [];
+  
   while ((match = regex.exec(code)) !== null) {
     const [fullMatch, importName, importPath] = match;
-    const fullPath = join(currentDir, importPath);
+    const fullPath = resolve(join(currentDir, importPath));
+    
     try {
-      const bundled = await bundleFile(fullPath, visited, true);
-      const replacement = `const ${importName} = (function(){\n  const exports = {};\n  ${bundled}\n  return exports;\n})();`;
-      replacements.push({ from: fullMatch, to: replacement });
-    } catch (e) {
-      console.error(`Error bundling HQL import ${importPath}:`, e);
+      // Create a fresh visited set for this import chain but keep parent visited entries
+      const importVisited = new Set<string>([...visited]);
+      
+      // Bundle the HQL file with its dependencies
+      const bundled = await bundleFile(fullPath, importVisited, true);
+      
+      // Create a proper IIFE with the bundled code
+      const replacement = `// HQL module bundled from ${importPath}
+const ${importName} = (function() {
+  const exports = {};
+${bundled}
+  return exports;
+})();`;
+      
+      // Replace the import statement with the bundled IIFE
+      processed = processed.replace(fullMatch, replacement);
+    } catch (error) {
+      console.error(`Error processing HQL import ${importPath}:`, error);
+      
+      // Replace with a placeholder that won't cause runtime errors
+      const errorReplacement = `// Error bundling ${importPath}: ${error.message}
+const ${importName} = {
+  /* Failed to bundle HQL module */
+};`;
+      
+      processed = processed.replace(fullMatch, errorReplacement);
     }
   }
-  for (const r of replacements) {
-    processed = processed.replace(r.from, r.to);
-  }
+  
   return processed;
 }
 
@@ -120,25 +168,29 @@ async function processJSImports(
   let match: RegExpExecArray | null;
   let processed = code;
   const replacements: { from: string; to: string }[] = [];
+  
   while ((match = regex.exec(code)) !== null) {
     const [fullMatch, importSpecifier, importPath] = match;
     if (importPath.startsWith("./") || importPath.startsWith("../")) {
-      const fullPath = join(currentDir, importPath);
       try {
-        const bundled = await bundleJSModule(fullPath, visited);
-        const tempFile = await Deno.makeTempFile({ suffix: ".js" });
-        await Deno.writeTextFile(tempFile, bundled);
-        const fileUrl = "file://" + tempFile;
-        const replacement = fullMatch.replace(importPath, fileUrl);
+        const fullPath = join(currentDir, importPath);
+        const importVisited = new Set<string>([...visited]);
+        const bundled = await bundleJSModule(fullPath, importVisited);
+        
+        // Embed the bundled JS directly rather than using a temporary file
+        const replacement = `// Inlined from ${importPath}
+${bundled}`;
         replacements.push({ from: fullMatch, to: replacement });
-      } catch (e) {
-        console.error(`Error processing JS import ${importPath}:`, e);
+      } catch (error) {
+        console.error(`Error processing JS import ${importPath}:`, error);
       }
     }
   }
+  
   for (const r of replacements) {
     processed = processed.replace(r.from, r.to);
   }
+  
   return processed;
 }
 

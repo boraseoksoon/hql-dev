@@ -13,8 +13,12 @@ export async function transpile(source: string, filePath: string = "."): Promise
   try {
     const ast = parse(source);
     const currentDir = dirname(resolve(filePath));
-    const visited = new Set<string>();
-    return await transformAST(ast, currentDir, visited);
+    const visited = new Set<string>([resolve(filePath)]);
+    
+    // Transform the AST to JavaScript
+    return await transformAST(ast, currentDir, visited, {
+      module: 'esm'  // Always use ESM for top-level files
+    });
   } catch (error: any) {
     throw new Error(`Transpile error: ${error.message}`);
   }
@@ -28,8 +32,14 @@ export async function transpile(source: string, filePath: string = "."): Promise
  */
 export async function transpileFile(inputPath: string): Promise<string> {
   try {
-    const source = await Deno.readTextFile(inputPath);
-    return await transpile(source, inputPath);
+    const absPath = resolve(inputPath);
+    console.log(`Transpiling file: ${absPath}`);
+    
+    // Read the source file
+    const source = await Deno.readTextFile(absPath);
+    
+    // Transpile with full bundling of dependencies
+    return await transpile(source, absPath);
   } catch (error: any) {
     if (error instanceof Deno.errors.NotFound) {
       throw new Error(`File not found: ${inputPath}`);
@@ -60,6 +70,7 @@ export async function writeOutput(code: string, outputPath: string): Promise<voi
     
     // Write the main output file
     await Deno.writeTextFile(outputPath, code);
+    console.log(`Output written to: ${outputPath}`);
   } catch (error: any) {
     throw new Error(`Failed to write output: ${error.message}`);
   }

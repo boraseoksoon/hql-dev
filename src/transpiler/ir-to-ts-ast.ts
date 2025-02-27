@@ -1,4 +1,4 @@
-// src/transpiler/ir-to-ts-ast.ts - Clean implementation without hacks
+// src/transpiler/ir-to-ts-ast.ts - With higher-order function fixes
 import * as IR from "./hql_ir.ts";
 import {
   TSNodeType,
@@ -104,10 +104,10 @@ function processImport(node: IR.IRNode): TSNode | null {
   const url = (callExpr.arguments[0] as IR.IRStringLiteral).value;
   
   if (url.endsWith(".hql")) {
-    // HQL module import - bundled as IIFE
+    // HQL module import - placeholder for bundling
     return {
       type: TSNodeType.Raw,
-      code: `const ${varName} = (function(){\n  const exports = {};\n  // bundled HQL module\n  return exports;\n})();`
+      code: `const ${varName} = (function(){\n  const exports = {};\n  // This placeholder will be replaced with bundled HQL from ${url}\n  return exports;\n})();`
     };
   } else {
     // External module import
@@ -397,11 +397,11 @@ function handleReturnExpression(call: IR.IRCallExpression): TSNode {
  */
 function isHigherOrderReturnCall(call: IR.IRCallExpression): boolean {
   return call.callee.type === IR.IRNodeType.Identifier &&
-         (call.callee as IR.IRIdentifier).name === "$$RETURN_FUNCTION";
+         (call.callee as IR.IRIdentifier).name === "$RETURN_FUNCTION";
 }
 
 /**
- * Handle a higher-order function return.
+ * Handle a higher-order function return (functions that return functions).
  */
 function handleHigherOrderReturn(call: IR.IRCallExpression): TSNode {
   if (call.arguments.length === 0) {
@@ -412,10 +412,36 @@ function handleHigherOrderReturn(call: IR.IRCallExpression): TSNode {
   const arg = call.arguments[0];
   if (arg.type === IR.IRNodeType.FunctionDeclaration) {
     const fn = arg as IR.IRFunctionDeclaration;
-    return convertFunctionReturn(fn);
+    
+    // Get parameters and body for the inner function
+    let parameters: string;
+    if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
+      parameters = "params";
+      
+      // Process function body with parameter destructuring
+      const destructuring = `const { ${fn.namedParamIds.map(id => `${id}: ${id}`).join(", ")} } = params;`;
+      let body = convertFunctionBody(fn.body, destructuring);
+      
+      // Return as a function with the destructuring
+      return {
+        type: TSNodeType.Raw,
+        code: `return function(${parameters}) ${body}`
+      };
+    } else {
+      parameters = fn.params.map(p => p.id.name).join(", ");
+      
+      // Convert body normally
+      let body = convertFunctionBody(fn.body);
+      
+      // Return as a function
+      return {
+        type: TSNodeType.Raw,
+        code: `return function(${parameters}) ${body}`
+      };
+    }
   }
   
-  // Otherwise, standard return
+  // For non-function returns, just use a simple return
   const argNode = convertNode(arg);
   return {
     type: TSNodeType.Raw,
@@ -458,28 +484,16 @@ function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
 }
 
 /**
- * Convert a function return (for higher-order functions).
+ * Check if a node already contains a return statement
  */
-function convertFunctionReturn(fn: IR.IRFunctionDeclaration): TSNode {
-  let parameters: string;
-  let body: string;
+function hasReturnStatement(node: IR.IRNode): boolean {
+  if (node.type !== IR.IRNodeType.CallExpression) return false;
   
-  // Handle named parameters
-  if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
-    parameters = "params";
-    
-    // Process function body with parameter destructuring
-    const destructuring = `const { ${fn.namedParamIds.map(id => `${id}: ${id}`).join(", ")} } = params;`;
-    body = convertFunctionBody(fn.body, destructuring);
-  } else {
-    parameters = fn.params.map(p => p.id.name).join(", ");
-    body = convertFunctionBody(fn.body);
-  }
+  const callExpr = node as IR.IRCallExpression;
+  if (callExpr.callee.type !== IR.IRNodeType.Identifier) return false;
   
-  return {
-    type: TSNodeType.Raw,
-    code: `return function(${parameters}) ${body}`
-  };
+  const calleeName = (callExpr.callee as IR.IRIdentifier).name;
+  return calleeName === "$$RETURN" || calleeName === "$RETURN_FUNCTION";
 }
 
 /**
@@ -498,7 +512,8 @@ function convertFunctionBody(block: IR.IRBlock, destructuring?: string): string 
     const lastIndex = statements.length - 1;
     const lastStmt = statements[lastIndex];
     
-    if (!isStatementLike(lastStmt)) {
+    // Only add return if it's not already a statement or doesn't already have a return
+    if (!isStatementLike(lastStmt) && !hasReturnStatement(lastStmt)) {
       // Wrap in return statement
       statements[lastIndex] = {
         type: IR.IRNodeType.CallExpression,
