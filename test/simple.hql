@@ -8,7 +8,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Local module (if needed)
-(def mod (import "./simple2.hql"))
+;; (def mod (import "./simple2.hql"))
 
 ;; Remote modules
 (def strUtil (import "https://esm.sh/lodash"))
@@ -26,11 +26,9 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Part 1: Local module usage and greetings
-(defn greet (name)
-  (str (mod.sayHi name) " Welcome to HQL.")
-)
+;; (defn greet (name) (str (mod.sayHi name) " Welcome to HQL."))
 ;; For testing, call greet and print its result.
-(print (greet "Alice"))
+;; (print (greet "Alice"))
 
 ;; Part 2: Remote-based definitions (using lodash)
 (defn greetRemote (name)
@@ -116,7 +114,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Section 3: Module Exports
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(export "greet" greet)
+;; (export "greet" greet)
 (export "greetTwice" greetTwice)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

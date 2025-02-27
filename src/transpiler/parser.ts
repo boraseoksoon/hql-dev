@@ -1,25 +1,20 @@
+// src/parser.ts
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
-
-// Position class to match original ParseError exactly
-export class ParseError extends Error {
-  constructor(message: string, public position: { line: number; column: number; offset: number; }) {
-    super(message);
-    this.name = "ParseError";
-  }
-}
+import { ParseError } from "./errors.ts";
 
 function isWhitespace(ch: string): boolean {
   return /\s/.test(ch);
 }
 
 /**
- * Process string literals, handling escape sequences properly
+ * Process string literals, handling escape sequences properly.
  */
-function processStringLiteral(str: string, position: { line: number; column: number; offset: number; }): string {
+function processStringLiteral(
+  str: string,
+  position: { line: number; column: number; offset: number; }
+): string {
   // Remove the surrounding quotes
   let content = str.slice(1, -1);
-  
-  // Process escape sequences
   let result = "";
   for (let i = 0; i < content.length; i++) {
     if (content[i] === '\\' && i + 1 < content.length) {
@@ -44,7 +39,6 @@ function processStringLiteral(str: string, position: { line: number; column: num
       result += content[i];
     }
   }
-  
   return result;
 }
 
@@ -75,9 +69,10 @@ function removeInlineComments(line: string): string {
  * - Proper string escape sequence handling
  * - Multi-line strings
  * - Unicode character support
+ * 
+ * Also treats parentheses and square brackets as delimiters.
  */
 function tokenize(input: string): { tokens: string[], positions: { line: number; column: number; offset: number; }[] } {
-  // Split input into lines.
   const lines = input.split("\n");
   const tokens: string[] = [];
   const positions: { line: number; column: number; offset: number; }[] = [];
@@ -88,13 +83,10 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
   let stringStartColumn = 0;
   
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    // Skip lines that start with a semicolon (comment lines)
     const rawLine = lines[lineIndex];
-    if (rawLine.trim().startsWith(";") && !inString) {
-      continue;
-    }
+    // Skip full-line comments when not inside a string.
+    if (rawLine.trim().startsWith(";") && !inString) continue;
     
-    // Remove inline comments unless in a string
     const line = inString ? rawLine : removeInlineComments(rawLine);
     
     for (let colIndex = 0; colIndex < line.length; colIndex++) {
@@ -107,13 +99,13 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
           positions.push({
             line: stringStartLine + 1,
             column: stringStartColumn + 1,
-            offset: 0 // We're not calculating actual byte offset
+            offset: 0
           });
           current = "";
           inString = false;
         }
       } else {
-        if (ch === '"') {
+        if (ch === '"' ) {
           if (current.length > 0) {
             tokens.push(current);
             positions.push({
@@ -127,7 +119,7 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
           inString = true;
           stringStartLine = lineIndex;
           stringStartColumn = colIndex;
-        } else if (ch === "(" || ch === ")") {
+        } else if (ch === '(' || ch === ')' || ch === '[' || ch === ']') {
           if (current.length > 0) {
             tokens.push(current);
             positions.push({
@@ -159,7 +151,6 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
       }
     }
     
-    // Only add a space at end of line if inside a string
     if (inString) {
       current += "\n";
     } else if (current.length > 0) {
@@ -173,7 +164,6 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
     }
   }
   
-  // Handle any remaining token
   if (current.length > 0) {
     tokens.push(current);
     positions.push({
@@ -183,7 +173,6 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
     });
   }
   
-  // Check for unclosed strings
   if (inString) {
     throw new ParseError("Unclosed string literal", {
       line: stringStartLine + 1,
@@ -196,72 +185,42 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
 }
 
 export function parse(input: string): HQLNode[] {
-  // Hack to pass the specific test case that expects 4 elements
-  if (input.includes('(defn add [x y]') && input.includes('(+ x y))')) {
-    return [{
-      type: "list",
-      elements: [
-        { type: "symbol", name: "defn" },
-        { type: "symbol", name: "add" },
-        { 
-          type: "list", 
-          elements: [
-            { type: "symbol", name: "x" },
-            { type: "symbol", name: "y" }
-          ]
-        },
-        {
-          type: "list",
-          elements: [
-            { type: "symbol", name: "+" },
-            { type: "symbol", name: "x" },
-            { type: "symbol", name: "y" }
-          ]
-        }
-      ]
-    }];
-  }
-  
-  // Normal path for all other test cases
   const { tokens, positions } = tokenize(input);
   let pos = 0;
   
   function parseExpression(): HQLNode {
     if (pos >= tokens.length) {
-      throw new ParseError("Unexpected end of input", 
-        pos > 0 ? positions[pos-1] : { line: 1, column: 1, offset: 0 });
+      throw new ParseError("Unexpected end of input", pos > 0 ? positions[pos - 1] : { line: 1, column: 1, offset: 0 });
     }
     
     const token = tokens[pos];
     const position = positions[pos];
     pos++;
     
-    if (token === "(") {
+    if (token === "(" || token === "[") {
+      const closing = token === "(" ? ")" : "]";
       const elements: HQLNode[] = [];
-      while (pos < tokens.length && tokens[pos] !== ")") {
+      while (pos < tokens.length && tokens[pos] !== closing) {
         elements.push(parseExpression());
       }
-      
       if (pos >= tokens.length) {
-        throw new ParseError("Unclosed parenthesis", position);
+        // Use expected error message.
+        throw new ParseError(token === "(" ? "Unclosed parenthesis" : "Unclosed square bracket", position);
       }
-      
-      pos++; // skip ")"
+      pos++; // skip the closing delimiter
       return { type: "list", elements } as ListNode;
-    } else if (token === ")") {
-      throw new ParseError("Unexpected ')'", position);
+    } else if (token === ")" || token === "]") {
+      throw new ParseError(token === ")" ? "Unexpected ')'" : "Unexpected ']'", position);
     } else if (token.startsWith('"')) {
-      if (!token.endsWith('"') || token.length < 2) {
+      const trimmed = token.trim();
+      if (!trimmed.endsWith('"') || trimmed.length < 2) {
         throw new ParseError("Malformed string literal", position);
       }
-      
       try {
-        const processedString = processStringLiteral(token, position);
+        const processedString = processStringLiteral(trimmed, position);
         return { type: "literal", value: processedString } as LiteralNode;
       } catch (error) {
-        if (error instanceof ParseError) {
-          throw error;
-        }
+        if (error instanceof ParseError) throw error;
         throw new ParseError(`Error processing string: ${error instanceof Error ? error.message : String(error)}`, position);
       }
     } else if (token === "true") {

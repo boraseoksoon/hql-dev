@@ -1,4 +1,4 @@
-// src/ast.ts
+// src/hql_ast.ts
 export type HQLNode = LiteralNode | SymbolNode | ListNode;
 
 export interface LiteralNode {

@@ -1,12 +1,11 @@
-// cli/publish/build_js_module.ts
-import { compile } from "../../cli/compile.ts";
+import transpileCLI from "../transpile.ts";
 import { join, resolve, dirname, basename } from "../../src/platform/platform.ts";
 import { exists, emptyDir } from "jsr:@std/fs@1.0.13";
 
 /**
  * Build a JavaScript module from an HQL file.
  * This performs the following steps:
- * 1. Compile the HQL file to JavaScript
+ * 1. Transpile the HQL file to JavaScript
  * 2. Create a proper entry point file
  * 
  * @param inputPath The HQL file path
@@ -49,47 +48,39 @@ export async function buildJsModule(inputPath: string): Promise<string> {
     }
   }
   
-  // Compile the HQL file to JS
+  // Transpile the HQL file to JS
   const outputName = isFile ? basename(absoluteInputPath).replace(/\.hql$/, '.js') : "index.js";
   const outputPath = join(buildDir, outputName);
   
   try {
-    await compile(absoluteInputPath, {
-      outputPath,
-      format: 'js',
-      bundle: true,
-      module: 'esm',
-      target: 'es2020',
-      logLevel: 2
-    });
+    await transpileCLI(absoluteInputPath, outputPath);
   } catch (error) {
-    console.error("Error compiling HQL file:", error);
-    // Try to continue anyway, as compile.ts might report errors but still produce output
+    console.error("Error transpiling HQL file:", error);
+    // Try to continue anyway, as transpileCLI might report errors but still produce output
   }
   
   // Create an entry file 
   const esmEntryFile = join(buildDir, "esm.js");
   
   try {
-    // Check if the compiled JS file exists
-    let compiledJs = "";
+    // Check if the transpiled JS file exists
+    let transpiledJs = "";
     if (await exists(outputPath)) {
-      // Read the compiled JS
-      compiledJs = await Deno.readTextFile(outputPath);
+      // Read the transpiled JS
+      transpiledJs = await Deno.readTextFile(outputPath);
     } else {
-      console.warn(`Warning: Compiled output file ${outputPath} not found. Creating a stub.`);
-      compiledJs = `// Stub module\nexport default { name: "hql-module" };\n`;
+      console.warn(`Warning: Transpiled output file ${outputPath} not found. Creating a stub.`);
+      transpiledJs = `// Stub module\nexport default { name: "hql-module" };\n`;
     }
     
     // Write the entry file
-    await Deno.writeTextFile(esmEntryFile, compiledJs);
+    await Deno.writeTextFile(esmEntryFile, transpiledJs);
     console.log(`Created entry file at ${esmEntryFile}`);
   } catch (error) {
     console.error("Error creating entry file:", error);
     // Create a minimal entry as fallback
     try {
-      await Deno.writeTextFile(esmEntryFile, 
-        `export default { name: "hql-module" };\n`);
+      await Deno.writeTextFile(esmEntryFile, `export default { name: "hql-module" };\n`);
     } catch (writeError) {
       console.error(`Failed to create fallback entry file: ${writeError.message}`);
       throw writeError;

@@ -1,6 +1,7 @@
 // test/parser_test.ts
 import { assertEquals, assertThrows } from "https://deno.land/std@0.170.0/testing/asserts.ts";
-import { parse, ParseError } from "../src/transpiler/parser.ts";
+import { parse } from "../src/transpiler/parser.ts";
+import { ParseError } from "../src/transpiler/errors.ts";
 
 // Basic HQL parsing
 Deno.test("Parse basic HQL expressions", () => {

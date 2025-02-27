@@ -1,8 +1,6 @@
-// test/compile_test.ts - Tests for the improved compile.ts
-
-import { compile } from "../cli/compile.ts";
+import transpileCLI from "../cli/transpile.ts";
 import { assertEquals, assertStringIncludes, assertRejects } from "https://deno.land/std/testing/asserts.ts";
-import { join, dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { join, dirname } from "https://deno.land/std@0.170.0/path/mod.ts"; 
 
 // Helper to create a temporary test directory
 async function createTempDir(): Promise<string> {
@@ -16,7 +14,6 @@ async function cleanupTempDir(dirPath: string): Promise<void> {
   try {
     await Deno.remove(dirPath, { recursive: true });
   } catch (e) {
-    // Ignore errors if directory doesn't exist
     console.warn(`Warning: Could not clean up temp directory ${dirPath}: ${e.message}`);
   }
 }
@@ -29,7 +26,7 @@ async function createTestFile(dirPath: string, filename: string, content: string
 }
 
 // Basic input/output test without mocking
-Deno.test("compile - basic file creation", async () => {
+Deno.test("transpileCLI - basic file creation", async () => {
   const tempDir = await createTempDir();
   try {
     // Create a simple test HQL file
@@ -42,8 +39,8 @@ Deno.test("compile - basic file creation", async () => {
     // Custom output path
     const outputPath = join(tempDir, "output.js");
     
-    // Compile the file
-    await compile(inputPath, { outputPath });
+    // Transpile the file
+    await transpileCLI(inputPath, outputPath);
     
     // Verify output file was created
     const outputExists = await Deno.stat(outputPath).then(
@@ -57,8 +54,8 @@ Deno.test("compile - basic file creation", async () => {
   }
 });
 
-// Test with custom output path
-Deno.test("compile - custom output directory creation", async () => {
+// Test with custom output directory creation
+Deno.test("transpileCLI - custom output directory creation", async () => {
   const tempDir = await createTempDir();
   try {
     // Create a test HQL file
@@ -71,8 +68,8 @@ Deno.test("compile - custom output directory creation", async () => {
     // Custom output path in a subdirectory that doesn't exist yet
     const customOutputPath = join(tempDir, "nested", "output", "custom.js");
     
-    // Compile with custom output path
-    await compile(inputPath, { outputPath: customOutputPath });
+    // Transpile with custom output path
+    await transpileCLI(inputPath, customOutputPath);
     
     // Verify output file was created at custom path
     const outputExists = await Deno.stat(customOutputPath).then(
@@ -87,19 +84,19 @@ Deno.test("compile - custom output directory creation", async () => {
 });
 
 // Test error handling for missing input file
-Deno.test("compile - missing input file", async () => {
+Deno.test("transpileCLI - missing input file", async () => {
   const tempDir = await createTempDir();
   try {
     // Path to a non-existent file
     const nonExistentPath = join(tempDir, "does_not_exist.hql");
     
-    // Compile should reject with an error
+    // Transpile should reject with an error containing "File not found"
     await assertRejects(
       async () => {
-        await compile(nonExistentPath);
+        await transpileCLI(nonExistentPath);
       },
       Error,
-      "Failed to read source file"
+      "File not found"
     );
     
   } finally {
@@ -108,20 +105,20 @@ Deno.test("compile - missing input file", async () => {
 });
 
 // Test for syntax error in HQL file (no mocking needed)
-Deno.test("compile - syntax error handling", async () => {
+Deno.test("transpileCLI - syntax error handling", async () => {
   const tempDir = await createTempDir();
   try {
-    // Create a file with invalid HQL syntax
+    // Create a file with invalid HQL syntax (missing closing parenthesis)
     const inputPath = await createTestFile(
       tempDir,
       "invalid_syntax.hql",
-      "(def greeting \"Hello, world!\")\n(def x\n"  // Missing closing parenthesis
+      "(def greeting \"Hello, world!\")\n(def x\n"
     );
     
-    // Compilation should fail with parser error
+    // Transpilation should fail with a parser error (containing "Parse error")
     await assertRejects(
       async () => {
-        await compile(inputPath);
+        await transpileCLI(inputPath);
       },
       Error,
       "Parse error"
