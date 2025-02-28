@@ -9,6 +9,7 @@
     "compile-test": "deno test --allow-all test/transpile_test.ts",
     "temp-test": "deno run -A ./cli/transpile.ts ./test/simple.hql && deno run -A ./test/simple.js",
     "temp-test2": "deno run -A ./cli/transpile.ts ./test/issue.hql && deno run -A ./test/issue.js",
-    "all-temp-test": "deno task temp-test && deno task temp-test2"
+    "temp-test3": "deno run -A ./cli/transpile.ts ./test/interop/main.hql && deno run -A ./test/interop/main.js",
+    "all-temp-test": "deno task temp-test && deno task temp-test2 && deno task temp-test3"
   }
 }

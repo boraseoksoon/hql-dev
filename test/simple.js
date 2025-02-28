@@ -1,5 +1,5 @@
 // Module: /Users/seoksoonjang/Desktop/hql/test/simple3.hql
-const __module_simple3_3156 = (function() {
+const __module_simple3_4951 = (function() {
   const exports = {};
   function sayBye(name) {
     return "Bye, " + name + "!"
@@ -10,9 +10,9 @@ const __module_simple3_3156 = (function() {
 })();
 
 // Module: /Users/seoksoonjang/Desktop/hql/test/simple2.hql
-const __module_simple2_1630 = (function() {
+const __module_simple2_6334 = (function() {
   const exports = {};
-  const mod3 = __module_simple3_3156;
+  const mod3 = __module_simple3_4951;
   function sayHi(name) {
     return "Hi, " + name + "! " + mod3.sayBye(name)
   }
@@ -21,7 +21,7 @@ const __module_simple2_1630 = (function() {
   return exports;
 })();
 
-const mod = __module_simple2_1630;
+const mod = __module_simple2_6334;
 import strUtil from "https://esm.sh/lodash";
 import chalk from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
 import chalk2 from "jsr:@nothing628/chalk";

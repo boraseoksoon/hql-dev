@@ -64,6 +64,9 @@ export async function transformAST(
 /**
  * Process JS imports by traversing the TS AST and inlining relative .js modules
  */
+/**
+ * Process JS imports by traversing the TS AST and handling relative .js modules appropriately
+ */
 async function processJSImportsAST(
   ast: TSSourceFile, 
   currentDir: string, 
@@ -93,25 +96,42 @@ async function processJSImportsAST(
               if (!visited.has(fullPath)) {
                 visited.add(fullPath);
                 
-                // Process the JS module
-                const bundled = await bundleJSModule(fullPath, new Set<string>([...visited]));
-                
-                // Create a comment about the inlined module
-                ast.statements[i] = { 
-                  type: TSNodeType.Raw, 
-                  code: `// Inlined from ${importPath}\n${bundled}` 
-                };
+                // Check if the JS file has ESM syntax
+                const jsContent = await Deno.readTextFile(fullPath);
+                if (detectESMSyntax(jsContent)) {
+                  // For ESM modules, don't inline - keep the import statement as is
+                  // Just modify the path if needed
+                  continue;
+                } else {
+                  // Only inline non-ESM JS modules
+                  const bundled = await bundleJSModule(fullPath, new Set<string>([...visited]));
+                  
+                  // Create a comment about the inlined module
+                  ast.statements[i] = { 
+                    type: TSNodeType.Raw, 
+                    code: `// Inlined from ${importPath}\n${bundled}` 
+                  };
+                }
               } else {
                 console.warn(`Circular dependency detected: ${fullPath}`);
               }
             } catch (error) {
-              console.error(`Error inlining JS module ${importPath}:`, error);
+              console.error(`Error processing JS module ${importPath}:`, error);
             }
           }
         }
       }
     }
   }
+}
+
+/**
+ * Detect if a JavaScript file contains ESM syntax
+ */
+function detectESMSyntax(code: string): boolean {
+  // Look for import/export statements at the top level
+  const esmSyntaxRegex = /^(?:\s*(?:\/\/.*|\/\*[\s\S]*?\*\/))*\s*(?:import\s+|export\s+|import\s*\()/m;
+  return esmSyntaxRegex.test(code);
 }
 
 import { parse } from "./parser.ts";
