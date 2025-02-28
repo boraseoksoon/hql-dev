@@ -1,23 +1,18 @@
-// src/bundler/bundler.ts - Enhanced for clean ESM output
+// src/bundler/bundler.ts
 import { parse } from "../transpiler/parser.ts";
 import { expandMacros } from "../macro.ts";
 import { transformAST } from "../transpiler/transformer.ts";
 import { dirname, join, resolve, basename } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { HQLNode, ListNode, SymbolNode, LiteralNode } from "../transpiler/hql_ast.ts";
-import { exists } from "jsr:@std/fs@1.0.13";
 
 /**
- * A module with its dependencies and code
+ * A module with its dependencies
  */
 interface Module {
-  id: string;                     // Module identifier
-  path: string;                   // Absolute path
-  type: 'hql' | 'js' | 'external'; // Module type
+  id: string;                       // Module identifier
+  path: string;                     // Absolute path
   dependencies: Map<string, string>; // LocalImportId -> DependencyPath
-  exports: Map<string, string>;   // LocalName -> ExportedName
-  code: string;                   // Transpiled module code
-  processedCode?: string;         // Processed code for output
-  inCycle: boolean;               // Is in a circular dependency
+  code: string;                     // Transpiled code
 }
 
 /**
@@ -33,7 +28,7 @@ function isExternalModule(path: string): boolean {
 /**
  * Extract HQL imports from an AST
  */
-function extractHQLImports(ast: HQLNode[]): Map<string, string> {
+function extractImports(ast: HQLNode[]): Map<string, string> {
   const imports = new Map<string, string>();
   
   for (const node of ast) {
@@ -41,18 +36,9 @@ function extractHQLImports(ast: HQLNode[]): Map<string, string> {
       const list = node as ListNode;
       
       // Check for (def moduleId (import "./path.hql"))
-      if (list.elements.length >= 3 && 
-          list.elements[0]?.type === "symbol" && 
-          list.elements[0].name === "def" &&
-          list.elements[1]?.type === "symbol" &&
-          list.elements[2]?.type === "list" &&
-          list.elements[2].elements.length >= 2 &&
-          list.elements[2].elements[0]?.type === "symbol" &&
-          list.elements[2].elements[0].name === "import" &&
-          list.elements[2].elements[1]?.type === "literal") {
-        
-        const moduleId = (list.elements[1] as SymbolNode).name;
-        const importPath = (list.elements[2].elements[1] as LiteralNode).value as string;
+      if (isImportDeclaration(list)) {
+        const moduleId = getImportModuleId(list);
+        const importPath = getImportPath(list);
         
         imports.set(moduleId, importPath);
       }
@@ -63,136 +49,40 @@ function extractHQLImports(ast: HQLNode[]): Map<string, string> {
 }
 
 /**
- * Extract exports from an HQL AST
+ * Check if a list node is an import declaration
  */
-function extractHQLExports(ast: HQLNode[]): Map<string, string> {
-  const exports = new Map<string, string>();
-  
-  for (const node of ast) {
-    if (node.type === "list") {
-      const list = node as ListNode;
-      
-      // Check for (export "exportedName" localName)
-      if (list.elements.length >= 3 &&
-          list.elements[0]?.type === "symbol" &&
-          list.elements[0].name === "export" &&
-          list.elements[1]?.type === "literal" &&
-          typeof list.elements[1].value === "string" &&
-          list.elements[2]?.type === "symbol") {
-        
-        const exportName = list.elements[1].value as string;
-        const localName = (list.elements[2] as SymbolNode).name;
-        
-        exports.set(localName, exportName);
-      }
-    }
-  }
-  
-  return exports;
+function isImportDeclaration(list: ListNode): boolean {
+  return list.elements.length >= 3 && 
+      list.elements[0]?.type === "symbol" && 
+      list.elements[0].name === "def" &&
+      list.elements[1]?.type === "symbol" &&
+      list.elements[2]?.type === "list" &&
+      list.elements[2].elements.length >= 2 &&
+      list.elements[2].elements[0]?.type === "symbol" &&
+      list.elements[2].elements[0].name === "import" &&
+      list.elements[2].elements[1]?.type === "literal";
 }
 
 /**
- * Extract imports from a JavaScript file based on its format (ESM or CommonJS)
+ * Get the module ID from an import declaration
  */
-async function extractJSImports(filePath: string): Promise<Map<string, string>> {
-  const imports = new Map<string, string>();
-  try {
-    const content = await Deno.readTextFile(filePath);
-    
-    // Check if it's an ESM file
-    if (content.includes('import ') || content.includes('export ')) {
-      // Handle ESM imports
-      // Simple regex for import statements - note this is a simplification
-      const importRegex = /import\s+(?:(?:\*\s+as\s+(\w+))|(\w+)|(?:\{([^}]+)\}))\s+from\s+['"]([^'"]+)['"]/g;
-      let match;
-      
-      while ((match = importRegex.exec(content)) !== null) {
-        const [_, namespace, defaultImport, namedImports, importPath] = match;
-        
-        if (namespace) {
-          imports.set(namespace, importPath);
-        } else if (defaultImport) {
-          imports.set(defaultImport, importPath);
-        } else if (namedImports) {
-          // For simplicity, we're treating the first named import as the module ID
-          // This is a simplification that works for our test case
-          const firstImport = namedImports.split(',')[0].trim().split(' as ')[0].trim();
-          imports.set(firstImport, importPath);
-        }
-      }
-    } else {
-      // Handle CommonJS require
-      const requireRegex = /(?:const|let|var)\s+(\w+)\s*=\s*require\(['"]([^'"]+)['"]\)/g;
-      let match;
-      
-      while ((match = requireRegex.exec(content)) !== null) {
-        const [_, varName, importPath] = match;
-        imports.set(varName, importPath);
-      }
-    }
-  } catch (error) {
-    console.error(`Failed to extract JS imports from ${filePath}:`, error);
-  }
-  
-  return imports;
+function getImportModuleId(list: ListNode): string {
+  return (list.elements[1] as SymbolNode).name;
 }
 
 /**
- * Extract exports from a JavaScript file
+ * Get the import path from an import declaration
  */
-async function extractJSExports(filePath: string): Promise<Map<string, string>> {
-  const exports = new Map<string, string>();
-  try {
-    const content = await Deno.readTextFile(filePath);
-    
-    // Check if it's an ESM file
-    if (content.includes('export ')) {
-      // Handle ESM exports
-      // Named exports: export { name1, name2 as alias }
-      const namedExportRegex = /export\s+\{([^}]+)\}/g;
-      let match;
-      
-      while ((match = namedExportRegex.exec(content)) !== null) {
-        const exportsList = match[1].split(',').map(s => s.trim());
-        for (const exp of exportsList) {
-          const parts = exp.split(/\s+as\s+/).map(s => s.trim());
-          const localName = parts[0];
-          const exportName = parts.length > 1 ? parts[1] : localName;
-          exports.set(localName, exportName);
-        }
-      }
-      
-      // Default export: export default name
-      const defaultExportRegex = /export\s+default\s+(\w+)/g;
-      while ((match = defaultExportRegex.exec(content)) !== null) {
-        exports.set(match[1], 'default');
-      }
-      
-      // Direct exports: export const name = ...
-      const directExportRegex = /export\s+(?:const|let|var|function)\s+(\w+)/g;
-      while ((match = directExportRegex.exec(content)) !== null) {
-        exports.set(match[1], match[1]);
-      }
-    } else {
-      // Handle CommonJS exports
-      const moduleExportsRegex = /module\.exports\s*=\s*(\w+)/g;
-      let match;
-      
-      while ((match = moduleExportsRegex.exec(content)) !== null) {
-        exports.set(match[1], 'default');
-      }
-      
-      // Handle exports.name = value
-      const exportsRegex = /exports\.(\w+)\s*=\s*(\w+)/g;
-      while ((match = exportsRegex.exec(content)) !== null) {
-        exports.set(match[2], match[1]);
-      }
-    }
-  } catch (error) {
-    console.error(`Failed to extract JS exports from ${filePath}:`, error);
-  }
-  
-  return exports;
+function getImportPath(list: ListNode): string {
+  return (list.elements[2].elements[1] as LiteralNode).value as string;
+}
+
+/**
+ * Fix higher-order function syntax in code
+ */
+function fixSpecialSyntax(code: string): string {
+  // Fix $RETURN_FUNCTION placeholder for higher-order functions
+  return code.replace(/\$RETURN_FUNCTION\s*\(\s*(function\s*\([^)]*\))/g, 'return $1');
 }
 
 /**
@@ -213,19 +103,7 @@ async function processModule(
   
   // Check for circular dependencies
   if (visited.has(absPath)) {
-    // Just create a placeholder for now, we'll handle cycles later
-    const placeholderId = createModuleId(absPath);
-    const placeholderModule: Module = {
-      id: placeholderId,
-      path: absPath,
-      type: absPath.endsWith('.hql') ? 'hql' : 'js',
-      dependencies: new Map(),
-      exports: new Map(),
-      code: "",
-      inCycle: true
-    };
-    allModules.set(absPath, placeholderModule);
-    return placeholderModule;
+    throw new Error(`Circular dependency detected: ${absPath}`);
   }
   
   // Mark as visited for this processing chain
@@ -233,467 +111,69 @@ async function processModule(
   
   console.log(`Processing module: ${absPath}`);
   
-  // Create a module entry
-  const moduleId = createModuleId(absPath);
-  const module: Module = {
+  // Create a placeholder first to avoid infinite recursion
+  const moduleId = basename(absPath, '.hql').replace(/[^a-zA-Z0-9_]/g, '_');
+  allModules.set(absPath, {
     id: moduleId,
     path: absPath,
-    type: isExternalModule(absPath) ? 'external' : 
-          absPath.endsWith('.hql') ? 'hql' : 'js',
     dependencies: new Map(),
-    exports: new Map(),
-    code: "",
-    inCycle: false
-  };
+    code: ""
+  });
   
-  // Add to modules map to handle circular dependencies
-  allModules.set(absPath, module);
-  
-  // Only process local modules
-  if (isExternalModule(absPath)) {
-    return module;
+  // Only process HQL files; for external modules or non-HQL files, just keep the reference
+  if (!absPath.endsWith('.hql') || isExternalModule(absPath)) {
+    return allModules.get(absPath)!; 
   }
   
-  try {
-    if (absPath.endsWith('.hql')) {
-      // Process HQL module
-      await processHQLModule(module, allModules, visited);
-    } else if (absPath.endsWith('.js')) {
-      // Process JS module
-      await processJSModule(module, allModules, visited);
-    }
-  } catch (error) {
-    console.error(`Error processing ${absPath}:`, error);
-  }
+  // Read the file
+  const source = await Deno.readTextFile(absPath);
   
-  return module;
-}
-
-/**
- * Process an HQL module
- */
-async function processHQLModule(
-  module: Module,
-  allModules: Map<string, Module>,
-  visited: Set<string>
-): Promise<void> {
-  // Read and parse the file
-  const source = await Deno.readTextFile(module.path);
+  // Parse the file
   const ast = parse(source);
   const expanded = expandMacros(ast);
   
-  // Extract imports and process dependencies
-  const imports = extractHQLImports(expanded);
-  for (const [importId, importPath] of imports.entries()) {
-    let fullPath = importPath;
-    
-    // For relative imports, resolve relative to the current file
-    if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
-      fullPath = resolve(join(dirname(module.path), importPath));
-    }
-    
-    module.dependencies.set(importId, fullPath);
-    
-    // Process this dependency
-    await processModule(fullPath, allModules, new Set([...visited]));
-  }
-  
-  // Extract exports
-  const exports = extractHQLExports(expanded);
-  for (const [localName, exportName] of exports.entries()) {
-    module.exports.set(localName, exportName);
-  }
-  
-  // Transform to JavaScript (we'll generate clean module code later)
-  const currentDir = dirname(module.path);
-  try {
-    const transformed = await transformAST(expanded, currentDir, visited, {
-      module: 'esm'
-    });
-    
-    module.code = transformed;
-  } catch (error) {
-    console.error(`Error transforming HQL module ${module.path}:`, error);
-    module.code = `// Failed to transform: ${error.message}\n`;
-  }
-}
-
-/**
- * Process a JavaScript module
- */
-async function processJSModule(
-  module: Module,
-  allModules: Map<string, Module>,
-  visited: Set<string>
-): Promise<void> {
   // Extract imports
-  const imports = await extractJSImports(module.path);
+  const imports = extractImports(expanded);
+  const dependencies = new Map<string, string>();
+  
+  // Process dependencies
   for (const [importId, importPath] of imports.entries()) {
     let fullPath = importPath;
     
     // For relative imports, resolve relative to the current file
     if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
-      fullPath = resolve(join(dirname(module.path), importPath));
+      fullPath = resolve(join(dirname(absPath), importPath));
     }
     
-    module.dependencies.set(importId, fullPath);
+    dependencies.set(importId, fullPath);
     
-    // Process this dependency
-    if (!isExternalModule(fullPath)) {
+    // Only process HQL dependencies; external ones are left as is
+    if (fullPath.endsWith('.hql') && !isExternalModule(fullPath)) {
+      // Process this dependency with a new visited set
       await processModule(fullPath, allModules, new Set([...visited]));
     }
   }
   
-  // Extract exports
-  const exports = await extractJSExports(module.path);
-  for (const [localName, exportName] of exports.entries()) {
-    module.exports.set(localName, exportName);
-  }
+  // Update the module with dependencies
+  allModules.get(absPath)!.dependencies = dependencies;
   
-  // Read the JS source for later code generation
-  module.code = await Deno.readTextFile(module.path);
+  // Transform to JavaScript
+  const currentDir = dirname(absPath);
+  const transformed = await transformAST(expanded, currentDir, visited, {
+    module: 'esm'  // Always use ESM for modules
+  }, true);
+  
+  // Fix any special syntax
+  const fixedCode = fixSpecialSyntax(transformed);
+  
+  // Update the module with the real code
+  allModules.get(absPath)!.code = fixedCode;
+  
+  return allModules.get(absPath)!;
 }
 
 /**
- * Create a clean module ID based on the file path
- */
-function createModuleId(path: string): string {
-  if (isExternalModule(path)) {
-    // For external modules, use the last part of the path
-    const parts = path.split('/');
-    const lastPart = parts[parts.length - 1].replace(/\..+$/, '');
-    return cleanIdentifier(lastPart);
-  }
-  
-  // For local modules, use the filename
-  const filename = basename(path).replace(/\.[^/.]+$/, '');
-  return cleanIdentifier(filename);
-}
-
-/**
- * Clean an identifier for use as a variable name
- */
-function cleanIdentifier(name: string): string {
-  // Replace invalid characters with underscores
-  let clean = name.replace(/[^a-zA-Z0-9_$]/g, '_');
-  
-  // Ensure it starts with a valid character
-  if (!/^[a-zA-Z_$]/.test(clean)) {
-    clean = '_' + clean;
-  }
-  
-  return clean;
-}
-
-/**
- * Detect circular dependencies
- */
-function detectCircularDependencies(modules: Map<string, Module>): void {
-  // Map to track modules being processed in the current chain
-  const processing = new Set<string>();
-  // Map to track fully processed modules
-  const processed = new Set<string>();
-  
-  // DFS function to detect cycles
-  function visit(path: string, chain: string[] = []) {
-    // Skip external modules
-    if (isExternalModule(path) || !modules.has(path)) return;
-    
-    // Already fully processed
-    if (processed.has(path)) return;
-    
-    // Currently processing this module in this chain - found a cycle
-    if (processing.has(path)) {
-      // Find where the cycle starts
-      const cycleStart = chain.indexOf(path);
-      if (cycleStart >= 0) {
-        // Mark all modules in the cycle
-        for (let i = cycleStart; i < chain.length; i++) {
-          const cyclePath = chain[i];
-          const module = modules.get(cyclePath);
-          if (module) module.inCycle = true;
-        }
-      }
-      return;
-    }
-    
-    // Mark as processing
-    processing.add(path);
-    chain.push(path);
-    
-    // Visit all dependencies
-    const module = modules.get(path);
-    if (module) {
-      for (const depPath of module.dependencies.values()) {
-        visit(depPath, [...chain]);
-      }
-    }
-    
-    // Mark as fully processed
-    processing.delete(path);
-    processed.add(path);
-  }
-  
-  // Start DFS from each module
-  for (const path of modules.keys()) {
-    if (!processed.has(path) && !isExternalModule(path)) {
-      visit(path);
-    }
-  }
-}
-
-/**
- * Generates clean ESM code for modules
- */
-async function generateModuleCode(modules: Map<string, Module>): Promise<void> {
-  // First pass: process and clean up modules code
-  for (const module of modules.values()) {
-    // Skip external modules
-    if (module.type === 'external') continue;
-    
-    try {
-      if (module.type === 'hql') {
-        // Extract the actual implementations from transpiled HQL
-        module.processedCode = await extractHQLImplementations(module);
-      } else if (module.type === 'js') {
-        // Clean up JS code for the bundle
-        module.processedCode = await cleanJSForBundle(module);
-      }
-    } catch (error) {
-      console.error(`Error generating code for ${module.path}:`, error);
-      module.processedCode = `// Error generating code: ${error.message}`;
-    }
-  }
-}
-
-/**
- * Extract implementations from transpiled HQL code
- */
-async function extractHQLImplementations(module: Module): Promise<string> {
-  // Re-read the original source for cleaner transformation
-  const source = await Deno.readTextFile(module.path);
-  const ast = parse(source);
-  const expanded = expandMacros(ast);
-  
-  // Create function implementations for each export
-  const propertyEntries: string[] = [];
-  
-  for (const [localName, exportName] of module.exports.entries()) {
-    // Find function implementation in AST
-    const functionDef = findFunctionInAST(expanded, localName);
-    
-    if (functionDef) {
-      // Extract params
-      const params = extractFunctionParams(functionDef);
-      
-      // Extract the function body - for this we'll use the transformer
-      const implementation = await generateFunctionBody(functionDef, module.path);
-      
-      propertyEntries.push(`  ${exportName}: function(${params}) ${implementation}`);
-    } else {
-      // Fallback if function not found
-      propertyEntries.push(`  ${exportName}: function() { 
-        console.warn("Implementation not found for ${localName}"); 
-        return "${localName} not implemented"; 
-      }`);
-    }
-  }
-  
-  return `const ${module.id} = {\n${propertyEntries.join(',\n')}\n};`;
-}
-
-/**
- * Find a function definition in the AST
- */
-function findFunctionInAST(ast: HQLNode[], functionName: string): ListNode | null {
-  for (const node of ast) {
-    if (node.type === "list") {
-      const list = node as ListNode;
-      
-      // Check for (defn functionName ...)
-      if (list.elements.length >= 3 &&
-          list.elements[0]?.type === "symbol" &&
-          (list.elements[0] as SymbolNode).name === "defn" &&
-          list.elements[1]?.type === "symbol" &&
-          (list.elements[1] as SymbolNode).name === functionName) {
-        return list;
-      }
-    }
-  }
-  
-  return null;
-}
-
-/**
- * Extract function parameters from a function definition
- */
-function extractFunctionParams(functionDef: ListNode): string {
-  if (functionDef.elements.length < 3) return "";
-  
-  const paramsList = functionDef.elements[2] as ListNode;
-  if (paramsList.type !== "list") return "";
-  
-  // Get parameter names
-  return paramsList.elements
-    .filter(el => el.type === "symbol")
-    .map(el => (el as SymbolNode).name)
-    .join(", ");
-}
-
-/**
- * Generate a function body from a function definition
- */
-async function generateFunctionBody(functionDef: ListNode, filePath: string): Promise<string> {
-  if (functionDef.elements.length < 4) return "{}";
-  
-  // Extract body nodes
-  const bodyNodes = functionDef.elements.slice(3);
-  
-  // Create a minimal AST with just this function for transformation
-  const minimumAST: HQLNode[] = [functionDef];
-  
-  // Get the parameter list
-  const paramsList = functionDef.elements[2] as ListNode;
-  const params = paramsList.elements
-    .filter(el => el.type === "symbol")
-    .map(el => (el as SymbolNode).name)
-    .join(", ");
-  
-  // Use the transformer to generate JavaScript for the function body
-  const currentDir = dirname(filePath);
-  try {
-    // Create a special AST specifically for this function to transform
-    const bodyAST: HQLNode[] = [
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "fn" },
-          paramsList,
-          ...bodyNodes
-        ]
-      }
-    ];
-    
-    // Transform to get just the function implementation
-    const transformedBody = await transformAST(bodyAST, currentDir, new Set(), {
-      module: 'esm',
-      formatting: 'minimal'
-    });
-    
-    // Extract the function body from the anonymous function
-    const match = transformedBody.match(/function\s*\([^)]*\)\s*(\{[\s\S]*\})/);
-    if (match) {
-      return match[1];
-    }
-    
-    // If transformation failed, do a simple fallback
-    return `{
-      console.warn('Using simplified implementation for ${functionDef.elements[1]?.type === "symbol" ? (functionDef.elements[1] as SymbolNode).name : "unknown"}');
-      return "Simplified implementation";
-    }`;
-  } catch (error) {
-    console.error(`Error generating function body:`, error);
-    return `{ 
-      console.error('Error generating function: ${error.message}'); 
-      return "Error in function implementation";
-    }`;
-  }
-}
-
-/**
- * Clean JavaScript code for bundling
- */
-async function cleanJSForBundle(module: Module): Promise<string> {
-  let source = module.code;
-  
-  // Strip imports
-  source = source.replace(/import\s+.*?from\s+['"].*?['"];?\s*/g, '');
-  source = source.replace(/const\s+.*?\s*=\s*require\s*\(.*?\);?\s*/g, '');
-  
-  // Strip exports but keep functions
-  source = source.replace(/export\s+default\s+/g, '');
-  source = source.replace(/export\s+{.*?};?\s*/g, '');
-  source = source.replace(/export\s+/g, '');
-  source = source.replace(/module\.exports\s*=\s*/g, '');
-  source = source.replace(/exports\.\w+\s*=\s*/g, '');
-  
-  // Extract function definitions 
-  const exportedFunctions = extractJSFunctions(source, module.exports);
-  
-  // Create module object
-  const propertyEntries = Array.from(module.exports.entries())
-    .map(([localName, exportName]) => {
-      const implementation = exportedFunctions.get(localName);
-      if (implementation) {
-        return `  ${exportName}: ${implementation}`;
-      } else {
-        return `  ${exportName}: function() { 
-          console.warn("Implementation not found for ${localName}"); 
-          return "${localName} not implemented"; 
-        }`;
-      }
-    });
-  
-  return `const ${module.id} = {\n${propertyEntries.join(',\n')}\n};`;
-}
-
-/**
- * Extract JavaScript functions from source code
- */
-function extractJSFunctions(source: string, exports: Map<string, string>): Map<string, string> {
-  const functions = new Map<string, string>();
-  
-  // Try to find all common function patterns
-  const patterns = [
-    // Function declarations: function name(params) { body }
-    { regex: /function\s+(\w+)\s*\(([^)]*)\)\s*\{([\s\S]*?)(?=\n\}|\}$)/g,
-      extract: (match: RegExpExecArray) => ({ 
-        name: match[1], 
-        body: `function(${match[2]}) {${match[3]}\n  }` 
-      })
-    },
-    
-    // Variable function assignments: const name = function(params) { body }
-    { regex: /(?:const|let|var)\s+(\w+)\s*=\s*function\s*\(([^)]*)\)\s*\{([\s\S]*?)(?=\n\}|\}$)/g,
-      extract: (match: RegExpExecArray) => ({ 
-        name: match[1], 
-        body: `function(${match[2]}) {${match[3]}\n  }`
-      })
-    },
-    
-    // Arrow functions with block: const name = (params) => { body }
-    { regex: /(?:const|let|var)\s+(\w+)\s*=\s*\(([^)]*)\)\s*=>\s*\{([\s\S]*?)(?=\n\}|\}$)/g,
-      extract: (match: RegExpExecArray) => ({ 
-        name: match[1], 
-        body: `function(${match[2]}) {${match[3]}\n  }`
-      })
-    },
-    
-    // Arrow functions with expression: const name = (params) => expression
-    { regex: /(?:const|let|var)\s+(\w+)\s*=\s*\(([^)]*)\)\s*=>\s*([^{;][^;]*);/g,
-      extract: (match: RegExpExecArray) => ({ 
-        name: match[1], 
-        body: `function(${match[2]}) { return ${match[3]}; }`
-      })
-    }
-  ];
-  
-  // Find all functions that match the exports
-  for (const pattern of patterns) {
-    let match;
-    while ((match = pattern.regex.exec(source)) !== null) {
-      const { name, body } = pattern.extract(match);
-      if (exports.has(name)) {
-        functions.set(name, body);
-      }
-    }
-  }
-  
-  return functions;
-}
-
-/**
- * Sort modules in dependency order
+ * Perform topological sort on modules
  */
 function sortModules(modules: Map<string, Module>): string[] {
   const result: string[] = [];
@@ -701,18 +181,21 @@ function sortModules(modules: Map<string, Module>): string[] {
   const temp = new Set<string>();
   
   function visit(path: string) {
-    // Skip external modules and already visited
-    if (isExternalModule(path) || !modules.has(path) || visited.has(path)) return;
+    if (temp.has(path)) {
+      throw new Error(`Circular dependency detected: ${path}`);
+    }
     
-    // Detect cycles (already handled by marking inCycle flag)
-    if (temp.has(path)) return;
+    if (visited.has(path)) return;
     
     temp.add(path);
     
     const module = modules.get(path);
     if (module) {
       for (const depPath of module.dependencies.values()) {
-        visit(depPath);
+        // Only visit HQL dependencies; external ones are just referenced
+        if (modules.has(depPath) && depPath.endsWith('.hql') && !isExternalModule(depPath)) {
+          visit(depPath);
+        }
       }
     }
     
@@ -721,233 +204,170 @@ function sortModules(modules: Map<string, Module>): string[] {
     result.push(path);
   }
   
-  // Sort all modules
   for (const path of modules.keys()) {
-    visit(path);
+    if (!visited.has(path) && path.endsWith('.hql') && !isExternalModule(path)) {
+      visit(path);
+    }
   }
   
   return result;
 }
 
 /**
- * Generate the complete ESM bundle
+ * Generate bundled code from processed modules
  */
-async function generateESMBundle(
-  entryPath: string, 
-  modules: Map<string, Module>, 
-  sortedPaths: string[]
-): string {
-  const output: string[] = [];
+function generateBundle(entryPath: string, modules: Map<string, Module>): string {
+  const absEntryPath = isExternalModule(entryPath) ? entryPath : resolve(entryPath);
+  const entryModule = modules.get(absEntryPath);
   
-  // 1. Process external imports
-  const externalImports: Map<string, Set<string>> = new Map();
-  
-  for (const module of modules.values()) {
-    for (const [importId, importPath] of module.dependencies.entries()) {
-      if (isExternalModule(importPath)) {
-        if (!externalImports.has(importPath)) {
-          externalImports.set(importPath, new Set());
-        }
-        externalImports.get(importPath)!.add(importId);
-      }
-    }
+  if (!entryModule) {
+    throw new Error(`Entry module not found: ${entryPath}`);
   }
   
-  // Generate import statements
-  const importStatements: string[] = [];
-  for (const [importPath, importIds] of externalImports.entries()) {
-    // For consistency with the example format, if there's only one import
-    // we'll use a shorter format
-    if (importIds.size === 1) {
-      const importId = Array.from(importIds)[0];
-      importStatements.push(`import * as ${importId} from "${importPath}";`);
-    } else {
-      // For multiple imports from the same path, group them
-      const idsList = Array.from(importIds).join(', ');
-      importStatements.push(`import { ${idsList} } from "${importPath}";`);
-    }
-  }
+  // Get modules in dependency order
+  const sortedPaths = sortModules(modules);
   
-  if (importStatements.length > 0) {
-    output.push(importStatements.join('\n'));
-  }
+  // Generate code for each module
+  let bundled = "";
+  const moduleMap = new Map<string, string>(); // Maps path -> local variable name
   
-  // 2. First declare all modules with circular dependencies
-  const circularDeclares: string[] = [];
+  // Process all modules except the entry
   for (const path of sortedPaths) {
-    const module = modules.get(path);
-    if (module?.inCycle) {
-      circularDeclares.push(`// Module with circular dependency: ${path}`);
-      circularDeclares.push(`const ${module.id} = {};`);
-    }
-  }
-  
-  if (circularDeclares.length > 0) {
-    output.push(circularDeclares.join('\n'));
-  }
-  
-  // 3. Generate module implementations
-  for (const path of sortedPaths) {
-    const module = modules.get(path);
-    if (!module || module.type === 'external') continue;
+    // Skip entry module, we'll add it at the end
+    if (path === absEntryPath) continue;
     
-    // Skip declaring modules again if already declared for circular dependency
-    if (!module.inCycle) {
-      output.push(`// Module: ${module.path}`);
-      output.push(module.processedCode || `const ${module.id} = {}; // No processed code available`);
-    } else if (module.processedCode) {
-      // For circular dependencies, extract just the property assignments
-      const body = extractCircularImplementation(module.processedCode, module.id);
-      output.push(`// Implementation for circular dependency: ${module.path}`);
-      output.push(body);
-    }
-  }
-  
-  // 4. Add entry module's top-level code
-  const entryModule = modules.get(entryPath);
-  if (entryModule?.code) {
-    try {
-      // Re-read the source for cleaner processing
-      const source = await Deno.readTextFile(entryPath);
-      const ast = parse(source);
-      const expanded = expandMacros(ast);
-      
-      // Find non-function top-level statements like (print ...)
-      const topLevelStatements: HQLNode[] = [];
-      for (const node of expanded) {
-        if (node.type === "list") {
-          const list = node as ListNode;
-          if (list.elements[0]?.type === "symbol") {
-            const firstElement = list.elements[0] as SymbolNode;
-            if (firstElement.name === "print" || 
-                (firstElement.name !== "defn" && 
-                 firstElement.name !== "def" && 
-                 firstElement.name !== "export")) {
-              topLevelStatements.push(node);
-            }
-          }
-        }
-      }
-      
-      if (topLevelStatements.length > 0) {
-        // Transform just the top-level statements
-        const currentDir = dirname(entryPath);
-        const transformedCode = await transformAST(topLevelStatements, currentDir, new Set(), {
-          module: 'esm',
-          formatting: 'standard'
-        });
+    const module = modules.get(path)!;
+    
+    // Use a unique name for the module
+    const uniqueId = `__module_${basename(path, '.hql').replace(/[^a-zA-Z0-9_]/g, '_')}_${Math.floor(Math.random() * 10000)}`;
+    moduleMap.set(path, uniqueId);
+    
+    // Generate the module code
+    bundled += `// Module: ${module.path}\n`;
+    bundled += `const ${uniqueId} = (function() {\n`;
+    bundled += `  const exports = {};\n`;
+    
+    // Replace references to other modules in the code
+    let moduleCode = module.code;
+    
+    // Fix imports in the module code
+    for (const [localId, depPath] of module.dependencies.entries()) {
+      // Handle HQL dependencies
+      if (moduleMap.has(depPath)) {
+        // Get the module ID for this dependency
+        const depModuleId = moduleMap.get(depPath);
         
-        if (transformedCode.trim()) {
-          output.push('// Entry module top-level code');
-          output.push(transformedCode);
-        }
+        // Replace the import statement with a reference to the already-processed module
+        moduleCode = replaceImportStatement(moduleCode, localId, depModuleId!);
       }
-    } catch (error) {
-      console.error(`Error extracting top-level code:`, error);
+    }
+    
+    // Add the fixed code with indentation
+    bundled += moduleCode
+      .split('\n')
+      .map(line => `  ${line}`)
+      .join('\n');
+    
+    bundled += `\n  return exports;\n`;
+    bundled += `})();\n\n`;
+  }
+  
+  // Now process the entry module
+  let entryCode = entryModule.code;
+  
+  // Fix imports in the entry code
+  for (const [localId, depPath] of entryModule.dependencies.entries()) {
+    // Handle HQL dependencies
+    if (moduleMap.has(depPath)) {
+      // Get the module ID for this dependency
+      const depModuleId = moduleMap.get(depPath);
+      
+      // Replace the import statement
+      entryCode = replaceImportStatement(entryCode, localId, depModuleId!);
     }
   }
   
-  // 5. Add exports
-  if (entryModule && entryModule.exports.size > 0) {
-    const exports = Array.from(entryModule.exports.entries())
-      .map(([localName, exportName]) => {
-        return exportName === localName ? localName : `${localName} as ${exportName}`;
+  // Convert CommonJS exports to ESM exports in entry module
+  entryCode = convertExportsToESM(entryCode);
+  
+  // Add the entry code
+  bundled += entryCode;
+  
+  return bundled;
+}
+
+/**
+ * Replace import statements with module references
+ */
+function replaceImportStatement(code: string, localId: string, moduleId: string): string {
+  // Create a regex that matches the entire import statement for this local ID
+  const importRegex = new RegExp(
+    `const\\s+${localId}\\s+=\\s+\\(function\\(\\)\\s*\\{[\\s\\S]*?return exports;\\s*\\}\\)\\(\\);`, 
+    'g'
+  );
+  
+  // Replace with a reference to the already processed module
+  return code.replace(importRegex, `const ${localId} = ${moduleId};`);
+}
+
+/**
+ * Convert CommonJS exports to ESM exports
+ */
+function convertExportsToESM(code: string): string {
+  // Find all exports.x = y statements
+  const exportRegex = /exports\.(\w+)\s*=\s*(\w+)\s*;/g;
+  
+  // Collect all exports
+  const exports = new Map<string, string>();
+  let match;
+  while ((match = exportRegex.exec(code)) !== null) {
+    const exportName = match[1];
+    const localName = match[2];
+    exports.set(exportName, localName);
+  }
+  
+  // Replace CommonJS exports with nothing (we'll add ESM exports at the end)
+  let result = code.replace(exportRegex, '');
+  
+  // If we have exports, add an ESM export statement at the end
+  if (exports.size > 0) {
+    const exportsList = Array.from(exports.entries())
+      .map(([exportName, localName]) => {
+        if (exportName === localName) {
+          return localName;
+        } else {
+          return `${localName} as ${exportName}`;
+        }
       })
       .join(', ');
     
-    output.push(`export { ${exports} };`);
+    result += `\nexport { ${exportsList} };\n`;
   }
   
-  return output.join('\n\n');
-}
-
-/**
- * Extract top-level code from a module (excluding function declarations)
- */
-function extractTopLevelCode(code: string): string {
-  // This is a simplification - ideally we would parse the JS correctly
-  // But for our purpose, we can strip out function declarations and export statements
-  
-  // Remove function declarations
-  let result = code.replace(/function\s+\w+\s*\([^)]*\)\s*\{[\s\S]*?\n\}/g, '');
-  
-  // Remove variable function declarations
-  result = result.replace(/(?:const|let|var)\s+\w+\s*=\s*function\s*\([^)]*\)\s*\{[\s\S]*?\n\}/g, '');
-  
-  // Remove arrow functions
-  result = result.replace(/(?:const|let|var)\s+\w+\s*=\s*\([^)]*\)\s*=>\s*\{[\s\S]*?\n\}/g, '');
-  result = result.replace(/(?:const|let|var)\s+\w+\s*=\s*\([^)]*\)\s*=>\s*[^{;][^;]*;/g, '');
-  
-  // Remove export statements
-  result = result.replace(/export\s+.*?;/g, '');
-  result = result.replace(/export\s+\{[^}]*\};/g, '');
-  
-  // Remove import statements
-  result = result.replace(/import\s+.*?from\s+['"].*?['"];/g, '');
-  
-  // Use the module id instead of the original variable names
   return result;
 }
 
 /**
- * Extract the implementation part for modules with circular dependencies
- */
-function extractCircularImplementation(processedCode: string, moduleId: string): string {
-  // Extract all property assignments from the processed code
-  const objectMatch = processedCode.match(new RegExp(`const\\s+${moduleId}\\s*=\\s*\\{([\\s\\S]*?)\\};`));
-  if (!objectMatch) return "// Could not extract implementation";
-  
-  const properties = objectMatch[1].trim();
-  
-  // Convert each property to an assignment
-  return properties.split(',\n')
-    .map(prop => {
-      const [key, value] = prop.trim().split(/:\s+/);
-      if (key && value) {
-        return `${moduleId}.${key.trim()} = ${value.trim()};`;
-      }
-      return "";
-    })
-    .filter(Boolean)
-    .join('\n');
-}
-
-/**
- * Bundle an HQL file with all its dependencies into clean ESM
- */
-export async function bundleFileESM(filePath: string): Promise<string> {
-  // 1. Process all modules
-  const allModules = new Map<string, Module>();
-  const entryModule = await processModule(filePath, allModules, new Set());
-  
-  // 2. Detect circular dependencies
-  detectCircularDependencies(allModules);
-  
-  // 3. Generate module code
-  await generateModuleCode(allModules);
-  
-  // 4. Sort modules in dependency order
-  const sortedPaths = sortModules(allModules);
-  
-  // 5. Generate the bundled code
-  return generateESMBundle(filePath, allModules, sortedPaths);
-}
-
-/**
- * Original bundleFile function - kept for backward compatibility
+ * Bundle an HQL file with all its dependencies
  */
 export async function bundleFile(
   filePath: string, 
   visited = new Set<string>(),
   inModule = false
 ): Promise<string> {
-  // For ESM output, use the new bundler
-  return bundleFileESM(filePath);
+  // Process all modules
+  const allModules = new Map<string, Module>();
+  await processModule(filePath, allModules, visited);
+  
+  // Generate the bundled code
+  return generateBundle(filePath, allModules);
 }
 
 /**
  * Bundle a JavaScript file that may import HQL modules
- * This is kept for backward compatibility with transformer.ts
+ */
+/**
+ * Bundle a JavaScript file that may import HQL modules
  */
 export async function bundleJSModule(filePath: string, visited = new Set<string>()): Promise<string> {
   const source = await Deno.readTextFile(filePath);
@@ -998,7 +418,7 @@ ${bundled.split('\n').map(line => `  ${line}`).join('\n')}
 /**
  * Process ESM imports by preserving the ESM structure
  */
-function processESMImports(source: string, filePath: string, visited = new Set<string>()): Promise<string> {
+async function processESMImports(source: string, filePath: string, visited = new Set<string>()): Promise<string> {
   // For ESM JS files, we keep the import/export statements
   // But we need to modify imports for HQL files
   const hqlImportRegex = /import\s+(?:{[^}]+}|[^;]+)\s+from\s+["']([^"']+\.hql)["'];/g;
@@ -1019,7 +439,7 @@ function processESMImports(source: string, filePath: string, visited = new Set<s
     );
   }
   
-  return Promise.resolve(processedSource);
+  return processedSource;
 }
 
 /**
