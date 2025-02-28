@@ -13,31 +13,6 @@ import {
 } from "./ts-ast-types.ts";
 
 /**
- * Determines the appropriate import style for a given module URL.
- */
-function determineImportStyle(url: string): 'default' | 'namespace' {
-  // Deno standard library modules use namespace imports
-  if (url.includes('deno.land/std')) {
-    return 'namespace';
-  }
-  
-  // Known modules with namespace exports
-  const namespaceModules = [
-    'path/', 'datetime/', 'uuid/', 'fs/', 'crypto/',
-    'testing/', 'encoding/', 'io/', 'fmt/', 'flags/'
-  ];
-  
-  for (const mod of namespaceModules) {
-    if (url.includes(mod)) {
-      return 'namespace';
-    }
-  }
-  
-  // Default to default imports for other modules
-  return 'default';
-}
-
-/**
  * Convert an IRProgram into a TSSourceFile.
  */
 export function convertIRToTSAST(program: IR.IRProgram): TSSourceFile {
@@ -84,6 +59,13 @@ function isImport(node: IR.IRNode): boolean {
 /**
  * Process an import statement from IR to TS.
  */
+// src/transpiler/ir-to-ts-ast.ts - Update the processImport function
+
+/**
+ * Process an import statement from IR to TS.
+ * This improved implementation uses a universal import approach that works
+ * consistently with all module export styles (default exports, namespace exports, etc.)
+ */
 function processImport(node: IR.IRNode): TSNode | null {
   if (node.type !== IR.IRNodeType.VariableDeclaration) return null;
   
@@ -104,19 +86,13 @@ function processImport(node: IR.IRNode): TSNode | null {
       code: `const ${varName} = (function(){\n  const exports = {};\n  // Bundled HQL from ${url}\n  return exports;\n})();`
     };
   } else {
-    // External module import
-    const importStyle = determineImportStyle(url);
-    if (importStyle === 'namespace') {
-      return {
-        type: TSNodeType.Raw,
-        code: `import * as ${varName} from "${url}";`
-      };
-    } else {
-      return {
-        type: TSNodeType.Raw,
-        code: `import ${varName} from "${url}";`
-      };
-    }
+    // External module import - use universal import approach
+    // This approach works consistently for both default exports and namespace exports
+    return {
+      type: TSNodeType.Raw,
+      code: `import * as ${varName}_module from "${url}";\n` +
+            `const ${varName} = ${varName}_module.default !== undefined ? ${varName}_module.default : ${varName}_module;`
+    };
   }
 }
 

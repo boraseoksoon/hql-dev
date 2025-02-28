@@ -1,5 +1,5 @@
 // Module: /Users/seoksoonjang/Desktop/hql/test/simple3.hql
-const __module_simple3_4951 = (function() {
+const __module_simple3_5858 = (function() {
   const exports = {};
   function sayBye(name) {
     return "Bye, " + name + "!"
@@ -10,9 +10,9 @@ const __module_simple3_4951 = (function() {
 })();
 
 // Module: /Users/seoksoonjang/Desktop/hql/test/simple2.hql
-const __module_simple2_6334 = (function() {
+const __module_simple2_473 = (function() {
   const exports = {};
-  const mod3 = __module_simple3_4951;
+  const mod3 = __module_simple3_5858;
   function sayHi(name) {
     return "Hi, " + name + "! " + mod3.sayBye(name)
   }
@@ -21,14 +21,21 @@ const __module_simple2_6334 = (function() {
   return exports;
 })();
 
-const mod = __module_simple2_6334;
-import strUtil from "https://esm.sh/lodash";
-import chalk from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
-import chalk2 from "jsr:@nothing628/chalk";
-import lodash from "npm:lodash";
-import * as pathModule from "https://deno.land/std@0.170.0/path/mod.ts";
-import * as datetime from "https://deno.land/std@0.170.0/datetime/mod.ts";
-import * as uuidModule from "https://deno.land/std@0.170.0/uuid/mod.ts";
+const mod = __module_simple2_473;
+import * as strUtil_module from "https://esm.sh/lodash";
+const strUtil = strUtil_module.default !== undefined ? strUtil_module.default : strUtil_module;
+import * as chalk_module from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
+const chalk = chalk_module.default !== undefined ? chalk_module.default : chalk_module;
+import * as chalk2_module from "jsr:@nothing628/chalk";
+const chalk2 = chalk2_module.default !== undefined ? chalk2_module.default : chalk2_module;
+import * as lodash_module from "npm:lodash";
+const lodash = lodash_module.default !== undefined ? lodash_module.default : lodash_module;
+import * as pathModule_module from "https://deno.land/std@0.170.0/path/mod.ts";
+const pathModule = pathModule_module.default !== undefined ? pathModule_module.default : pathModule_module;
+import * as datetime_module from "https://deno.land/std@0.170.0/datetime/mod.ts";
+const datetime = datetime_module.default !== undefined ? datetime_module.default : datetime_module;
+import * as uuidModule_module from "https://deno.land/std@0.170.0/uuid/mod.ts";
+const uuidModule = uuidModule_module.default !== undefined ? uuidModule_module.default : uuidModule_module;
 function greet(name) {
   return mod.sayHi(name) + " Welcome to HQL."
 }
