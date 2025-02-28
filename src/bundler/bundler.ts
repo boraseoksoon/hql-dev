@@ -13,6 +13,8 @@ interface Module {
   path: string;                     // Absolute path
   dependencies: Map<string, string>; // LocalImportId -> DependencyPath
   code: string;                     // Transpiled code
+  uniqueVarName: string;            // Unique variable name to avoid conflicts
+  exports: Set<string>;             // Names of exported values
 }
 
 /**
@@ -78,6 +80,82 @@ function fixSpecialSyntax(code: string): string {
 }
 
 /**
+ * Create a unique variable name for a module to avoid conflicts
+ * Uses path information to create more consistent and readable names
+ */
+function createUniqueModuleVarName(basePath: string): string {
+  const baseName = basename(basePath, '.hql').replace(/[^a-zA-Z0-9_]/g, '_');
+  const uniqueSuffix = Math.floor(Math.random() * 10000);
+  return `__module_${baseName}_${uniqueSuffix}`;
+}
+
+/**
+ * Extract exported symbols from code
+ */
+function extractExports(code: string): Set<string> {
+  const exports = new Set<string>();
+  
+  // Match CommonJS style exports
+  const commonJSExportRegex = /exports\.(\w+)\s*=\s*(\w+)\s*;/g;
+  let match;
+  while ((match = commonJSExportRegex.exec(code)) !== null) {
+    exports.add(match[1]);
+  }
+  
+  // Match ESM style exports
+  const esmExportRegex = /export\s*{\s*([^}]+)\s*};/g;
+  while ((match = esmExportRegex.exec(code)) !== null) {
+    const exportList = match[1].split(',');
+    for (const exp of exportList) {
+      const trimmed = exp.trim();
+      if (trimmed.includes(' as ')) {
+        // Extract the 'as' name
+        const asName = trimmed.split(' as ')[1].trim();
+        exports.add(asName);
+      } else {
+        exports.add(trimmed);
+      }
+    }
+  }
+  
+  return exports;
+}
+
+/**
+ * Convert CommonJS exports to ESM exports
+ */
+function convertToESMExports(code: string): string {
+  // Collect all exports
+  const exportsMap = new Map<string, string>();
+  
+  // Find all CommonJS export statements
+  const commonJSExportRegex = /exports\.(\w+)\s*=\s*(\w+)\s*;/g;
+  let match;
+  while ((match = commonJSExportRegex.exec(code)) !== null) {
+    exportsMap.set(match[1], match[2]);
+  }
+  
+  // Remove all CommonJS export statements
+  let result = code.replace(commonJSExportRegex, '');
+  
+  // Add an ESM export statement at the end if needed
+  if (exportsMap.size > 0) {
+    const exportsList = Array.from(exportsMap.entries())
+      .map(([exportName, localName]) => {
+        if (exportName === localName) {
+          return localName;
+        }
+        return `${localName} as ${exportName}`;
+      })
+      .join(', ');
+    
+    result += `\nexport { ${exportsList} };\n`;
+  }
+  
+  return result;
+}
+
+/**
  * Process an HQL file and its dependencies
  */
 async function processModule(
@@ -114,13 +192,18 @@ async function processModule(
   const imports = extractImports(expanded);
   const dependencies = new Map<string, string>();
   
+  // Create a unique variable name for this module
+  const uniqueVarName = createUniqueModuleVarName(absPath);
+  
   // Create a placeholder first to avoid infinite recursion
   const moduleId = basename(absPath, '.hql').replace(/[^a-zA-Z0-9_]/g, '_');
   allModules.set(absPath, {
     id: moduleId,
     path: absPath,
     dependencies,
-    code: ""
+    code: "",
+    uniqueVarName,
+    exports: new Set()
   });
   
   // Process dependencies
@@ -135,16 +218,21 @@ async function processModule(
   // Transform to JavaScript
   const currentDir = dirname(absPath);
   const transformed = await transformAST(expanded, currentDir, visited, {
-    module: 'commonjs'  // Always use commonjs for modules
+    module: 'esm'  // Always use ESM for modules
   }, true);
   
   // Fix any special syntax
   const fixedCode = fixSpecialSyntax(transformed);
   
-  // Update the module with the real code
-  allModules.get(absPath)!.code = fixedCode;
+  // Extract exports
+  const exports = extractExports(fixedCode);
   
-  return allModules.get(absPath)!;
+  // Update the module with the real code and exports
+  const module = allModules.get(absPath)!;
+  module.code = fixedCode;
+  module.exports = exports;
+  
+  return module;
 }
 
 /**
@@ -186,7 +274,7 @@ function sortModules(modules: Map<string, Module>): string[] {
 }
 
 /**
- * Generate bundled code from processed modules
+ * Generate bundled code from processed modules with proper ESM format
  */
 function generateBundle(entryPath: string, modules: Map<string, Module>): string {
   const absEntryPath = resolve(entryPath);
@@ -201,7 +289,6 @@ function generateBundle(entryPath: string, modules: Map<string, Module>): string
   
   // Generate code for each module
   let bundled = "";
-  const moduleMap = new Map<string, string>(); // Maps path -> local variable name
   
   // Process all modules except the entry
   for (const path of sortedPaths) {
@@ -210,12 +297,9 @@ function generateBundle(entryPath: string, modules: Map<string, Module>): string
     
     const module = modules.get(path)!;
     
-    // Use a unique name for the module
-    const uniqueId = `__module_${basename(path, '.hql').replace(/[^a-zA-Z0-9_]/g, '_')}_${Math.floor(Math.random() * 10000)}`;
-    moduleMap.set(path, uniqueId);
-    
-    // Generate the module code
-    bundled += `const ${uniqueId} = (function() {\n`;
+    // Generate the module code with IIFE pattern for proper scoping
+    bundled += `// Module: ${module.path}\n`;
+    bundled += `const ${module.uniqueVarName} = (function() {\n`;
     bundled += `  const exports = {};\n`;
     
     // Replace references to other modules in the code
@@ -223,21 +307,24 @@ function generateBundle(entryPath: string, modules: Map<string, Module>): string
     
     // Fix imports in the module code
     for (const [localId, depPath] of module.dependencies.entries()) {
-      // Get the module ID for this dependency
-      const depModuleId = moduleMap.get(depPath);
-      if (depModuleId) {
+      // Get the module for this dependency
+      const depModule = modules.get(depPath);
+      if (depModule) {
         // Replace the import statement with a reference to the already-processed module
-        moduleCode = replaceImportStatement(moduleCode, localId, depModuleId);
+        moduleCode = replaceModuleImport(moduleCode, localId, depModule.uniqueVarName);
       }
     }
+    
+    // Convert CommonJS exports to variable assignments
+    moduleCode = moduleCode.replace(/exports\.(\w+)\s*=\s*(\w+)\s*;/g, 'exports.$1 = $2;');
     
     // Add the fixed code with indentation
     bundled += moduleCode
       .split('\n')
       .map(line => `  ${line}`)
-      .join('\n');
+      .join('\n') + '\n';
     
-    bundled += `\n  return exports;\n`;
+    bundled += `  return exports;\n`;
     bundled += `})();\n\n`;
   }
   
@@ -246,16 +333,16 @@ function generateBundle(entryPath: string, modules: Map<string, Module>): string
   
   // Fix imports in the entry code
   for (const [localId, depPath] of entryModule.dependencies.entries()) {
-    // Get the module ID for this dependency
-    const depModuleId = moduleMap.get(depPath);
-    if (depModuleId) {
+    // Get the module for this dependency
+    const depModule = modules.get(depPath);
+    if (depModule) {
       // Replace the import statement
-      entryCode = replaceImportStatement(entryCode, localId, depModuleId);
+      entryCode = replaceModuleImport(entryCode, localId, depModule.uniqueVarName);
     }
   }
   
-  // Fix CommonJS exports to ESM exports in entry module
-  entryCode = convertCommonJSToESM(entryCode);
+  // Convert any CommonJS exports to ESM syntax
+  entryCode = convertToESMExports(entryCode);
   
   // Add the entry code
   bundled += entryCode;
@@ -264,25 +351,27 @@ function generateBundle(entryPath: string, modules: Map<string, Module>): string
 }
 
 /**
- * Replace import statements with module references
+ * Replace module imports with direct references
  */
-function replaceImportStatement(code: string, localId: string, moduleId: string): string {
-  // Create a regex that matches the entire import statement for this local ID
-  const importRegex = new RegExp(
+function replaceModuleImport(code: string, localId: string, moduleId: string): string {
+  // Match CommonJS-style imports
+  const commonJSImportRegex = new RegExp(
     `const\\s+${localId}\\s+=\\s+\\(function\\(\\)\\s*\\{[\\s\\S]*?return exports;\\s*\\}\\)\\(\\);`, 
     'g'
   );
   
+  // Match ESM-style imports
+  const esmImportRegex = new RegExp(
+    `import\\s+${localId}\\s+from\\s+["'][^"']+\\.hql["'];`, 
+    'g'
+  );
+  
   // Replace with a reference to the already processed module
-  return code.replace(importRegex, `const ${localId} = ${moduleId};`);
-}
-
-/**
- * Convert CommonJS exports to ESM exports
- */
-function convertCommonJSToESM(code: string): string {
-  // Replace exports.name = value; with export { value as name };
-  return code.replace(/exports\.(\w+)\s*=\s*(\w+)\s*;/g, 'export { $2 as $1 };');
+  let result = code;
+  result = result.replace(commonJSImportRegex, `const ${localId} = ${moduleId};`);
+  result = result.replace(esmImportRegex, `const ${localId} = ${moduleId};`);
+  
+  return result;
 }
 
 /**
@@ -312,25 +401,45 @@ export async function bundleJSModule(filePath: string, visited = new Set<string>
   let processedSource = source;
   let match;
   
+  // Track processed modules to avoid duplicates
+  const processedModules = new Map<string, string>();
+  
   // Process each HQL import
   while ((match = hqlImportRegex.exec(source)) !== null) {
     const [fullMatch, importName, importPath] = match;
     const fullPath = join(dirname(filePath), importPath);
     
     try {
+      // If we've already processed this module, reuse it
+      if (processedModules.has(fullPath)) {
+        const moduleVarName = processedModules.get(fullPath)!;
+        processedSource = processedSource.replace(
+          fullMatch, 
+          `const ${importName} = ${moduleVarName};`
+        );
+        continue;
+      }
+      
       // Bundle the HQL file, avoiding circular dependencies
       if (!visited.has(fullPath)) {
         visited.add(fullPath);
+        
+        // Generate a unique module name
+        const moduleVarName = createUniqueModuleVarName(fullPath);
+        processedModules.set(fullPath, moduleVarName);
+        
+        // Bundle the module
         const bundled = await bundleFile(fullPath, new Set([...visited]), true);
         
         // Replace with IIFE
         const iife = `
 // HQL module bundled from ${importPath}
-const ${importName} = (function() {
+const ${moduleVarName} = (function() {
   const exports = {};
 ${bundled.split('\n').map(line => `  ${line}`).join('\n')}
   return exports;
-})();`;
+})();
+const ${importName} = ${moduleVarName};`;
         
         processedSource = processedSource.replace(fullMatch, iife);
       } else {

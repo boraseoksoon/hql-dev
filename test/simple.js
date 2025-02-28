@@ -1,4 +1,5 @@
-const __module_simple3_8507 = (function() {
+// Module: /Users/seoksoonjang/Desktop/hql/test/simple3.hql
+const __module_simple3_3156 = (function() {
   const exports = {};
   function sayBye(name) {
     return "Bye, " + name + "!"
@@ -8,9 +9,10 @@ const __module_simple3_8507 = (function() {
   return exports;
 })();
 
-const __module_simple2_4062 = (function() {
+// Module: /Users/seoksoonjang/Desktop/hql/test/simple2.hql
+const __module_simple2_1630 = (function() {
   const exports = {};
-  const mod3 = __module_simple3_8507;
+  const mod3 = __module_simple3_3156;
   function sayHi(name) {
     return "Hi, " + name + "! " + mod3.sayBye(name)
   }
@@ -19,7 +21,7 @@ const __module_simple2_4062 = (function() {
   return exports;
 })();
 
-const mod = __module_simple2_4062;
+const mod = __module_simple2_1630;
 import strUtil from "https://esm.sh/lodash";
 import chalk from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
 import chalk2 from "jsr:@nothing628/chalk";
@@ -86,16 +88,16 @@ const syncMinus = function(params) {
   const { x: x, y: y } = params;
   return (x - y)
 };
-export { syncAdd as syncAdd };
-export { syncMinus as syncMinus };
+
+
 const add2 = function(x, y) {
   return (x + y)
 };
 const minus2 = function(x, y) {
   return (x - y)
 };
-export { add2 as add2 };
-export { minus2 as minus2 };
+
+
 const Destination = { hlvm: "hlvm", macos: "macos", ios: "ios" };
 function send(params) {
   const { message: message, to: to } = params;
@@ -111,8 +113,8 @@ console.log("====== String Interpolation Demo ======")
 const name = "Charlie";
 const greeting = "hello my name is \\(name) and welcome!";
 console.log(greeting)
-export { greet as greet };
-export { greetTwice as greetTwice };
+
+
 console.log("====== Named Parameter Tests ======")
 function calculateArea(params) {
   const { width: width, height: height } = params;
@@ -155,8 +157,10 @@ function processData(params) {
   return (data * options.factor)
 }
 console.log("Processed data: ", processData({data: 100, options: {[":factor"]: 1.5}}))
-export { calculateArea as calculateArea };
-export { formatName as formatName };
-export { calculateTotal as calculateTotal };
-export { complexMath as complexMath };
-export { processData as processData };
+
+
+
+
+
+
+export { syncAdd, syncMinus, add2, minus2, greet, greetTwice, calculateArea, formatName, calculateTotal, complexMath, processData };

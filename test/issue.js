@@ -1,4 +1,5 @@
-const __module_simple3_157 = (function() {
+// Module: /Users/seoksoonjang/Desktop/hql/test/simple3.hql
+const __module_simple3_8178 = (function() {
   const exports = {};
   function sayBye(name) {
     return "Bye, " + name + "!"
@@ -8,9 +9,10 @@ const __module_simple3_157 = (function() {
   return exports;
 })();
 
-const __module_simple2_710 = (function() {
+// Module: /Users/seoksoonjang/Desktop/hql/test/simple2.hql
+const __module_simple2_94 = (function() {
   const exports = {};
-  const mod3 = __module_simple3_157;
+  const mod3 = __module_simple3_8178;
   function sayHi(name) {
     return "Hi, " + name + "! " + mod3.sayBye(name)
   }
@@ -19,9 +21,11 @@ const __module_simple2_710 = (function() {
   return exports;
 })();
 
-const mod = __module_simple2_710;
+const mod = __module_simple2_94;
 function greet(name) {
   return mod.sayHi(name) + " Welcome to HQL."
 }
 console.log(greet("Alice"))
-export { greet as greet };
+
+
+export { greet };
