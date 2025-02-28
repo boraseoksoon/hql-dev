@@ -1,4 +1,4 @@
-// src/hql_ir.ts
+// src/transpiler/hql_ir.ts
 export enum IRNodeType {
   Program,
   StringLiteral,
@@ -15,11 +15,13 @@ export enum IRNodeType {
   BinaryExpression,
   CallExpression,
   NewExpression,
+  PropertyAccess,      // NEW: For property/member access expressions
 
   VariableDeclaration,
   FunctionDeclaration,
   EnumDeclaration,
   ExportDeclaration,
+  ReturnStatement,     // NEW: For explicit return statements
 
   Block,
   Parameter,
@@ -100,6 +102,14 @@ export interface IRNewExpression extends IRNode {
   arguments: IRNode[];
 }
 
+// NEW: Property access node (obj.prop or obj["prop"])
+export interface IRPropertyAccess extends IRNode {
+  type: IRNodeType.PropertyAccess;
+  object: IRNode;
+  property: IRNode;
+  computed: boolean; // true for obj[prop], false for obj.prop
+}
+
 export interface IRVariableDeclaration extends IRNode {
   type: IRNodeType.VariableDeclaration;
   kind: "const" | "let" | "var";
@@ -138,6 +148,12 @@ export interface IRExportDeclaration extends IRNode {
   exports: { local: IRIdentifier; exported: string }[];
 }
 
+// NEW: Return statement node
+export interface IRReturnStatement extends IRNode {
+  type: IRNodeType.ReturnStatement;
+  argument: IRNode | null; // null for "return;" with no value
+}
+
 // Enhanced function to determine if a node returns a function expression
 export function isHigherOrderFunction(node: IRNode): boolean {
   if (node.type === IRNodeType.FunctionDeclaration) {
@@ -145,6 +161,36 @@ export function isHigherOrderFunction(node: IRNode): boolean {
     return fn.isAnonymous;
   }
   return false;
+}
+
+// Function to check if a node is statement-like (for auto-return handling)
+export function isStatementLike(node: IRNode): boolean {
+  return [
+    IRNodeType.VariableDeclaration,
+    IRNodeType.FunctionDeclaration,
+    IRNodeType.ExportDeclaration,
+    IRNodeType.EnumDeclaration,
+    IRNodeType.ReturnStatement,
+    IRNodeType.Block
+  ].includes(node.type);
+}
+
+// Function to check if a node is an expression
+export function isExpression(node: IRNode): boolean {
+  return [
+    IRNodeType.StringLiteral,
+    IRNodeType.NumericLiteral,
+    IRNodeType.BooleanLiteral,
+    IRNodeType.NullLiteral,
+    IRNodeType.KeywordLiteral,
+    IRNodeType.Identifier,
+    IRNodeType.ArrayLiteral,
+    IRNodeType.ObjectLiteral,
+    IRNodeType.BinaryExpression,
+    IRNodeType.CallExpression,
+    IRNodeType.NewExpression,
+    IRNodeType.PropertyAccess
+  ].includes(node.type);
 }
 
 // This function should be used for nested blocks where identifying 

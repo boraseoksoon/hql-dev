@@ -1,4 +1,4 @@
-// src/hql-to-ir.ts
+// src/transpiler/hql-to-ir.ts
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
 
@@ -83,6 +83,12 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "*":
       case "/":
         return transformArithmetic(list, currentDir);
+      case "get":
+        // NEW: Handle property access directly
+        return transformPropertyAccess(list, currentDir);
+      case "return":
+        // NEW: Handle return statements directly
+        return transformReturnStatement(list, currentDir);
       default:
         break;
     }
@@ -107,7 +113,7 @@ function transformDef(list: ListNode, currentDir: string): IR.IRVariableDeclarat
 function transformImport(list: ListNode, currentDir: string): IR.IRNode {
   if (list.elements.length !== 2) throw new Error("import requires a string argument");
   const urlNode = list.elements[1] as LiteralNode;
-  if (typeof urlNode.value !== "string") throw new Error("import path must be a string");
+  if (typeof urlNode.value !== "string") throw new Error("import path must be a string literal");
   return {
     type: IR.IRNodeType.CallExpression,
     callee: { type: IR.IRNodeType.Identifier, name: "$$IMPORT" },
@@ -126,17 +132,16 @@ function transformDefn(list: ListNode, currentDir: string): IR.IRFunctionDeclara
     .filter(Boolean) as IR.IRNode[];
   const { params, namedParamIds } = transformParams(paramList);
   
-  // Wrap last anonymous function expression in a return call if needed
+  // For the last expression in the body, ensure it's properly returned
   if (bodyNodes.length > 0) {
     const lastNode = bodyNodes[bodyNodes.length - 1];
     if (lastNode.type === IR.IRNodeType.FunctionDeclaration &&
         (lastNode as IR.IRFunctionDeclaration).isAnonymous) {
+      // Replace with proper return statement
       bodyNodes[bodyNodes.length - 1] = {
-        type: IR.IRNodeType.CallExpression,
-        callee: { type: IR.IRNodeType.Identifier, name: "$RETURN_FUNCTION" },
-        arguments: [lastNode],
-        isNamedArgs: false
-      } as IR.IRCallExpression;
+        type: IR.IRNodeType.ReturnStatement,
+        argument: lastNode
+      } as IR.IRReturnStatement;
     }
   }
   
@@ -263,6 +268,46 @@ function transformStr(list: ListNode, currentDir: string): IR.IRCallExpression {
   } as IR.IRCallExpression;
 }
 
+/** (get obj "prop") => PropertyAccess */
+function transformPropertyAccess(list: ListNode, currentDir: string): IR.IRPropertyAccess {
+  if (list.elements.length !== 3) throw new Error("get requires object and property arguments");
+  
+  const obj = transformNode(list.elements[1], currentDir)!;
+  const prop = transformNode(list.elements[2], currentDir)!;
+  
+  // Determine if this should be computed (bracket) or direct (dot) access
+  let computed = true;
+  if (prop.type === IR.IRNodeType.StringLiteral) {
+    const propName = (prop as IR.IRStringLiteral).value;
+    computed = !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propName);
+  }
+  
+  return {
+    type: IR.IRNodeType.PropertyAccess,
+    object: obj,
+    property: prop,
+    computed
+  } as IR.IRPropertyAccess;
+}
+
+/** (return value) => ReturnStatement */
+function transformReturnStatement(list: ListNode, currentDir: string): IR.IRReturnStatement {
+  if (list.elements.length === 1) {
+    // return with no value
+    return {
+      type: IR.IRNodeType.ReturnStatement,
+      argument: null
+    } as IR.IRReturnStatement;
+  }
+  
+  // return with value
+  const valueNode = list.elements[1];
+  return {
+    type: IR.IRNodeType.ReturnStatement,
+    argument: transformNode(valueNode, currentDir)
+  } as IR.IRReturnStatement;
+}
+
 /** (let [var1 val1 var2 val2 ...] body...) => local scoped variables */
 function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
   if (list.elements.length < 3) throw new Error("let requires bindings and a body");
@@ -373,4 +418,3 @@ function transformParams(list: ListNode): { params: IR.IRParameter[], namedParam
   }
   return { params, namedParamIds: named };
 }
-

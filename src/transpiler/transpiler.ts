@@ -1,3 +1,4 @@
+// src/transpiler/transpiler.ts
 import { parse } from "./parser.ts";
 import { transformAST } from "./transformer.ts";
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
@@ -11,11 +12,16 @@ import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
  */
 export async function transpile(source: string, filePath: string = "."): Promise<string> {
   try {
+    // Parse source code to HQL AST
     const ast = parse(source);
+    
+    // Get directory for resolving relative imports
     const currentDir = dirname(resolve(filePath));
+    
+    // Track visited files to avoid circular dependencies
     const visited = new Set<string>([resolve(filePath)]);
     
-    // Transform the AST to JavaScript
+    // Transform the AST to JavaScript with ESM module format
     return await transformAST(ast, currentDir, visited, {
       module: 'esm'  // Always use ESM for top-level files
     });
@@ -32,13 +38,14 @@ export async function transpile(source: string, filePath: string = "."): Promise
  */
 export async function transpileFile(inputPath: string): Promise<string> {
   try {
+    // Convert to absolute path
     const absPath = resolve(inputPath);
     console.log(`Transpiling file: ${absPath}`);
     
     // Read the source file
     const source = await Deno.readTextFile(absPath);
     
-    // Transpile with full bundling of dependencies
+    // Transpile the source with proper path resolution
     return await transpile(source, absPath);
   } catch (error: any) {
     if (error instanceof Deno.errors.NotFound) {
@@ -63,12 +70,13 @@ export async function writeOutput(code: string, outputPath: string): Promise<voi
     try {
       await Deno.mkdir(outputDir, { recursive: true });
     } catch (error) {
+      // Ignore if directory already exists
       if (!(error instanceof Deno.errors.AlreadyExists)) {
         throw error;
       }
     }
     
-    // Write the main output file
+    // Write the output file
     await Deno.writeTextFile(outputPath, code);
     console.log(`Output written to: ${outputPath}`);
   } catch (error: any) {

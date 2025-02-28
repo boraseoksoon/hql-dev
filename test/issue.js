@@ -1,4 +1,4 @@
-const __module_simple3_4595 = (function() {
+const __module_simple3_157 = (function() {
   const exports = {};
   function sayBye(name) {
     return "Bye, " + name + "!"
@@ -8,9 +8,9 @@ const __module_simple3_4595 = (function() {
   return exports;
 })();
 
-const __module_simple2_760 = (function() {
+const __module_simple2_710 = (function() {
   const exports = {};
-  const mod3 = __module_simple3_4595;
+  const mod3 = __module_simple3_157;
   function sayHi(name) {
     return "Hi, " + name + "! " + mod3.sayBye(name)
   }
@@ -19,7 +19,7 @@ const __module_simple2_760 = (function() {
   return exports;
 })();
 
-const mod = __module_simple2_760;
+const mod = __module_simple2_710;
 function greet(name) {
   return mod.sayHi(name) + " Welcome to HQL."
 }

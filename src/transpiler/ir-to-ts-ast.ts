@@ -1,4 +1,4 @@
-// src/ir-to-ts-ast.ts
+// src/transpiler/ir-to-ts-ast.ts
 import * as IR from "./hql_ir.ts";
 import {
   TSNodeType,
@@ -124,6 +124,8 @@ function processImport(node: IR.IRNode): TSNode | null {
  * Main IR→TS dispatcher function.
  */
 function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
+  if (!node) return null;
+  
   switch (node.type) {
     case IR.IRNodeType.StringLiteral:
       return { type: TSNodeType.StringLiteral, text: JSON.stringify((node as IR.IRStringLiteral).value) };
@@ -170,6 +172,9 @@ function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
 
     case IR.IRNodeType.NewExpression:
       return convertNewExpression(node as IR.IRNewExpression);
+      
+    case IR.IRNodeType.PropertyAccess:
+      return convertPropertyAccess(node as IR.IRPropertyAccess);
 
     case IR.IRNodeType.VariableDeclaration:
       return convertVariableDeclaration(node as IR.IRVariableDeclaration);
@@ -182,13 +187,60 @@ function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
 
     case IR.IRNodeType.ExportDeclaration:
       return convertExportDeclaration(node as IR.IRExportDeclaration);
+      
+    case IR.IRNodeType.ReturnStatement:
+      return convertReturnStatement(node as IR.IRReturnStatement);
 
     case IR.IRNodeType.Block:
       return convertBlock(node as IR.IRBlock);
 
     default:
+      console.warn(`Unknown IR node type: ${node.type}`);
       return null;
   }
+}
+
+/**
+ * Convert a PropertyAccess node to TS AST
+ */
+function convertPropertyAccess(propAccess: IR.IRPropertyAccess): TSNode {
+  const obj = nodeToString(convertNode(propAccess.object));
+  const prop = convertNode(propAccess.property);
+  
+  if (propAccess.computed) {
+    // Use bracket notation: obj[prop]
+    return { 
+      type: TSNodeType.Raw, 
+      code: `${obj}[${nodeToString(prop)}]` 
+    };
+  } else {
+    // Use dot notation: obj.prop - for string literals
+    if (prop?.type === TSNodeType.StringLiteral) {
+      const propName = JSON.parse((prop as TSStringLiteral).text);
+      return { 
+        type: TSNodeType.Raw, 
+        code: `${obj}.${propName}` 
+      };
+    } else {
+      // Fallback to bracket notation if not a string literal
+      return { 
+        type: TSNodeType.Raw, 
+        code: `${obj}[${nodeToString(prop)}]` 
+      };
+    }
+  }
+}
+
+/**
+ * Convert a ReturnStatement node to TS AST
+ */
+function convertReturnStatement(returnStmt: IR.IRReturnStatement): TSNode {
+  if (returnStmt.argument === null) {
+    return { type: TSNodeType.Raw, code: "return" };
+  }
+  
+  const arg = nodeToString(convertNode(returnStmt.argument));
+  return { type: TSNodeType.Raw, code: `return ${arg}` };
 }
 
 /**
@@ -213,7 +265,7 @@ function convertObjectLiteral(obj: IR.IRObjectLiteral): TSNode {
     }
     
     // If key is a string literal without special characters, we can use normal syntax
-    if (key.type === TSNodeType.StringLiteral) {
+    if (key?.type === TSNodeType.StringLiteral) {
       const keyStr = (key as TSStringLiteral).text;
       const unquoted = keyStr.slice(1, -1); // Remove quotes
       
@@ -244,16 +296,13 @@ function convertBinaryExpression(bin: IR.IRBinaryExpression): TSNode {
  * Convert a call expression to a TS node, with special handling.
  */
 function convertCallExpression(call: IR.IRCallExpression): TSNode {
+  // Skip import calls - handled separately
   if (isImportCall(call)) return { type: TSNodeType.Raw, code: "" };
   
-  if (isPropertyAccess(call)) return handlePropertyAccess(call);
-  
+  // Handle string concatenation special case
   if (isStringConcatenation(call)) return handleStringConcatenation(call);
   
-  if (isReturnCall(call)) return handleReturnExpression(call);
-  
-  if (isHigherOrderReturnCall(call)) return handleHigherOrderReturn(call);
-  
+  // Regular function call
   const callee = convertNode(call.callee);
   const args = call.arguments.map(arg => nodeToString(convertNode(arg)));
   
@@ -266,35 +315,6 @@ function convertCallExpression(call: IR.IRCallExpression): TSNode {
 function isImportCall(call: IR.IRCallExpression): boolean {
   return call.callee.type === IR.IRNodeType.Identifier &&
          (call.callee as IR.IRIdentifier).name === "$$IMPORT";
-}
-
-/**
- * Check if a call is a property access.
- */
-function isPropertyAccess(call: IR.IRCallExpression): boolean {
-  return call.callee.type === IR.IRNodeType.Identifier &&
-         (call.callee as IR.IRIdentifier).name === "get" &&
-         call.arguments.length >= 2;
-}
-
-/**
- * Handle property access.
- */
-function handlePropertyAccess(call: IR.IRCallExpression): TSNode {
-  const obj = convertNode(call.arguments[0]);
-  const prop = call.arguments[1];
-  
-  if (prop.type === IR.IRNodeType.StringLiteral) {
-    const propName = (prop as IR.IRStringLiteral).value;
-    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propName)) {
-      return { type: TSNodeType.Raw, code: `${nodeToString(obj)}.${propName}` };
-    } else {
-      return { type: TSNodeType.Raw, code: `${nodeToString(obj)}[${JSON.stringify(propName)}]` };
-    }
-  }
-  
-  const propNode = convertNode(prop);
-  return { type: TSNodeType.Raw, code: `${nodeToString(obj)}[${nodeToString(propNode)}]` };
 }
 
 /**
@@ -315,41 +335,22 @@ function handleStringConcatenation(call: IR.IRCallExpression): TSNode {
 }
 
 /**
- * Check if a call is a return call.
+ * Convert a new expression.
  */
-function isReturnCall(call: IR.IRCallExpression): boolean {
-  if (!call.callee) return false;
-  return call.callee.type === IR.IRNodeType.Identifier &&
-         (call.callee as IR.IRIdentifier).name === "$$RETURN";
+function convertNewExpression(newExpr: IR.IRNewExpression): TSNode {
+  const callee = nodeToString(convertNode(newExpr.callee));
+  const args = newExpr.arguments.map(arg => nodeToString(convertNode(arg)));
+  return { type: TSNodeType.Raw, code: `new ${callee}(${args.join(", ")})` };
 }
 
 /**
- * Handle a return expression.
+ * Convert a variable declaration.
  */
-function handleReturnExpression(call: IR.IRCallExpression): TSNode {
-  if (call.arguments.length === 0) return { type: TSNodeType.Raw, code: "return" };
-  const arg = nodeToString(convertNode(call.arguments[0]));
-  return { type: TSNodeType.Raw, code: `return ${arg}` };
-}
-
-/**
- * Check if a call is a higher-order function return.
- */
-function isHigherOrderReturnCall(call: IR.IRCallExpression): boolean {
-  return call.callee.type === IR.IRNodeType.Identifier &&
-         (call.callee as IR.IRIdentifier).name === "$RETURN_FUNCTION";
-}
-
-/**
- * Handle a higher-order function return.
- */
-function handleHigherOrderReturn(call: IR.IRCallExpression): TSNode {
-  if (call.arguments.length === 0) return { type: TSNodeType.Raw, code: "return" };
-  const arg = call.arguments[0];
-  if (arg.type === IR.IRNodeType.FunctionDeclaration) {
-    return convertFunctionDeclaration(arg as IR.IRFunctionDeclaration);
-  }
-  return { type: TSNodeType.Raw, code: `return ${nodeToString(convertNode(arg))}` };
+function convertVariableDeclaration(vd: IR.IRVariableDeclaration): TSNode {
+  if (isImport(vd)) return null;
+  const varName = vd.id.name;
+  const initializer = nodeToString(convertNode(vd.init));
+  return { type: TSNodeType.Raw, code: `const ${varName} = ${initializer};` };
 }
 
 /**
@@ -383,18 +384,16 @@ function convertFunctionBody(block: IR.IRBlock, destructuring?: string): string 
   const statements = [...block.body];
   if (statements.length === 0) return "{}";
   
-  // Check if the last statement is not statement-like and is not already a return call.
+  // If the last statement is an expression (not a statement), wrap it in a return
   const lastIndex = statements.length - 1;
   const lastStmt = statements[lastIndex];
-  if (!isStatementLike(lastStmt)) {
-    if (!(lastStmt.type === IR.IRNodeType.CallExpression && isReturnCall(lastStmt as IR.IRCallExpression))) {
-      statements[lastIndex] = {
-        type: IR.IRNodeType.CallExpression,
-        callee: { type: IR.IRNodeType.Identifier, name: "$$RETURN" },
-        arguments: [lastStmt],
-        isNamedArgs: false
-      } as IR.IRCallExpression;
-    }
+  
+  if (lastStmt && IR.isExpression(lastStmt) && !IR.isStatementLike(lastStmt) 
+      && lastStmt.type !== IR.IRNodeType.ReturnStatement) {
+    statements[lastIndex] = {
+      type: IR.IRNodeType.ReturnStatement,
+      argument: lastStmt
+    } as IR.IRReturnStatement;
   }
   
   const lines = statements
@@ -407,25 +406,6 @@ function convertFunctionBody(block: IR.IRBlock, destructuring?: string): string 
   if (destructuring) lines.unshift(destructuring);
   const indentedLines = lines.map(line => `  ${line}`);
   return `{\n${indentedLines.join("\n")}\n}`;
-}
-
-/**
- * Convert a new expression.
- */
-function convertNewExpression(newExpr: IR.IRNewExpression): TSNode {
-  const callee = nodeToString(convertNode(newExpr.callee));
-  const args = newExpr.arguments.map(arg => nodeToString(convertNode(arg)));
-  return { type: TSNodeType.Raw, code: `new ${callee}(${args.join(", ")})` };
-}
-
-/**
- * Convert a variable declaration.
- */
-function convertVariableDeclaration(vd: IR.IRVariableDeclaration): TSNode {
-  if (isImport(vd)) return null;
-  const varName = vd.id.name;
-  const initializer = nodeToString(convertNode(vd.init));
-  return { type: TSNodeType.Raw, code: `const ${varName} = ${initializer};` };
 }
 
 /**
@@ -461,21 +441,6 @@ function convertBlock(block: IR.IRBlock): TSNode {
 }
 
 /**
- * Check if a node is "statement-like" (e.g., variable declarations, function declarations, etc.).
- */
-function isStatementLike(node: IR.IRNode): boolean {
-  switch (node.type) {
-    case IR.IRNodeType.VariableDeclaration:
-    case IR.IRNodeType.FunctionDeclaration:
-    case IR.IRNodeType.ExportDeclaration:
-    case IR.IRNodeType.EnumDeclaration:
-      return true;
-    default:
-      return false;
-  }
-}
-
-/**
  * Convert a TS node (or array of nodes) to a string.
  */
 function nodeToString(node: TSNode | TSNode[] | null): string {
@@ -498,6 +463,7 @@ function nodeToString(node: TSNode | TSNode[] | null): string {
     case TSNodeType.ExportDeclaration:
       return "";
     default:
+      console.warn(`Unhandled TS node type in nodeToString: ${(node as any).type}`);
       return "";
   }
 }

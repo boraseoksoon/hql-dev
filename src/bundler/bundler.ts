@@ -1,4 +1,4 @@
-// src/bundler.ts
+// src/bundler/bundler.ts
 import { parse } from "../transpiler/parser.ts";
 import { expandMacros } from "../macro.ts";
 import { transformAST } from "../transpiler/transformer.ts";
@@ -9,10 +9,10 @@ import { HQLNode, ListNode, SymbolNode, LiteralNode } from "../transpiler/hql_as
  * A module with its dependencies
  */
 interface Module {
-  id: string;              // Module identifier
-  path: string;            // Absolute path
+  id: string;                       // Module identifier
+  path: string;                     // Absolute path
   dependencies: Map<string, string>; // LocalImportId -> DependencyPath
-  code: string;            // Transpiled code
+  code: string;                     // Transpiled code
 }
 
 /**
@@ -26,18 +26,9 @@ function extractImports(ast: HQLNode[]): Map<string, string> {
       const list = node as ListNode;
       
       // Check for (def moduleId (import "./path.hql"))
-      if (list.elements.length >= 3 && 
-          list.elements[0]?.type === "symbol" && 
-          list.elements[0].name === "def" &&
-          list.elements[1]?.type === "symbol" &&
-          list.elements[2]?.type === "list" &&
-          list.elements[2].elements.length >= 2 &&
-          list.elements[2].elements[0]?.type === "symbol" &&
-          list.elements[2].elements[0].name === "import" &&
-          list.elements[2].elements[1]?.type === "literal") {
-        
-        const moduleId = (list.elements[1] as SymbolNode).name;
-        const importPath = (list.elements[2].elements[1] as LiteralNode).value as string;
+      if (isImportDeclaration(list)) {
+        const moduleId = getImportModuleId(list);
+        const importPath = getImportPath(list);
         
         if (importPath && importPath.endsWith('.hql')) {
           imports.set(moduleId, importPath);
@@ -50,13 +41,40 @@ function extractImports(ast: HQLNode[]): Map<string, string> {
 }
 
 /**
+ * Check if a list node is an import declaration
+ */
+function isImportDeclaration(list: ListNode): boolean {
+  return list.elements.length >= 3 && 
+      list.elements[0]?.type === "symbol" && 
+      list.elements[0].name === "def" &&
+      list.elements[1]?.type === "symbol" &&
+      list.elements[2]?.type === "list" &&
+      list.elements[2].elements.length >= 2 &&
+      list.elements[2].elements[0]?.type === "symbol" &&
+      list.elements[2].elements[0].name === "import" &&
+      list.elements[2].elements[1]?.type === "literal";
+}
+
+/**
+ * Get the module ID from an import declaration
+ */
+function getImportModuleId(list: ListNode): string {
+  return (list.elements[1] as SymbolNode).name;
+}
+
+/**
+ * Get the import path from an import declaration
+ */
+function getImportPath(list: ListNode): string {
+  return (list.elements[2].elements[1] as LiteralNode).value as string;
+}
+
+/**
  * Fix higher-order function syntax in code
  */
 function fixSpecialSyntax(code: string): string {
-  // Fix $RETURN_FUNCTION placeholder
-  const fixed = code.replace(/\$RETURN_FUNCTION\s*\(\s*(function\s*\([^)]*\))/g, 'return $1');
-  
-  return fixed;
+  // Fix $RETURN_FUNCTION placeholder for higher-order functions
+  return code.replace(/\$RETURN_FUNCTION\s*\(\s*(function\s*\([^)]*\))/g, 'return $1');
 }
 
 /**
@@ -110,7 +128,7 @@ async function processModule(
     const fullPath = resolve(join(dirname(absPath), importPath));
     dependencies.set(importId, fullPath);
     
-    // Process this dependency
+    // Process this dependency with a new visited set to avoid false positives
     await processModule(fullPath, allModules, new Set([...visited]));
   }
   
@@ -208,9 +226,8 @@ function generateBundle(entryPath: string, modules: Map<string, Module>): string
       // Get the module ID for this dependency
       const depModuleId = moduleMap.get(depPath);
       if (depModuleId) {
-        // Replace the import statement
-        const importRegex = new RegExp(`const\\s+${localId}\\s+=\\s+\\(function\\(\\)\\s*\\{[\\s\\S]*?return exports;\\s*\\}\\)\\(\\);`, 'g');
-        moduleCode = moduleCode.replace(importRegex, `const ${localId} = ${depModuleId};`);
+        // Replace the import statement with a reference to the already-processed module
+        moduleCode = replaceImportStatement(moduleCode, localId, depModuleId);
       }
     }
     
@@ -233,18 +250,39 @@ function generateBundle(entryPath: string, modules: Map<string, Module>): string
     const depModuleId = moduleMap.get(depPath);
     if (depModuleId) {
       // Replace the import statement
-      const importRegex = new RegExp(`const\\s+${localId}\\s+=\\s+\\(function\\(\\)\\s*\\{[\\s\\S]*?return exports;\\s*\\}\\)\\(\\);`, 'g');
-      entryCode = entryCode.replace(importRegex, `const ${localId} = ${depModuleId};`);
+      entryCode = replaceImportStatement(entryCode, localId, depModuleId);
     }
   }
   
   // Fix CommonJS exports to ESM exports in entry module
-  entryCode = entryCode.replace(/exports\.(\w+)\s*=\s*(\w+)\s*;/g, 'export { $2 as $1 };');
+  entryCode = convertCommonJSToESM(entryCode);
   
   // Add the entry code
   bundled += entryCode;
   
   return bundled;
+}
+
+/**
+ * Replace import statements with module references
+ */
+function replaceImportStatement(code: string, localId: string, moduleId: string): string {
+  // Create a regex that matches the entire import statement for this local ID
+  const importRegex = new RegExp(
+    `const\\s+${localId}\\s+=\\s+\\(function\\(\\)\\s*\\{[\\s\\S]*?return exports;\\s*\\}\\)\\(\\);`, 
+    'g'
+  );
+  
+  // Replace with a reference to the already processed module
+  return code.replace(importRegex, `const ${localId} = ${moduleId};`);
+}
+
+/**
+ * Convert CommonJS exports to ESM exports
+ */
+function convertCommonJSToESM(code: string): string {
+  // Replace exports.name = value; with export { value as name };
+  return code.replace(/exports\.(\w+)\s*=\s*(\w+)\s*;/g, 'export { $2 as $1 };');
 }
 
 /**
@@ -274,24 +312,30 @@ export async function bundleJSModule(filePath: string, visited = new Set<string>
   let processedSource = source;
   let match;
   
+  // Process each HQL import
   while ((match = hqlImportRegex.exec(source)) !== null) {
     const [fullMatch, importName, importPath] = match;
     const fullPath = join(dirname(filePath), importPath);
     
     try {
-      // Bundle the HQL file
-      const bundled = await bundleFile(fullPath, new Set([...visited]), true);
-      
-      // Replace with IIFE
-      const iife = `
+      // Bundle the HQL file, avoiding circular dependencies
+      if (!visited.has(fullPath)) {
+        visited.add(fullPath);
+        const bundled = await bundleFile(fullPath, new Set([...visited]), true);
+        
+        // Replace with IIFE
+        const iife = `
 // HQL module bundled from ${importPath}
 const ${importName} = (function() {
   const exports = {};
 ${bundled.split('\n').map(line => `  ${line}`).join('\n')}
   return exports;
 })();`;
-      
-      processedSource = processedSource.replace(fullMatch, iife);
+        
+        processedSource = processedSource.replace(fullMatch, iife);
+      } else {
+        console.warn(`Circular dependency detected: ${fullPath}`);
+      }
     } catch (error) {
       console.error(`Error bundling HQL import ${importPath}:`, error);
     }
