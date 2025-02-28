@@ -67,6 +67,9 @@ export async function transformAST(
 /**
  * Process JS imports by traversing the TS AST and handling relative .js modules appropriately
  */
+/**
+ * Process JS imports by traversing the TS AST and handling relative .js modules appropriately
+ */
 async function processJSImportsAST(
   ast: TSSourceFile, 
   currentDir: string, 
@@ -76,14 +79,14 @@ async function processJSImportsAST(
   for (let i = 0; i < ast.statements.length; i++) {
     const stmt = ast.statements[i];
     
-    // Look for raw import statements (for JS files)
+    // Look for raw import statements
     if (stmt.type === TSNodeType.Raw) {
       const raw = stmt as TSRaw;
       
-      // Find JS import statements
-      if (raw.code.startsWith("import") && raw.code.includes('.js')) {
+      // Find import statements (both JS and HQL)
+      if (raw.code.startsWith("import")) {
         // Extract the module path from the import statement
-        const match = raw.code.match(/["']([^"']+\.js)["']/);
+        const match = raw.code.match(/["']([^"']+)["']/);
         if (match) {
           const importPath = match[1];
           
@@ -92,31 +95,83 @@ async function processJSImportsAST(
             try {
               const fullPath = join(currentDir, importPath);
               
-              // Avoid circular dependencies
-              if (!visited.has(fullPath)) {
-                visited.add(fullPath);
+              // Handle HQL imports specially
+              if (importPath.endsWith('.hql')) {
+                // Check if the corresponding JS file exists or should be created
+                const jsPath = fullPath.replace(/\.hql$/, '.js');
                 
-                // Check if the JS file has ESM syntax
-                const jsContent = await Deno.readTextFile(fullPath);
-                if (detectESMSyntax(jsContent)) {
-                  // For ESM modules, don't inline - keep the import statement as is
-                  // Just modify the path if needed
-                  continue;
-                } else {
-                  // Only inline non-ESM JS modules
-                  const bundled = await bundleJSModule(fullPath, new Set<string>([...visited]));
-                  
-                  // Create a comment about the inlined module
-                  ast.statements[i] = { 
-                    type: TSNodeType.Raw, 
-                    code: `// Inlined from ${importPath}\n${bundled}` 
-                  };
+                // Update the import statement to use .js instead of .hql
+                const newImportPath = importPath.replace(/\.hql$/, '.js');
+                ast.statements[i] = { 
+                  type: TSNodeType.Raw, 
+                  code: raw.code.replace(importPath, newImportPath) 
+                };
+                
+                // If we haven't already visited this HQL file, process it
+                if (!visited.has(fullPath)) {
+                  visited.add(fullPath);
+                  try {
+                    console.log(`Transpiling HQL import: ${fullPath}`);
+                    const bundled = await bundleFile(fullPath, new Set([...visited]), true);
+                    await Deno.writeTextFile(jsPath, bundled);
+                    console.log(`Generated JS from HQL import: ${jsPath}`);
+                  } catch (error) {
+                    console.error(`Error bundling HQL import ${importPath}:`, error);
+                  }
                 }
-              } else {
-                console.warn(`Circular dependency detected: ${fullPath}`);
+              }
+              // Handle JS imports
+              else if (importPath.endsWith('.js')) {
+                // Avoid circular dependencies
+                if (!visited.has(fullPath)) {
+                  visited.add(fullPath);
+                  
+                  // Check if the JS file exists
+                  const jsContent = await Deno.readTextFile(fullPath);
+                  
+                  // Look for HQL imports in the JS file
+                  const hqlImportRegex = /import\s+(?:\*\s+as\s+\w+|\w+|\{[^}]*\})\s+from\s+["']([^"']+\.hql)["'];/g;
+                  let hqlMatch;
+                  let hasHqlImports = false;
+                  
+                  while ((hqlMatch = hqlImportRegex.exec(jsContent)) !== null) {
+                    hasHqlImports = true;
+                    const hqlImportPath = hqlMatch[1];
+                    
+                    // Process HQL imports in the JS file
+                    const hqlFullPath = resolve(join(dirname(fullPath), hqlImportPath));
+                    const hqlJsPath = hqlFullPath.replace(/\.hql$/, '.js');
+                    
+                    if (!visited.has(hqlFullPath)) {
+                      visited.add(hqlFullPath);
+                      try {
+                        console.log(`Transpiling nested HQL import: ${hqlFullPath}`);
+                        const hqlBundled = await bundleFile(hqlFullPath, new Set([...visited]), true);
+                        await Deno.writeTextFile(hqlJsPath, hqlBundled);
+                        console.log(`Generated JS from nested HQL import: ${hqlJsPath}`);
+                      } catch (error) {
+                        console.error(`Error bundling nested HQL import ${hqlImportPath}:`, error);
+                      }
+                    }
+                  }
+                  
+                  // If this JS file imports HQL files, we need to rewrite those imports
+                  if (hasHqlImports) {
+                    // Rewrite the JS file with updated imports
+                    let updatedContent = jsContent;
+                    const updateRegex = /import\s+(?:\*\s+as\s+\w+|\w+|\{[^}]*\})\s+from\s+["']([^"']+)\.hql["'];/g;
+                    updatedContent = updatedContent.replace(updateRegex, (match, path) => {
+                      return match.replace(`${path}.hql`, `${path}.js`);
+                    });
+                    
+                    // Write the updated JS file
+                    await Deno.writeTextFile(fullPath, updatedContent);
+                    console.log(`Updated JS imports in: ${fullPath}`);
+                  }
+                }
               }
             } catch (error) {
-              console.error(`Error processing JS module ${importPath}:`, error);
+              console.error(`Error processing import ${importPath}:`, error);
             }
           }
         }

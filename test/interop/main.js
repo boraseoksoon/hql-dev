@@ -1,5 +1,5 @@
 // Module: /Users/seoksoonjang/Desktop/hql/test/interop/hql-submodule.hql
-const __module_hql_submodule_7953 = (function() {
+const __module_hql_submodule_9536 = (function() {
   const exports = {};
   function hello(name) {
     return "hello, " + name
@@ -14,9 +14,9 @@ const __module_hql_submodule_7953 = (function() {
 })();
 
 // Module: /Users/seoksoonjang/Desktop/hql/test/interop/hql-module.hql
-const __module_hql_module_8203 = (function() {
+const __module_hql_module_1527 = (function() {
   const exports = {};
-  const hqlSubMod = __module_hql_submodule_7953;
+  const hqlSubMod = __module_hql_submodule_9536;
   import * as jsUtil_module from "./js-util.js";
   const jsUtil = jsUtil_module.default !== undefined ? jsUtil_module.default : jsUtil_module;
   function greet(name) {
@@ -27,7 +27,7 @@ const __module_hql_module_8203 = (function() {
   return exports;
 })();
 
-const hqlMod = __module_hql_module_8203;
+const hqlMod = __module_hql_module_1527;
 import * as jsMod_module from "./js-module.js";
 const jsMod = jsMod_module.default !== undefined ? jsMod_module.default : jsMod_module;
 import * as mathMod_module from "npm:mathjs";

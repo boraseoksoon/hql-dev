@@ -1,27 +1,27 @@
 // Module: /Users/seoksoonjang/Desktop/hql/test/simple3.hql
-const __module_simple3_9035 = (function() {
+const __module_simple3_6898 = (function() {
   const exports = {};
   function sayBye(name) {
     return "Bye, " + name + "!"
   }
   exports.sayBye = sayBye;
-  
+
   return exports;
 })();
 
 // Module: /Users/seoksoonjang/Desktop/hql/test/simple2.hql
-const __module_simple2_7639 = (function() {
+const __module_simple2_2370 = (function() {
   const exports = {};
-  const mod3 = __module_simple3_9035;
+  const mod3 = __module_simple3_6898;
   function sayHi(name) {
     return "Hi, " + name + "! " + mod3.sayBye(name)
   }
   exports.sayHi = sayHi;
-  
+
   return exports;
 })();
 
-const mod = __module_simple2_7639;
+const mod = __module_simple2_2370;
 function greet(name) {
   return mod.sayHi(name) + " Welcome to HQL."
 }
