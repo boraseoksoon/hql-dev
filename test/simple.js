@@ -1,6 +1,6 @@
-const mod = (function(){
+const mod = (function() {
   const exports = {};
-  const mod3 = (function(){
+  const mod3 = (function() {
   const exports = {};
   function sayBye(name) {
   return "Bye, " + name + "!"

@@ -1,10 +1,10 @@
-// src/transpiler/transformer.ts - Updated to fix JS module handling
+// src/transpiler/transformer.ts - With enhanced module handling
 import { HQLNode } from "./hql_ast.ts";
 import { transformToIR } from "./hql-to-ir.ts";
 import { convertIRToTSAST } from "./ir-to-ts-ast.ts";
 import { generateTypeScript, CodeGenerationOptions } from "./ts-ast-to-code.ts";
-import { join, dirname } from "jsr:@std/path@1.0.8"; // Ensure dirname is imported
-import { bundleFile } from "../bundler/bundler.ts";
+import { join } from "jsr:@std/path@1.0.8";
+import { bundleFile, bundleJSModule } from "../bundler/bundler.ts";
 
 export interface TransformOptions {
   target?: 'javascript' | 'typescript';
@@ -56,20 +56,20 @@ export async function transformAST(
   return jsCode;
 }
 
-// This is the main function that processes the generated JavaScript
+/**
+ * Post-process the generated JavaScript code to bundle imports.
+ */
 async function postProcessGeneratedCode(
   code: string,
   currentDir: string,
   visited: Set<string>,
   useCommonJS: boolean
 ): Promise<string> {
-  let processed = code;
+  // First handle any remaining HQL imports
+  let processed = await processRemainingHqlImports(code, currentDir, visited);
   
-  // Process HQL imports first
-  processed = await processHQLImports(processed, currentDir, visited);
-  
-  // Process JS imports
-  processed = await processJSImports(processed, currentDir, visited);
+  // Then handle JS imports
+  processed = await processRemainingJsImports(processed, currentDir, visited);
   
   // Format exports if CommonJS is used
   if (useCommonJS) {
@@ -83,102 +83,116 @@ async function postProcessGeneratedCode(
   return processed;
 }
 
-// Process HQL imports
-async function processHQLImports(
+/**
+ * Process any remaining HQL imports in the code.
+ */
+async function processRemainingHqlImports(
   code: string,
   currentDir: string,
   visited: Set<string>
 ): Promise<string> {
-  // Regex for HQL imports in initial transformation (IIFE with comment)
-  const iifeRegex = /const\s+(\w+)\s+=\s+\(function\(\)[\s\S]*?\/\/\s+bundled\s+HQL\s+module:\s+([\w\d./\\-]+)/g;
+  // Use separate patterns for different import types for better matching
+  const defaultImportPattern = /import\s+(\w+)\s+from\s+["']([^"']+\.hql)["'];/g;
+  const namedImportPattern = /import\s+\{\s*([^}]+)\s*\}\s+from\s+["']([^"']+\.hql)["'];/g;
+  const namespaceImportPattern = /import\s+\*\s+as\s+(\w+)\s+from\s+["']([^"']+\.hql)["'];/g;
   
   let processed = code;
-  let match;
   
-  // Process IIFE imports (from HQL files importing HQL)
-  while ((match = iifeRegex.exec(code)) !== null) {
-    const [partialMatch, importName, importPath] = match;
+  // Handle named imports first
+  let match;
+  while ((match = namedImportPattern.exec(code)) !== null) {
+    const [fullMatch, namedImports, importPath] = match;
+    
+    // Skip non-local imports
+    if (!importPath.startsWith('./') && !importPath.startsWith('../')) continue;
+    
     const fullPath = join(currentDir, importPath);
     
-    // Find the full IIFE to replace
-    const fullIIFEPattern = new RegExp(`(const\\s+${importName}\\s+=\\s+\\(function\\(\\)[\\s\\S]*?return\\s+exports;\\s*\\}\\)\\(\\);)`);
-    const fullMatch = fullIIFEPattern.exec(processed);
-    
-    if (fullMatch) {
-      try {
-        const bundled = await bundleFile(fullPath, visited, true);
-        const replacement = `const ${importName} = (function(){\n  const exports = {};\n  ${bundled}\n  return exports;\n})();`;
-        processed = processed.replace(fullMatch[1], replacement);
-      } catch (e) {
-        console.error(`Error bundling HQL import ${importPath}:`, e);
-      }
+    try {
+      // Bundle the HQL file
+      const bundledHql = await bundleFile(fullPath, visited, true);
+      
+      // Parse the named imports
+      const importItems = namedImports
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+      
+      const tempVar = `__hql_mod_${Math.floor(Math.random() * 10000)}`;
+      
+      // Create variable declarations for each named import
+      const importVars = importItems.map(item => {
+        const [name, alias] = item.split(/\s+as\s+/).map(s => s.trim());
+        const localName = alias || name;
+        return `const ${localName} = ${tempVar}.${name};`;
+      });
+      
+      // Create replacement
+      const replacement = `// Bundled HQL module from ${importPath}
+const ${tempVar} = (function() {
+  const exports = {};
+  ${bundledHql}
+  return exports;
+})();
+${importVars.join('\n')}`;
+      
+      processed = processed.replace(fullMatch, replacement);
+    } catch (error) {
+      console.error(`Error processing named HQL import ${importPath}:`, error);
     }
   }
   
-  return processed;
-}
-
-// Process JS imports
-async function processJSImports(
-  code: string,
-  currentDir: string,
-  visited: Set<string>
-): Promise<string> {
-  // Match ES6 import statements for local JS files
-  const regex = /import\s+(\w+|\{[^}]*\}|\*\s+as\s+\w+)\s+from\s+["']([^"']+\.js)["'];/g;
-  let processed = code;
-  let match;
-  
-  // Process imports
-  while ((match = regex.exec(code)) !== null) {
-    const [fullMatch, importSpecifier, importPath] = match;
+  // Handle default imports
+  while ((match = defaultImportPattern.exec(processed)) !== null) {
+    const [fullMatch, importName, importPath] = match;
     
-    // Only process local relative paths
-    if (importPath.startsWith("./") || importPath.startsWith("../")) {
-      const fullPath = join(currentDir, importPath);
+    // Skip non-local imports
+    if (!importPath.startsWith('./') && !importPath.startsWith('../')) continue;
+    
+    const fullPath = join(currentDir, importPath);
+    
+    try {
+      // Bundle the HQL file
+      const bundledHql = await bundleFile(fullPath, visited, true);
       
-      try {
-        // Read the JS file content
-        const jsContent = await Deno.readTextFile(fullPath);
-        
-        // Transform ES module syntax to CommonJS style for use in IIFE
-        const transformedContent = transformJsForIife(jsContent);
-        
-        // Process different import types
-        if (importSpecifier.startsWith('{')) {
-          // Named imports
-          const namedImports = importSpecifier
-            .replace(/^\{\s*|\s*\}$/g, '') // Remove braces
-            .split(',')
-            .map(s => s.trim())
-            .filter(s => s.length > 0);
-          
-          const tempVar = `__js_mod_${Math.floor(Math.random() * 10000)}`;
-          let replacement = `// Bundled JS module from ${importPath}\nconst ${tempVar} = (function() {\n  const exports = {};\n  ${transformedContent}\n  return exports;\n})();\n`;
-          
-          // Add each named import
-          for (const item of namedImports) {
-            const parts = item.split(/\s+as\s+/);
-            const name = parts[0].trim();
-            const alias = parts.length > 1 ? parts[1].trim() : name;
-            replacement += `const ${alias} = ${tempVar}.${name};\n`;
-          }
-          
-          processed = processed.replace(fullMatch, replacement);
-        } else if (importSpecifier.startsWith('*')) {
-          // Namespace import
-          const namespaceVar = importSpecifier.replace(/^\*\s+as\s+/, '');
-          const replacement = `// Bundled JS module from ${importPath}\nconst ${namespaceVar} = (function() {\n  const exports = {};\n  ${transformedContent}\n  return exports;\n})();`;
-          processed = processed.replace(fullMatch, replacement);
-        } else {
-          // Default import
-          const importName = importSpecifier.trim();
-          const replacement = `// Bundled JS module from ${importPath}\nconst ${importName} = (function() {\n  const exports = {};\n  ${transformedContent}\n  return exports;\n})();`;
-          processed = processed.replace(fullMatch, replacement);
-        }
-      } catch (e) {
-        console.error(`Error processing JS import ${importPath}:`, e);
-      }
+      // Create replacement
+      const replacement = `// Bundled HQL module from ${importPath}
+const ${importName} = (function() {
+  const exports = {};
+  ${bundledHql}
+  return exports;
+})();`;
+      
+      processed = processed.replace(fullMatch, replacement);
+    } catch (error) {
+      console.error(`Error processing default HQL import ${importPath}:`, error);
+    }
+  }
+  
+  // Handle namespace imports
+  while ((match = namespaceImportPattern.exec(processed)) !== null) {
+    const [fullMatch, namespaceName, importPath] = match;
+    
+    // Skip non-local imports
+    if (!importPath.startsWith('./') && !importPath.startsWith('../')) continue;
+    
+    const fullPath = join(currentDir, importPath);
+    
+    try {
+      // Bundle the HQL file
+      const bundledHql = await bundleFile(fullPath, visited, true);
+      
+      // Create replacement
+      const replacement = `// Bundled HQL module from ${importPath}
+const ${namespaceName} = (function() {
+  const exports = {};
+  ${bundledHql}
+  return exports;
+})();`;
+      
+      processed = processed.replace(fullMatch, replacement);
+    } catch (error) {
+      console.error(`Error processing namespace HQL import ${importPath}:`, error);
     }
   }
   
@@ -186,42 +200,149 @@ async function processJSImports(
 }
 
 /**
- * Transform JS with ES module syntax for use in an IIFE.
- * This converts export statements to CommonJS style exports
- * while preserving template literals.
+ * Process any remaining JS imports in the code.
  */
-function transformJsForIife(jsContent: string): string {
-  // Remove any "export" keyword from function, variable, or class declarations.
-  // (A simple regex; adjust if your JS uses more complex patterns.)
-  let processed = jsContent.replace(/\bexport\s+(?=function\b)/g, "");
-  processed = processed.replace(/\bexport\s+(?=const\b)/g, "");
-  processed = processed.replace(/\bexport\s+(?=let\b)/g, "");
-  processed = processed.replace(/\bexport\s+(?=var\b)/g, "");
-  processed = processed.replace(/\bexport\s+(?=class\b)/g, "");
-  // Also remove any "export default" (if present)
-  processed = processed.replace(/\bexport\s+default\s+/g, "");
-  // Finally, remove ES6 module import statements (they’re handled separately)
-  processed = processed.replace(/import\s+.*?from\s+["'][^"']+["'];/g, "// import handled separately");
+async function processRemainingJsImports(
+  code: string,
+  currentDir: string,
+  visited: Set<string>
+): Promise<string> {
+  // Use separate patterns for different import types
+  const defaultImportPattern = /import\s+(\w+)\s+from\s+["']([^"']+\.js)["'];/g;
+  const namedImportPattern = /import\s+\{\s*([^}]+)\s*\}\s+from\s+["']([^"']+\.js)["'];/g;
+  const namespaceImportPattern = /import\s+\*\s+as\s+(\w+)\s+from\s+["']([^"']+\.js)["'];/g;
+  
+  let processed = code;
+  
+  // Handle named imports first
+  let match;
+  while ((match = namedImportPattern.exec(code)) !== null) {
+    const [fullMatch, namedImports, importPath] = match;
+    
+    // Skip non-local imports
+    if (!importPath.startsWith('./') && !importPath.startsWith('../')) continue;
+    
+    const fullPath = join(currentDir, importPath);
+    
+    try {
+      // Read and bundle the JS file
+      const jsContent = await bundleJSModule(fullPath, visited);
+      
+      // Parse the named imports
+      const importItems = namedImports
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+      
+      const tempVar = `__js_mod_${Math.floor(Math.random() * 10000)}`;
+      
+      // Create variable declarations for each named import
+      const importVars = importItems.map(item => {
+        const [name, alias] = item.split(/\s+as\s+/).map(s => s.trim());
+        const localName = alias || name;
+        return `const ${localName} = ${tempVar}.${name};`;
+      });
+      
+      // Replace the import
+      const replacement = `// Bundled JS module from ${importPath}
+const ${tempVar} = (function() {
+  const exports = {};
+  ${jsContent}
+  return exports;
+})();
+${importVars.join('\n')}`;
+      
+      processed = processed.replace(fullMatch, replacement);
+    } catch (error) {
+      console.error(`Error processing named JS import ${importPath}:`, error);
+    }
+  }
+  
+  // Handle default imports
+  while ((match = defaultImportPattern.exec(processed)) !== null) {
+    const [fullMatch, importName, importPath] = match;
+    
+    // Skip non-local imports
+    if (!importPath.startsWith('./') && !importPath.startsWith('../')) continue;
+    
+    const fullPath = join(currentDir, importPath);
+    
+    try {
+      // Read and bundle the JS file
+      const jsContent = await bundleJSModule(fullPath, visited);
+      
+      // Replace the import
+      const replacement = `// Bundled JS module from ${importPath}
+const ${importName} = (function() {
+  const exports = {};
+  ${jsContent}
+  return exports;
+})();`;
+      
+      processed = processed.replace(fullMatch, replacement);
+    } catch (error) {
+      console.error(`Error processing default JS import ${importPath}:`, error);
+    }
+  }
+  
+  // Handle namespace imports
+  while ((match = namespaceImportPattern.exec(processed)) !== null) {
+    const [fullMatch, namespaceName, importPath] = match;
+    
+    // Skip non-local imports
+    if (!importPath.startsWith('./') && !importPath.startsWith('../')) continue;
+    
+    const fullPath = join(currentDir, importPath);
+    
+    try {
+      // Read and bundle the JS file
+      const jsContent = await bundleJSModule(fullPath, visited);
+      
+      // Replace the import
+      const replacement = `// Bundled JS module from ${importPath}
+const ${namespaceName} = (function() {
+  const exports = {};
+  ${jsContent}
+  return exports;
+})();`;
+      
+      processed = processed.replace(fullMatch, replacement);
+    } catch (error) {
+      console.error(`Error processing namespace JS import ${importPath}:`, error);
+    }
+  }
   
   return processed;
 }
 
+/**
+ * Clean up type annotations in the generated code.
+ */
 function cleanupTypeAnnotations(code: string): string {
+  // Remove leftover type hints like "->(Number)"
   return code.replace(/->\([^)]*\)/g, "");
 }
 
+/**
+ * Fix logical operations in the generated code.
+ */
 function fixLogicalOperations(code: string): string {
   let processed = code;
   
-  // Fix not() function calls 
-  processed = processed.replace(/not\(([^)]+)\)/g, '!($1)');
+  // Fix not() function calls that weren't properly transformed
+  const notPattern = /not\(([^)]+)\)/g;
+  processed = processed.replace(notPattern, '!($1)');
   
-  // Fix equals function calls
-  processed = processed.replace(/=\(([^,]+),\s*([^)]+)\)/g, '($1 === $2)');
+  // Fix equals function calls that weren't properly transformed
+  const equalsPattern = /=\(([^,]+),\s*([^)]+)\)/g;
+  processed = processed.replace(equalsPattern, '($1 === $2)');
   
   return processed;
 }
 
+/**
+ * Format exports for CommonJS.
+ */
 function formatExportsForCommonJS(code: string): string {
   return code.replace(/export\s*\{\s*([^}]+)\s*\};/g, (match, list: string) => {
     const items = list.split(",").map(s => s.trim());

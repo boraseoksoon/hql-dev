@@ -5,7 +5,7 @@
 (def hqlMod (import "./hql-module.hql"))  ;; HQL module import
 (def jsMod (import "./js-module.js"))     ;; JS module import
 (def mathMod (import "npm:mathjs"))       ;; npm module
-(def remoteMod (import "https://deno.land/std@0.170.0/path/mod.ts"))
+(def remoteMod (import "https://deno.land/std@0.170.0/path/mod.ts"))  ;; remote module
 (def jsrMod (import "jsr:@std/path@1.0.8"))  ;; JSR module
 
 (defn main (name)
