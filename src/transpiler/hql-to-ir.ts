@@ -1,4 +1,4 @@
-// src/transpiler/hql-to-ir.ts
+// src/hql-to-ir.ts
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
 
@@ -57,9 +57,8 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "import":
         return transformImport(list, currentDir);
       case "vector":
-        return transformVector(list, currentDir);
       case "list":
-        return transformListLiteral(list, currentDir);
+        return transformArrayLiteral(list, currentDir);
       case "hash-map":
         return transformHashMap(list, currentDir);
       case "keyword":
@@ -127,13 +126,11 @@ function transformDefn(list: ListNode, currentDir: string): IR.IRFunctionDeclara
     .filter(Boolean) as IR.IRNode[];
   const { params, namedParamIds } = transformParams(paramList);
   
-  // Check if this is a higher-order function (last expression in body is an anonymous function)
-  // If so, ensure it gets a return statement
+  // Wrap last anonymous function expression in a return call if needed
   if (bodyNodes.length > 0) {
     const lastNode = bodyNodes[bodyNodes.length - 1];
-    if (lastNode.type === IR.IRNodeType.FunctionDeclaration && 
+    if (lastNode.type === IR.IRNodeType.FunctionDeclaration &&
         (lastNode as IR.IRFunctionDeclaration).isAnonymous) {
-      // Replace last node with a return statement wrapping the function
       bodyNodes[bodyNodes.length - 1] = {
         type: IR.IRNodeType.CallExpression,
         callee: { type: IR.IRNodeType.Identifier, name: "$RETURN_FUNCTION" },
@@ -173,38 +170,8 @@ function transformFn(list: ListNode, currentDir: string): IR.IRFunctionDeclarati
   } as IR.IRFunctionDeclaration;
 }
 
-/** Transform a parameter list into IR parameters */
-function transformParams(list: ListNode): { params: IR.IRParameter[], namedParamIds: string[] } {
-  const params: IR.IRParameter[] = [];
-  const named: string[] = [];
-  for (const el of list.elements) {
-    if (el.type !== "symbol") throw new Error("Parameter must be a symbol");
-    const name = (el as SymbolNode).name;
-    if (name.endsWith(":")) {
-      const real = hyphenToCamel(name.slice(0, -1));
-      named.push(real);
-      params.push({
-        type: IR.IRNodeType.Parameter,
-        id: { type: IR.IRNodeType.Identifier, name: real }
-      });
-    } else {
-      params.push({
-        type: IR.IRNodeType.Parameter,
-        id: { type: IR.IRNodeType.Identifier, name: hyphenToCamel(name) }
-      });
-    }
-  }
-  return { params, namedParamIds: named };
-}
-
-/** (vector ... ) => ArrayLiteral */
-function transformVector(list: ListNode, currentDir: string): IR.IRArrayLiteral {
-  const elems = list.elements.slice(1).map(x => transformNode(x, currentDir)).filter(Boolean) as IR.IRNode[];
-  return { type: IR.IRNodeType.ArrayLiteral, elements: elems };
-}
-
-/** (list ... ) => ArrayLiteral */
-function transformListLiteral(list: ListNode, currentDir: string): IR.IRArrayLiteral {
+/** Helper: Transform a list as an ArrayLiteral (for both vectors and list literals) */
+function transformArrayLiteral(list: ListNode, currentDir: string): IR.IRArrayLiteral {
   const elems = list.elements.slice(1).map(x => transformNode(x, currentDir)).filter(Boolean) as IR.IRNode[];
   return { type: IR.IRNodeType.ArrayLiteral, elements: elems };
 }
@@ -342,7 +309,7 @@ function transformArithmetic(list: ListNode, currentDir: string): IR.IRNode {
   return expr;
 }
 
-/** Fallback: treat list as a function call. If arguments are named (keys ending in ":"), fold them into an object. */
+/** Fallback: treat list as a function call. If arguments are named, fold them into an object. */
 function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression {
   const head = list.elements[0];
   const callee = transformNode(head, currentDir)!;
@@ -382,3 +349,28 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
     };
   }
 }
+
+/** Transform a parameter list into IR parameters */
+function transformParams(list: ListNode): { params: IR.IRParameter[], namedParamIds: string[] } {
+  const params: IR.IRParameter[] = [];
+  const named: string[] = [];
+  for (const el of list.elements) {
+    if (el.type !== "symbol") throw new Error("Parameter must be a symbol");
+    const name = (el as SymbolNode).name;
+    if (name.endsWith(":")) {
+      const real = hyphenToCamel(name.slice(0, -1));
+      named.push(real);
+      params.push({
+        type: IR.IRNodeType.Parameter,
+        id: { type: IR.IRNodeType.Identifier, name: real }
+      });
+    } else {
+      params.push({
+        type: IR.IRNodeType.Parameter,
+        id: { type: IR.IRNodeType.Identifier, name: hyphenToCamel(name) }
+      });
+    }
+  }
+  return { params, namedParamIds: named };
+}
+

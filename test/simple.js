@@ -1,4 +1,4 @@
-const __module_simple3_3597 = (function() {
+const __module_simple3_2508 = (function() {
   const exports = {};
   function sayBye(name) {
     return "Bye, " + name + "!"
@@ -8,9 +8,9 @@ const __module_simple3_3597 = (function() {
   return exports;
 })();
 
-const __module_simple2_259 = (function() {
+const __module_simple2_3782 = (function() {
   const exports = {};
-  const mod3 = __module_simple3_3597;
+  const mod3 = __module_simple3_2508;
   function sayHi(name) {
     return "Hi, " + name + "! " + mod3.sayBye(name)
   }
@@ -19,7 +19,7 @@ const __module_simple2_259 = (function() {
   return exports;
 })();
 
-const mod = __module_simple2_259;
+const mod = __module_simple2_3782;
 import strUtil from "https://esm.sh/lodash";
 import chalk from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
 import chalk2 from "jsr:@nothing628/chalk";
@@ -109,7 +109,7 @@ console.log(send({message: "hello1", to: "hlvm"}))
 console.log(send2({message: "hello2", to: Destination.hlvm}))
 console.log("====== String Interpolation Demo ======")
 const name = "Charlie";
-const greeting = `hello my name is ${name} and welcome!`;
+const greeting = "hello my name is \\(name) and welcome!";
 console.log(greeting)
 export { greet as greet };
 export { greetTwice as greetTwice };
