@@ -1,458 +1,301 @@
-// src/bundler/bundler.ts
+// src/bundler.ts
 import { parse } from "../transpiler/parser.ts";
 import { expandMacros } from "../macro.ts";
 import { transformAST } from "../transpiler/transformer.ts";
-import { dirname, join } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { dirname, join, resolve, basename } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { HQLNode, ListNode, SymbolNode, LiteralNode } from "../transpiler/hql_ast.ts";
 
 /**
- * Bundle an HQL file and its dependencies into JavaScript.
- * 
- * @param filePath Path to the HQL file
- * @param visited Set of already processed files to avoid circular dependencies
- * @param inModule Whether the HQL file is being imported as a module
- * @returns The bundled JavaScript code
+ * A module with its dependencies
+ */
+interface Module {
+  id: string;              // Module identifier
+  path: string;            // Absolute path
+  dependencies: Map<string, string>; // LocalImportId -> DependencyPath
+  code: string;            // Transpiled code
+}
+
+/**
+ * Extract HQL imports from an AST
+ */
+function extractImports(ast: HQLNode[]): Map<string, string> {
+  const imports = new Map<string, string>();
+  
+  for (const node of ast) {
+    if (node.type === "list") {
+      const list = node as ListNode;
+      
+      // Check for (def moduleId (import "./path.hql"))
+      if (list.elements.length >= 3 && 
+          list.elements[0]?.type === "symbol" && 
+          list.elements[0].name === "def" &&
+          list.elements[1]?.type === "symbol" &&
+          list.elements[2]?.type === "list" &&
+          list.elements[2].elements.length >= 2 &&
+          list.elements[2].elements[0]?.type === "symbol" &&
+          list.elements[2].elements[0].name === "import" &&
+          list.elements[2].elements[1]?.type === "literal") {
+        
+        const moduleId = (list.elements[1] as SymbolNode).name;
+        const importPath = (list.elements[2].elements[1] as LiteralNode).value as string;
+        
+        if (importPath && importPath.endsWith('.hql')) {
+          imports.set(moduleId, importPath);
+        }
+      }
+    }
+  }
+  
+  return imports;
+}
+
+/**
+ * Fix higher-order function syntax in code
+ */
+function fixSpecialSyntax(code: string): string {
+  // Fix $RETURN_FUNCTION placeholder
+  const fixed = code.replace(/\$RETURN_FUNCTION\s*\(\s*(function\s*\([^)]*\))/g, 'return $1');
+  
+  return fixed;
+}
+
+/**
+ * Process an HQL file and its dependencies
+ */
+async function processModule(
+  filePath: string,
+  allModules = new Map<string, Module>(),
+  visited = new Set<string>()
+): Promise<Module> {
+  // Resolve to absolute path
+  const absPath = resolve(filePath);
+  
+  // Return if already processed
+  if (allModules.has(absPath)) {
+    return allModules.get(absPath)!;
+  }
+  
+  // Check for circular dependencies
+  if (visited.has(absPath)) {
+    throw new Error(`Circular dependency detected: ${absPath}`);
+  }
+  
+  // Mark as visited for this processing chain
+  visited.add(absPath);
+  
+  console.log(`Processing module: ${absPath}`);
+  
+  // Read the file
+  const source = await Deno.readTextFile(absPath);
+  
+  // Parse the file
+  const ast = parse(source);
+  const expanded = expandMacros(ast);
+  
+  // Extract imports
+  const imports = extractImports(expanded);
+  const dependencies = new Map<string, string>();
+  
+  // Create a placeholder first to avoid infinite recursion
+  const moduleId = basename(absPath, '.hql').replace(/[^a-zA-Z0-9_]/g, '_');
+  allModules.set(absPath, {
+    id: moduleId,
+    path: absPath,
+    dependencies,
+    code: ""
+  });
+  
+  // Process dependencies
+  for (const [importId, importPath] of imports.entries()) {
+    const fullPath = resolve(join(dirname(absPath), importPath));
+    dependencies.set(importId, fullPath);
+    
+    // Process this dependency
+    await processModule(fullPath, allModules, new Set([...visited]));
+  }
+  
+  // Transform to JavaScript
+  const currentDir = dirname(absPath);
+  const transformed = await transformAST(expanded, currentDir, visited, {
+    module: 'commonjs'  // Always use commonjs for modules
+  }, true);
+  
+  // Fix any special syntax
+  const fixedCode = fixSpecialSyntax(transformed);
+  
+  // Update the module with the real code
+  allModules.get(absPath)!.code = fixedCode;
+  
+  return allModules.get(absPath)!;
+}
+
+/**
+ * Perform topological sort on modules
+ */
+function sortModules(modules: Map<string, Module>): string[] {
+  const result: string[] = [];
+  const visited = new Set<string>();
+  const temp = new Set<string>();
+  
+  function visit(path: string) {
+    if (temp.has(path)) {
+      throw new Error(`Circular dependency detected: ${path}`);
+    }
+    
+    if (visited.has(path)) return;
+    
+    temp.add(path);
+    
+    const module = modules.get(path);
+    if (module) {
+      for (const depPath of module.dependencies.values()) {
+        visit(depPath);
+      }
+    }
+    
+    temp.delete(path);
+    visited.add(path);
+    result.push(path);
+  }
+  
+  for (const path of modules.keys()) {
+    if (!visited.has(path)) {
+      visit(path);
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Generate bundled code from processed modules
+ */
+function generateBundle(entryPath: string, modules: Map<string, Module>): string {
+  const absEntryPath = resolve(entryPath);
+  const entryModule = modules.get(absEntryPath);
+  
+  if (!entryModule) {
+    throw new Error(`Entry module not found: ${entryPath}`);
+  }
+  
+  // Get modules in dependency order
+  const sortedPaths = sortModules(modules);
+  
+  // Generate code for each module
+  let bundled = "";
+  const moduleMap = new Map<string, string>(); // Maps path -> local variable name
+  
+  // Process all modules except the entry
+  for (const path of sortedPaths) {
+    // Skip entry module, we'll add it at the end
+    if (path === absEntryPath) continue;
+    
+    const module = modules.get(path)!;
+    
+    // Use a unique name for the module
+    const uniqueId = `__module_${basename(path, '.hql').replace(/[^a-zA-Z0-9_]/g, '_')}_${Math.floor(Math.random() * 10000)}`;
+    moduleMap.set(path, uniqueId);
+    
+    // Generate the module code
+    bundled += `const ${uniqueId} = (function() {\n`;
+    bundled += `  const exports = {};\n`;
+    
+    // Replace references to other modules in the code
+    let moduleCode = module.code;
+    
+    // Fix imports in the module code
+    for (const [localId, depPath] of module.dependencies.entries()) {
+      // Get the module ID for this dependency
+      const depModuleId = moduleMap.get(depPath);
+      if (depModuleId) {
+        // Replace the import statement
+        const importRegex = new RegExp(`const\\s+${localId}\\s+=\\s+\\(function\\(\\)\\s*\\{[\\s\\S]*?return exports;\\s*\\}\\)\\(\\);`, 'g');
+        moduleCode = moduleCode.replace(importRegex, `const ${localId} = ${depModuleId};`);
+      }
+    }
+    
+    // Add the fixed code with indentation
+    bundled += moduleCode
+      .split('\n')
+      .map(line => `  ${line}`)
+      .join('\n');
+    
+    bundled += `\n  return exports;\n`;
+    bundled += `})();\n\n`;
+  }
+  
+  // Now process the entry module
+  let entryCode = entryModule.code;
+  
+  // Fix imports in the entry code
+  for (const [localId, depPath] of entryModule.dependencies.entries()) {
+    // Get the module ID for this dependency
+    const depModuleId = moduleMap.get(depPath);
+    if (depModuleId) {
+      // Replace the import statement
+      const importRegex = new RegExp(`const\\s+${localId}\\s+=\\s+\\(function\\(\\)\\s*\\{[\\s\\S]*?return exports;\\s*\\}\\)\\(\\);`, 'g');
+      entryCode = entryCode.replace(importRegex, `const ${localId} = ${depModuleId};`);
+    }
+  }
+  
+  // Fix CommonJS exports to ESM exports in entry module
+  entryCode = entryCode.replace(/exports\.(\w+)\s*=\s*(\w+)\s*;/g, 'export { $2 as $1 };');
+  
+  // Add the entry code
+  bundled += entryCode;
+  
+  return bundled;
+}
+
+/**
+ * Bundle an HQL file with all its dependencies
  */
 export async function bundleFile(
-  filePath: string,
+  filePath: string, 
   visited = new Set<string>(),
   inModule = false
 ): Promise<string> {
-  try {
-    const realPath = await Deno.realPath(filePath);
-    
-    // Better circular dependency handling
-    if (visited.has(realPath)) {
-      console.warn(`Circular dependency detected: ${filePath}`);
-      // Return a module that exports stubs instead of an empty string
-      return `// Circular dependency detected: ${filePath}\n` +
-             `// Providing stub exports to prevent infinite recursion\n` +
-             `exports.default = {}; // Stub export\n`;
-    }
-    
-    // Create a cloned visited set to avoid polluting the parent context
-    const clonedVisited = new Set<string>(visited);
-    clonedVisited.add(realPath);
-    
-    const source = await Deno.readTextFile(realPath);
-    const ast = parse(source);
-    const expanded = expandMacros(ast);
-    const currentDir = dirname(realPath);
-    
-    // Transform the AST to JavaScript with bundled imports
-    const transformed = await transformAST(expanded, currentDir, clonedVisited, {
-      module: inModule ? 'commonjs' : 'esm' 
-    }, inModule);
-    
-    // Process all imports directly
-    let processed = transformed;
-    
-    // First, process any HQL module references
-    processed = await processHqlImports(processed, currentDir, clonedVisited);
-    
-    // Then process JS imports
-    processed = await processJsImports(processed, currentDir, clonedVisited);
-    
-    // Fix any logical operations
-    processed = fixLogicalOperations(processed);
-    
-    return processed;
-  } catch (error) {
-    // Provide helpful error information in the bundle
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`Error bundling ${filePath}:`, errorMsg);
-    
-    // Return JS that includes proper error reporting
-    return `// Error bundling HQL file: ${filePath}\n` +
-           `console.error("Error in HQL module ${filePath}: ${errorMsg.replace(/"/g, '\\"')}");\n` +
-           `exports.default = { error: "Failed to load module", message: "${errorMsg.replace(/"/g, '\\"')}" };\n`;
-  }
+  // Process all modules
+  const allModules = new Map<string, Module>();
+  await processModule(filePath, allModules, visited);
+  
+  // Generate the bundled code
+  return generateBundle(filePath, allModules);
 }
 
 /**
- * Process HQL imports in a JavaScript string.
- */
-async function processHqlImports(
-  code: string, 
-  currentDir: string, 
-  visited: Set<string>
-): Promise<string> {
-  // Regex for IIFE placeholders for HQL modules
-  const iifePattern = /const\s+(\w+)\s+=\s+\(function\(\)\s*\{\s*const\s+exports\s+=\s+\{\};\s*\/\/\s+bundled\s+HQL\s+module:\s+([\w\d./\\-]+)/g;
-  
-  let processed = code;
-  let match;
-  
-  // Process all HQL module placeholders
-  while ((match = iifePattern.exec(code)) !== null) {
-    const [prefix, importVar, importPath] = match;
-    const fullPath = join(currentDir, importPath);
-    
-    try {
-      // Find the full IIFE to replace
-      const iifeTail = /return\s+exports;\s*\}\)\(\);/g;
-      const fullPattern = new RegExp(`${escapeRegExp(prefix)}[\\s\\S]*?return\\s+exports;\\s*\\}\\)\\(\\);`);
-      const fullMatch = fullPattern.exec(processed);
-      
-      if (fullMatch) {
-        // Bundle the HQL module
-        const bundledHql = await bundleFile(fullPath, visited, true);
-        
-        // Create the complete IIFE with the bundled code
-        const replacement = `const ${importVar} = (function() {\n  const exports = {};\n  ${bundledHql}\n  return exports;\n})();`;
-        
-        // Replace the placeholder with the complete module
-        processed = processed.replace(fullMatch[0], replacement);
-      }
-    } catch (error) {
-      console.error(`Error processing HQL import ${importPath}:`, error);
-    }
-  }
-  
-  return processed;
-}
-
-/**
- * Process JS imports in a JavaScript string.
- */
-async function processJsImports(
-  code: string, 
-  currentDir: string, 
-  visited: Set<string>
-): Promise<string> {
-  // Regex for normal import statements for JS files
-  const importPattern = /import\s+(\w+)\s+from\s+["']([^"']+\.js)["'];/g;
-  
-  // Regex for nested import statements (in IIFEs)
-  const nestedImportPattern = /(const\s+\w+\s+=\s+\(function\(\)\s*\{\s*const\s+exports\s+=\s+\{\};[\s\S]*?)(import\s+(\w+)\s+from\s+["']([^"']+\.js)["'];)([\s\S]*?return\s+exports;\s*\}\)\(\);)/g;
-  
-  let processed = code;
-  
-  // First, process nested imports (imports inside IIFEs)
-  let nestedMatch;
-  while ((nestedMatch = nestedImportPattern.exec(code)) !== null) {
-    const [fullMatch, prefix, importStmt, importVar, importPath, suffix] = nestedMatch;
-    
-    // Skip non-local imports
-    if (!importPath.startsWith('./') && !importPath.startsWith('../')) continue;
-    
-    const fullPath = join(currentDir, importPath);
-    
-    try {
-      // Read and bundle the imported JS
-      const jsContent = await Deno.readTextFile(fullPath);
-      const bundledJs = await bundleJsContent(jsContent, dirname(fullPath), visited);
-      
-      // Replace the import with an inline IIFE
-      const replacement = `${prefix}// Bundled JS module from ${importPath}
-const ${importVar} = (function() {
-  const exports = {};
-  ${bundledJs}
-  return exports;
-})();${suffix}`;
-      
-      processed = processed.replace(fullMatch, replacement);
-    } catch (error) {
-      console.error(`Error processing nested JS import ${importPath}:`, error);
-    }
-  }
-  
-  // Now process top-level imports
-  let match;
-  while ((match = importPattern.exec(processed)) !== null) {
-    const [fullMatch, importVar, importPath] = match;
-    
-    // Skip non-local imports
-    if (!importPath.startsWith('./') && !importPath.startsWith('../')) continue;
-    
-    const fullPath = join(currentDir, importPath);
-    
-    try {
-      // Read and bundle the JS module
-      const jsContent = await Deno.readTextFile(fullPath);
-      const bundledJs = await bundleJsContent(jsContent, dirname(fullPath), visited);
-      
-      // Replace with IIFE
-      const replacement = `// Bundled JS module from ${importPath}
-const ${importVar} = (function() {
-  const exports = {};
-  ${bundledJs}
-  return exports;
-})();`;
-      
-      processed = processed.replace(fullMatch, replacement);
-    } catch (error) {
-      console.error(`Error processing JS import ${importPath}:`, error);
-    }
-  }
-  
-  return processed;
-}
-
-/**
- * Bundle JS content, including processing any imports it contains.
- */
-async function bundleJsContent(
-  content: string,
-  currentDir: string,
-  visited: Set<string>
-): Promise<string> {
-  let processed = content;
-  
-  // Handle HQL imports in the JS content
-  processed = await processHqlImportsInJs(processed, currentDir, visited);
-  
-  // Handle JS imports in the JS content
-  processed = await processJsImportsInJs(processed, currentDir, visited);
-  
-  // Convert ESM exports to CommonJS for proper bundling
-  processed = convertEsmToCommonJs(processed);
-  
-  return processed;
-}
-
-/**
- * Process HQL imports within JS content.
- */
-async function processHqlImportsInJs(
-  content: string,
-  currentDir: string,
-  visited: Set<string>
-): Promise<string> {
-  // Regex for HQL imports - both default and named
-  const defaultImportPattern = /import\s+(\w+)\s+from\s+["']([^"']+\.hql)["'];/g;
-  const namedImportPattern = /import\s+\{\s*([^}]+)\s*\}\s+from\s+["']([^"']+\.hql)["'];/g;
-  
-  let processed = content;
-  
-  // Handle default imports
-  let match;
-  while ((match = defaultImportPattern.exec(content)) !== null) {
-    const [fullMatch, importVar, importPath] = match;
-    const fullPath = join(currentDir, importPath);
-    
-    try {
-      // Bundle the HQL module
-      const bundledHql = await bundleFile(fullPath, visited, true);
-      
-      // Replace the import with an IIFE
-      const replacement = `// Bundled HQL module from ${importPath}
-const ${importVar} = (function() {
-  const exports = {};
-  ${bundledHql}
-  return exports;
-})();`;
-      
-      processed = processed.replace(fullMatch, replacement);
-    } catch (error) {
-      console.error(`Error processing HQL import ${importPath} in JS:`, error);
-    }
-  }
-  
-  // Handle named imports
-  while ((match = namedImportPattern.exec(content)) !== null) {
-    const [fullMatch, namedImports, importPath] = match;
-    const fullPath = join(currentDir, importPath);
-    
-    try {
-      // Bundle the HQL module
-      const bundledHql = await bundleFile(fullPath, visited, true);
-      
-      // Create a temp module variable
-      const tempVar = `__hql_mod_${Math.floor(Math.random() * 10000)}`;
-      
-      // Create variable declarations for each named import
-      const importVars = namedImports.split(',').map(item => {
-        const [name, alias] = item.trim().split(/\s+as\s+/).map(s => s.trim());
-        const localName = alias || name;
-        return `const ${localName} = ${tempVar}.${name};`;
-      });
-      
-      // Replace the import
-      const replacement = `// Bundled HQL module from ${importPath}
-const ${tempVar} = (function() {
-  const exports = {};
-  ${bundledHql}
-  return exports;
-})();
-${importVars.join('\n')}`;
-      
-      processed = processed.replace(fullMatch, replacement);
-    } catch (error) {
-      console.error(`Error processing HQL named import ${importPath} in JS:`, error);
-    }
-  }
-  
-  return processed;
-}
-
-/**
- * Process JS imports within JS content.
- */
-async function processJsImportsInJs(
-  content: string,
-  currentDir: string,
-  visited: Set<string>
-): Promise<string> {
-  // Regex for JS imports
-  const importPattern = /import\s+(\w+|\{\s*[^}]+\s*\}|\*\s+as\s+\w+)\s+from\s+["']([^"']+\.js)["'];/g;
-  
-  let processed = content;
-  
-  // Handle all import types
-  let match;
-  while ((match = importPattern.exec(content)) !== null) {
-    const [fullMatch, importSpecifier, importPath] = match;
-    
-    // Skip non-local imports
-    if (!importPath.startsWith('./') && !importPath.startsWith('../')) continue;
-    
-    const fullPath = join(currentDir, importPath);
-    
-    try {
-      // Read and bundle the imported JS
-      const jsContent = await Deno.readTextFile(fullPath);
-      const bundledJs = await bundleJsContent(jsContent, dirname(fullPath), visited);
-      
-      // Process different import types
-      if (importSpecifier.startsWith('{')) {
-        // Named imports: import { a, b as c } from "./module.js";
-        const namedImports = importSpecifier
-          .replace(/^\{\s*|\s*\}$/g, '') // Remove braces
-          .split(',')
-          .map(s => s.trim())
-          .filter(s => s.length > 0);
-        
-        const tempVar = `__js_mod_${Math.floor(Math.random() * 10000)}`;
-        
-        // Create variable declarations for each named import
-        const importVars = namedImports.map(item => {
-          const [name, alias] = item.split(/\s+as\s+/).map(s => s.trim());
-          const localName = alias || name;
-          return `const ${localName} = ${tempVar}.${name};`;
-        });
-        
-        // Replace the import
-        const replacement = `// Bundled JS module from ${importPath}
-const ${tempVar} = (function() {
-  const exports = {};
-  ${bundledJs}
-  return exports;
-})();
-${importVars.join('\n')}`;
-        
-        processed = processed.replace(fullMatch, replacement);
-      } else if (importSpecifier.startsWith('*')) {
-        // Namespace import: import * as mod from "./module.js";
-        const namespaceVar = importSpecifier.replace(/^\*\s+as\s+/, '');
-        
-        // Replace the import
-        const replacement = `// Bundled JS module from ${importPath}
-const ${namespaceVar} = (function() {
-  const exports = {};
-  ${bundledJs}
-  return exports;
-})();`;
-        
-        processed = processed.replace(fullMatch, replacement);
-      } else {
-        // Default import: import mod from "./module.js";
-        const importVar = importSpecifier.trim();
-        
-        // Replace the import
-        const replacement = `// Bundled JS module from ${importPath}
-const ${importVar} = (function() {
-  const exports = {};
-  ${bundledJs}
-  return exports;
-})();`;
-        
-        processed = processed.replace(fullMatch, replacement);
-      }
-    } catch (error) {
-      console.error(`Error processing JS import ${importPath} in JS:`, error);
-    }
-  }
-  
-  return processed;
-}
-
-/**
- * Convert ESM exports to CommonJS exports for bundling.
- */
-function convertEsmToCommonJs(content: string): string {
-  let processed = content;
-  
-  // Convert 'export default x' to 'exports.default = x'
-  processed = processed.replace(/export\s+default\s+([^;]+);/g, 'exports.default = $1;');
-  
-  // Convert 'export function x()' to 'function x() {...}; exports.x = x'
-  processed = processed.replace(
-    /export\s+function\s+(\w+)(\([^)]*\))\s*(\{[\s\S]*?\n\})/g,
-    'function $1$2 $3\nexports.$1 = $1;'
-  );
-  
-  // Convert 'export class X' to 'class X {...}; exports.X = X'
-  processed = processed.replace(
-    /export\s+class\s+(\w+)(\s*\{[\s\S]*?\n\})/g,
-    'class $1$2\nexports.$1 = $1;'
-  );
-  
-  // Convert 'export const x = y' to 'const x = y; exports.x = x'
-  processed = processed.replace(
-    /export\s+(const|let|var)\s+(\w+)\s*=\s*([^;]+);/g,
-    '$1 $2 = $3;\nexports.$2 = $2;'
-  );
-  
-  // Convert 'export { x, y as z }' to 'exports.x = x; exports.z = y;'
-  processed = processed.replace(/export\s*\{([^}]+)\};/g, (match, exports) => {
-    const statements = exports
-      .split(',')
-      .map(exp => {
-        const [name, alias] = exp.trim().split(/\s+as\s+/).map(s => s.trim());
-        const exportName = alias || name;
-        return `exports.${exportName} = ${name};`;
-      });
-    return statements.join('\n');
-  });
-  
-  return processed;
-}
-
-/**
- * Fix logical operations in the generated code.
- */
-function fixLogicalOperations(code: string): string {
-  let processed = code;
-  
-  // Fix not() function calls
-  const notPattern = /not\(([^)]+)\)/g;
-  processed = processed.replace(notPattern, '!($1)');
-  
-  // Fix equals function calls
-  const equalsPattern = /=\(([^,]+),\s*([^)]+)\)/g;
-  processed = processed.replace(equalsPattern, '($1 === $2)');
-  
-  return processed;
-}
-
-/**
- * Legacy function to maintain API compatibility.
+ * Bundle a JavaScript file that may import HQL modules
  */
 export async function bundleJSModule(filePath: string, visited = new Set<string>()): Promise<string> {
-  try {
-    // This is now just a wrapper around bundleJsContent
-    const source = await Deno.readTextFile(filePath);
-    return await bundleJsContent(source, dirname(filePath), visited);
-  } catch (error) {
-    console.error(`Error bundling JS module ${filePath}:`, error);
-    return `// Error bundling JS module: ${filePath}\n` +
-           `console.error("Error bundling JS module ${filePath}: ${error instanceof Error ? error.message : String(error)}");\n`;
+  const source = await Deno.readTextFile(filePath);
+  
+  // Find HQL imports
+  const hqlImportRegex = /import\s+(\w+)\s+from\s+["']([^"']+\.hql)["'];/g;
+  let processedSource = source;
+  let match;
+  
+  while ((match = hqlImportRegex.exec(source)) !== null) {
+    const [fullMatch, importName, importPath] = match;
+    const fullPath = join(dirname(filePath), importPath);
+    
+    try {
+      // Bundle the HQL file
+      const bundled = await bundleFile(fullPath, new Set([...visited]), true);
+      
+      // Replace with IIFE
+      const iife = `
+// HQL module bundled from ${importPath}
+const ${importName} = (function() {
+  const exports = {};
+${bundled.split('\n').map(line => `  ${line}`).join('\n')}
+  return exports;
+})();`;
+      
+      processedSource = processedSource.replace(fullMatch, iife);
+    } catch (error) {
+      console.error(`Error bundling HQL import ${importPath}:`, error);
+    }
   }
-}
-
-/**
- * Helper function to escape regex special characters in a string.
- */
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  
+  return processedSource;
 }
