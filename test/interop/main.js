@@ -1,6 +1,6 @@
-const hqlMod = (function() {
+const hqlMod = (function(){
   const exports = {};
-  const hqlSubMod = (function() {
+  const hqlSubMod = (function(){
   const exports = {};
   function hello(name) {
   return "hello, " + name
@@ -16,12 +16,12 @@ exports.goodbye = goodbye;
 // Bundled JS module from ./js-util.js
 const jsUtil = (function() {
   const exports = {};
-  export function capitalize(str) {
+  function capitalize(str) {
     return str.charAt(0).toUpperCase() + str.slice(1);
   }
   
   // Get current timestamp
-  export function getTimestamp() {
+  function getTimestamp() {
     return new Date().toISOString();
   }
   return exports;
@@ -36,41 +36,13 @@ exports.greet = greet;
 // Bundled JS module from ./js-module.js
 const jsMod = (function() {
   const exports = {};
-  // Bundled HQL module from ./hql-submodule.hql
-const __hql_mod_4109 = (function() {
-  const exports = {};
-  function hello(name) {
-  return "hello, " + name
-}
-function goodbye(name) {
-  return "goodbye, " + name
-}
-exports.hello = hello;
-exports.goodbye = goodbye;
-
-  return exports;
-})();
-const goodbye = __hql_mod_4109.goodbye;
-// Bundled JS module from ./js-util.js
-const __js_mod_120 = (function() {
-  const exports = {};
-  export function capitalize(str) {
-    return str.charAt(0).toUpperCase() + str.slice(1);
-  }
-  
-  // Get current timestamp
-  export function getTimestamp() {
-    return new Date().toISOString();
-  }
-  return exports;
-})();
-const getTimestamp = __js_mod_120.getTimestamp;
+  import { goodbye } from "./hql-submodule.hql";
+import { getTimestamp } from "./js-util.js";
 
 // Use the imported HQL function
 function greet(name) {
-  return `JavaScript module says: ${goodbye(name)} (at ${getTimestamp()})`;
+  return \`JavaScript module says: \${goodbye(name)} (at \${getTimestamp()})\`;
 }
-exports.greet = greet;
   return exports;
 })();
 import mathMod from "npm:mathjs";
