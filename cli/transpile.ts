@@ -1,6 +1,5 @@
 // cli/transpile.ts - Critical Transpiler Fix
 
-import { bundleFile } from "../src/bundler/bundler.ts";
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transformAST } from "../src/transpiler/transformer.ts";
 import { parse } from "../src/transpiler/parser.ts";
@@ -44,13 +43,7 @@ async function transpileCLI(inputPath: string, outputPath?: string): Promise<voi
       await writeOutput(transformed, outPath);
       log(`Successfully transpiled ${inputPath} -> ${outPath}`);
     } catch (error) {
-      // Fall back to bundling if direct approach fails
-      log(`Direct transpilation failed, falling back to bundling: ${error.message}`);
-      const code = await bundleFile(resolvedInputPath);
-      
-      // Write the output
-      await writeOutput(code, outPath);
-      log(`Successfully transpiled ${inputPath} -> ${outPath} using bundler`);
+      console.error(`Transpilation failed: ${error.message}`);
     }
   } catch (error: any) {
     console.error(`Transpilation failed: ${error.message}`);
