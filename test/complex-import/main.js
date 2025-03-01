@@ -24,21 +24,30 @@ import * as chalkMod_module from "https://deno.land/x/chalk_deno@v4.1.1-deno/sou
 const chalkMod = chalkMod_module.default !== undefined ? chalkMod_module.default : chalkMod_module;
 const supportedFormats = ["json", "xml", "yaml", "csv", "text"];
 const numericValues = [10, 20, 30, 40, 50];
-const defaultSettings = {timeout: 30000, retries: 3, verbose: false, format: supportedFormats[0]};
+const defaultSettings = {
+  timeout: 30000,
+  retries: 3,
+  verbose: false,
+  format: supportedFormats[0]
+};
 const itemsList = ["apple", "banana", "cherry", "date"];
 const currentDate = new Date();
 const mySet = new Set([1, 2, 3, 3, 4, 5, 5]);
-const LogLevel = { debug: "debug", info: "info", warn: "warn", error: "error", critical: "critical" };
-function greet(name) {
-  return "Hello, " + name + "!";
-}
+const LogLevel = {
+  debug: "debug",
+  info: "info",
+  warn: "warn",
+  error: "error",
+  critical: "critical"
+};
+function greet(name) { return `Hello, ${name}!`; }
 function calculateArea(params) {
   const { width, height } = params;
   return (width * height);
 }
 function formatUser(params) {
   const { first, last, title } = params;
-  return title + " " + first + " " + last;
+  return `${title} ${first} ${last}`;
 }
 function processPath(filePath) {
   {
@@ -46,20 +55,20 @@ function processPath(filePath) {
   const baseName = pathMod.basename(filePath);
   const extension = pathMod.extname(filePath);
   const exists = fsMod.existsSync(filePath);
-  return {dir: dirName, base: baseName, ext: extension, exists: exists, formatted: jsHelperMod.formatPathInfo(dirName, baseName, extension)};
+  return {
+  dir: dirName,
+  base: baseName,
+  ext: extension,
+  exists: exists,
+  formatted: jsHelperMod.formatPathInfo(dirName, baseName, extension)
+};
 }
 }
 function classifyNumber(num) {
   return (num < 0) ? "negative" : (num === 0) ? "zero" : (num > 0) ? "positive" : true ? "unknown" : null;
 }
-const multiply = function(a, b) {
-  return (a * b);
-};
-function makeAdder(n) {
-  return function(x) {
-  return (x + n);
-};
-}
+const multiply = function(a, b) { return (a * b); };
+function makeAdder(n) { return function(x) { return (x + n); }; }
 const addFive = makeAdder(5);
 function generateReport(data, format) {
   {
@@ -69,7 +78,14 @@ function generateReport(data, format) {
   const formattedData = utilsMod.formatData(data, format);
   const config = configMod.getConfig(format);
   const mathResult = mathMod.calculate(data.value, 10);
-  return {id: id, timestamp: timestamp, name: upperName, data: formattedData, config: config, calculation: mathResult};
+  return {
+  id: id,
+  timestamp: timestamp,
+  name: upperName,
+  data: formattedData,
+  config: config,
+  calculation: mathResult
+};
 }
 }
 function coloredLog(message, level) {
@@ -81,25 +97,44 @@ function processCollection(items) {
   const shuffled = lodashMod.shuffle(items);
   const first = lodashMod.first(items);
   const last = lodashMod.last(items);
-  return {chunked: chunked, shuffled: shuffled, first: first, last: last};
+  return {
+  chunked: chunked,
+  shuffled: shuffled,
+  first: first,
+  last: last
+};
 }
 }
-function formatTimeAgo(dateString) {
-  return momentMod.fromNow(dateString);
-}
+function formatTimeAgo(dateString) { return momentMod.fromNow(dateString); }
 function mathDemo(a, b) {
-  return {add: (a + b), subtract: (a - b), multiply: (a * b), divide: (a / b), complex: ((a * b) + (a / b))};
+  return {
+  add: (a + b),
+  subtract: (a - b),
+  multiply: (a * b),
+  divide: (a / b),
+  complex: ((a * b) + (a / b))
+};
 }
 function stringDemo(a, b) {
-  return {concat: a + b, ["with-space"]: a + " " + b, repeated: a + a + a, ["with-number"]: a + " #" + b};
+  return {
+  concat: `${a}${b}`,
+  ["with-space"]: `${a} ${b}`,
+  repeated: `${a}${a}${a}`,
+  ["with-number"]: `${a} #${b}`
+};
 }
 function runDemo() {
   {
   const userName = "Alice Smith";
-  const userSettings = {name: userName, path: "./data/user.json", value: 42, items: itemsList};
+  const userSettings = {
+  name: userName,
+  path: "./data/user.json",
+  value: 42,
+  items: itemsList
+};
   const processedPath = processPath(userSettings.path);
   const report = generateReport(userSettings, "json");
-  const infoMessage = "Generated report for " + userName;
+  const infoMessage = `Generated report for ${userName}`;
   const errorMessage = "Failed to save report " + report.id;
   console.log(coloredLog("Starting demo", LogLevel.info))
   console.log(coloredLog(infoMessage, LogLevel.info))

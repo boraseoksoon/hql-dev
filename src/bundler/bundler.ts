@@ -215,6 +215,54 @@ class DependencyGraph {
     
     return result;
   }
+
+  /**
+   * Get all JavaScript import statements needed for HQL modules
+   */
+  getAllJSImports(): Record<string, string> {
+    const importStatements: Record<string, string> = {};
+    
+    for (const module of this.modules.values()) {
+      // Only process HQL modules that import JS modules
+      if (module.type !== 'hql') continue;
+      
+      for (const imp of module.imports) {
+        if (!imp.isExternal && this.modules.has(normalizePath(imp.sourcePath))) {
+          const importedModule = this.modules.get(normalizePath(imp.sourcePath));
+          if (importedModule && importedModule.type === 'js') {
+            const key = `${module.id}_${importedModule.id}`;
+            if (!importStatements[key]) {
+              importStatements[key] = `import * as ${imp.localName} from "${imp.sourcePath}";`;
+            }
+          }
+        }
+      }
+    }
+    
+    return importStatements;
+  }
+
+  /**
+   * Get all module variables needed for bundling
+   */
+  getAllModuleVariables(): Map<string, string> {
+    const vars = new Map<string, string>();
+    
+    for (const module of this.modules.values()) {
+      if (module.type === 'external') continue;
+      
+      // Add any necessary helper or utility variables
+      if (module.importedAs.size > 0) {
+        const importers = Array.from(module.importedAs.entries())
+          .map(([moduleId, importedAs]) => `${moduleId}: ${importedAs}`)
+          .join(', ');
+        
+        vars.set(module.id, `const ${module.id}_importers = { ${importers} };`);
+      }
+    }
+    
+    return vars;
+  }
 }
 
 /**
@@ -323,7 +371,8 @@ function getExportLocalName(list: ListNode): string {
 }
 
 /**
- * Extract imports from a JavaScript file
+ * Extract imports from a JavaScript file more reliably using regexps
+ * that handle the full range of import syntax.
  */
 function extractJsImports(source: string): Map<string, {
   importStatement: string;
@@ -342,9 +391,10 @@ function extractJsImports(source: string): Map<string, {
     isHQL: boolean;
   }>();
   
-  // Match different types of import statements
+  // Match different types of import statements with better regex patterns
+  // that handle multiline imports and various spacing
   const defaultImportRegex = /import\s+(\w+)\s+from\s+["']([^"']+)["'];/g;
-  const namedImportRegex = /import\s+\{\s*([^}]+)\s*\}\s+from\s+["']([^"']+)["'];/g;
+  const namedImportRegex = /import\s+\{\s*((?:[^{}]|{[^{}]*})*?)\s*\}\s+from\s+["']([^"']+)["'];/g;
   const namespaceImportRegex = /import\s+\*\s+as\s+(\w+)\s+from\s+["']([^"']+)["'];/g;
   
   // Process default imports (import name from 'path')
@@ -362,21 +412,25 @@ function extractJsImports(source: string): Map<string, {
     });
   }
   
-  // Process named imports (import { name } from 'path')
+  // Process named imports (import { name, other as alias } from 'path')
   while ((match = namedImportRegex.exec(source)) !== null) {
     const importPath = match[2];
-    const importItems = match[1].split(',').map(s => s.trim());
+    // Better handling of complex import specifiers like nested structures
+    const importItems = match[1].split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
     
     for (const item of importItems) {
-      // Handle potential "as" renaming
-      const [original, renamed] = item.split(/\s+as\s+/).map(s => s.trim());
-      const localName = renamed || original;
+      // Handle potential "as" renaming with better pattern matching
+      const parts = item.split(/\s+as\s+/).map(s => s.trim());
+      const original = parts[0];
+      const renamed = parts.length > 1 ? parts[1] : original;
       
-      imports.set(localName, {
+      imports.set(renamed, {
         importStatement: match[0],
         importPath,
         isNamespace: false,
-        localName,
+        localName: renamed,
         isDefault: false,
         isHQL: importPath.endsWith('.hql')
       });
@@ -401,15 +455,16 @@ function extractJsImports(source: string): Map<string, {
 }
 
 /**
- * Extract exports from a JavaScript file
+ * Extract exports from a JavaScript file using improved regular expressions
  */
 function extractJsExports(source: string): ModuleExport[] {
   const exports: ModuleExport[] = [];
   
-  // Match different types of export statements
-  const defaultExportRegex = /export\s+default\s+(\w+);/g;
-  const namedExportRegex = /export\s+\{\s*([^}]+)\s*\};/g;
+  // Match different types of export statements with better regex patterns
+  const defaultExportRegex = /export\s+default\s+(\w+)\s*;/g;
+  const namedExportRegex = /export\s+\{\s*((?:[^{}]|{[^{}]*})*?)\s*\}\s*;/g;
   const declaredExportRegex = /export\s+(const|let|var|function|class)\s+(\w+)/g;
+  const defaultDeclaredExportRegex = /export\s+default\s+(function|class|const|let|var)\s+(\w+)/g;
   
   // Process default exports
   let match;
@@ -422,22 +477,37 @@ function extractJsExports(source: string): ModuleExport[] {
     });
   }
   
-  // Process named exports (export { name })
+  // Process default declared exports (export default function name() {})
+  while ((match = defaultDeclaredExportRegex.exec(source)) !== null) {
+    const localName = match[2];
+    exports.push({
+      localName,
+      exportedName: 'default',
+      isDefault: true
+    });
+  }
+  
+  // Process named exports (export { name, other as alias })
   while ((match = namedExportRegex.exec(source)) !== null) {
-    const exportItems = match[1].split(',').map(s => s.trim());
+    const exportItems = match[1].split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
     
     for (const item of exportItems) {
-      // Handle potential "as" renaming
-      const [original, renamed] = item.split(/\s+as\s+/).map(s => s.trim());
+      // Handle potential "as" renaming with better pattern matching
+      const parts = item.split(/\s+as\s+/).map(s => s.trim());
+      const original = parts[0];
+      const renamed = parts.length > 1 ? parts[1] : original;
+      
       exports.push({
         localName: original,
-        exportedName: renamed || original,
+        exportedName: renamed,
         isDefault: false
       });
     }
   }
   
-  // Process declared exports (export function name())
+  // Process declared exports (export function name() {})
   while ((match = declaredExportRegex.exec(source)) !== null) {
     const localName = match[2];
     exports.push({
@@ -692,8 +762,6 @@ async function processJSModules(graph: DependencyGraph): Promise<void> {
 /**
  * Generate bundled code from the processed modules
  */
-
-// Fix the entry module issue in the generateBundle function, around line 700:
 function generateBundle(entryPath: string, graph: DependencyGraph): string {
   // Make sure we're using the string path, not an object
   if (typeof entryPath !== 'string') {
@@ -723,15 +791,80 @@ function generateBundle(entryPath: string, graph: DependencyGraph): string {
   return generateBundleWithModule(normalizedEntryPath, entryModule, graph);
 }
 
+/**
+ * Process module code to prepare for bundling
+ */
+function processModuleCode(module: Module, moduleMap: Map<string, string>): string {
+  // Skip if module is not processed
+  if (!module.isProcessed) return '';
+  
+  let code = module.code;
+  
+  // Remove import statements
+  code = code.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
+  
+  // Replace references to other modules
+  for (const [path, uniqueId] of moduleMap.entries()) {
+    const importedModule = path;
+    
+    // Find if this module imports the referenced module
+    const importInfo = module.imports.find(imp => normalizePath(imp.sourcePath) === importedModule);
+    
+    if (importInfo) {
+      // Replace references to the imported module
+      const localName = importInfo.localName;
+      const regex = new RegExp(`\\b${localName}\\b`, 'g');
+      
+      // Only replace full variable references, not partial matches
+      code = code.replace(regex, uniqueId);
+    }
+  }
+  
+  return code;
+}
 
-// Refactored bundle generation logic to avoid duplication
+/**
+ * Process entry module code specially for bundling
+ */
+function processEntryModuleCode(module: Module, moduleMap: Map<string, string>): string {
+  // Skip if module is not processed
+  if (!module.isProcessed) return '';
+  
+  let code = module.code;
+  
+  // Remove import statements
+  code = code.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
+  
+  // Replace references to other modules
+  for (const [path, uniqueId] of moduleMap.entries()) {
+    const importedModule = path;
+    
+    // Find if this module imports the referenced module
+    const importInfo = module.imports.find(imp => normalizePath(imp.sourcePath) === importedModule);
+    
+    if (importInfo) {
+      // Replace references to the imported module
+      const localName = importInfo.localName;
+      const regex = new RegExp(`\\b${localName}\\b`, 'g');
+      
+      // Only replace full variable references, not partial matches
+      code = code.replace(regex, uniqueId);
+    }
+  }
+  
+  return code;
+}
+
+/**
+ * Refactored bundle generation logic to avoid duplication
+ */
 function generateBundleWithModule(
   entryPath: string,
   entryModule: Module, 
   graph: DependencyGraph
 ): string {
   // Get modules in dependency order
-  const sortedPaths = graph.getSortedModules();
+  const sortedModules = graph.getSortedModules();
   
   // Collect all external imports
   const externalImports = graph.getAllExternalImports();
@@ -743,33 +876,77 @@ function generateBundleWithModule(
   let bundled = '';
   
   // 1. Add external imports first
-  bundled += Array.from(externalImports.keys()).join('\n');
+  const externalImportStatements = [];
+  for (const [importPath, importSet] of externalImports.entries()) {
+    // Group by import path to reduce duplicate imports
+    const importsByType = {
+      default: [] as string[],
+      named: [] as Array<{ orig: string, renamed: string }>,
+      namespace: [] as string[]
+    };
+    
+    for (const imp of importSet) {
+      if (imp.isDefault) {
+        importsByType.default.push(imp.localName);
+      } else if (imp.isNamespace) {
+        importsByType.namespace.push(imp.localName);
+      } else {
+        importsByType.named.push({ 
+          orig: imp.importedName || imp.localName, 
+          renamed: imp.localName 
+        });
+      }
+    }
+    
+    // Generate optimized import statements
+    let importStmt = '';
+    
+    if (importsByType.default.length > 0) {
+      importStmt += importsByType.default[0];
+    }
+    
+    if (importsByType.named.length > 0) {
+      if (importStmt) importStmt += ', ';
+      importStmt += '{ ' + importsByType.named
+        .map(n => n.orig === n.renamed ? n.orig : `${n.orig} as ${n.renamed}`)
+        .join(', ') + ' }';
+    }
+    
+    if (importsByType.namespace.length > 0) {
+      for (const ns of importsByType.namespace) {
+        externalImportStatements.push(`import * as ${ns} from "${importPath}";`);
+      }
+    }
+    
+    if (importStmt) {
+      externalImportStatements.push(`import ${importStmt} from "${importPath}";`);
+    }
+  }
+  
+  bundled += externalImportStatements.join('\n');
   
   // 2. Add JS imports for HQL files
   if (Object.keys(jsImports).length > 0) {
-    bundled += bundled ? '\n' : '';
+    if (bundled) bundled += '\n';
     bundled += Object.values(jsImports).join('\n');
   }
   
-  bundled += bundled ? '\n\n' : '';
+  if (bundled) bundled += '\n\n';
   
   // Map for tracking bundled modules
   const moduleMap = new Map<string, string>();
   
-  // Process all HQL modules except the entry
-  for (const path of sortedPaths) {
+  // Process all modules except the entry
+  for (const module of sortedModules) {
     // Skip entry module, we'll add it at the end
-    if (path === entryPath) continue;
+    if (module.path === entryPath) continue;
     
-    const module = graph.modules.get(path);
-    if (!module) continue;
-    
-    // Skip external modules and JS files
-    if (module.isExternal || module.type !== 'hql') continue;
+    // Skip external modules
+    if (module.type === 'external') continue;
     
     // Generate a unique module identifier
     const uniqueId = `__module_${module.id}_${Math.floor(Math.random() * 10000)}`;
-    moduleMap.set(path, uniqueId);
+    moduleMap.set(module.path, uniqueId);
     
     // Generate the module code
     bundled += `// Module: ${module.path}\n`;
@@ -806,74 +983,6 @@ function generateBundleWithModule(
   return bundled;
 }
 
-
-/**
- * Process module code to prepare for bundling
- */
-function processModuleCode(code: string): string {
-  // Remove import statements
-  let processed = code.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
-  
-  // Fix any redundant export statements
-  return processed;
-}
-
-/**
- * Process JS module code
- */
-function processJsModule(code: string): string {
-  // Replace ESM exports with CommonJS exports
-  let processed = code.replace(
-    /export\s+(?:default\s+)?(\w+);/g, 
-    'exports.$1 = $1;'
-  );
-  
-  // Replace named export blocks
-  processed = processed.replace(
-    /export\s+\{\s*([^}]+)\s*\};/g,
-    (match, exportList) => {
-      const exports = exportList.split(',').map(e => {
-        const [name, alias] = e.trim().split(/\s+as\s+/).map(s => s.trim());
-        if (alias) {
-          return `exports.${alias} = ${name};`;
-        }
-        return `exports.${name} = ${name};`;
-      });
-      return exports.join('\n');
-    }
-  );
-  
-  // Remove import statements
-  processed = processed.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
-  
-  return processed;
-}
-
-/**
- * Process the entry module code
- */
-function processEntryModule(code: string, graph: DependencyGraph): string {
-  // Remove import statements
-  let processed = code.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
-  
-  // Fix references to imported modules
-  for (const module of graph.modules.values()) {
-    for (const [moduleId, importedAs] of module.importedAs.entries()) {
-      // Replace references to the imported module
-      const importedModule = Array.from(graph.modules.values())
-        .find(m => m.id === moduleId);
-      
-      if (importedModule && importedModule.type !== 'external') {
-        const regex = new RegExp(`const\\s+${importedAs}\\s+=.*?;`, 'g');
-        processed = processed.replace(regex, `const ${importedAs} = ${importedModule.id};`);
-      }
-    }
-  }
-  
-  // Keep export statements for the entry module
-  return processed;
-}
-
 /**
  * Bundle an HQL file and all its dependencies
  */
@@ -895,7 +1004,6 @@ export async function bundleFile(
     await processJSModules(graph);
     
     // Generate the bundled code
-    // IMPORTANT FIX: Pass the filePath string, not the graph object
     return generateBundle(filePath, graph);
   } catch (error) {
     console.error(`Error bundling file ${filePath}:`, error);
@@ -920,7 +1028,7 @@ export async function bundleJSModule(filePath: string, visited = new Set<string>
     await processJSModules(graph);
     
     // Generate bundle
-    return generateBundle(graph);
+    return generateBundle(filePath, graph);
   } catch (error) {
     console.error(`Error bundling JS module ${filePath}:`, error);
     throw error;

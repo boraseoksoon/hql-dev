@@ -12,7 +12,12 @@ function getConfig(format) {
   const baseConfig = {app: {name: appName, version: appVersion, description: appDescription}, environment: envConfig.getCurrentEnvironment()};
   const formatSettings = formatConfig.getFormatSettings(format);
   const externalConfig = configLoader.loadExternalConfig(format);
-  return {base: baseConfig, format: formatSettings, external: externalConfig, combined: configLoader.mergeConfigs(baseConfig, formatSettings, externalConfig)};
+  return {
+  base: baseConfig,
+  format: formatSettings,
+  external: externalConfig,
+  combined: configLoader.mergeConfigs(baseConfig, formatSettings, externalConfig)
+};
 }
 }
 export { getConfig };

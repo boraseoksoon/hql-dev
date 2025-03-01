@@ -2,8 +2,18 @@
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
 
+// Cache for commonly transformed symbols
+const symbolCache = new Map<string, IR.IRIdentifier>();
+
+// Cache for transformed nodes to avoid redundant transformations
+const nodeTransformCache = new Map<HQLNode, IR.IRNode | null>();
+
 /** Convert an array of HQL nodes into an IR program */
 export function transformToIR(nodes: HQLNode[], currentDir: string): IR.IRProgram {
+  // Clear caches for each new transformation
+  symbolCache.clear();
+  nodeTransformCache.clear();
+  
   const program: IR.IRProgram = { type: IR.IRNodeType.Program, body: [] };
   for (const n of nodes) {
     const ir = transformNode(n, currentDir);
@@ -13,24 +23,51 @@ export function transformToIR(nodes: HQLNode[], currentDir: string): IR.IRProgra
 }
 
 function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
+  // Check cache first
+  if (nodeTransformCache.has(node)) {
+    return nodeTransformCache.get(node);
+  }
+  
+  let result: IR.IRNode | null;
+  
   switch (node.type) {
     case "literal":
-      return transformLiteral(node as LiteralNode);
+      result = transformLiteral(node as LiteralNode);
+      break;
     case "symbol":
-      return transformSymbol(node as SymbolNode);
+      result = transformSymbol(node as SymbolNode);
+      break;
     case "list":
-      return transformList(node as ListNode, currentDir);
+      result = transformList(node as ListNode, currentDir);
+      break;
     default:
       throw new Error("Unknown HQL node type: " + (node as any).type);
   }
+  
+  // Cache the result
+  nodeTransformCache.set(node, result);
+  return result;
 }
 
 function transformLiteral(lit: LiteralNode): IR.IRNode {
   const v = lit.value;
-  if (typeof v === "string") return { type: IR.IRNodeType.StringLiteral, value: v } as IR.IRStringLiteral;
-  if (typeof v === "number") return { type: IR.IRNodeType.NumericLiteral, value: v } as IR.IRNumericLiteral;
-  if (typeof v === "boolean") return { type: IR.IRNodeType.BooleanLiteral, value: v } as IR.IRBooleanLiteral;
-  if (v === null) return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+  
+  if (typeof v === "string") {
+    return { type: IR.IRNodeType.StringLiteral, value: v } as IR.IRStringLiteral;
+  }
+  
+  if (typeof v === "number") {
+    return { type: IR.IRNodeType.NumericLiteral, value: v } as IR.IRNumericLiteral;
+  }
+  
+  if (typeof v === "boolean") {
+    return { type: IR.IRNodeType.BooleanLiteral, value: v } as IR.IRBooleanLiteral;
+  }
+  
+  if (v === null) {
+    return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+  }
+  
   throw new Error("Unsupported literal: " + v);
 }
 
@@ -39,64 +76,64 @@ function hyphenToCamel(name: string): string {
 }
 
 function transformSymbol(sym: SymbolNode): IR.IRIdentifier {
-  // Handle JavaScript interop (js/X.y.z -> X.y.z)
   const name = sym.name;
+  
+  // Check cache first
+  if (symbolCache.has(name)) {
+    return { ...symbolCache.get(name)! };
+  }
+  
+  let result: IR.IRIdentifier;
+  
+  // Handle JavaScript interop (js/X.y.z -> X.y.z)
   if (name.startsWith('js/')) {
-    return { 
+    result = { 
       type: IR.IRNodeType.Identifier, 
       name: name.substring(3), // Remove 'js/' prefix
       isJSAccess: true
     };
+  } else {
+    result = { 
+      type: IR.IRNodeType.Identifier, 
+      name: hyphenToCamel(name) 
+    };
   }
   
-  return { type: IR.IRNodeType.Identifier, name: hyphenToCamel(name) };
+  // Cache the result
+  symbolCache.set(name, result);
+  return { ...result };
 }
 
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (list.elements.length === 0) return null;
+  
   const head = list.elements[0];
   if (head.type === "symbol") {
     const s = head as SymbolNode;
+    
+    // Dispatch based on the head symbol
     switch (s.name) {
-      case "def":
-        return transformDef(list, currentDir);
-      case "defn":
-        return transformDefn(list, currentDir);
-      case "fn":
-        return transformFn(list, currentDir);
-      case "import":
-        return transformImport(list, currentDir);
-      case "vector":
-        return transformVector(list, currentDir);
-      case "list":
-        return transformArrayLiteral(list, currentDir);
-      case "hash-map":
-        return transformHashMap(list, currentDir);
-      case "keyword":
-        return transformKeyword(list);
-      case "defenum":
-        return transformDefenum(list);
-      case "export":
-        return transformExport(list, currentDir);
-      case "print":
-        return transformPrint(list, currentDir);
-      case "new":
-        return transformNew(list, currentDir);
-      case "str":
-        return transformStr(list, currentDir);
-      case "let":
-        return transformLet(list, currentDir);
-      case "cond":
-        return transformCond(list, currentDir);
-      case "if":
-        return transformIf(list, currentDir);
-      case "for":
-        return transformFor(list, currentDir);
-      case "set":
-        return transformSet(list, currentDir);
-      case "->":
-        // Ignore type annotations
-        return null;
+      case "def": return transformDef(list, currentDir);
+      case "defn": return transformDefn(list, currentDir);
+      case "fn": return transformFn(list, currentDir);
+      case "import": return transformImport(list, currentDir);
+      case "vector": return transformVector(list, currentDir);
+      case "list": return transformArrayLiteral(list, currentDir);
+      case "hash-map": return transformHashMap(list, currentDir);
+      case "keyword": return transformKeyword(list);
+      case "defenum": return transformDefenum(list);
+      case "export": return transformExport(list, currentDir);
+      case "print": return transformPrint(list, currentDir);
+      case "new": return transformNew(list, currentDir);
+      case "str": return transformStr(list, currentDir);
+      case "let": return transformLet(list, currentDir);
+      case "cond": return transformCond(list, currentDir);
+      case "if": return transformIf(list, currentDir);
+      case "for": return transformFor(list, currentDir);
+      case "set": return transformSet(list, currentDir);
+      case "->": return null; // Ignore type annotations
+      
+      // Arithmetic and comparison operators
       case "+":
       case "-":
       case "*":
@@ -108,22 +145,27 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "=":
       case "!=":
         return transformArithmetic(list, currentDir);
-      case "get":
-        return transformPropertyAccess(list, currentDir);
-      case "return":
-        return transformReturnStatement(list, currentDir);
-      default:
-        break;
+        
+      case "get": return transformPropertyAccess(list, currentDir);
+      case "return": return transformReturnStatement(list, currentDir);
+      
+      default: break;
     }
   }
+  
+  // Default: treat as function call
   return transformCall(list, currentDir);
 }
 
 /** (def var expr) */
 function transformDef(list: ListNode, currentDir: string): IR.IRVariableDeclaration {
-  if (list.elements.length < 3) throw new Error("def requires a name and an expression");
+  if (list.elements.length < 3) {
+    throw new Error("def requires a name and an expression");
+  }
+  
   const nameNode = list.elements[1] as SymbolNode;
   const valNode = list.elements[2];
+  
   return {
     type: IR.IRNodeType.VariableDeclaration,
     kind: "const",
@@ -134,9 +176,15 @@ function transformDef(list: ListNode, currentDir: string): IR.IRVariableDeclarat
 
 /** (import "url") */
 function transformImport(list: ListNode, currentDir: string): IR.IRNode {
-  if (list.elements.length !== 2) throw new Error("import requires a string argument");
+  if (list.elements.length !== 2) {
+    throw new Error("import requires a string argument");
+  }
+  
   const urlNode = list.elements[1] as LiteralNode;
-  if (typeof urlNode.value !== "string") throw new Error("import path must be a string literal");
+  if (typeof urlNode.value !== "string") {
+    throw new Error("import path must be a string literal");
+  }
+  
   return {
     type: IR.IRNodeType.CallExpression,
     callee: { type: IR.IRNodeType.Identifier, name: "$$IMPORT" },
@@ -147,12 +195,16 @@ function transformImport(list: ListNode, currentDir: string): IR.IRNode {
 
 /** (defn name (params) body...) */
 function transformDefn(list: ListNode, currentDir: string): IR.IRFunctionDeclaration {
-  if (list.elements.length < 4) throw new Error("defn requires a name, parameter list, and a body");
+  if (list.elements.length < 4) {
+    throw new Error("defn requires a name, parameter list, and a body");
+  }
+  
   const nameSym = list.elements[1] as SymbolNode;
   const paramList = list.elements[2] as ListNode;
   const bodyNodes = list.elements.slice(3)
     .map(n => transformNode(n, currentDir))
     .filter(Boolean) as IR.IRNode[];
+  
   const { params, namedParamIds } = transformParams(paramList);
   
   // For the last expression in the body, ensure it's properly returned
@@ -171,11 +223,15 @@ function transformDefn(list: ListNode, currentDir: string): IR.IRFunctionDeclara
 
 /** (fn (params) body...) */
 function transformFn(list: ListNode, currentDir: string): IR.IRFunctionDeclaration {
-  if (list.elements.length < 3) throw new Error("fn requires a parameter list and a body");
+  if (list.elements.length < 3) {
+    throw new Error("fn requires a parameter list and a body");
+  }
+  
   const paramList = list.elements[1] as ListNode;
   const bodyNodes = list.elements.slice(2)
     .map(n => transformNode(n, currentDir))
     .filter(Boolean) as IR.IRNode[];
+  
   const { params, namedParamIds } = transformParams(paramList);
   
   // For the last expression in the body, ensure it's properly returned
@@ -194,47 +250,80 @@ function transformFn(list: ListNode, currentDir: string): IR.IRFunctionDeclarati
 
 /** Helper: Transform a list as a Vector (JavaScript array) */
 function transformVector(list: ListNode, currentDir: string): IR.IRArrayLiteral {
-  const elems = list.elements.slice(1).map(x => transformNode(x, currentDir)).filter(Boolean) as IR.IRNode[];
+  const elems = list.elements.slice(1)
+    .map(x => transformNode(x, currentDir))
+    .filter(Boolean) as IR.IRNode[];
+  
   return { type: IR.IRNodeType.ArrayLiteral, elements: elems };
 }
 
 /** Helper: Transform a list as an ArrayLiteral (for both vectors and list literals) */
 function transformArrayLiteral(list: ListNode, currentDir: string): IR.IRArrayLiteral {
-  const elems = list.elements.slice(1).map(x => transformNode(x, currentDir)).filter(Boolean) as IR.IRNode[];
+  const elems = list.elements.slice(1)
+    .map(x => transformNode(x, currentDir))
+    .filter(Boolean) as IR.IRNode[];
+  
   return { type: IR.IRNodeType.ArrayLiteral, elements: elems };
 }
 
 /** (hash-map key value ... ) => ObjectLiteral */
 function transformHashMap(list: ListNode, currentDir: string): IR.IRObjectLiteral {
   const body = list.elements.slice(1);
-  if (body.length % 2 !== 0) throw new Error("hash-map requires even number of arguments");
+  
+  if (body.length % 2 !== 0) {
+    throw new Error("hash-map requires even number of arguments");
+  }
+  
   const props: IR.IRProperty[] = [];
+  
   for (let i = 0; i < body.length; i += 2) {
     const k = transformNode(body[i], currentDir);
     const v = transformNode(body[i+1], currentDir);
-    props.push({ type: IR.IRNodeType.Property, key: k!, value: v!, computed: false });
+    
+    if (k && v) {
+      props.push({ 
+        type: IR.IRNodeType.Property, 
+        key: k, 
+        value: v, 
+        computed: false 
+      });
+    }
   }
+  
   return { type: IR.IRNodeType.ObjectLiteral, properties: props };
 }
 
 /** (keyword "foo") => KeywordLiteral */
 function transformKeyword(list: ListNode): IR.IRKeywordLiteral {
-  if (list.elements.length !== 2) throw new Error("keyword requires exactly one argument");
+  if (list.elements.length !== 2) {
+    throw new Error("keyword requires exactly one argument");
+  }
+  
   const arg = list.elements[1];
   if (arg.type !== "literal" || typeof (arg as LiteralNode).value !== "string") {
     throw new Error("keyword argument must be a string literal");
   }
-  return { type: IR.IRNodeType.KeywordLiteral, value: (arg as LiteralNode).value as string };
+  
+  return { 
+    type: IR.IRNodeType.KeywordLiteral, 
+    value: (arg as LiteralNode).value as string 
+  };
 }
 
 /** (defenum Name member1 member2 ...) => EnumDeclaration */
 function transformDefenum(list: ListNode): IR.IREnumDeclaration {
-  if (list.elements.length < 2) throw new Error("defenum requires a name");
+  if (list.elements.length < 2) {
+    throw new Error("defenum requires a name");
+  }
+  
   const nameSym = list.elements[1] as SymbolNode;
   const members = list.elements.slice(2).map(x => {
-    if (x.type !== "symbol") throw new Error("defenum members must be symbols");
+    if (x.type !== "symbol") {
+      throw new Error("defenum members must be symbols");
+    }
     return hyphenToCamel((x as SymbolNode).name);
   });
+  
   return {
     type: IR.IRNodeType.EnumDeclaration,
     name: { type: IR.IRNodeType.Identifier, name: hyphenToCamel(nameSym.name) },
@@ -244,22 +333,34 @@ function transformDefenum(list: ListNode): IR.IREnumDeclaration {
 
 /** (export "exportName" localSym) => ExportDeclaration */
 function transformExport(list: ListNode, currentDir: string): IR.IRExportDeclaration {
-  if (list.elements.length !== 3) throw new Error("export requires two arguments: exportName and localSymbol");
+  if (list.elements.length !== 3) {
+    throw new Error("export requires two arguments: exportName and localSymbol");
+  }
+  
   const exportNameNode = list.elements[1] as LiteralNode;
   const localSym = list.elements[2] as SymbolNode;
-  if (typeof exportNameNode.value !== "string") throw new Error("export name must be a string literal");
+  
+  if (typeof exportNameNode.value !== "string") {
+    throw new Error("export name must be a string literal");
+  }
+  
   return {
     type: IR.IRNodeType.ExportDeclaration,
     exports: [
-      { local: { type: IR.IRNodeType.Identifier, name: hyphenToCamel(localSym.name) },
-        exported: exportNameNode.value }
+      { 
+        local: { type: IR.IRNodeType.Identifier, name: hyphenToCamel(localSym.name) },
+        exported: exportNameNode.value 
+      }
     ]
   };
 }
 
 /** (print ...) => console.log(...) */
 function transformPrint(list: ListNode, currentDir: string): IR.IRCallExpression {
-  const args = list.elements.slice(1).map(x => transformNode(x, currentDir)).filter(Boolean) as IR.IRNode[];
+  const args = list.elements.slice(1)
+    .map(x => transformNode(x, currentDir))
+    .filter(Boolean) as IR.IRNode[];
+  
   return {
     type: IR.IRNodeType.CallExpression,
     callee: { type: IR.IRNodeType.Identifier, name: "console.log" },
@@ -270,9 +371,15 @@ function transformPrint(list: ListNode, currentDir: string): IR.IRCallExpression
 
 /** (new Type arg1 arg2) => NewExpression */
 function transformNew(list: ListNode, currentDir: string): IR.IRNewExpression {
-  if (list.elements.length < 2) throw new Error("new requires a type");
+  if (list.elements.length < 2) {
+    throw new Error("new requires a type");
+  }
+  
   const typeNode = list.elements[1];
-  const args = list.elements.slice(2).map(x => transformNode(x, currentDir)).filter(Boolean) as IR.IRNode[];
+  const args = list.elements.slice(2)
+    .map(x => transformNode(x, currentDir))
+    .filter(Boolean) as IR.IRNode[];
+  
   return {
     type: IR.IRNodeType.NewExpression,
     callee: transformNode(typeNode, currentDir)!,
@@ -282,7 +389,10 @@ function transformNew(list: ListNode, currentDir: string): IR.IRNewExpression {
 
 /** (str a b c) => string concatenation */
 function transformStr(list: ListNode, currentDir: string): IR.IRCallExpression {
-  const args = list.elements.slice(1).map(x => transformNode(x, currentDir)).filter(Boolean) as IR.IRNode[];
+  const args = list.elements.slice(1)
+    .map(x => transformNode(x, currentDir))
+    .filter(Boolean) as IR.IRNode[];
+  
   return {
     type: IR.IRNodeType.CallExpression,
     callee: { type: IR.IRNodeType.Identifier, name: "str" },
@@ -299,6 +409,7 @@ function transformCond(list: ListNode, currentDir: string): IR.IRNode {
   
   // Group elements into pairs
   const pairs: Array<[IR.IRNode, IR.IRNode]> = [];
+  
   for (let i = 1; i < list.elements.length; i += 2) {
     // Check if we have enough elements
     if (i + 1 >= list.elements.length) {
@@ -435,7 +546,9 @@ function transformSet(list: ListNode, currentDir: string): IR.IRNode {
 
 /** (get obj "prop") => PropertyAccess */
 function transformPropertyAccess(list: ListNode, currentDir: string): IR.IRPropertyAccess {
-  if (list.elements.length !== 3) throw new Error("get requires object and property arguments");
+  if (list.elements.length !== 3) {
+    throw new Error("get requires object and property arguments");
+  }
   
   const obj = transformNode(list.elements[1], currentDir)!;
   const prop = transformNode(list.elements[2], currentDir)!;
@@ -475,22 +588,31 @@ function transformReturnStatement(list: ListNode, currentDir: string): IR.IRRetu
 
 /** (let [var1 val1 var2 val2 ...] body...) => local scoped variables */
 function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
-  if (list.elements.length < 3) throw new Error("let requires bindings and a body");
+  if (list.elements.length < 3) {
+    throw new Error("let requires bindings and a body");
+  }
+  
   const bindingsNode = list.elements[1] as ListNode;
   const bindings = bindingsNode.elements;
   
-  if (bindings.length % 2 !== 0) throw new Error("let bindings require even number of forms");
+  if (bindings.length % 2 !== 0) {
+    throw new Error("let bindings require even number of forms");
+  }
   
   const declarations: IR.IRVariableDeclaration[] = [];
   for (let i = 0; i < bindings.length; i += 2) {
     const nameNode = bindings[i] as SymbolNode;
     const valNode = bindings[i+1];
-    declarations.push({
-      type: IR.IRNodeType.VariableDeclaration,
-      kind: "const",
-      id: transformSymbol(nameNode),
-      init: transformNode(valNode, currentDir)!
-    });
+    
+    const valueIR = transformNode(valNode, currentDir);
+    if (valueIR) {
+      declarations.push({
+        type: IR.IRNodeType.VariableDeclaration,
+        kind: "const",
+        id: transformSymbol(nameNode),
+        init: valueIR
+      });
+    }
   }
   
   const bodyNodes = list.elements.slice(2)
@@ -524,17 +646,25 @@ function ensureReturnForLastExpression(bodyNodes: IR.IRNode[]): void {
 
 /** (+ a b c ...) => fold left into binary expressions */
 function transformArithmetic(list: ListNode, currentDir: string): IR.IRNode {
-  if (list.elements.length < 3) throw new Error("Arithmetic operator requires at least two operands");
+  if (list.elements.length < 3) {
+    throw new Error("Arithmetic operator requires at least two operands");
+  }
+  
   const op = (list.elements[0] as SymbolNode).name;
   let expr = transformNode(list.elements[1], currentDir)!;
+  
   for (let i = 2; i < list.elements.length; i++) {
-    expr = {
-      type: IR.IRNodeType.BinaryExpression,
-      operator: op,
-      left: expr,
-      right: transformNode(list.elements[i], currentDir)!
-    } as IR.IRBinaryExpression;
+    const rightNode = transformNode(list.elements[i], currentDir);
+    if (rightNode) {
+      expr = {
+        type: IR.IRNodeType.BinaryExpression,
+        operator: op,
+        left: expr,
+        right: rightNode
+      } as IR.IRBinaryExpression;
+    }
   }
+  
   return expr;
 }
 
@@ -543,25 +673,34 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
   const head = list.elements[0];
   const callee = transformNode(head, currentDir)!;
   const args = list.elements.slice(1);
+  
+  // Check if the arguments are named (key-value pairs)
   let isNamed = false;
   if (args.length >= 2 && args.length % 2 === 0) {
     isNamed = args.every((n, i) =>
       i % 2 === 0 ? (n.type === "symbol" && (n as SymbolNode).name.endsWith(":")) : true
     );
   }
+  
   if (isNamed) {
+    // Handle named arguments as object
     const props: IR.IRProperty[] = [];
+    
     for (let i = 0; i < args.length; i += 2) {
       const keySym = args[i] as SymbolNode;
       const keyName = hyphenToCamel(keySym.name.slice(0, -1));
-      const val = transformNode(args[i+1], currentDir)!;
-      props.push({
-        type: IR.IRNodeType.Property,
-        key: { type: IR.IRNodeType.StringLiteral, value: keyName },
-        value: val,
-        computed: false
-      });
+      const valNode = transformNode(args[i+1], currentDir);
+      
+      if (valNode) {
+        props.push({
+          type: IR.IRNodeType.Property,
+          key: { type: IR.IRNodeType.StringLiteral, value: keyName },
+          value: valNode,
+          computed: false
+        });
+      }
     }
+    
     return {
       type: IR.IRNodeType.CallExpression,
       callee,
@@ -569,11 +708,15 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
       isNamedArgs: true
     };
   } else {
-    const norm = args.map(x => transformNode(x, currentDir)).filter(Boolean) as IR.IRNode[];
+    // Handle regular arguments
+    const transformedArgs = args
+      .map(x => transformNode(x, currentDir))
+      .filter(Boolean) as IR.IRNode[];
+    
     return {
       type: IR.IRNodeType.CallExpression,
       callee,
-      arguments: norm,
+      arguments: transformedArgs,
       isNamedArgs: false
     };
   }
@@ -590,9 +733,14 @@ function transformParams(list: ListNode): { params: IR.IRParameter[], namedParam
   }
   
   for (const el of list.elements) {
-    if (el.type !== "symbol") throw new Error("Parameter must be a symbol");
+    if (el.type !== "symbol") {
+      throw new Error("Parameter must be a symbol");
+    }
+    
     const name = (el as SymbolNode).name;
+    
     if (name.endsWith(":")) {
+      // Named parameter
       const real = hyphenToCamel(name.slice(0, -1));
       named.push(real);
       params.push({
@@ -600,11 +748,13 @@ function transformParams(list: ListNode): { params: IR.IRParameter[], namedParam
         id: { type: IR.IRNodeType.Identifier, name: real }
       });
     } else {
+      // Regular parameter
       params.push({
         type: IR.IRNodeType.Parameter,
         id: { type: IR.IRNodeType.Identifier, name: hyphenToCamel(name) }
       });
     }
   }
+  
   return { params, namedParamIds: named };
 }

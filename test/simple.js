@@ -46,18 +46,12 @@ console.log("====== New Special Form Test ======")
 const arr = new Array(1, 2, 3);
 console.log(arr)
 console.log("====== Arithmetic Operations ======")
-const add = function(a, b) {
-  return (a + b);
-};
+const add = function(a, b) { return (a + b); };
 console.log(add(3, 4))
-const inc = function(n) {
-  return (n + 1);
-};
+const inc = function(n) { return (n + 1); };
 console.log(inc(10))
 console.log("====== New Syntax (defn) Demo ======")
-function addN(x, y) {
-  return (x + y);
-}
+function addN(x, y) { return (x + y); }
 console.log(addN(2, 3))
 function minus(params) {
   const { x, y } = params;
@@ -75,12 +69,8 @@ const syncMinus = function(params) {
 };
 export { syncAdd };
 export { syncMinus };
-const add2 = function(x, y) {
-  return (x + y);
-};
-const minus2 = function(x, y) {
-  return (x - y);
-};
+const add2 = function(x, y) { return (x + y); };
+const minus2 = function(x, y) { return (x - y); };
 export { add2 };
 export { minus2 };
 const Destination = { hlvm: "hlvm", macos: "macos", ios: "ios" };
@@ -108,12 +98,10 @@ function calculateArea(params) {
 console.log("Area of 5x10 rectangle: ", calculateArea({width: 5, height: 10}))
 function formatName(params) {
   const { first, last, title } = params;
-  return title + " " + first + " " + last;
+  return `${title} ${first} ${last}`;
 }
 console.log("Formatted name: ", formatName({first: "Jane", last: "Doe", title: "Dr."}))
-function point3d(x, y, z) {
-  return [x, y, z];
-}
+function point3d(x, y, z) { return [x, y, z]; }
 console.log("3D Point: ", point3d(10, 20, 30))
 function applyTax(params) {
   const { amount, rate } = params;
@@ -126,9 +114,7 @@ function calculateTotal(params) {
 console.log("Total price with tax: ", calculateTotal({price: 19.99, qty: 3, taxRate: 8.5}))
 function makeAdder(params) {
   const { increment } = params;
-  return function(x) {
-  return (x + increment);
-};
+  return function(x) { return (x + increment); };
 }
 const add5 = makeAdder({increment: 5});
 console.log("Result of add5(10): ", add5(10))
