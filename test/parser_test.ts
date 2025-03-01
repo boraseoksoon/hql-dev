@@ -1,189 +1,281 @@
 // test/parser_test.ts
 import { assertEquals, assertThrows } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../src/transpiler/parser.ts";
+import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../src/transpiler/hql_ast.ts";
 import { ParseError } from "../src/transpiler/errors.ts";
 
-// Basic HQL parsing
-Deno.test("Parse basic HQL expressions", () => {
-  // Simple def statement
-  const ast1 = parse('(def greeting "Hello, world!")');
-  assertEquals(ast1.length, 1);
-  assertEquals(ast1[0].type, "list");
-  if (ast1[0].type === "list") {
-    assertEquals(ast1[0].elements.length, 3);
-    assertEquals(ast1[0].elements[0].type, "symbol");
-    assertEquals(ast1[0].elements[1].type, "symbol");
-    assertEquals(ast1[0].elements[2].type, "literal");
-    
-    if (ast1[0].elements[0].type === "symbol" && 
-        ast1[0].elements[1].type === "symbol" && 
-        ast1[0].elements[2].type === "literal") {
-      assertEquals(ast1[0].elements[0].name, "def");
-      assertEquals(ast1[0].elements[1].name, "greeting");
-      assertEquals(ast1[0].elements[2].value, "Hello, world!");
-    }
-  }
-  
-  // Basic function definition
-  const ast2 = parse(`
-    (defn add [x y]
-      (+ x y))
-  `);
-  assertEquals(ast2.length, 1);
-  assertEquals(ast2[0].type, "list");
-  if (ast2[0].type === "list") {
-    assertEquals(ast2[0].elements.length, 4);
-    assertEquals(ast2[0].elements[0].type, "symbol");
-    if (ast2[0].elements[0].type === "symbol") {
-      assertEquals(ast2[0].elements[0].name, "defn");
-    }
-  }
+// Helper function to assert equality while ignoring position info for simplicity
+function assertAstEqual(actual: HQLNode[], expected: HQLNode[]) {
+  assertEquals(JSON.stringify(actual), JSON.stringify(expected));
+}
+
+Deno.test("parser - empty input", () => {
+  const ast = parse("");
+  assertEquals(ast.length, 0);
 });
 
-// String literals with escapes
-Deno.test("Parse string literals with escapes", () => {
-  const ast = parse('(def escaped "Line 1\\nLine 2\\tTabbed\\\\Backslash\\"Quote")');
-  assertEquals(ast.length, 1);
-  assertEquals(ast[0].type, "list");
-  if (ast[0].type === "list" && ast[0].elements[2].type === "literal") {
-    assertEquals(ast[0].elements[2].value, "Line 1\nLine 2\tTabbed\\Backslash\"Quote");
-  }
-});
-
-// Boolean and null literals
-Deno.test("Parse boolean and null literals", () => {
-  const ast = parse(`
-    (def t true)
-    (def f false)
-    (def n null)
-    (def nil-val nil)
-  `);
-  assertEquals(ast.length, 4);
+Deno.test("parser - literal values", () => {
+  // String
+  let ast = parse('"hello"');
+  assertAstEqual(ast, [{ type: "literal", value: "hello" }]);
   
-  // True
-  if (ast[0].type === "list" && ast[0].elements[2].type === "literal") {
-    assertEquals(ast[0].elements[2].value, true);
-  }
+  // Numbers
+  ast = parse("123");
+  assertAstEqual(ast, [{ type: "literal", value: 123 }]);
   
-  // False
-  if (ast[1].type === "list" && ast[1].elements[2].type === "literal") {
-    assertEquals(ast[1].elements[2].value, false);
-  }
+  ast = parse("123.456");
+  assertAstEqual(ast, [{ type: "literal", value: 123.456 }]);
+  
+  // Booleans
+  ast = parse("true");
+  assertAstEqual(ast, [{ type: "literal", value: true }]);
+  
+  ast = parse("false");
+  assertAstEqual(ast, [{ type: "literal", value: false }]);
   
   // Null
-  if (ast[2].type === "list" && ast[2].elements[2].type === "literal") {
-    assertEquals(ast[2].elements[2].value, null);
-  }
+  ast = parse("null");
+  assertAstEqual(ast, [{ type: "literal", value: null }]);
   
-  // Nil
-  if (ast[3].type === "list" && ast[3].elements[2].type === "literal") {
-    assertEquals(ast[3].elements[2].value, null);
-  }
+  ast = parse("nil");
+  assertAstEqual(ast, [{ type: "literal", value: null }]);
 });
 
-// Numeric literals
-Deno.test("Parse numeric literals", () => {
-  const ast = parse(`
-    (def int 42)
-    (def float 3.14159)
-    (def negative -10)
-  `);
-  assertEquals(ast.length, 3);
-  
-  // Integer
-  if (ast[0].type === "list" && ast[0].elements[2].type === "literal") {
-    assertEquals(ast[0].elements[2].value, 42);
-  }
-  
-  // Float
-  if (ast[1].type === "list" && ast[1].elements[2].type === "literal") {
-    assertEquals(ast[1].elements[2].value, 3.14159);
-  }
-  
-  // Negative
-  if (ast[2].type === "list" && ast[2].elements[2].type === "literal") {
-    assertEquals(ast[2].elements[2].value, -10);
-  }
+Deno.test("parser - symbols", () => {
+  const ast = parse("foo bar baz");
+  assertAstEqual(ast, [
+    { type: "symbol", name: "foo" },
+    { type: "symbol", name: "bar" },
+    { type: "symbol", name: "baz" }
+  ]);
 });
 
-// Nested expressions
-Deno.test("Parse nested expressions", () => {
-  const ast = parse(`
-    (defn area-circle [radius]
-      (* 3.14159 (* radius radius)))
-  `);
-  assertEquals(ast.length, 1);
+Deno.test("parser - lists and nesting", () => {
+  // Simple list
+  let ast = parse("(foo bar)");
+  assertAstEqual(ast, [{
+    type: "list",
+    elements: [
+      { type: "symbol", name: "foo" },
+      { type: "symbol", name: "bar" }
+    ]
+  }]);
   
-  if (ast[0].type === "list") {
-    // Check function body (* 3.14159 (* radius radius))
-    const bodyExpr = ast[0].elements[3];
-    assertEquals(bodyExpr.type, "list");
-    
-    if (bodyExpr.type === "list") {
-      // Check nested (* radius radius)
-      const nestedExpr = bodyExpr.elements[2];
-      assertEquals(nestedExpr.type, "list");
-      
-      if (nestedExpr.type === "list") {
-        assertEquals(nestedExpr.elements.length, 3);
-        assertEquals(nestedExpr.elements[0].type, "symbol");
-        
-        if (nestedExpr.elements[0].type === "symbol") {
-          assertEquals(nestedExpr.elements[0].name, "*");
-        }
+  // Nested lists
+  ast = parse("(foo (bar baz))");
+  assertAstEqual(ast, [{
+    type: "list",
+    elements: [
+      { type: "symbol", name: "foo" },
+      {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "bar" },
+          { type: "symbol", name: "baz" }
+        ]
       }
-    }
-  }
-});
-
-// Comment handling
-Deno.test("Handle comments correctly", () => {
-  const ast = parse(`
-    ;; This is a full line comment
-    (def x 1) ;; This is an inline comment
-    ;; Another comment
-    (def y 2)
-  `);
-  assertEquals(ast.length, 2);
+    ]
+  }]);
   
-  if (ast[0].type === "list" && ast[0].elements[2].type === "literal") {
-    assertEquals(ast[0].elements[2].value, 1);
-  }
+  // Empty list
+  ast = parse("()");
+  assertAstEqual(ast, [{ type: "list", elements: [] }]);
+});
+
+Deno.test("parser - vector syntax with square brackets", () => {
+  const ast = parse("[1 2 3]");
+  assertAstEqual(ast, [{
+    type: "list",
+    elements: [
+      { type: "literal", value: 1 },
+      { type: "literal", value: 2 },
+      { type: "literal", value: 3 }
+    ]
+  }]);
+});
+
+Deno.test("parser - mixed expressions", () => {
+  const ast = parse('(defn greet [name] (print "Hello, " name "!"))');
+  assertAstEqual(ast, [{
+    type: "list",
+    elements: [
+      { type: "symbol", name: "defn" },
+      { type: "symbol", name: "greet" },
+      {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "name" }
+        ]
+      },
+      {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "print" },
+          { type: "literal", value: "Hello, " },
+          { type: "symbol", name: "name" },
+          { type: "literal", value: "!" }
+        ]
+      }
+    ]
+  }]);
+});
+
+Deno.test("parser - comments", () => {
+  // Single line comment
+  let ast = parse("; This is a comment\nfoo");
+  assertAstEqual(ast, [{ type: "symbol", name: "foo" }]);
   
-  if (ast[1].type === "list" && ast[1].elements[2].type === "literal") {
-    assertEquals(ast[1].elements[2].value, 2);
-  }
+  // Inline comment
+  ast = parse("foo ; This is a comment\nbar");
+  assertAstEqual(ast, [
+    { type: "symbol", name: "foo" },
+    { type: "symbol", name: "bar" }
+  ]);
+  
+  // Comment within a list
+  ast = parse("(foo ; This is a comment\nbar)");
+  assertAstEqual(ast, [{
+    type: "list",
+    elements: [
+      { type: "symbol", name: "foo" },
+      { type: "symbol", name: "bar" }
+    ]
+  }]);
 });
 
-// Error cases
-Deno.test("Throw error for unclosed string", () => {
-  assertThrows(
-    () => parse('(def greeting "Hello, world!);'),
-    ParseError,
-    "Unclosed string literal"
-  );
+Deno.test("parser - string escapes", () => {
+  // Basic escapes
+  let ast = parse('"Hello\\nWorld"');
+  assertAstEqual(ast, [{ type: "literal", value: "Hello\nWorld" }]);
+  
+  ast = parse('"Tab\\tCharacter"');
+  assertAstEqual(ast, [{ type: "literal", value: "Tab\tCharacter" }]);
+  
+  ast = parse('"Quoted\\"String\\""');
+  assertAstEqual(ast, [{ type: "literal", value: 'Quoted"String"' }]);
+  
+  // HQL interpolation escapes
+  ast = parse('"Value: \\(x)"');
+  assertAstEqual(ast, [{ type: "literal", value: 'Value: (x)' }]);
 });
 
-Deno.test("Throw error for unclosed parenthesis", () => {
+Deno.test("parser - string with interpolation markers", () => {
+  const ast = parse('"Hello, \\(name)!"');
+  assertAstEqual(ast, [{ type: "literal", value: "Hello, (name)!" }]);
+});
+
+Deno.test("parser - error: unclosed list", () => {
   assertThrows(
-    () => parse('(def greeting "Hello"'),
+    () => parse("(foo bar"),
     ParseError,
     "Unclosed parenthesis"
   );
 });
 
-Deno.test("Throw error for unexpected closing parenthesis", () => {
+Deno.test("parser - error: unclosed square bracket", () => {
   assertThrows(
-    () => parse('(def greeting "Hello"))'),
+    () => parse("[1 2 3"),
+    ParseError,
+    "Unclosed square bracket"
+  );
+});
+
+Deno.test("parser - error: unexpected closing parenthesis", () => {
+  assertThrows(
+    () => parse("foo)"),
     ParseError,
     "Unexpected ')'"
   );
 });
 
-Deno.test("Throw error for invalid escape sequence", () => {
+Deno.test("parser - error: unexpected closing square bracket", () => {
   assertThrows(
-    () => parse('(def greeting "Hello\\z")'),
+    () => parse("foo]"),
+    ParseError,
+    "Unexpected ']'"
+  );
+});
+
+Deno.test("parser - error: unclosed string", () => {
+  assertThrows(
+    () => parse('"Hello'),
+    ParseError,
+    "Unclosed string literal"
+  );
+});
+
+Deno.test("parser - error: invalid escape sequence", () => {
+  assertThrows(
+    () => parse('"Hello\\z"'),
     ParseError,
     "Invalid escape sequence"
   );
 });
+
+Deno.test("parser - multiline code", () => {
+  const code = `
+    (defn factorial [n]
+      (if (= n 0)
+        1
+        (* n (factorial (- n 1)))))
+  `;
+  
+  const ast = parse(code);
+  assertEquals(ast.length, 1);
+  assertEquals((ast[0] as ListNode).elements[0].type, "symbol");
+  assertEquals(((ast[0] as ListNode).elements[0] as SymbolNode).name, "defn");
+});
+
+Deno.test("parser - handling js/interop syntax", () => {
+  const ast = parse("js/console.log");
+  assertAstEqual(ast, [{ type: "symbol", name: "js/console.log" }]);
+});
+
+Deno.test("parser - multiple top-level expressions", () => {
+  const code = `
+    (def x 10)
+    (def y 20)
+    (+ x y)
+  `;
+  
+  const ast = parse(code);
+  assertEquals(ast.length, 3);
+});
+
+Deno.test("parser - whitespace handling", () => {
+  // Test that different whitespace patterns are handled equivalently
+  const compact = parse("(foo bar)");
+  const spaced = parse("( foo   bar )");
+  const multiline = parse(`(foo
+    bar)`);
+  
+  assertAstEqual(compact, spaced);
+  assertAstEqual(compact, multiline);
+});
+
+Deno.test("parser - performance with large input", () => {
+  // Generate a large input
+  const largeInput = Array(1000).fill('(def x 10)').join('\n');
+  
+  // Measure parse time
+  const start = performance.now();
+  const ast = parse(largeInput);
+  const end = performance.now();
+  
+  assertEquals(ast.length, 1000);
+  
+  // This should parse quickly (adjust threshold as needed)
+  const parseTime = end - start;
+  console.log(`Large input parse time: ${parseTime}ms`);
+  
+  // We're not making a strict assertion here, just a sanity check
+  // that parsing is reasonably fast
+  assert(parseTime < 1000, "Parsing should be reasonably fast");
+});
+
+// Helper function for the assertion above
+function assert(condition: boolean, message: string) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}

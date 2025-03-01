@@ -25,7 +25,7 @@ export function transformToIR(nodes: HQLNode[], currentDir: string): IR.IRProgra
 function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
   // Check cache first
   if (nodeTransformCache.has(node)) {
-    return nodeTransformCache.get(node);
+    return nodeTransformCache.get(node) || null;
   }
   
   let result: IR.IRNode | null;
@@ -185,10 +185,15 @@ function transformImport(list: ListNode, currentDir: string): IR.IRNode {
     throw new Error("import path must be a string literal");
   }
   
+  const stringLiteral: IR.IRStringLiteral = { 
+    type: IR.IRNodeType.StringLiteral, 
+    value: urlNode.value
+  };
+  
   return {
     type: IR.IRNodeType.CallExpression,
     callee: { type: IR.IRNodeType.Identifier, name: "$$IMPORT" },
-    arguments: [{ type: IR.IRNodeType.StringLiteral, value: urlNode.value }],
+    arguments: [stringLiteral],
     isNamedArgs: false
   } as IR.IRCallExpression;
 }
@@ -692,19 +697,29 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
       const valNode = transformNode(args[i+1], currentDir);
       
       if (valNode) {
+        const keyLiteral: IR.IRStringLiteral = { 
+          type: IR.IRNodeType.StringLiteral, 
+          value: keyName 
+        };
+        
         props.push({
           type: IR.IRNodeType.Property,
-          key: { type: IR.IRNodeType.StringLiteral, value: keyName },
+          key: keyLiteral,
           value: valNode,
           computed: false
         });
       }
     }
     
+    const objLiteral: IR.IRObjectLiteral = {
+      type: IR.IRNodeType.ObjectLiteral,
+      properties: props
+    };
+    
     return {
       type: IR.IRNodeType.CallExpression,
       callee,
-      arguments: [{ type: IR.IRNodeType.ObjectLiteral, properties: props }],
+      arguments: [objLiteral],
       isNamedArgs: true
     };
   } else {
