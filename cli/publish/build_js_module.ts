@@ -2,13 +2,13 @@
 
 import transpileCLI from "../transpile.ts";
 import { join, resolve, dirname, basename } from "../../src/platform/platform.ts";
-import { exists, emptyDir } from "jsr:@std/fs@1.0.13";
+import { exists, emptyDir, copy, ensureDir } from "jsr:@std/fs@1.0.13";
 
 /**
  * Build a JavaScript module from an HQL file.
  * This performs the following steps:
  * 1. Transpile the HQL file to JavaScript with bundling enabled
- * 2. Create a proper entry point file
+ * 2. Create a proper directory structure for publishing
  * 
  * @param inputPath The HQL file path
  * @returns Promise<string> Path to the npm directory
@@ -66,9 +66,19 @@ export async function buildJsModule(inputPath: string): Promise<string> {
     // Try to continue anyway, as transpileCLI might report errors but still produce output
   }
   
-  // Create an entry file 
-  const esmEntryFile = join(buildDir, "esm.js");
+  // Create the npm directory for the final output
+  const npmDir = join(baseDir, "npm");
+  await ensureDir(npmDir, { recursive: true });
   
+  // Create the esm directory structure inside npm
+  const esmDir = join(npmDir, "esm");
+  await ensureDir(esmDir, { recursive: true });
+  
+  // Create the types directory structure inside npm
+  const typesDir = join(npmDir, "types");
+  await ensureDir(typesDir, { recursive: true });
+  
+  // Create entry files
   try {
     // Check if the transpiled JS file exists
     let transpiledJs = "";
@@ -80,27 +90,24 @@ export async function buildJsModule(inputPath: string): Promise<string> {
       transpiledJs = `// Stub module\nexport default { name: "hql-module" };\n`;
     }
     
-    // Write the entry file
-    await Deno.writeTextFile(esmEntryFile, transpiledJs);
-    console.log(`Created entry file at ${esmEntryFile}`);
-  } catch (error) {
-    console.error("Error creating entry file:", error);
-    // Create a minimal entry as fallback
-    try {
-      await Deno.writeTextFile(esmEntryFile, `export default { name: "hql-module" };\n`);
-    } catch (writeError) {
-      console.error(`Failed to create fallback entry file: ${writeError.message}`);
-      throw writeError;
+    // Write the main esm index file
+    const esmIndexFile = join(esmDir, "index.js");
+    await Deno.writeTextFile(esmIndexFile, transpiledJs);
+    console.log(`Created ESM index file at ${esmIndexFile}`);
+    
+    // Create a type definition file
+    const typesIndexFile = join(typesDir, "index.d.ts");
+    await Deno.writeTextFile(typesIndexFile, `declare const _default: any;\nexport default _default;\n`);
+    console.log(`Created types definition file at ${typesIndexFile}`);
+    
+    // Create a basic README.md if it doesn't exist
+    const readmePath = join(npmDir, "README.md");
+    if (!await exists(readmePath)) {
+      await Deno.writeTextFile(readmePath, `# HQL Module\n\nAuto-generated README for the HQL module.\n`);
     }
-  }
-  
-  const npmDir = join(baseDir, "npm");
-  try {
-    await Deno.mkdir(npmDir, { recursive: true });
   } catch (error) {
-    if (!(error instanceof Deno.errors.AlreadyExists)) {
-      throw error;
-    }
+    console.error("Error creating module files:", error);
+    throw error;
   }
   
   return npmDir;

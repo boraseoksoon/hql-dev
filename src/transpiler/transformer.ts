@@ -16,7 +16,7 @@ import {
   pathExists
 } from "./path-utils.ts";
 import { parse } from "./parser.ts";
-import { dirname, resolve, join } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { dirname, resolve, join, basename } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { bundleJavaScript } from "../bundler/bundler.ts";
 
 // Cache for processed imports to avoid redundant processing
@@ -544,10 +544,7 @@ export async function transpileFile(
         await Deno.writeTextFile(tempJsPath, transpiled);
         
         // Bundle the transpiled output
-        const bundled = await bundleJavaScript(tempJsPath, {
-          format: options.module as "esm" | "commonjs",
-          verbose: options.verbose
-        });
+        const bundled = await bundleJavaScript(tempJsPath, { format: options.module as "esm" | "commonjs", verbose: options.verbose });
         
         // Clean up temporary file
         try {

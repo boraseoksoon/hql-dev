@@ -1,7 +1,7 @@
-// cli/transpile.ts - Update with bundling support
+// cli/transpile.ts - Updated with bundling support
 
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { transformAST } from "../src/transpiler/transformer.ts";
+import { transformAST, transpileFile } from "../src/transpiler/transformer.ts";
 import { parse } from "../src/transpiler/parser.ts";
 
 /**
@@ -13,11 +13,11 @@ function log(message: string) {
 
 /**
  * Transpile an HQL file and write the output to a file.
- * This function properly bundles all dependencies when --bundle flag is used.
+ * This function transforms the source without bundling.
  *
  * @param inputPath - Path to the input HQL file.
  * @param outputPath - Path to the output JavaScript file.
- * @param options - Transpilation options including bundle flag.
+ * @param options - Transpilation options.
  */
 async function transpileCLI(
   inputPath: string, 
@@ -45,20 +45,16 @@ async function transpileCLI(
       const ast = parse(source);
       const dir = dirname(resolvedInputPath);
       
-      // Transform with bundling if requested
+      // Transform without bundling
       const transformed = await transformAST(ast, dir, new Set(), {
         module: options.module || 'esm',
-        bundle: options.bundle,
+        bundle: false,
         verbose: options.verbose
       });
       
       // Write the output
       await writeOutput(transformed, outPath);
       log(`Successfully transpiled ${inputPath} -> ${outPath}`);
-      
-      if (options.bundle) {
-        log(`Output is a bundled self-contained file`);
-      }
     } catch (error) {
       console.error(`Transpilation failed: ${error.message}`);
     }
@@ -76,7 +72,6 @@ async function transpileCLI(
  *
  * @param code - The transpiled code.
  * @param outputPath - Path to the output file.
- * @returns A promise that resolves when the file has been written.
  */
 async function writeOutput(code: string, outputPath: string): Promise<void> {
   try {
@@ -101,9 +96,10 @@ async function writeOutput(code: string, outputPath: string): Promise<void> {
 
 /**
  * Watch an HQL file for changes and transpile on modification.
+ * Uses bundling if the --bundle flag is provided.
  *
  * @param inputPath - Path to the input HQL file.
- * @param options - Transpilation options including bundle flag.
+ * @param options - Transpilation options.
  */
 async function watchFile(
   inputPath: string, 
@@ -116,8 +112,12 @@ async function watchFile(
   log(`Watching ${inputPath} for changes...`);
   
   try {
-    // Initial transpilation
-    await transpileCLI(inputPath, undefined, options);
+    // Initial transpilation using bundling if requested
+    if (options.bundle) {
+      await transpileFile(inputPath, undefined, options);
+    } else {
+      await transpileCLI(inputPath, undefined, options);
+    }
     
     // Set up file watcher
     const watcher = Deno.watchFs(inputPath);
@@ -126,7 +126,11 @@ async function watchFile(
       if (event.kind === 'modify') {
         try {
           log(`File changed, retranspiling...`);
-          await transpileCLI(inputPath, undefined, options);
+          if (options.bundle) {
+            await transpileFile(inputPath, undefined, options);
+          } else {
+            await transpileCLI(inputPath, undefined, options);
+          }
         } catch (error: any) {
           console.error(`Transpilation failed: ${error.message}`);
         }
@@ -180,7 +184,11 @@ if (import.meta.main) {
   if (watch) {
     watchFile(inputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
   } else {
-    transpileCLI(inputPath, outputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
+    if (bundle) {
+      transpileFile(inputPath, outputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
+    } else {
+      transpileCLI(inputPath, outputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
+    }
   }
 }
 
