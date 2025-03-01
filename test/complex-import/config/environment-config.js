@@ -9,7 +9,7 @@ function getCurrentEnvironment() {
 function getEnvironmentConfig() {
   {
   const currentEnv = getCurrentEnvironment();
-  return (currentEnv === environments[0]) ? {[":debug"]: true, [":logLevel"]: "debug", [":apiBase"]: "http://localhost:3000"} : (currentEnv === environments[1]) ? {[":debug"]: true, [":logLevel"]: "info", [":apiBase"]: "http://test-api.example.com"} : (currentEnv === environments[2]) ? {[":debug"]: false, [":logLevel"]: "warn", [":apiBase"]: "https://staging-api.example.com"} : (currentEnv === environments[3]) ? {[":debug"]: false, [":logLevel"]: "error", [":apiBase"]: "https://api.example.com"} : true ? {[":debug"]: true, [":logLevel"]: "debug", [":apiBase"]: "http://localhost:3000"} : null;
+  return (currentEnv === environments[0]) ? {debug: true, logLevel: "debug", apiBase: "http://localhost:3000"} : (currentEnv === environments[1]) ? {debug: true, logLevel: "info", apiBase: "http://test-api.example.com"} : (currentEnv === environments[2]) ? {debug: false, logLevel: "warn", apiBase: "https://staging-api.example.com"} : (currentEnv === environments[3]) ? {debug: false, logLevel: "error", apiBase: "https://api.example.com"} : true ? {debug: true, logLevel: "debug", apiBase: "http://localhost:3000"} : null;
 }
 }
 export { getCurrentEnvironment };

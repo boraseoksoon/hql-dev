@@ -1,4 +1,5 @@
-import * as sharedUtils from "./shared-utils.js";
+import * as sharedUtils_module from "./shared-utils.js";
+const sharedUtils = sharedUtils_module.default !== undefined ? sharedUtils_module.default : sharedUtils_module;
 function formatData(data, format) {
   {
   const normalizedFormat = sharedUtils.normalizeFormat(format);

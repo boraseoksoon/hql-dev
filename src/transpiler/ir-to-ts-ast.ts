@@ -91,17 +91,18 @@ function processImport(node: IR.IRNode): TSNode | null {
 }
 
 /**
- * Creates a standard namespace import
+ * Creates a standard namespace import.
  */
 function createNamespaceImport(varName: string, url: string): TSNode {
   return {
     type: TSNodeType.Raw,
-    code: `import * as ${varName} from "${url}";`
+    code: `import * as ${varName}_module from "${url}";\n` +
+          `const ${varName} = ${varName}_module.default !== undefined ? ${varName}_module.default : ${varName}_module;`
   };
 }
 
 /**
- * Creates a universal import that works with both default and namespace exports
+ * Creates a universal import that works with both default and namespace exports.
  */
 function createUniversalImport(varName: string, url: string): TSNode {
   return {
@@ -118,23 +119,27 @@ function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
   if (!node) return null;
   
   switch (node.type) {
-    case IR.IRNodeType.StringLiteral:
-      return { type: TSNodeType.StringLiteral, text: JSON.stringify((node as IR.IRStringLiteral).value) };
-
+    case IR.IRNodeType.StringLiteral: {
+      const lit = node as IR.IRStringLiteral;
+      const value = lit.value;
+      // ★ NEW: If the string contains HQL interpolation markers, convert to a template literal.
+      if (typeof value === "string" && value.includes("\\(")) {
+        const converted = value.replace(/\\\((.*?)\)/g, '${$1}');
+        return { type: TSNodeType.Raw, code: `\`${converted}\`` };
+      }
+      return { type: TSNodeType.StringLiteral, text: JSON.stringify(value) };
+    }
     case IR.IRNodeType.NumericLiteral:
       return { type: TSNodeType.NumericLiteral, text: (node as IR.IRNumericLiteral).value.toString() };
-
     case IR.IRNodeType.BooleanLiteral:
       return { type: TSNodeType.BooleanLiteral, text: (node as IR.IRBooleanLiteral).value ? "true" : "false" };
-
     case IR.IRNodeType.NullLiteral:
       return { type: TSNodeType.NullLiteral };
-
-    case IR.IRNodeType.KeywordLiteral: {
-      const kw = node as IR.IRKeywordLiteral;
-      return { type: TSNodeType.StringLiteral, text: JSON.stringify(":" + kw.value) };
-    }
-
+      case IR.IRNodeType.KeywordLiteral: {
+        const kw = node as IR.IRKeywordLiteral;
+        return { type: TSNodeType.StringLiteral, text: JSON.stringify(kw.value) };
+      }
+      
     case IR.IRNodeType.Identifier: {
       const idNode = node as IR.IRIdentifier;
       let name = idNode.name;
@@ -148,55 +153,38 @@ function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
       
       return { type: TSNodeType.Identifier, text: name };
     }
-
     case IR.IRNodeType.ArrayLiteral:
       return convertArrayLiteral(node as IR.IRArrayLiteral);
-
     case IR.IRNodeType.ObjectLiteral:
       return convertObjectLiteral(node as IR.IRObjectLiteral);
-
     case IR.IRNodeType.BinaryExpression:
       return convertBinaryExpression(node as IR.IRBinaryExpression);
-      
     case IR.IRNodeType.AssignmentExpression:
       return convertAssignmentExpression(node as IR.IRAssignmentExpression);
-      
     case IR.IRNodeType.ConditionalExpression:
       return convertConditionalExpression(node as IR.IRConditionalExpression);
-
     case IR.IRNodeType.CallExpression:
       return convertCallExpression(node as IR.IRCallExpression);
-
     case IR.IRNodeType.NewExpression:
       return convertNewExpression(node as IR.IRNewExpression);
-      
     case IR.IRNodeType.PropertyAccess:
       return convertPropertyAccess(node as IR.IRPropertyAccess);
-
     case IR.IRNodeType.VariableDeclaration:
       return convertVariableDeclaration(node as IR.IRVariableDeclaration);
-
     case IR.IRNodeType.FunctionDeclaration:
       return convertFunctionDeclaration(node as IR.IRFunctionDeclaration);
-
     case IR.IRNodeType.EnumDeclaration:
       return convertEnumDeclaration(node as IR.IREnumDeclaration);
-
     case IR.IRNodeType.ExportDeclaration:
       return convertExportDeclaration(node as IR.IRExportDeclaration);
-      
     case IR.IRNodeType.ReturnStatement:
       return convertReturnStatement(node as IR.IRReturnStatement);
-      
     case IR.IRNodeType.IfStatement:
       return convertIfStatement(node as IR.IRIfStatement);
-      
     case IR.IRNodeType.ForStatement:
       return convertForStatement(node as IR.IRForStatement);
-
     case IR.IRNodeType.Block:
       return convertBlock(node as IR.IRBlock);
-
     default:
       console.warn(`Unknown IR node type: ${node.type}`);
       return null;
@@ -204,7 +192,7 @@ function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
 }
 
 /**
- * Convert a PropertyAccess node to TS AST
+ * Convert a PropertyAccess node to TS AST.
  */
 function convertPropertyAccess(propAccess: IR.IRPropertyAccess): TSNode {
   const obj = nodeToString(convertNode(propAccess.object));
@@ -235,7 +223,7 @@ function convertPropertyAccess(propAccess: IR.IRPropertyAccess): TSNode {
 }
 
 /**
- * Convert an assignment expression to TS AST
+ * Convert an assignment expression to TS AST.
  */
 function convertAssignmentExpression(assign: IR.IRAssignmentExpression): TSNode {
   const left = convertNode(assign.left);
@@ -248,7 +236,7 @@ function convertAssignmentExpression(assign: IR.IRAssignmentExpression): TSNode 
 }
 
 /**
- * Convert a conditional expression to TS AST
+ * Convert a conditional expression to TS AST.
  */
 function convertConditionalExpression(cond: IR.IRConditionalExpression): TSNode {
   const test = convertNode(cond.test);
@@ -262,7 +250,7 @@ function convertConditionalExpression(cond: IR.IRConditionalExpression): TSNode 
 }
 
 /**
- * Convert a ReturnStatement node to TS AST
+ * Convert a ReturnStatement node to TS AST.
  */
 function convertReturnStatement(returnStmt: IR.IRReturnStatement): TSNode {
   if (returnStmt.argument === null) {
@@ -274,7 +262,7 @@ function convertReturnStatement(returnStmt: IR.IRReturnStatement): TSNode {
 }
 
 /**
- * Convert an if statement to TS AST
+ * Convert an if statement to TS AST.
  */
 function convertIfStatement(ifStmt: IR.IRIfStatement): TSNode {
   const test = nodeToString(convertNode(ifStmt.test));
@@ -295,7 +283,7 @@ function convertIfStatement(ifStmt: IR.IRIfStatement): TSNode {
 }
 
 /**
- * Convert a for statement to TS AST
+ * Convert a for statement to TS AST.
  */
 function convertForStatement(forStmt: IR.IRForStatement): TSNode {
   const init = nodeToString(convertNode(forStmt.init));
@@ -446,8 +434,8 @@ function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
   
   // If the function is anonymous and is used as an expression (not declaration)
   if (fn.isAnonymous) {
-    // In JavaScript, anonymous functions must be expressions, not declarations
-    return { type: TSNodeType.Raw, code: `return function(${parameters}) ${body}` };
+    // ★ UPDATED: Removed erroneous "return" keyword.
+    return { type: TSNodeType.Raw, code: `function(${parameters}) ${body}` };
   }
   
   return { type: TSNodeType.Raw, code: `function ${functionName}(${parameters}) ${body}` };

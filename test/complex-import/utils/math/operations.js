@@ -30,7 +30,7 @@ function calculate(value, factor) {
   const squared = square(value);
   const multiplied = multiply(squared, factor);
   const result = add(multiplied, 10);
-  return {[":input"]: value, [":factor"]: factor, [":squared"]: squared, [":multiplied"]: multiplied, [":result"]: result};
+  return {input: value, factor: factor, squared: squared, multiplied: multiplied, result: result};
 }
 }
 function reduce(array, fn, initial) {

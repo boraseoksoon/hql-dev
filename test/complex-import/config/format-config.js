@@ -1,5 +1,6 @@
-import * as sharedUtils from "../utils/shared-utils.js";
-const formatSettings = {[":json"]: {[":indent"]: 2, [":pretty"]: true, [":contentType"]: "application/json"}, [":xml"]: {[":indent"]: 4, [":header"]: true, [":contentType"]: "application/xml"}, [":yaml"]: {[":indent"]: 2, [":flowStyle"]: false, [":contentType"]: "application/yaml"}, [":csv"]: {[":delimiter"]: ",", [":header"]: true, [":contentType"]: "text/csv"}, [":text"]: {[":encoding"]: "utf-8", [":contentType"]: "text/plain"}};
+import * as sharedUtils_module from "../utils/shared-utils.js";
+const sharedUtils = sharedUtils_module.default !== undefined ? sharedUtils_module.default : sharedUtils_module;
+const formatSettings = {json: {indent: 2, pretty: true, contentType: "application/json"}, xml: {indent: 4, header: true, contentType: "application/xml"}, yaml: {indent: 2, flowStyle: false, contentType: "application/yaml"}, csv: {delimiter: ",", header: true, contentType: "text/csv"}, text: {encoding: "utf-8", contentType: "text/plain"}};
 function getFormatSettings(format) {
   {
   const normalizedFormat = sharedUtils.normalizeFormat(format);

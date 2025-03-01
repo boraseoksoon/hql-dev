@@ -224,7 +224,8 @@ export function isExpression(node: IRNode): boolean {
     IRNodeType.NewExpression,
     IRNodeType.PropertyAccess,
     IRNodeType.AssignmentExpression,
-    IRNodeType.ConditionalExpression
+    IRNodeType.ConditionalExpression, 
+    IRNodeType.FunctionDeclaration
   ].includes(node.type);
 }
 

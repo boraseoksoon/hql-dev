@@ -12,6 +12,7 @@
     "temp-test3": "deno run -A ./cli/transpile.ts ./test/interop2/main.hql && deno run -A ./test/interop2/main.js",
     "temp-test4": "deno run -A ./cli/transpile.ts ./test/interop3/main.hql && deno run -A ./test/interop3/main.js",
     "temp-test5": "deno run -A ./cli/transpile.ts ./test/complex-import/main.hql && deno run -A ./test/complex-import/main.js",
-    "all-temp-test": "deno task temp-test && deno task temp-test2 && deno task temp-test3 && deno task temp-test4 && deno task temp-test5"
+    "all-temp-test": "deno task temp-test && deno task temp-test2 && deno task temp-test3 && deno task temp-test4 && deno task temp-test5",
+    "quick-test": "deno run -A ./cli/run.ts ./test/test.js"
   }
 }

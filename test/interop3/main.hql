@@ -1,4 +1,3 @@
-// File: test/interop2/main.hql
 ;; main.hql - Entry point with nested imports
 (def advancedUtils (import "./advanced-utils.hql"))
 

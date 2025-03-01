@@ -27,9 +27,6 @@ export interface CodeGenerationOptions {
   module?: "esm" | "commonjs";
 }
 
-/**
- * Generate TypeScript/JavaScript code from a TS AST
- */
 export function generateTypeScript(ast: TSSourceFile, options?: CodeGenerationOptions): string {
   const config = {
     indentSize: options?.indentSize ?? 2,
@@ -40,29 +37,17 @@ export function generateTypeScript(ast: TSSourceFile, options?: CodeGenerationOp
   
   const indentChar = config.useSpaces ? " " : "\t";
 
-  /**
-   * Generate indentation based on level
-   */
   function indent(level: number): string {
     return indentChar.repeat(level * config.indentSize);
   }
 
-  /**
-   * Generate code with indentation
-   */
   function genWithIndent(node: TSNode, level: number): string {
     const code = gen(node, level);
     if (code.trim().length === 0) return "";
-    
-    // Skip indentation for raw nodes that already contain newlines
     if (node.type === TSNodeType.Raw && code.includes("\n")) return code;
-    
     return indent(level) + code;
   }
 
-  /**
-   * Main code generation function
-   */
   function gen(node: TSNode, level: number): string {
     if (!node) return "";
     
@@ -87,10 +72,7 @@ export function generateTypeScript(ast: TSSourceFile, options?: CodeGenerationOp
       }
       
       case TSNodeType.FunctionDeclaration: {
-        const fd = node as TSFunctionDeclaration;
-        const params = fd.parameters.map(p => gen(p, 0)).join(", ");
-        const body = gen(fd.body, level);
-        return indent(level) + "function " + gen(fd.name, 0) + "(" + params + ") " + body;
+        return convertFunctionDeclaration(node as TSFunctionDeclaration);
       }
       
       case TSNodeType.Block: {
@@ -141,7 +123,6 @@ export function generateTypeScript(ast: TSSourceFile, options?: CodeGenerationOp
         const obj = node as TSObjectLiteral;
         if (obj.properties.length === 0) return "{}";
         
-        // Different formatting options for objects
         if (config.formatting === "minimal") {
           const props = obj.properties.map(p => gen(p, level)).join(", ");
           return "{" + props + "}";
@@ -158,14 +139,11 @@ export function generateTypeScript(ast: TSSourceFile, options?: CodeGenerationOp
       
       case TSNodeType.ExportDeclaration: {
         const exp = node as TSExportDeclaration;
-        
-        // Handle ESM vs CommonJS exports
         if (config.module === "commonjs") {
           return exp.exports
             .map(e => `exports.${e.exported} = ${e.local};`)
             .join("\n");
         } else {
-          // ESM exports (default)
           const items = exp.exports.map(e => 
             e.exported === e.local ? e.local : `${e.local} as ${e.exported}`
           );
@@ -179,7 +157,45 @@ export function generateTypeScript(ast: TSSourceFile, options?: CodeGenerationOp
     }
   }
 
-  // Generate code and clean up multiple newlines
+  // ★ UPDATED: Revised conversion of function declarations.
+  // Removed erroneous "return" keyword before anonymous function expressions.
+  function convertFunctionDeclaration(fn: TSFunctionDeclaration): TSNode {
+    const functionName = fn.id.text;
+    let parameters: string;
+    let body: string;
+    
+    if ((fn as any).isNamedParams && (fn as any).namedParamIds && (fn as any).namedParamIds.length > 0) {
+      parameters = "params";
+      const destructuring = `const { ${(fn as any).namedParamIds.join(", ")} } = params;`;
+      body = convertFunctionBody(fn.body, destructuring);
+    } else {
+      parameters = fn.parameters.map(p => p.text).join(", ");
+      body = convertFunctionBody(fn.body);
+    }
+    
+    if ((fn as any).isAnonymous) {
+      return { type: TSNodeType.Raw, code: `return function(${parameters}) ${body}` };
+    }
+    
+    return { type: TSNodeType.Raw, code: `function ${functionName}(${parameters}) ${body}` };
+  }
+
+  function convertFunctionBody(block: TSBlock, destructuring?: string): string {
+    const statements = [...block.statements];
+    if (statements.length === 0) return "{}";
+    
+    const lines = statements
+      .map(stmt => {
+        const converted = gen(stmt, 0);
+        return converted ? converted : "";
+      })
+      .filter(line => line.length > 0);
+    
+    if (destructuring) lines.unshift(destructuring);
+    const indentedLines = lines.map(line => `  ${line}`);
+    return `{\n${indentedLines.join("\n")}\n}`;
+  }
+
   let code = gen(ast, 0);
   code = code.replace(/\n\s*\n\s*\n/g, "\n\n").trim() + "\n";
   return code;

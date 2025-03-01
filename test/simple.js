@@ -1,14 +1,19 @@
-import * as mod from "./simple2.js";
+import * as mod_module from "./simple2.js";
+const mod = mod_module.default !== undefined ? mod_module.default : mod_module;
 import * as strUtil_module from "https://esm.sh/lodash";
 const strUtil = strUtil_module.default !== undefined ? strUtil_module.default : strUtil_module;
-import * as chalk from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
+import * as chalk_module from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
+const chalk = chalk_module.default !== undefined ? chalk_module.default : chalk_module;
 import * as chalk2_module from "jsr:@nothing628/chalk";
 const chalk2 = chalk2_module.default !== undefined ? chalk2_module.default : chalk2_module;
 import * as lodash_module from "https://esm.sh/lodash";
 const lodash = lodash_module.default !== undefined ? lodash_module.default : lodash_module;
-import * as pathModule from "https://deno.land/std@0.170.0/path/mod.ts";
-import * as datetime from "https://deno.land/std@0.170.0/datetime/mod.ts";
-import * as uuidModule from "https://deno.land/std@0.170.0/uuid/mod.ts";
+import * as pathModule_module from "https://deno.land/std@0.170.0/path/mod.ts";
+const pathModule = pathModule_module.default !== undefined ? pathModule_module.default : pathModule_module;
+import * as datetime_module from "https://deno.land/std@0.170.0/datetime/mod.ts";
+const datetime = datetime_module.default !== undefined ? datetime_module.default : datetime_module;
+import * as uuidModule_module from "https://deno.land/std@0.170.0/uuid/mod.ts";
+const uuidModule = uuidModule_module.default !== undefined ? uuidModule_module.default : uuidModule_module;
 function greet(name) {
   return mod.sayHi(name) + " Welcome to HQL.";
 }
@@ -26,7 +31,7 @@ console.log(lodash.chunk([1, 2, 3, 4, 5, 6], 2))
 console.log("====== Data Structures ======")
 const myvec = [10, 20, 30, 40];
 console.log(myvec)
-const mymap = {[":a"]: 100, [":b"]: 200};
+const mymap = {a: 100, b: 200};
 console.log(mymap)
 const myset = new Set([1, 2, 3]);
 console.log(myset.size)
@@ -41,11 +46,11 @@ console.log("====== New Special Form Test ======")
 const arr = new Array(1, 2, 3);
 console.log(arr)
 console.log("====== Arithmetic Operations ======")
-const add = return function(a, b) {
+const add = function(a, b) {
   return (a + b);
 };
 console.log(add(3, 4))
-const inc = return function(n) {
+const inc = function(n) {
   return (n + 1);
 };
 console.log(inc(10))
@@ -60,20 +65,20 @@ function minus(params) {
 }
 console.log(minus({x: 100, y: 20}))
 console.log("====== Sync/Async Exports ======")
-const syncAdd = return function(params) {
+const syncAdd = function(params) {
   const { x, y } = params;
   return (x + y);
 };
-const syncMinus = return function(params) {
+const syncMinus = function(params) {
   const { x, y } = params;
   return (x - y);
 };
 export { syncAdd };
 export { syncMinus };
-const add2 = return function(x, y) {
+const add2 = function(x, y) {
   return (x + y);
 };
-const minus2 = return function(x, y) {
+const minus2 = function(x, y) {
   return (x - y);
 };
 export { add2 };
@@ -91,7 +96,7 @@ console.log(send({message: "hello1", to: "hlvm"}))
 console.log(send2({message: "hello2", to: Destination.hlvm}))
 console.log("====== String Interpolation Demo ======")
 const name = "Charlie";
-const greeting = "hello my name is \\(name) and welcome!";
+const greeting = `hello my name is ${name} and welcome!`;
 console.log(greeting)
 export { greet };
 export { greetTwice };
@@ -123,7 +128,7 @@ function makeAdder(params) {
   const { increment } = params;
   return function(x) {
   return (x + increment);
-}
+};
 }
 const add5 = makeAdder({increment: 5});
 console.log("Result of add5(10): ", add5(10))
@@ -136,7 +141,7 @@ function processData(params) {
   const { data, options } = params;
   return (data * options.factor);
 }
-console.log("Processed data: ", processData({data: 100, options: {[":factor"]: 1.5}}))
+console.log("Processed data: ", processData({data: 100, options: {factor: 1.5}}))
 export { calculateArea };
 export { formatName };
 export { calculateTotal };

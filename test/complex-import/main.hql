@@ -16,7 +16,6 @@
 ;; Deno standard library imports
 (def pathMod (import "https://deno.land/std@0.170.0/path/mod.ts"))
 (def fsMod (import "https://deno.land/std@0.170.0/fs/mod.ts"))
-(def uuidMod (import "https://deno.land/std@0.170.0/uuid/mod.ts"))
 
 ;; JSR registry imports 
 (def jsr1 (import "jsr:@std/path@1.0.8"))
@@ -115,7 +114,7 @@
 (defn generateReport (data format)
   (let [
     timestamp (dateMod.formatCurrentDate "yyyy-MM-dd HH:mm:ss")
-    id (uuidMod.v4)
+    id (crypto.randomUUID)
     upperName (lodashMod.upperCase (get data "name"))
     formattedData (utilsMod.formatData data format)
     config (configMod.getConfig format)

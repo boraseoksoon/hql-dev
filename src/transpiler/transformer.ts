@@ -5,106 +5,88 @@ import { convertIRToTSAST } from "./ir-to-ts-ast.ts";
 import { generateTypeScript, CodeGenerationOptions } from "./ts-ast-to-code.ts";
 import { bundleFile } from "../bundler/bundler.ts";
 import { TSSourceFile, TSNode, TSNodeType, TSRaw } from "./ts-ast-types.ts";
-import { 
-  isExternalModule, 
-  resolveImportPath, 
-  hqlToJsPath, 
-  getDirectory, 
+import {
+  isExternalModule,
+  resolveImportPath,
+  hqlToJsPath,
+  getDirectory,
   hasExtension,
   normalizePath,
   resolveWithExtensions,
-  convertImportSpecifier 
+  convertImportSpecifier
 } from "./path-utils.ts";
 import { parse } from "./parser.ts";
+// ★ NEW: Import dirname (and resolve) from the Deno std path module.
+import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 
+/**
+ * Transformation options.
+ */
 export interface TransformOptions {
-  target?: 'javascript' | 'typescript';
-  missingTypeStrategy?: 'omit' | 'any';
-  propertyAccessStyle?: 'dot' | 'bracket';
-  formatting?: 'minimal' | 'standard' | 'pretty';
-  module?: 'esm' | 'commonjs';
+  target?: "javascript" | "typescript";
+  missingTypeStrategy?: "omit" | "any";
+  propertyAccessStyle?: "dot" | "bracket";
+  formatting?: "minimal" | "standard" | "pretty";
+  module?: "esm" | "commonjs";
   indentSize?: number;
   useSpaces?: boolean;
   preserveImports?: boolean; // New: whether to keep import statements
 }
 
 /**
- * Interface for representing an import in JavaScript/TypeScript code
- */
-interface ImportInfo {
-  importStatement: string;
-  moduleName: string | null;
-  importPath: string;
-  isHQL: boolean;
-  isExternal: boolean;
-}
-
-/**
- * Transform HQL AST to JavaScript code
+ * Transform HQL AST to JavaScript code.
  */
 export async function transformAST(
   nodes: HQLNode[],
   currentDir: string,
-  visited: Set<string>,
+  visited = new Set<string>(),
   options: TransformOptions = {},
   inModule: boolean = false
 ): Promise<string> {
-  // Default options for transformation
   const opts: TransformOptions = {
-    target: options.target ?? 'javascript',
-    missingTypeStrategy: options.missingTypeStrategy ?? 'omit',
-    propertyAccessStyle: options.propertyAccessStyle ?? 'dot',
-    formatting: options.formatting ?? 'standard',
-    module: options.module ?? 'esm',
+    target: options.target ?? "javascript",
+    missingTypeStrategy: options.missingTypeStrategy ?? "omit",
+    propertyAccessStyle: options.propertyAccessStyle ?? "dot",
+    formatting: options.formatting ?? "standard",
+    module: options.module ?? "esm",
     indentSize: options.indentSize ?? 2,
     useSpaces: options.useSpaces ?? true,
     preserveImports: options.preserveImports ?? false,
   };
-  
-  // Force commonjs for modules included in other files
-  if (inModule) opts.module = 'commonjs';
 
-  // Step 1: Transform HQL to IR (Intermediate Representation)
+  if (inModule) opts.module = "commonjs";
+
+  // Step 1: Transform HQL to IR.
   const irProgram = transformToIR(nodes, currentDir);
-  
-  // Step 2: Convert IR to TypeScript AST
+  // Step 2: Convert IR to TS AST.
   let tsAST = convertIRToTSAST(irProgram);
-
-  // Step 3: Process imports by resolving them properly
+  // Step 3: Process imports.
   await processImportsInAST(tsAST, currentDir, visited, opts);
-
-  // Step 4: Generate code from the TS AST
+  // Step 4: Generate code.
   const codeOptions: CodeGenerationOptions = {
     formatting: opts.formatting,
     indentSize: opts.indentSize,
     useSpaces: opts.useSpaces,
-    module: opts.module
+    module: opts.module,
   };
 
   return generateTypeScript(tsAST, codeOptions);
 }
 
 /**
- * Process imports in the TypeScript AST
+ * Process imports in the TS AST.
  */
 async function processImportsInAST(
-  ast: TSSourceFile, 
-  currentDir: string, 
+  ast: TSSourceFile,
+  currentDir: string,
   visited: Set<string>,
   options: TransformOptions
 ): Promise<void> {
-  // If we're preserving imports (for the bundler), we can skip this step
   if (options.preserveImports) return;
-  
-  // Loop through all statements in the AST
   for (let i = 0; i < ast.statements.length; i++) {
     const stmt = ast.statements[i];
-    
-    // Look for raw import statements
     if (stmt.type === TSNodeType.Raw) {
       const raw = stmt as TSRaw;
-      
-      // Find import statements
       if (raw.code.startsWith("import")) {
         const importInfo = extractImportInfo(raw.code);
         if (importInfo) {
@@ -116,30 +98,33 @@ async function processImportsInAST(
 }
 
 /**
- * Extract import information from an import statement
+ * Extract import information from an import statement.
  */
 function extractImportInfo(importStatement: string): ImportInfo | null {
-  // Extract the module path
   const pathMatch = importStatement.match(/from\s+["']([^"']+)["']/);
   if (!pathMatch) return null;
-  
   const importPath = pathMatch[1];
-  
-  // Extract the module name for "*" imports
   const moduleNameMatch = importStatement.match(/import\s+\*\s+as\s+(\w+)/);
   const moduleName = moduleNameMatch ? moduleNameMatch[1] : null;
-  
   return {
     importStatement,
     moduleName,
     importPath,
-    isHQL: importPath.endsWith('.hql'),
-    isExternal: isExternalModule(importPath)
+    isHQL: importPath.endsWith(".hql"),
+    isExternal: isExternalModule(importPath),
   };
 }
 
+interface ImportInfo {
+  importStatement: string;
+  moduleName: string | null;
+  importPath: string;
+  isHQL: boolean;
+  isExternal: boolean;
+}
+
 /**
- * Process an import based on its type
+ * Process an import based on its type.
  */
 async function processImport(
   ast: TSSourceFile,
@@ -149,39 +134,42 @@ async function processImport(
   visited: Set<string>
 ): Promise<void> {
   const { importStatement, importPath, isHQL, isExternal } = importInfo;
-  
-  // Handle external modules
   if (isExternal) {
-    // Convert import specifiers to their canonical form
     const convertedPath = convertImportSpecifier(importPath);
     if (convertedPath !== importPath) {
-      ast.statements[statementIndex] = { 
-        type: TSNodeType.Raw, 
-        code: importStatement.replace(importPath, convertedPath) 
+      ast.statements[statementIndex] = {
+        type: TSNodeType.Raw,
+        code: importStatement.replace(importPath, convertedPath),
       };
     }
     return;
   }
-  
-  // Handle relative imports
   let fullPath = resolveImportPath(importPath, currentDir);
-  
-  // For HQL imports, process and update to JS path
   if (isHQL) {
-    await processHqlImport(ast, statementIndex, importStatement, importPath, fullPath, visited);
-  } 
-  // For JS imports that might contain HQL imports
-  else if (hasExtension(importPath, '.js')) {
+    await processHqlImport(
+      ast,
+      statementIndex,
+      importStatement,
+      importPath,
+      fullPath,
+      visited
+    );
+  } else if (hasExtension(importPath, ".js")) {
     await processJsImport(fullPath, visited);
-  }
-  // For imports without extensions, try to resolve
-  else {
-    await processUnknownImport(ast, statementIndex, importStatement, importPath, currentDir, visited);
+  } else {
+    await processUnknownImport(
+      ast,
+      statementIndex,
+      importStatement,
+      importPath,
+      currentDir,
+      visited
+    );
   }
 }
 
 /**
- * Process an HQL import 
+ * Process an HQL import.
  */
 async function processHqlImport(
   ast: TSSourceFile,
@@ -191,38 +179,28 @@ async function processHqlImport(
   fullPath: string,
   visited: Set<string>
 ): Promise<void> {
-  // Update the import statement to use .js instead of .hql
   const jsImportPath = hqlToJsPath(importPath);
   const jsFullPath = hqlToJsPath(fullPath);
-  
-  // Update the import in the AST
-  ast.statements[statementIndex] = { 
-    type: TSNodeType.Raw, 
-    code: importStatement.replace(importPath, jsImportPath) 
+  ast.statements[statementIndex] = {
+    type: TSNodeType.Raw,
+    code: importStatement.replace(importPath, jsImportPath),
   };
-  
-  // If we haven't already visited this HQL file, process it
   if (!visited.has(normalizePath(fullPath))) {
     visited.add(normalizePath(fullPath));
     try {
       console.log(`Transpiling HQL import: ${fullPath}`);
-      
-      // IMPORTANT FIX: Generate standalone JS file first
       const source = await Deno.readTextFile(fullPath);
       const hqlAst = parse(source);
-      const currentDir = dirname(fullPath);
-      const transformed = await transformAST(hqlAst, currentDir, new Set([...visited]), {
-        module: 'esm'
-      });
-      
-      // Write the standalone JS file
+      // ★ Use dirname to set the new current directory for the imported file.
+      const newCurrentDir = dirname(fullPath);
+      const transformed = await transformAST(
+        hqlAst,
+        newCurrentDir,
+        new Set([...visited]),
+        { module: "esm" }
+      );
       await Deno.writeTextFile(jsFullPath, transformed);
       console.log(`Generated JS file: ${jsFullPath}`);
-      
-      // IMPORTANT: Skip bundling since it's causing issues
-      // Instead of bundling, we'll just generate the standalone JS files
-      // and rely on ESM's import system to handle dependencies
-      
     } catch (error) {
       console.error(`Error processing HQL import ${importPath}:`, error);
     }
@@ -230,28 +208,15 @@ async function processHqlImport(
 }
 
 /**
- * Process a JS import that might contain HQL imports
+ * Process a JS import that might contain HQL imports.
  */
-async function processJsImport(
-  fullPath: string,
-  visited: Set<string>
-): Promise<void> {
-  // Skip if already visited or if it's an external module
-  if (visited.has(normalizePath(fullPath)) || isExternalModule(fullPath)) {
-    return;
-  }
-  
+async function processJsImport(fullPath: string, visited: Set<string>): Promise<void> {
+  if (visited.has(normalizePath(fullPath)) || isExternalModule(fullPath)) return;
   visited.add(normalizePath(fullPath));
-  
   try {
-    // Read the JS file (only for local files)
     const jsContent = await Deno.readTextFile(fullPath);
-    
-    // Extract all imports from the JS file
     const imports = extractAllJsImports(jsContent);
-    const hqlImports = imports.filter(imp => imp.isHQL);
-    
-    // Process any HQL imports found in the JS file
+    const hqlImports = imports.filter((imp) => imp.isHQL);
     if (hqlImports.length > 0) {
       await processHqlImportsInJsFile(fullPath, jsContent, hqlImports, visited);
     }
@@ -260,9 +225,8 @@ async function processJsImport(
   }
 }
 
-
 /**
- * Process an import with unknown extension
+ * Process an import with unknown extension.
  */
 async function processUnknownImport(
   ast: TSSourceFile,
@@ -272,49 +236,42 @@ async function processUnknownImport(
   currentDir: string,
   visited: Set<string>
 ): Promise<void> {
-  // Try to resolve the import with various extensions
   const basePath = resolveImportPath(importPath, currentDir);
   const resolvedPath = await resolveWithExtensions(basePath);
-  
   if (resolvedPath) {
-    if (resolvedPath.endsWith('.hql')) {
-      // Process as HQL import
+    if (resolvedPath.endsWith(".hql")) {
       await processHqlImport(
-        ast, 
-        statementIndex, 
-        importStatement, 
-        importPath, 
-        resolvedPath, 
+        ast,
+        statementIndex,
+        importStatement,
+        importPath,
+        resolvedPath,
         visited
       );
-    } else if (resolvedPath.endsWith('.js')) {
-      // Update import path and process JS import
-      const relativePath = importPath + (importPath.endsWith('/') ? 'index.js' : '.js');
-      ast.statements[statementIndex] = { 
-        type: TSNodeType.Raw, 
-        code: importStatement.replace(importPath, relativePath) 
+    } else if (resolvedPath.endsWith(".js")) {
+      const relativePath = importPath + (importPath.endsWith("/") ? "index.js" : ".js");
+      ast.statements[statementIndex] = {
+        type: TSNodeType.Raw,
+        code: importStatement.replace(importPath, relativePath),
       };
-      
       await processJsImport(resolvedPath, visited);
     } else {
-      // For other file types, just update the import path
-      const ext = resolvedPath.substring(resolvedPath.lastIndexOf('.'));
+      const ext = resolvedPath.substring(resolvedPath.lastIndexOf("."));
       const relativePath = importPath + ext;
-      ast.statements[statementIndex] = { 
-        type: TSNodeType.Raw, 
-        code: importStatement.replace(importPath, relativePath) 
+      ast.statements[statementIndex] = {
+        type: TSNodeType.Raw,
+        code: importStatement.replace(importPath, relativePath),
       };
     }
   }
 }
 
 /**
- * Extract all imports from a JavaScript file
+ * Extract all JS imports from file content.
  */
 function extractAllJsImports(jsContent: string): ImportInfo[] {
   const imports: ImportInfo[] = [];
   const importRegex = /import\s+(?:\*\s+as\s+(\w+)|\w+|\{[^}]*\})\s+from\s+["']([^"']+)["'];/g;
-  
   let match;
   while ((match = importRegex.exec(jsContent)) !== null) {
     const moduleName = match[1] || null;
@@ -323,16 +280,15 @@ function extractAllJsImports(jsContent: string): ImportInfo[] {
       importStatement: match[0],
       moduleName,
       importPath,
-      isHQL: importPath.endsWith('.hql'),
-      isExternal: isExternalModule(importPath)
+      isHQL: importPath.endsWith(".hql"),
+      isExternal: isExternalModule(importPath),
     });
   }
-  
   return imports;
 }
 
 /**
- * Process HQL imports found in a JS file
+ * Process HQL imports found in a JS file.
  */
 async function processHqlImportsInJsFile(
   jsFilePath: string,
@@ -343,48 +299,36 @@ async function processHqlImportsInJsFile(
   const jsFileDir = getDirectory(jsFilePath);
   let updatedContent = jsContent;
   let contentModified = false;
-  
-  // Process each HQL import
   for (const importInfo of hqlImports) {
     const { importStatement, importPath } = importInfo;
     const fullHqlPath = resolveImportPath(importPath, jsFileDir);
     const jsImportPath = hqlToJsPath(importPath);
-    
-    // Process the HQL file if not already processed
     if (!visited.has(normalizePath(fullHqlPath))) {
       visited.add(normalizePath(fullHqlPath));
       try {
         console.log(`Transpiling nested HQL import: ${fullHqlPath}`);
-        
-        // IMPORTANT FIX: Generate standalone JS file first
         const source = await Deno.readTextFile(fullHqlPath);
         const hqlAst = parse(source);
-        const currentDir = dirname(fullHqlPath);
-        const transformed = await transformAST(hqlAst, currentDir, new Set([...visited]), {
-          module: 'esm'
-        });
-        
-        // Write the standalone JS file
+        const newCurrentDir = dirname(fullHqlPath);
+        const transformed = await transformAST(
+          hqlAst,
+          newCurrentDir,
+          new Set([...visited]),
+          { module: "esm" }
+        );
         const hqlJsPath = hqlToJsPath(fullHqlPath);
         await Deno.writeTextFile(hqlJsPath, transformed);
         console.log(`Generated JS from nested HQL import: ${hqlJsPath}`);
-        
-        // IMPORTANT: Skip bundling since it's causing issues
-        
       } catch (error) {
         console.error(`Error processing nested HQL import ${importPath}:`, error);
       }
     }
-    
-    // Update the import statement in the JS content
     const newImportStatement = importStatement.replace(importPath, jsImportPath);
     if (newImportStatement !== importStatement) {
       updatedContent = updatedContent.replace(importStatement, newImportStatement);
       contentModified = true;
     }
   }
-  
-  // Write the updated JS file if imports were modified
   if (contentModified) {
     await Deno.writeTextFile(jsFilePath, updatedContent);
     console.log(`Updated JS imports in: ${jsFilePath}`);
@@ -395,22 +339,15 @@ async function processHqlImportsInJsFile(
  * Transpile HQL source code into JavaScript.
  */
 export async function transpile(
-  source: string, 
+  source: string,
   filePath: string = "."
 ): Promise<string> {
   try {
-    // Parse the source code to AST
     const ast = parse(source);
-    
-    // Get the directory for resolving relative imports
     const currentDir = getDirectory(filePath);
-    
-    // Track visited files to avoid circular dependencies
     const visited = new Set<string>([normalizePath(filePath)]);
-    
-    // Transform AST to JavaScript
     return await transformAST(ast, currentDir, visited, {
-      module: 'esm'  // Default to ESM for top-level files
+      module: "esm",
     });
   } catch (error: any) {
     throw new Error(`Transpile error: ${error.message}`);
@@ -422,13 +359,10 @@ export async function transpile(
  */
 export async function transpileFile(inputPath: string): Promise<string> {
   try {
-    console.log(`Transpiling file: ${inputPath}`);
-    
-    // Read the source file
-    const source = await Deno.readTextFile(inputPath);
-    
-    // Transpile with full path for import resolution
-    return await transpile(source, inputPath);
+    const absPath = resolve(inputPath);
+    console.log(`Transpiling file: ${absPath}`);
+    const source = await Deno.readTextFile(absPath);
+    return await transpile(source, absPath);
   } catch (error: any) {
     if (error instanceof Deno.errors.NotFound) {
       throw new Error(`File not found: ${inputPath}`);
@@ -443,18 +377,13 @@ export async function transpileFile(inputPath: string): Promise<string> {
 export async function writeOutput(code: string, outputPath: string): Promise<void> {
   try {
     const outputDir = getDirectory(outputPath);
-    
-    // Ensure the output directory exists
     try {
       await Deno.mkdir(outputDir, { recursive: true });
     } catch (error) {
-      // Ignore if directory already exists
       if (!(error instanceof Deno.errors.AlreadyExists)) {
         throw error;
       }
     }
-    
-    // Write the output file
     await Deno.writeTextFile(outputPath, code);
     console.log(`Output written to: ${outputPath}`);
   } catch (error: any) {
