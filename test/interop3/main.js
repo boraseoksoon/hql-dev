@@ -1,7 +1,7 @@
 import * as jsModule_module from "/Users/seoksoonjang/Desktop/hql/test/interop3/js-module.js";
 
 // Module: /Users/seoksoonjang/Desktop/hql/test/interop3/advanced-utils.hql
-const __module_advanced_utils_7418 = (function() {
+const __module_advanced_utils_7384 = (function() {
   const exports = {};
 
   const version = "1.0.0";
@@ -16,7 +16,7 @@ const __module_advanced_utils_7418 = (function() {
 
 const jsModule = jsModule_module.default !== undefined ? jsModule_module.default : jsModule_module;
 
-const advancedUtils = __module_advanced_utils_7418;
+const advancedUtils = __module_advanced_utils_7384;
 
 
 function main(name) {

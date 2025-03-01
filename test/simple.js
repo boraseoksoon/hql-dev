@@ -7,7 +7,7 @@ import * as datetime_module from "https://deno.land/std@0.170.0/datetime/mod.ts"
 import * as uuidModule_module from "https://deno.land/std@0.170.0/uuid/mod.ts";
 
 // Module: /Users/seoksoonjang/Desktop/hql/test/simple3.hql
-const __module_simple3_3424 = (function() {
+const __module_simple3_4215 = (function() {
   const exports = {};
   function sayBye(name) {
     return "Bye, " + name + "!"
@@ -18,9 +18,9 @@ const __module_simple3_3424 = (function() {
 })();
 
 // Module: /Users/seoksoonjang/Desktop/hql/test/simple2.hql
-const __module_simple2_286 = (function() {
+const __module_simple2_383 = (function() {
   const exports = {};
-  const mod3 = __module_simple3_3424;
+  const mod3 = __module_simple3_4215;
   function sayHi(name) {
     return "Hi, " + name + "! " + mod3.sayBye(name)
   }
@@ -37,7 +37,7 @@ const pathModule = pathModule_module.default !== undefined ? pathModule_module.d
 const datetime = datetime_module.default !== undefined ? datetime_module.default : datetime_module;
 const uuidModule = uuidModule_module.default !== undefined ? uuidModule_module.default : uuidModule_module;
 
-const mod = __module_simple2_286;
+const mod = __module_simple2_383;
 
 
 

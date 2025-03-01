@@ -12,6 +12,7 @@ import {
   TSExportDeclaration
 } from "./ts-ast-types.ts";
 
+
 /**
  * Convert an IRProgram into a TSSourceFile.
  */
@@ -63,7 +64,7 @@ function isImport(node: IR.IRNode): boolean {
 
 /**
  * Process an import statement from IR to TS.
- * This improved implementation uses a universal import approach that works
+ * This implementation uses a universal import approach that works
  * consistently with all module export styles (default exports, namespace exports, etc.)
  */
 function processImport(node: IR.IRNode): TSNode | null {
@@ -79,22 +80,38 @@ function processImport(node: IR.IRNode): TSNode | null {
   
   const url = (callExpr.arguments[0] as IR.IRStringLiteral).value;
   
+  // Generate appropriate import based on file type
   if (url.endsWith(".hql")) {
     // HQL module import - placeholder for bundling
-    return {
-      type: TSNodeType.Raw,
-      code: `const ${varName} = (function(){\n  const exports = {};\n  // Bundled HQL from ${url}\n  return exports;\n})();`
-    };
+    return createHqlImportPlaceholder(varName, url);
   } else {
     // External module import - use universal import approach
-    // This approach works consistently for both default exports and namespace exports
-    return {
-      type: TSNodeType.Raw,
-      code: `import * as ${varName}_module from "${url}";\n` +
-            `const ${varName} = ${varName}_module.default !== undefined ? ${varName}_module.default : ${varName}_module;`
-    };
+    return createUniversalImport(varName, url);
   }
 }
+
+
+/**
+ * Creates a placeholder for bundled HQL modules
+ */
+function createHqlImportPlaceholder(varName: string, url: string): TSNode {
+  return {
+    type: TSNodeType.Raw,
+    code: `const ${varName} = (function(){\n  const exports = {};\n  // Bundled HQL from ${url}\n  return exports;\n})();`
+  };
+}
+
+/**
+ * Creates a universal import that works with both default and namespace exports
+ */
+function createUniversalImport(varName: string, url: string): TSNode {
+  return {
+    type: TSNodeType.Raw,
+    code: `import * as ${varName}_module from "${url}";\n` +
+          `const ${varName} = ${varName}_module.default !== undefined ? ${varName}_module.default : ${varName}_module;`
+  };
+}
+
 
 /**
  * Main IR→TS dispatcher function.

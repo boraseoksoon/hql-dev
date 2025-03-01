@@ -2,7 +2,14 @@
 import { parse } from "../transpiler/parser.ts";
 import { expandMacros } from "../macro.ts";
 import { transformAST } from "../transpiler/transformer.ts";
-import { dirname, join, resolve, basename } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { 
+  isExternalModule, 
+  resolveImportPath,
+  hqlToJsPath,
+  getDirectory,
+  ensureAbsolutePath
+} from "../transpiler/path-utils.ts";
+import { dirname, basename } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { HQLNode, ListNode, SymbolNode, LiteralNode } from "../transpiler/hql_ast.ts";
 
 /**
@@ -25,6 +32,15 @@ interface Module {
  */
 interface ImportMap {
   [filePath: string]: string; // path -> import statement
+}
+
+/**
+ * Interface for JS import information
+ */
+interface JSImportInfo {
+  importStatement: string;
+  importPath: string;
+  isHQL: boolean;
 }
 
 /**
@@ -202,16 +218,6 @@ class DependencyGraph {
 }
 
 /**
- * Check if a path refers to an external module
- */
-function isExternalModule(path: string): boolean {
-  return path.startsWith('http://') ||
-         path.startsWith('https://') ||
-         path.startsWith('npm:') ||
-         path.startsWith('jsr:');
-}
-
-/**
  * Extract HQL imports from an AST
  */
 function extractImports(ast: HQLNode[]): Map<string, string> {
@@ -235,22 +241,25 @@ function extractImports(ast: HQLNode[]): Map<string, string> {
 }
 
 /**
- * Extract imports from a JS file using regex
+ * Extract imports from a JS file
  */
-function extractJSImports(source: string): Map<string, { importStatement: string, importPath: string, isHQL: boolean }> {
-  const imports = new Map<string, { importStatement: string, importPath: string, isHQL: boolean }>();
+function extractJSImports(source: string): Map<string, JSImportInfo> {
+  const imports = new Map<string, JSImportInfo>();
   
   // Match all import statements
   const importRegex = /^(import\s+(?:\*\s+as\s+(\w+)|\w+|\{[^}]*\})\s+from\s+["']([^"']+)["'];)/gm;
   let match;
+  
   while ((match = importRegex.exec(source)) !== null) {
     const importStatement = match[1];
-    const moduleName = match[2] || ""; // Module name if using "* as name" syntax
     const importPath = match[3];
     const isHQL = importPath.endsWith('.hql');
     
-    const key = importPath; // Use the path as the key
-    imports.set(key, { importStatement, importPath, isHQL });
+    imports.set(importPath, { 
+      importStatement, 
+      importPath, 
+      isHQL 
+    });
   }
   
   return imports;
@@ -265,6 +274,7 @@ function extractModuleVariables(source: string): Map<string, string> {
   // Match the pattern "const name = name_module.default !== undefined ? name_module.default : name_module;"
   const varRegex = /const\s+(\w+)\s+=\s+(\w+)\.default\s+!==\s+undefined\s+\?\s+\2\.default\s+:\s+\2;/g;
   let match;
+  
   while ((match = varRegex.exec(source)) !== null) {
     const varName = match[1];
     const moduleName = match[2];
@@ -357,7 +367,7 @@ async function buildDependencyGraphImpl(
   currentDependencyChain = new Set<string>()
 ): Promise<void> {
   // Resolve to absolute path for local files
-  const absPath = isExternalModule(filePath) ? filePath : resolve(filePath);
+  const absPath = ensureAbsolutePath(filePath);
   
   // Check for circular dependency in the current chain
   if (currentDependencyChain.has(absPath)) {
@@ -396,74 +406,99 @@ async function buildDependencyGraphImpl(
   
   try {
     if (type === 'hql') {
-      // Process HQL file
-      const source = await Deno.readTextFile(absPath);
-      const ast = parse(source);
-      const expanded = expandMacros(ast);
-      const imports = extractImports(expanded);
-      
-      // Process each import
-      for (const [importId, importPath] of imports.entries()) {
-        let fullPath = importPath;
-        
-        // Resolve relative imports
-        if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
-          fullPath = resolve(join(dirname(absPath), importPath));
-        }
-        
-        // Add dependency to graph
-        graph.addDependency(absPath, fullPath, importId);
-        
-        // Track JS imports specially
-        if (fullPath.endsWith('.js') && !isExternalModule(fullPath)) {
-          graph.addJSImport(absPath, importId, fullPath);
-        }
-        
-        // If this is an external module, track it separately
-        if (isExternalModule(fullPath)) {
-          const importModuleName = `${importId}_module`;
-          const importStatement = `import * as ${importModuleName} from "${fullPath}";`;
-          graph.addExternalImport(absPath, importStatement, importModuleName);
-        } else {
-          // Process this dependency recursively
-          await buildDependencyGraphImpl(fullPath, graph, newChain);
-        }
-      }
+      await processHqlFile(absPath, graph, newChain);
     } else if (type === 'js') {
-      // Process JS file
-      const source = await Deno.readTextFile(absPath);
-      const imports = extractJSImports(source);
-      
-      // Process each import
-      for (const [importKey, { importStatement, importPath, isHQL }] of imports.entries()) {
-        let fullPath = importPath;
-        
-        // Resolve relative imports
-        if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
-          fullPath = resolve(join(dirname(absPath), importPath));
-        }
-        
-        // Add dependency to graph
-        const importId = isHQL ? 
-          `import_${graph.modules.size}_${Math.floor(Math.random() * 10000)}` : 
-          importPath.replace(/[^a-z0-9_]/gi, '_');
-        
-        graph.addDependency(absPath, fullPath, importId);
-        
-        // If this is an external module, track it
-        if (isExternalModule(fullPath)) {
-          // Extract the module name if possible
-          const moduleNameMatch = importStatement.match(/\*\s+as\s+(\w+)/);
-          const moduleName = moduleNameMatch ? moduleNameMatch[1] : importId + "_module";
-          graph.addExternalImport(absPath, importStatement, moduleName);
-        } else {
-          // Process this dependency recursively
-          await buildDependencyGraphImpl(fullPath, graph, newChain);
-        }
-      }
+      await processJsFile(absPath, graph, newChain);
     }
   } catch (error) {
     console.error(`Error processing ${absPath}:`, error);
+  }
+}
+
+/**
+ * Process an HQL file to extract its dependencies
+ */
+async function processHqlFile(
+  absPath: string,
+  graph: DependencyGraph,
+  dependencyChain: Set<string>
+): Promise<void> {
+  // Read and parse the HQL file
+  const source = await Deno.readTextFile(absPath);
+  const ast = parse(source);
+  const expanded = expandMacros(ast);
+  const imports = extractImports(expanded);
+  
+  const currentDir = dirname(absPath);
+  
+  // Process each import
+  for (const [importId, importPath] of imports.entries()) {
+    let fullPath = importPath;
+    
+    // Resolve relative imports
+    if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
+      fullPath = resolveImportPath(importPath, currentDir);
+    }
+    
+    // Add dependency to graph
+    graph.addDependency(absPath, fullPath, importId);
+    
+    // Track JS imports specially
+    if (fullPath.endsWith('.js') && !isExternalModule(fullPath)) {
+      graph.addJSImport(absPath, importId, fullPath);
+    }
+    
+    // If this is an external module, track it separately
+    if (isExternalModule(fullPath)) {
+      const importModuleName = `${importId}_module`;
+      const importStatement = `import * as ${importModuleName} from "${fullPath}";`;
+      graph.addExternalImport(absPath, importStatement, importModuleName);
+    } else {
+      // Process this dependency recursively
+      await buildDependencyGraphImpl(fullPath, graph, dependencyChain);
+    }
+  }
+}
+
+/**
+ * Process a JS file to extract its dependencies
+ */
+async function processJsFile(
+  absPath: string,
+  graph: DependencyGraph,
+  dependencyChain: Set<string>
+): Promise<void> {
+  // Read the JS file
+  const source = await Deno.readTextFile(absPath);
+  const imports = extractJSImports(source);
+  const currentDir = dirname(absPath);
+  
+  // Process each import
+  for (const [importKey, { importStatement, importPath, isHQL }] of imports.entries()) {
+    let fullPath = importPath;
+    
+    // Resolve relative imports
+    if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
+      fullPath = resolveImportPath(importPath, currentDir);
+    }
+    
+    // Add dependency to graph
+    const importId = isHQL ? 
+      `import_${graph.modules.size}_${Math.floor(Math.random() * 10000)}` : 
+      importPath.replace(/[^a-z0-9_]/gi, '_');
+    
+    graph.addDependency(absPath, fullPath, importId);
+    
+    // If this is an external module, track it
+    if (isExternalModule(fullPath)) {
+      // Extract the module name if possible
+      const moduleNameMatch = importStatement.match(/\*\s+as\s+(\w+)/);
+      const moduleName = moduleNameMatch ? moduleNameMatch[1] : importId + "_module";
+      graph.addExternalImport(absPath, importStatement, moduleName);
+    } else {
+      // Process this dependency recursively
+      await buildDependencyGraphImpl(fullPath, graph, dependencyChain);
+    }
   }
 }
 
@@ -504,7 +539,7 @@ async function processHQLModules(graph: DependencyGraph): Promise<void> {
       module.isProcessed = true;
       
       // Always write the JS file for HQL modules to support JS imports
-      const jsPath = path.replace(/\.hql$/, '.js');
+      const jsPath = hqlToJsPath(path);
       await Deno.writeTextFile(jsPath, fixedCode);
       console.log(`Generated JS file: ${jsPath}`);
     } catch (error) {
@@ -542,7 +577,7 @@ async function processJSModules(graph: DependencyGraph): Promise<void> {
       for (const [importKey, { importStatement, importPath, isHQL }] of imports.entries()) {
         if (isHQL) {
           // Generate JS path
-          const jsImportPath = importPath.replace(/\.hql$/, '.js');
+          const jsImportPath = hqlToJsPath(importPath);
           
           // Replace HQL import with JS import
           const newImportStatement = importStatement.replace(importPath, jsImportPath);
@@ -552,7 +587,7 @@ async function processJSModules(graph: DependencyGraph): Promise<void> {
           // Verify that the HQL module has been processed
           let fullHqlPath = importPath;
           if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
-            fullHqlPath = resolve(join(dirname(path), importPath));
+            fullHqlPath = resolveImportPath(importPath, dirname(path));
           }
           
           const hqlModule = graph.modules.get(fullHqlPath);
@@ -590,7 +625,7 @@ function removeModuleVarDeclarations(code: string): string {
  * Generate bundled code from the entry module and its dependencies
  */
 function generateBundle(entryPath: string, graph: DependencyGraph): string {
-  const absEntryPath = isExternalModule(entryPath) ? entryPath : resolve(entryPath);
+  const absEntryPath = ensureAbsolutePath(entryPath);
   const entryModule = graph.modules.get(absEntryPath);
   
   if (!entryModule) {
@@ -633,7 +668,7 @@ function generateBundle(entryPath: string, graph: DependencyGraph): string {
     // Skip external modules and JS files
     if (module.isExternal || module.type !== 'hql') continue;
     
-    // Use a unique name for the module
+    // Generate a unique module identifier
     const uniqueId = `__module_${module.id}_${Math.floor(Math.random() * 10000)}`;
     moduleMap.set(path, uniqueId);
     
@@ -642,26 +677,8 @@ function generateBundle(entryPath: string, graph: DependencyGraph): string {
     bundled += `const ${uniqueId} = (function() {\n`;
     bundled += `  const exports = {};\n`;
     
-    // Process the module code to remove import statements and module variable declarations
-    let moduleCode = module.code;
-    
-    // Remove import statements (they've been moved to the top)
-    moduleCode = moduleCode.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
-    
-    // Remove module variable declarations to prevent duplicates
-    moduleCode = removeModuleVarDeclarations(moduleCode);
-    
-    // Fix imports in the module code for bundled HQL modules
-    for (const [localId, depPath] of module.dependencies.entries()) {
-      // Handle HQL dependencies
-      if (moduleMap.has(depPath)) {
-        // Get the module ID for this dependency
-        const depModuleId = moduleMap.get(depPath);
-        
-        // Replace the import statement with a reference to the already-processed module
-        moduleCode = replaceImportStatement(moduleCode, localId, depModuleId!);
-      }
-    }
+    // Process the module code
+    let moduleCode = processModuleCode(module, moduleMap);
     
     // Add the fixed code with indentation
     bundled += moduleCode
@@ -674,6 +691,53 @@ function generateBundle(entryPath: string, graph: DependencyGraph): string {
   }
   
   // Now process the entry module
+  let entryCode = processEntryModuleCode(entryModule, moduleMap);
+  
+  // Get all needed module variables
+  const moduleVars = graph.getAllModuleVariables();
+  
+  // Add all module variables in a single block
+  if (moduleVars.size > 0) {
+    bundled += Array.from(moduleVars.values()).join('\n') + '\n\n';
+  }
+  
+  // Add the entry code
+  bundled += entryCode;
+  
+  return bundled;
+}
+
+/**
+ * Process a module's code to prepare it for bundling
+ */
+function processModuleCode(module: Module, moduleMap: Map<string, string>): string {
+  let moduleCode = module.code;
+  
+  // Remove import statements (they've been moved to the top)
+  moduleCode = moduleCode.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
+  
+  // Remove module variable declarations to prevent duplicates
+  moduleCode = removeModuleVarDeclarations(moduleCode);
+  
+  // Fix imports in the module code for bundled HQL modules
+  for (const [localId, depPath] of module.dependencies.entries()) {
+    // Handle HQL dependencies
+    if (moduleMap.has(depPath)) {
+      // Get the module ID for this dependency
+      const depModuleId = moduleMap.get(depPath);
+      
+      // Replace the import statement with a reference to the already-processed module
+      moduleCode = replaceImportStatement(moduleCode, localId, depModuleId!);
+    }
+  }
+  
+  return moduleCode;
+}
+
+/**
+ * Process the entry module code
+ */
+function processEntryModuleCode(entryModule: Module, moduleMap: Map<string, string>): string {
   let entryCode = entryModule.code;
   
   // Remove import statements (they've been moved to the top)
@@ -694,14 +758,6 @@ function generateBundle(entryPath: string, graph: DependencyGraph): string {
     }
   }
   
-  // Get all needed module variables
-  const moduleVars = graph.getAllModuleVariables();
-  
-  // Add all module variables in a single block
-  if (moduleVars.size > 0) {
-    bundled += Array.from(moduleVars.values()).join('\n') + '\n\n';
-  }
-  
   // Convert CommonJS exports to ESM exports in entry module
   entryCode = convertExportsToESM(entryCode);
   
@@ -712,10 +768,7 @@ function generateBundle(entryPath: string, graph: DependencyGraph): string {
   // Remove any file path comments that might be causing issues
   entryCode = entryCode.replace(/^\/\/\s*File:.*$/gm, '');
   
-  // Add the entry code
-  bundled += entryCode;
-  
-  return bundled;
+  return entryCode;
 }
 
 /**
@@ -825,7 +878,7 @@ export async function bundleJSModule(filePath: string, visited = new Set<string>
     await processJSModules(graph);
     
     // For JS entry files, just return the updated source
-    const jsModule = graph.modules.get(resolve(filePath));
+    const jsModule = graph.modules.get(ensureAbsolutePath(filePath));
     return jsModule?.code || "";
   } catch (error) {
     console.error(`Error bundling JS module ${filePath}:`, error);
@@ -846,21 +899,18 @@ export async function processESMImports(source: string, filePath: string, visite
     if (isHQL) {
       try {
         // Resolve the full path
-        let fullPath = importPath;
-        if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
-          fullPath = resolve(join(dirname(filePath), importPath));
-        }
+        const fullPath = resolveImportPath(importPath, dirname(filePath));
         
         // Skip if already visited
         if (visited.has(fullPath)) continue;
         visited.add(fullPath);
         
         // Generate JS file for HQL import
-        const jsPath = fullPath.replace(/\.hql$/, '.js');
+        const jsPath = hqlToJsPath(fullPath);
         await bundleFile(fullPath, new Set([...visited]), true);
         
         // Update the import in the source
-        const jsImportPath = importPath.replace(/\.hql$/, '.js');
+        const jsImportPath = hqlToJsPath(importPath);
         processedSource = processedSource.replace(importPath, jsImportPath);
       } catch (error) {
         console.error(`Error processing HQL import ${importPath}:`, error);
@@ -869,13 +919,4 @@ export async function processESMImports(source: string, filePath: string, visite
   }
   
   return processedSource;
-}
-
-/**
- * Detect if a JavaScript file contains ESM syntax
- */
-export function detectESMSyntax(code: string): boolean {
-  // Look for import/export statements at the top level
-  const esmSyntaxRegex = /^(?:\s*(?:\/\/.*|\/\*[\s\S]*?\*\/))*\s*(?:import\s+|export\s+|import\s*\()/m;
-  return esmSyntaxRegex.test(code);
 }
