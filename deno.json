@@ -1,19 +1,25 @@
 {
   "tasks": {
-    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test",
+    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test && deno task bundle-tests",
     "unit-tests": "deno task parser-test && deno task hql-to-ir-test",
     "run-test": "deno run -A ./cli/run.ts ./test/simple.hql",
-    
     "parser-test": "deno test --allow-all test/parser_test.ts",
     "hql-to-ir-test": "deno test --allow-all test/hql_to_ir_test.ts",
-
     "interop-test": "deno run -A ./cli/transpile.ts ./test/simple.hql && deno run -A ./test/simple.js",
     "interop-test2": "deno run -A ./cli/transpile.ts ./test/issue.hql && deno run -A ./test/issue.js",
     "interop-test3": "deno run -A ./cli/transpile.ts ./test/interop2/main.hql && deno run -A ./test/interop2/main.js",
     "interop-test4": "deno run -A ./cli/transpile.ts ./test/interop3/main.hql && deno run -A ./test/interop3/main.js",
     "interop-test5": "deno run -A ./cli/transpile.ts ./test/complex-import/main.hql && deno run -A ./test/complex-import/main.js",
     "all-interop-test": "deno task interop-test && deno task interop-test2 && deno task interop-test3 && deno task interop-test4 && deno task interop-test5",
-
-    "quick-test": "deno run -A ./cli/run.ts ./test/test.js"
+    "quick-test": "deno run -A ./cli/run.ts ./test/test.js",
+    "bundle-tests": "deno task bundle-simple && deno task bundle-complex && deno task bundle-interop && deno task bundle-publish-test",
+    "bundle-simple": "deno run -A ./cli/transpile.ts ./test/simple.hql ./test/simple.bundle.js --bundle && deno run -A ./test/simple.bundle.js",
+    "bundle-complex": "deno run -A ./cli/transpile.ts ./test/complex-import/main.hql ./test/complex-import/main.bundle.js --bundle && deno run -A ./test/complex-import/main.bundle.js",
+    "bundle-interop": "deno run -A ./cli/transpile.ts ./test/interop3/main.hql ./test/interop3/main.bundle.js --bundle && deno run -A ./test/interop3/main.bundle.js",
+    "bundle-interop2": "deno run -A ./cli/transpile.ts ./test/interop2/main.hql ./test/interop2/main.bundle.js --bundle && deno run -A ./test/interop2/main.bundle.js",
+    "bundle-run": "deno run -A ./cli/run.ts ./test/simple.hql --bundle",
+    "bundle-publish-test": "deno run -A ./cli/hql_publish.ts ./test/complex-import/main.hql",
+    "bundle-compare": "deno run -A ./test/tools/compare_bundle.ts ./test/complex-import/main.hql",
+    "bundle-cleanup": "find ./test -name \"*.bundle.js\" -type f -delete && rm -rf ./.test-publish"
   }
 }

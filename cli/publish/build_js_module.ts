@@ -1,3 +1,5 @@
+// cli/publish/build_js_module.ts - Updated with bundling support
+
 import transpileCLI from "../transpile.ts";
 import { join, resolve, dirname, basename } from "../../src/platform/platform.ts";
 import { exists, emptyDir } from "jsr:@std/fs@1.0.13";
@@ -5,7 +7,7 @@ import { exists, emptyDir } from "jsr:@std/fs@1.0.13";
 /**
  * Build a JavaScript module from an HQL file.
  * This performs the following steps:
- * 1. Transpile the HQL file to JavaScript
+ * 1. Transpile the HQL file to JavaScript with bundling enabled
  * 2. Create a proper entry point file
  * 
  * @param inputPath The HQL file path
@@ -48,12 +50,17 @@ export async function buildJsModule(inputPath: string): Promise<string> {
     }
   }
   
-  // Transpile the HQL file to JS
+  // Transpile the HQL file to JS with bundling enabled
   const outputName = isFile ? basename(absoluteInputPath).replace(/\.hql$/, '.js') : "index.js";
   const outputPath = join(buildDir, outputName);
   
   try {
-    await transpileCLI(absoluteInputPath, outputPath);
+    // Always use bundling for publishing to ensure self-contained modules
+    await transpileCLI(absoluteInputPath, outputPath, { 
+      bundle: true,
+      verbose: true 
+    });
+    console.log(`Successfully bundled module for publishing: ${outputPath}`);
   } catch (error) {
     console.error("Error transpiling HQL file:", error);
     // Try to continue anyway, as transpileCLI might report errors but still produce output

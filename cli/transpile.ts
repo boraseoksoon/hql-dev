@@ -1,4 +1,4 @@
-// cli/transpile.ts - Critical Transpiler Fix
+// cli/transpile.ts - Update with bundling support
 
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transformAST } from "../src/transpiler/transformer.ts";
@@ -13,12 +13,21 @@ function log(message: string) {
 
 /**
  * Transpile an HQL file and write the output to a file.
- * This function properly bundles all dependencies.
+ * This function properly bundles all dependencies when --bundle flag is used.
  *
  * @param inputPath - Path to the input HQL file.
  * @param outputPath - Path to the output JavaScript file.
+ * @param options - Transpilation options including bundle flag.
  */
-async function transpileCLI(inputPath: string, outputPath?: string): Promise<void> {
+async function transpileCLI(
+  inputPath: string, 
+  outputPath?: string, 
+  options: { 
+    bundle?: boolean; 
+    verbose?: boolean;
+    module?: "esm" | "commonjs";
+  } = {}
+): Promise<void> {
   try {
     log(`Transpiling ${inputPath}...`);
     
@@ -31,17 +40,25 @@ async function transpileCLI(inputPath: string, outputPath?: string): Promise<voi
     log(`Output path: ${outPath}`);
     
     try {
-      // IMPORTANT FIX: Use the direct approach instead of bundling
+      // Read the source
       const source = await Deno.readTextFile(resolvedInputPath);
       const ast = parse(source);
       const dir = dirname(resolvedInputPath);
+      
+      // Transform with bundling if requested
       const transformed = await transformAST(ast, dir, new Set(), {
-        module: 'esm'
+        module: options.module || 'esm',
+        bundle: options.bundle,
+        verbose: options.verbose
       });
       
       // Write the output
       await writeOutput(transformed, outPath);
       log(`Successfully transpiled ${inputPath} -> ${outPath}`);
+      
+      if (options.bundle) {
+        log(`Output is a bundled self-contained file`);
+      }
     } catch (error) {
       console.error(`Transpilation failed: ${error.message}`);
     }
@@ -86,13 +103,21 @@ async function writeOutput(code: string, outputPath: string): Promise<void> {
  * Watch an HQL file for changes and transpile on modification.
  *
  * @param inputPath - Path to the input HQL file.
+ * @param options - Transpilation options including bundle flag.
  */
-async function watchFile(inputPath: string): Promise<void> {
+async function watchFile(
+  inputPath: string, 
+  options: { 
+    bundle?: boolean; 
+    verbose?: boolean;
+    module?: "esm" | "commonjs";
+  } = {}
+): Promise<void> {
   log(`Watching ${inputPath} for changes...`);
   
   try {
     // Initial transpilation
-    await transpileCLI(inputPath);
+    await transpileCLI(inputPath, undefined, options);
     
     // Set up file watcher
     const watcher = Deno.watchFs(inputPath);
@@ -101,7 +126,7 @@ async function watchFile(inputPath: string): Promise<void> {
       if (event.kind === 'modify') {
         try {
           log(`File changed, retranspiling...`);
-          await transpileCLI(inputPath);
+          await transpileCLI(inputPath, undefined, options);
         } catch (error: any) {
           console.error(`Transpilation failed: ${error.message}`);
         }
@@ -118,33 +143,44 @@ if (import.meta.main) {
   const args = Deno.args;
   
   if (args.length < 1) {
-    console.error("Usage: deno run -A transpile.ts <input.hql> [output.js] [--watch]");
+    console.error("Usage: deno run -A transpile.ts <input.hql> [output.js] [--watch] [--bundle] [--format=esm|commonjs] [--verbose]");
     Deno.exit(1);
   }
   
   const inputPath = args[0];
   let outputPath: string | undefined = undefined;
   let watch = false;
+  let bundle = false;
+  let verbose = false;
+  let format: "esm" | "commonjs" = "esm";
   
   // Check if the second argument is an output path (does not start with '--')
   if (args.length > 1 && !args[1].startsWith('--')) {
     outputPath = args[1];
   }
   
-  // Check for watch flag
-  if (args.includes('--watch')) {
-    watch = true;
+  // Parse flags
+  for (const arg of args) {
+    if (arg === '--watch') watch = true;
+    if (arg === '--bundle') bundle = true;
+    if (arg === '--verbose') verbose = true;
+    if (arg === '--format=commonjs') format = "commonjs";
   }
   
   // Enable verbose logging with --verbose flag
-  if (args.includes('--verbose')) {
+  if (verbose) {
     Deno.env.set("HQL_DEBUG", "1");
+    console.log("Verbose logging enabled");
+  }
+  
+  if (bundle) {
+    console.log("Bundle mode enabled - output will be a self-contained JavaScript file");
   }
   
   if (watch) {
-    watchFile(inputPath).catch(() => Deno.exit(1));
+    watchFile(inputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
   } else {
-    transpileCLI(inputPath, outputPath).catch(() => Deno.exit(1));
+    transpileCLI(inputPath, outputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
   }
 }
 

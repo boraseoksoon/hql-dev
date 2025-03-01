@@ -16,7 +16,8 @@ import {
   pathExists
 } from "./path-utils.ts";
 import { parse } from "./parser.ts";
-import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { dirname, resolve, join } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { bundleJavaScript } from "../bundler/bundler.ts";
 
 // Cache for processed imports to avoid redundant processing
 const processedImportsCache = new Map<string, Set<string>>();
@@ -33,7 +34,9 @@ export interface TransformOptions {
   indentSize?: number;
   useSpaces?: boolean;
   preserveImports?: boolean; // Whether to keep import statements
-  inlineSourceMaps?: boolean; // New: add inline source maps
+  inlineSourceMaps?: boolean; // Add inline source maps
+  bundle?: boolean; // New: bundle the output to a single file
+  verbose?: boolean; // New: enable verbose logging
 }
 
 /**
@@ -49,7 +52,9 @@ function getDefaultOptions(overrides: Partial<TransformOptions> = {}): Required<
     indentSize: overrides.indentSize ?? 2,
     useSpaces: overrides.useSpaces ?? true,
     preserveImports: overrides.preserveImports ?? false,
-    inlineSourceMaps: overrides.inlineSourceMaps ?? false
+    inlineSourceMaps: overrides.inlineSourceMaps ?? false,
+    bundle: overrides.bundle ?? false,
+    verbose: overrides.verbose ?? false
   };
 }
 
@@ -248,7 +253,7 @@ async function processHqlImport(
   visited.add(normalizedPath);
   
   try {
-    console.log(`Transpiling HQL import: ${fullPath}`);
+    if (options.verbose) console.log(`Transpiling HQL import: ${fullPath}`);
     
     // Read and transform the HQL file
     const source = await Deno.readTextFile(fullPath);
@@ -266,7 +271,7 @@ async function processHqlImport(
     // Write the JS file
     const jsFullPath = hqlToJsPath(fullPath);
     await Deno.writeTextFile(jsFullPath, transformed);
-    console.log(`Generated JS file: ${jsFullPath}`);
+    if (options.verbose) console.log(`Generated JS file: ${jsFullPath}`);
   } catch (error) {
     console.error(`Error processing HQL import ${fullPath}:`, error);
   }
@@ -489,7 +494,7 @@ async function processHqlImportsInJsFile(
   // Write the updated file if needed
   if (contentModified) {
     await Deno.writeTextFile(jsFilePath, updatedContent);
-    console.log(`Updated JS imports in: ${jsFilePath}`);
+    if (options.verbose) console.log(`Updated JS imports in: ${jsFilePath}`);
   }
 }
 
@@ -516,14 +521,62 @@ export async function transpile(
  */
 export async function transpileFile(
   inputPath: string,
+  outputPath?: string,
   options: TransformOptions = {}
 ): Promise<string> {
   try {
     const absPath = resolve(inputPath);
-    console.log(`Transpiling file: ${absPath}`);
+    if (options.verbose) console.log(`Transpiling file: ${absPath}`);
     const source = await Deno.readTextFile(absPath);
-    return await transpile(source, absPath, options);
-  } catch (error: any) {
+    
+    // Transpile HQL to JS
+    const transpiled = await transpile(source, absPath, options);
+    
+    // If bundling is requested, write the transpiled output to a temporary file and bundle it
+    if (options.bundle) {
+      const outputDir = dirname(absPath);
+      const tempJsPath = join(outputDir, `.${basename(absPath)}.temp.js`);
+      
+      try {
+        if (options.verbose) console.log(`Writing transpiled JS to temporary file: ${tempJsPath}`);
+        
+        // Write transpiled output to a temporary file
+        await Deno.writeTextFile(tempJsPath, transpiled);
+        
+        // Bundle the transpiled output
+        const bundled = await bundleJavaScript(tempJsPath, {
+          format: options.module as "esm" | "commonjs",
+          verbose: options.verbose
+        });
+        
+        // Clean up temporary file
+        try {
+          await Deno.remove(tempJsPath);
+        } catch (e) {
+          // Ignore cleanup errors
+          if (options.verbose) console.warn(`Failed to remove temporary file: ${e.message}`);
+        }
+        
+        // Write output if outputPath is provided
+        if (outputPath) {
+          await writeOutput(bundled, outputPath);
+          if (options.verbose) console.log(`Bundled output written to: ${outputPath}`);
+        }
+        
+        return bundled;
+      } catch (error) {
+        throw new Error(`Bundling error: ${error.message}`);
+      }
+    }
+    
+    // Write output if outputPath is provided
+    if (outputPath) {
+      await writeOutput(transpiled, outputPath);
+      if (options.verbose) console.log(`Transpiled output written to: ${outputPath}`);
+    }
+    
+    return transpiled;
+  } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
       throw new Error(`File not found: ${inputPath}`);
     }
@@ -551,7 +604,6 @@ export async function writeOutput(
     }
     
     await Deno.writeTextFile(outputPath, code);
-    console.log(`Output written to: ${outputPath}`);
   } catch (error: any) {
     throw new Error(`Failed to write output: ${error.message}`);
   }
