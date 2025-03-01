@@ -6,11 +6,10 @@ import {
   isExternalModule,
   resolveImportPath,
   hqlToJsPath,
-  getDirectory,
   ensureAbsolutePath,
   normalizePath
 } from "../transpiler/path-utils.ts";
-import { dirname, basename, join } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { dirname, basename } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { HQLNode, ListNode, SymbolNode, LiteralNode } from "../transpiler/hql_ast.ts";
 import { exists } from "jsr:@std/fs@1.0.13";
 
