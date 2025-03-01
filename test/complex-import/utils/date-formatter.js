@@ -1,7 +1,7 @@
 // test/complex-import/utils/date-formatter.js
 
 // Import an HQL module (bidirectional dependency)
-import { padLeft } from './string-utils.hql';
+import { padLeft } from './string-utils.js';
 
 /**
  * Format current date with specified format

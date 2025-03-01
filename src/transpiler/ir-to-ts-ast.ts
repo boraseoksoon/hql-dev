@@ -11,7 +11,7 @@ import {
   TSRaw,
   TSExportDeclaration
 } from "./ts-ast-types.ts";
-
+import { convertImportSpecifier } from "./path-utils.ts";
 
 /**
  * Convert an IRProgram into a TSSourceFile.
@@ -59,13 +59,7 @@ function isImport(node: IR.IRNode): boolean {
 
 /**
  * Process an import statement from IR to TS.
- */
-// src/transpiler/ir-to-ts-ast.ts - Update the processImport function
-
-/**
- * Process an import statement from IR to TS.
- * This implementation uses a universal import approach that works
- * consistently with all module export styles (default exports, namespace exports, etc.)
+ * Enhanced to support all module systems and handle import types better.
  */
 function processImport(node: IR.IRNode): TSNode | null {
   if (node.type !== IR.IRNodeType.VariableDeclaration) return null;
@@ -78,26 +72,31 @@ function processImport(node: IR.IRNode): TSNode | null {
     return null;
   }
   
-  const url = (callExpr.arguments[0] as IR.IRStringLiteral).value;
+  let url = (callExpr.arguments[0] as IR.IRStringLiteral).value;
+  
+  // Convert import specifiers to their canonical form
+  url = convertImportSpecifier(url);
   
   // Generate appropriate import based on file type
   if (url.endsWith(".hql")) {
-    // HQL module import - placeholder for bundling
-    return createHqlImportPlaceholder(varName, url);
+    // HQL imports
+    return createNamespaceImport(varName, url);
+  } else if (url.endsWith(".js") || url.endsWith(".ts") || url.endsWith(".mjs")) {
+    // JavaScript/TypeScript imports
+    return createNamespaceImport(varName, url);
   } else {
-    // External module import - use universal import approach
+    // External module imports
     return createUniversalImport(varName, url);
   }
 }
 
-
 /**
- * Creates a placeholder for bundled HQL modules
+ * Creates a standard namespace import
  */
-function createHqlImportPlaceholder(varName: string, url: string): TSNode {
+function createNamespaceImport(varName: string, url: string): TSNode {
   return {
     type: TSNodeType.Raw,
-    code: `const ${varName} = (function(){\n  const exports = {};\n  // Bundled HQL from ${url}\n  return exports;\n})();`
+    code: `import * as ${varName} from "${url}";`
   };
 }
 
@@ -111,7 +110,6 @@ function createUniversalImport(varName: string, url: string): TSNode {
           `const ${varName} = ${varName}_module.default !== undefined ? ${varName}_module.default : ${varName}_module;`
   };
 }
-
 
 /**
  * Main IR→TS dispatcher function.
@@ -159,6 +157,12 @@ function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
 
     case IR.IRNodeType.BinaryExpression:
       return convertBinaryExpression(node as IR.IRBinaryExpression);
+      
+    case IR.IRNodeType.AssignmentExpression:
+      return convertAssignmentExpression(node as IR.IRAssignmentExpression);
+      
+    case IR.IRNodeType.ConditionalExpression:
+      return convertConditionalExpression(node as IR.IRConditionalExpression);
 
     case IR.IRNodeType.CallExpression:
       return convertCallExpression(node as IR.IRCallExpression);
@@ -183,6 +187,12 @@ function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
       
     case IR.IRNodeType.ReturnStatement:
       return convertReturnStatement(node as IR.IRReturnStatement);
+      
+    case IR.IRNodeType.IfStatement:
+      return convertIfStatement(node as IR.IRIfStatement);
+      
+    case IR.IRNodeType.ForStatement:
+      return convertForStatement(node as IR.IRForStatement);
 
     case IR.IRNodeType.Block:
       return convertBlock(node as IR.IRBlock);
@@ -225,15 +235,78 @@ function convertPropertyAccess(propAccess: IR.IRPropertyAccess): TSNode {
 }
 
 /**
+ * Convert an assignment expression to TS AST
+ */
+function convertAssignmentExpression(assign: IR.IRAssignmentExpression): TSNode {
+  const left = convertNode(assign.left);
+  const right = convertNode(assign.right);
+  
+  return { 
+    type: TSNodeType.Raw, 
+    code: `${nodeToString(left)} = ${nodeToString(right)}` 
+  };
+}
+
+/**
+ * Convert a conditional expression to TS AST
+ */
+function convertConditionalExpression(cond: IR.IRConditionalExpression): TSNode {
+  const test = convertNode(cond.test);
+  const consequent = convertNode(cond.consequent);
+  const alternate = convertNode(cond.alternate);
+  
+  return { 
+    type: TSNodeType.Raw, 
+    code: `${nodeToString(test)} ? ${nodeToString(consequent)} : ${nodeToString(alternate)}` 
+  };
+}
+
+/**
  * Convert a ReturnStatement node to TS AST
  */
 function convertReturnStatement(returnStmt: IR.IRReturnStatement): TSNode {
   if (returnStmt.argument === null) {
-    return { type: TSNodeType.Raw, code: "return" };
+    return { type: TSNodeType.Raw, code: "return;" };
   }
   
   const arg = nodeToString(convertNode(returnStmt.argument));
-  return { type: TSNodeType.Raw, code: `return ${arg}` };
+  return { type: TSNodeType.Raw, code: `return ${arg};` };
+}
+
+/**
+ * Convert an if statement to TS AST
+ */
+function convertIfStatement(ifStmt: IR.IRIfStatement): TSNode {
+  const test = nodeToString(convertNode(ifStmt.test));
+  const consequent = nodeToString(convertNode(ifStmt.consequent));
+  
+  if (ifStmt.alternate) {
+    const alternate = nodeToString(convertNode(ifStmt.alternate));
+    return { 
+      type: TSNodeType.Raw, 
+      code: `if (${test}) ${consequent} else ${alternate}` 
+    };
+  } else {
+    return { 
+      type: TSNodeType.Raw, 
+      code: `if (${test}) ${consequent}` 
+    };
+  }
+}
+
+/**
+ * Convert a for statement to TS AST
+ */
+function convertForStatement(forStmt: IR.IRForStatement): TSNode {
+  const init = nodeToString(convertNode(forStmt.init));
+  const test = nodeToString(convertNode(forStmt.test));
+  const update = forStmt.update ? nodeToString(convertNode(forStmt.update)) : '';
+  const body = nodeToString(convertNode(forStmt.body));
+  
+  return { 
+    type: TSNodeType.Raw, 
+    code: `for (${init}; ${test}; ${update}) ${body}` 
+  };
 }
 
 /**
@@ -282,7 +355,15 @@ function convertBinaryExpression(bin: IR.IRBinaryExpression): TSNode {
   const left = convertNode(bin.left);
   const right = convertNode(bin.right);
   
-  return { type: TSNodeType.Raw, code: `(${nodeToString(left)} ${bin.operator} ${nodeToString(right)})` };
+  // Convert HQL operators to JavaScript operators
+  let operator = bin.operator;
+  switch (operator) {
+    case '=': operator = '==='; break;
+    case '!=': operator = '!=='; break;
+    default: break;
+  }
+  
+  return { type: TSNodeType.Raw, code: `(${nodeToString(left)} ${operator} ${nodeToString(right)})` };
 }
 
 /**
@@ -343,7 +424,7 @@ function convertVariableDeclaration(vd: IR.IRVariableDeclaration): TSNode {
   if (isImport(vd)) return null;
   const varName = vd.id.name;
   const initializer = nodeToString(convertNode(vd.init));
-  return { type: TSNodeType.Raw, code: `const ${varName} = ${initializer};` };
+  return { type: TSNodeType.Raw, code: `${vd.kind} ${varName} = ${initializer};` };
 }
 
 /**
@@ -356,15 +437,17 @@ function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
   
   if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
     parameters = "params";
-    const destructuring = `const { ${fn.namedParamIds.map(id => `${id}: ${id}`).join(", ")} } = params;`;
+    const destructuring = `const { ${fn.namedParamIds.join(", ")} } = params;`;
     body = convertFunctionBody(fn.body, destructuring);
   } else {
     parameters = fn.params.map(p => p.id.name).join(", ");
     body = convertFunctionBody(fn.body);
   }
   
+  // If the function is anonymous and is used as an expression (not declaration)
   if (fn.isAnonymous) {
-    return { type: TSNodeType.Raw, code: `function(${parameters}) ${body}` };
+    // In JavaScript, anonymous functions must be expressions, not declarations
+    return { type: TSNodeType.Raw, code: `return function(${parameters}) ${body}` };
   }
   
   return { type: TSNodeType.Raw, code: `function ${functionName}(${parameters}) ${body}` };
@@ -376,18 +459,6 @@ function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
 function convertFunctionBody(block: IR.IRBlock, destructuring?: string): string {
   const statements = [...block.body];
   if (statements.length === 0) return "{}";
-  
-  // If the last statement is an expression (not a statement), wrap it in a return
-  const lastIndex = statements.length - 1;
-  const lastStmt = statements[lastIndex];
-  
-  if (lastStmt && IR.isExpression(lastStmt) && !IR.isStatementLike(lastStmt) 
-      && lastStmt.type !== IR.IRNodeType.ReturnStatement) {
-    statements[lastIndex] = {
-      type: IR.IRNodeType.ReturnStatement,
-      argument: lastStmt
-    } as IR.IRReturnStatement;
-  }
   
   const lines = statements
     .map(stmt => {

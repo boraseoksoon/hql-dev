@@ -1,8 +1,8 @@
 // test/complex-import/helpers/config-loader.js
 
 // Import HQL modules (bidirectional dependency)
-import { normalizeFormat } from '../utils/shared-utils.hql';
-import { getCurrentEnvironment } from '../config/environment-config.hql';
+import { normalizeFormat } from '../utils/shared-utils.js';
+import { getCurrentEnvironment } from '../config/environment-config.js';
 
 /**
  * Load external configuration for a specific format

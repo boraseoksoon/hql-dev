@@ -1,5 +1,9 @@
+// cli/transpile.ts - Critical Transpiler Fix
+
 import { bundleFile } from "../src/bundler/bundler.ts";
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { transformAST } from "../src/transpiler/transformer.ts";
+import { parse } from "../src/transpiler/parser.ts";
 
 /**
  * Simple logger.
@@ -27,12 +31,27 @@ async function transpileCLI(inputPath: string, outputPath?: string): Promise<voi
     const outPath = outputPath ?? resolvedInputPath.replace(/\.hql$/, '.js');
     log(`Output path: ${outPath}`);
     
-    // Bundle the file with all its dependencies
-    const code = await bundleFile(resolvedInputPath);
-    
-    // Write the output
-    await writeOutput(code, outPath);
-    log(`Successfully transpiled ${inputPath} -> ${outPath}`);
+    try {
+      // IMPORTANT FIX: Use the direct approach instead of bundling
+      const source = await Deno.readTextFile(resolvedInputPath);
+      const ast = parse(source);
+      const dir = dirname(resolvedInputPath);
+      const transformed = await transformAST(ast, dir, new Set(), {
+        module: 'esm'
+      });
+      
+      // Write the output
+      await writeOutput(transformed, outPath);
+      log(`Successfully transpiled ${inputPath} -> ${outPath}`);
+    } catch (error) {
+      // Fall back to bundling if direct approach fails
+      log(`Direct transpilation failed, falling back to bundling: ${error.message}`);
+      const code = await bundleFile(resolvedInputPath);
+      
+      // Write the output
+      await writeOutput(code, outPath);
+      log(`Successfully transpiled ${inputPath} -> ${outPath} using bundler`);
+    }
   } catch (error: any) {
     console.error(`Transpilation failed: ${error.message}`);
     if (error.stack) {

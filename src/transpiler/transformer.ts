@@ -10,7 +10,10 @@ import {
   resolveImportPath, 
   hqlToJsPath, 
   getDirectory, 
-  hasExtension 
+  hasExtension,
+  normalizePath,
+  resolveWithExtensions,
+  convertImportSpecifier 
 } from "./path-utils.ts";
 import { parse } from "./parser.ts";
 
@@ -22,6 +25,7 @@ export interface TransformOptions {
   module?: 'esm' | 'commonjs';
   indentSize?: number;
   useSpaces?: boolean;
+  preserveImports?: boolean; // New: whether to keep import statements
 }
 
 /**
@@ -32,6 +36,7 @@ interface ImportInfo {
   moduleName: string | null;
   importPath: string;
   isHQL: boolean;
+  isExternal: boolean;
 }
 
 /**
@@ -53,6 +58,7 @@ export async function transformAST(
     module: options.module ?? 'esm',
     indentSize: options.indentSize ?? 2,
     useSpaces: options.useSpaces ?? true,
+    preserveImports: options.preserveImports ?? false,
   };
   
   // Force commonjs for modules included in other files
@@ -64,8 +70,8 @@ export async function transformAST(
   // Step 2: Convert IR to TypeScript AST
   let tsAST = convertIRToTSAST(irProgram);
 
-  // Step 3: Process JS imports by inlining them within the TS AST
-  await processImportsInAST(tsAST, currentDir, visited);
+  // Step 3: Process imports by resolving them properly
+  await processImportsInAST(tsAST, currentDir, visited, opts);
 
   // Step 4: Generate code from the TS AST
   const codeOptions: CodeGenerationOptions = {
@@ -84,8 +90,12 @@ export async function transformAST(
 async function processImportsInAST(
   ast: TSSourceFile, 
   currentDir: string, 
-  visited: Set<string>
+  visited: Set<string>,
+  options: TransformOptions
 ): Promise<void> {
+  // If we're preserving imports (for the bundler), we can skip this step
+  if (options.preserveImports) return;
+  
   // Loop through all statements in the AST
   for (let i = 0; i < ast.statements.length; i++) {
     const stmt = ast.statements[i];
@@ -123,7 +133,8 @@ function extractImportInfo(importStatement: string): ImportInfo | null {
     importStatement,
     moduleName,
     importPath,
-    isHQL: importPath.endsWith('.hql')
+    isHQL: importPath.endsWith('.hql'),
+    isExternal: isExternalModule(importPath)
   };
 }
 
@@ -137,22 +148,35 @@ async function processImport(
   currentDir: string,
   visited: Set<string>
 ): Promise<void> {
-  const { importStatement, importPath, isHQL } = importInfo;
+  const { importStatement, importPath, isHQL, isExternal } = importInfo;
   
-  // Only process relative imports
-  if (!importPath.startsWith('./') && !importPath.startsWith('../') && !isExternalModule(importPath)) {
+  // Handle external modules
+  if (isExternal) {
+    // Convert import specifiers to their canonical form
+    const convertedPath = convertImportSpecifier(importPath);
+    if (convertedPath !== importPath) {
+      ast.statements[statementIndex] = { 
+        type: TSNodeType.Raw, 
+        code: importStatement.replace(importPath, convertedPath) 
+      };
+    }
     return;
   }
   
-  const fullPath = resolveImportPath(importPath, currentDir);
+  // Handle relative imports
+  let fullPath = resolveImportPath(importPath, currentDir);
   
-  // Handle HQL imports
+  // For HQL imports, process and update to JS path
   if (isHQL) {
     await processHqlImport(ast, statementIndex, importStatement, importPath, fullPath, visited);
   } 
-  // Handle JS imports that might contain HQL imports
+  // For JS imports that might contain HQL imports
   else if (hasExtension(importPath, '.js')) {
     await processJsImport(fullPath, visited);
+  }
+  // For imports without extensions, try to resolve
+  else {
+    await processUnknownImport(ast, statementIndex, importStatement, importPath, currentDir, visited);
   }
 }
 
@@ -178,22 +202,33 @@ async function processHqlImport(
   };
   
   // If we haven't already visited this HQL file, process it
-  if (!visited.has(fullPath)) {
-    visited.add(fullPath);
+  if (!visited.has(normalizePath(fullPath))) {
+    visited.add(normalizePath(fullPath));
     try {
       console.log(`Transpiling HQL import: ${fullPath}`);
-      const bundled = await bundleFile(fullPath, new Set([...visited]), true);
-      await Deno.writeTextFile(jsFullPath, bundled);
-      console.log(`Generated JS from HQL import: ${jsFullPath}`);
+      
+      // IMPORTANT FIX: Generate standalone JS file first
+      const source = await Deno.readTextFile(fullPath);
+      const hqlAst = parse(source);
+      const currentDir = dirname(fullPath);
+      const transformed = await transformAST(hqlAst, currentDir, new Set([...visited]), {
+        module: 'esm'
+      });
+      
+      // Write the standalone JS file
+      await Deno.writeTextFile(jsFullPath, transformed);
+      console.log(`Generated JS file: ${jsFullPath}`);
+      
+      // IMPORTANT: Skip bundling since it's causing issues
+      // Instead of bundling, we'll just generate the standalone JS files
+      // and rely on ESM's import system to handle dependencies
+      
     } catch (error) {
-      console.error(`Error bundling HQL import ${importPath}:`, error);
+      console.error(`Error processing HQL import ${importPath}:`, error);
     }
   }
 }
 
-/**
- * Process a JS import that might contain HQL imports
- */
 /**
  * Process a JS import that might contain HQL imports
  */
@@ -202,18 +237,18 @@ async function processJsImport(
   visited: Set<string>
 ): Promise<void> {
   // Skip if already visited or if it's an external module
-  if (visited.has(fullPath) || isExternalModule(fullPath)) {
+  if (visited.has(normalizePath(fullPath)) || isExternalModule(fullPath)) {
     return;
   }
   
-  visited.add(fullPath);
+  visited.add(normalizePath(fullPath));
   
   try {
     // Read the JS file (only for local files)
     const jsContent = await Deno.readTextFile(fullPath);
     
     // Extract all imports from the JS file
-    const imports = extractAllImports(jsContent);
+    const imports = extractAllJsImports(jsContent);
     const hqlImports = imports.filter(imp => imp.isHQL);
     
     // Process any HQL imports found in the JS file
@@ -225,10 +260,58 @@ async function processJsImport(
   }
 }
 
+
+/**
+ * Process an import with unknown extension
+ */
+async function processUnknownImport(
+  ast: TSSourceFile,
+  statementIndex: number,
+  importStatement: string,
+  importPath: string,
+  currentDir: string,
+  visited: Set<string>
+): Promise<void> {
+  // Try to resolve the import with various extensions
+  const basePath = resolveImportPath(importPath, currentDir);
+  const resolvedPath = await resolveWithExtensions(basePath);
+  
+  if (resolvedPath) {
+    if (resolvedPath.endsWith('.hql')) {
+      // Process as HQL import
+      await processHqlImport(
+        ast, 
+        statementIndex, 
+        importStatement, 
+        importPath, 
+        resolvedPath, 
+        visited
+      );
+    } else if (resolvedPath.endsWith('.js')) {
+      // Update import path and process JS import
+      const relativePath = importPath + (importPath.endsWith('/') ? 'index.js' : '.js');
+      ast.statements[statementIndex] = { 
+        type: TSNodeType.Raw, 
+        code: importStatement.replace(importPath, relativePath) 
+      };
+      
+      await processJsImport(resolvedPath, visited);
+    } else {
+      // For other file types, just update the import path
+      const ext = resolvedPath.substring(resolvedPath.lastIndexOf('.'));
+      const relativePath = importPath + ext;
+      ast.statements[statementIndex] = { 
+        type: TSNodeType.Raw, 
+        code: importStatement.replace(importPath, relativePath) 
+      };
+    }
+  }
+}
+
 /**
  * Extract all imports from a JavaScript file
  */
-function extractAllImports(jsContent: string): ImportInfo[] {
+function extractAllJsImports(jsContent: string): ImportInfo[] {
   const imports: ImportInfo[] = [];
   const importRegex = /import\s+(?:\*\s+as\s+(\w+)|\w+|\{[^}]*\})\s+from\s+["']([^"']+)["'];/g;
   
@@ -240,7 +323,8 @@ function extractAllImports(jsContent: string): ImportInfo[] {
       importStatement: match[0],
       moduleName,
       importPath,
-      isHQL: importPath.endsWith('.hql')
+      isHQL: importPath.endsWith('.hql'),
+      isExternal: isExternalModule(importPath)
     });
   }
   
@@ -267,16 +351,28 @@ async function processHqlImportsInJsFile(
     const jsImportPath = hqlToJsPath(importPath);
     
     // Process the HQL file if not already processed
-    if (!visited.has(fullHqlPath)) {
-      visited.add(fullHqlPath);
+    if (!visited.has(normalizePath(fullHqlPath))) {
+      visited.add(normalizePath(fullHqlPath));
       try {
         console.log(`Transpiling nested HQL import: ${fullHqlPath}`);
+        
+        // IMPORTANT FIX: Generate standalone JS file first
+        const source = await Deno.readTextFile(fullHqlPath);
+        const hqlAst = parse(source);
+        const currentDir = dirname(fullHqlPath);
+        const transformed = await transformAST(hqlAst, currentDir, new Set([...visited]), {
+          module: 'esm'
+        });
+        
+        // Write the standalone JS file
         const hqlJsPath = hqlToJsPath(fullHqlPath);
-        const bundled = await bundleFile(fullHqlPath, new Set([...visited]), true);
-        await Deno.writeTextFile(hqlJsPath, bundled);
+        await Deno.writeTextFile(hqlJsPath, transformed);
         console.log(`Generated JS from nested HQL import: ${hqlJsPath}`);
+        
+        // IMPORTANT: Skip bundling since it's causing issues
+        
       } catch (error) {
-        console.error(`Error bundling nested HQL import ${importPath}:`, error);
+        console.error(`Error processing nested HQL import ${importPath}:`, error);
       }
     }
     
@@ -310,7 +406,7 @@ export async function transpile(
     const currentDir = getDirectory(filePath);
     
     // Track visited files to avoid circular dependencies
-    const visited = new Set<string>([filePath]);
+    const visited = new Set<string>([normalizePath(filePath)]);
     
     // Transform AST to JavaScript
     return await transformAST(ast, currentDir, visited, {
@@ -349,7 +445,14 @@ export async function writeOutput(code: string, outputPath: string): Promise<voi
     const outputDir = getDirectory(outputPath);
     
     // Ensure the output directory exists
-    await Deno.mkdir(outputDir, { recursive: true });
+    try {
+      await Deno.mkdir(outputDir, { recursive: true });
+    } catch (error) {
+      // Ignore if directory already exists
+      if (!(error instanceof Deno.errors.AlreadyExists)) {
+        throw error;
+      }
+    }
     
     // Write the output file
     await Deno.writeTextFile(outputPath, code);

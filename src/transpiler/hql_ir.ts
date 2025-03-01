@@ -15,14 +15,17 @@ export enum IRNodeType {
   BinaryExpression,
   CallExpression,
   NewExpression,
-  PropertyAccess,      // NEW: For property/member access expressions
+  PropertyAccess,
+  AssignmentExpression,
+  ConditionalExpression,
 
   VariableDeclaration,
   FunctionDeclaration,
   EnumDeclaration,
   ExportDeclaration,
-  ReturnStatement,     // NEW: For explicit return statements
-
+  ReturnStatement,
+  IfStatement,
+  ForStatement,
   Block,
   Parameter,
 }
@@ -63,6 +66,7 @@ export interface IRKeywordLiteral extends IRNode {
 export interface IRIdentifier extends IRNode {
   type: IRNodeType.Identifier;
   name: string;
+  isJSAccess?: boolean;
 }
 
 export interface IRArrayLiteral extends IRNode {
@@ -102,12 +106,25 @@ export interface IRNewExpression extends IRNode {
   arguments: IRNode[];
 }
 
-// NEW: Property access node (obj.prop or obj["prop"])
 export interface IRPropertyAccess extends IRNode {
   type: IRNodeType.PropertyAccess;
   object: IRNode;
   property: IRNode;
-  computed: boolean; // true for obj[prop], false for obj.prop
+  computed: boolean;
+}
+
+export interface IRAssignmentExpression extends IRNode {
+  type: IRNodeType.AssignmentExpression;
+  operator: string;
+  left: IRNode;
+  right: IRNode;
+}
+
+export interface IRConditionalExpression extends IRNode {
+  type: IRNodeType.ConditionalExpression;
+  test: IRNode;
+  consequent: IRNode;
+  alternate: IRNode;
 }
 
 export interface IRVariableDeclaration extends IRNode {
@@ -148,10 +165,24 @@ export interface IRExportDeclaration extends IRNode {
   exports: { local: IRIdentifier; exported: string }[];
 }
 
-// NEW: Return statement node
 export interface IRReturnStatement extends IRNode {
   type: IRNodeType.ReturnStatement;
-  argument: IRNode | null; // null for "return;" with no value
+  argument: IRNode | null;
+}
+
+export interface IRIfStatement extends IRNode {
+  type: IRNodeType.IfStatement;
+  test: IRNode;
+  consequent: IRNode;
+  alternate: IRNode | null;
+}
+
+export interface IRForStatement extends IRNode {
+  type: IRNodeType.ForStatement;
+  init: IRVariableDeclaration;
+  test: IRNode;
+  update: IRNode | null;
+  body: IRBlock;
 }
 
 // Enhanced function to determine if a node returns a function expression
@@ -171,7 +202,9 @@ export function isStatementLike(node: IRNode): boolean {
     IRNodeType.ExportDeclaration,
     IRNodeType.EnumDeclaration,
     IRNodeType.ReturnStatement,
-    IRNodeType.Block
+    IRNodeType.Block,
+    IRNodeType.IfStatement,
+    IRNodeType.ForStatement
   ].includes(node.type);
 }
 
@@ -189,7 +222,9 @@ export function isExpression(node: IRNode): boolean {
     IRNodeType.BinaryExpression,
     IRNodeType.CallExpression,
     IRNodeType.NewExpression,
-    IRNodeType.PropertyAccess
+    IRNodeType.PropertyAccess,
+    IRNodeType.AssignmentExpression,
+    IRNodeType.ConditionalExpression
   ].includes(node.type);
 }
 

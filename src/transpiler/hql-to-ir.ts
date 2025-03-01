@@ -39,7 +39,17 @@ function hyphenToCamel(name: string): string {
 }
 
 function transformSymbol(sym: SymbolNode): IR.IRIdentifier {
-  return { type: IR.IRNodeType.Identifier, name: hyphenToCamel(sym.name) };
+  // Handle JavaScript interop (js/X.y.z -> X.y.z)
+  const name = sym.name;
+  if (name.startsWith('js/')) {
+    return { 
+      type: IR.IRNodeType.Identifier, 
+      name: name.substring(3), // Remove 'js/' prefix
+      isJSAccess: true
+    };
+  }
+  
+  return { type: IR.IRNodeType.Identifier, name: hyphenToCamel(name) };
 }
 
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
@@ -57,6 +67,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "import":
         return transformImport(list, currentDir);
       case "vector":
+        return transformVector(list, currentDir);
       case "list":
         return transformArrayLiteral(list, currentDir);
       case "hash-map":
@@ -75,6 +86,14 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
         return transformStr(list, currentDir);
       case "let":
         return transformLet(list, currentDir);
+      case "cond":
+        return transformCond(list, currentDir);
+      case "if":
+        return transformIf(list, currentDir);
+      case "for":
+        return transformFor(list, currentDir);
+      case "set":
+        return transformSet(list, currentDir);
       case "->":
         // Ignore type annotations
         return null;
@@ -82,12 +101,16 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "-":
       case "*":
       case "/":
+      case "<":
+      case ">":
+      case "<=":
+      case ">=":
+      case "=":
+      case "!=":
         return transformArithmetic(list, currentDir);
       case "get":
-        // NEW: Handle property access directly
         return transformPropertyAccess(list, currentDir);
       case "return":
-        // NEW: Handle return statements directly
         return transformReturnStatement(list, currentDir);
       default:
         break;
@@ -133,17 +156,7 @@ function transformDefn(list: ListNode, currentDir: string): IR.IRFunctionDeclara
   const { params, namedParamIds } = transformParams(paramList);
   
   // For the last expression in the body, ensure it's properly returned
-  if (bodyNodes.length > 0) {
-    const lastNode = bodyNodes[bodyNodes.length - 1];
-    if (lastNode.type === IR.IRNodeType.FunctionDeclaration &&
-        (lastNode as IR.IRFunctionDeclaration).isAnonymous) {
-      // Replace with proper return statement
-      bodyNodes[bodyNodes.length - 1] = {
-        type: IR.IRNodeType.ReturnStatement,
-        argument: lastNode
-      } as IR.IRReturnStatement;
-    }
-  }
+  ensureReturnForLastExpression(bodyNodes);
   
   return {
     type: IR.IRNodeType.FunctionDeclaration,
@@ -164,6 +177,10 @@ function transformFn(list: ListNode, currentDir: string): IR.IRFunctionDeclarati
     .map(n => transformNode(n, currentDir))
     .filter(Boolean) as IR.IRNode[];
   const { params, namedParamIds } = transformParams(paramList);
+  
+  // For the last expression in the body, ensure it's properly returned
+  ensureReturnForLastExpression(bodyNodes);
+  
   return {
     type: IR.IRNodeType.FunctionDeclaration,
     id: { type: IR.IRNodeType.Identifier, name: "$anonymous" },
@@ -173,6 +190,12 @@ function transformFn(list: ListNode, currentDir: string): IR.IRFunctionDeclarati
     isNamedParams: namedParamIds.length > 0,
     namedParamIds
   } as IR.IRFunctionDeclaration;
+}
+
+/** Helper: Transform a list as a Vector (JavaScript array) */
+function transformVector(list: ListNode, currentDir: string): IR.IRArrayLiteral {
+  const elems = list.elements.slice(1).map(x => transformNode(x, currentDir)).filter(Boolean) as IR.IRNode[];
+  return { type: IR.IRNodeType.ArrayLiteral, elements: elems };
 }
 
 /** Helper: Transform a list as an ArrayLiteral (for both vectors and list literals) */
@@ -268,6 +291,148 @@ function transformStr(list: ListNode, currentDir: string): IR.IRCallExpression {
   } as IR.IRCallExpression;
 }
 
+/** (cond pred1 val1 pred2 val2 ... true default) => Conditional */
+function transformCond(list: ListNode, currentDir: string): IR.IRNode {
+  if (list.elements.length < 3) {
+    throw new Error("cond requires at least one predicate-value pair");
+  }
+  
+  // Group elements into pairs
+  const pairs: Array<[IR.IRNode, IR.IRNode]> = [];
+  for (let i = 1; i < list.elements.length; i += 2) {
+    // Check if we have enough elements
+    if (i + 1 >= list.elements.length) {
+      throw new Error("cond requires pairs of predicate and value");
+    }
+    
+    const predicate = transformNode(list.elements[i], currentDir)!;
+    const value = transformNode(list.elements[i + 1], currentDir)!;
+    pairs.push([predicate, value]);
+  }
+  
+  // Convert to nested ternary operators
+  return buildConditionalChain(pairs, 0);
+}
+
+/** Helper to build a chain of conditional expressions */
+function buildConditionalChain(pairs: Array<[IR.IRNode, IR.IRNode]>, index: number): IR.IRNode {
+  if (index >= pairs.length - 1) {
+    // Last pair - either the final condition-result or default
+    const [predicate, value] = pairs[index];
+    
+    // If the predicate is 'true', just return the value
+    if (predicate.type === IR.IRNodeType.Identifier && 
+        (predicate as IR.IRIdentifier).name === 'true') {
+      return value;
+    }
+    
+    // Otherwise, it's a normal condition
+    return {
+      type: IR.IRNodeType.ConditionalExpression,
+      test: predicate,
+      consequent: value,
+      alternate: { type: IR.IRNodeType.NullLiteral }
+    } as IR.IRConditionalExpression;
+  }
+  
+  // Build a conditional with the rest of the chain as the alternate
+  const [predicate, value] = pairs[index];
+  return {
+    type: IR.IRNodeType.ConditionalExpression,
+    test: predicate,
+    consequent: value,
+    alternate: buildConditionalChain(pairs, index + 1)
+  } as IR.IRConditionalExpression;
+}
+
+/** (if condition then-branch else-branch) => IfStatement */
+function transformIf(list: ListNode, currentDir: string): IR.IRNode {
+  if (list.elements.length < 3) {
+    throw new Error("if requires at least a condition and then-branch");
+  }
+  
+  const condition = transformNode(list.elements[1], currentDir)!;
+  const thenBranch = transformNode(list.elements[2], currentDir)!;
+  let elseBranch = null;
+  
+  if (list.elements.length > 3) {
+    elseBranch = transformNode(list.elements[3], currentDir)!;
+  }
+  
+  // Use a conditional expression if both branches are expressions
+  if (IR.isExpression(thenBranch) && (elseBranch === null || IR.isExpression(elseBranch))) {
+    return {
+      type: IR.IRNodeType.ConditionalExpression,
+      test: condition,
+      consequent: thenBranch,
+      alternate: elseBranch || { type: IR.IRNodeType.NullLiteral }
+    } as IR.IRConditionalExpression;
+  }
+  
+  // Otherwise, use an if statement
+  return {
+    type: IR.IRNodeType.IfStatement,
+    test: condition,
+    consequent: thenBranch,
+    alternate: elseBranch
+  } as IR.IRIfStatement;
+}
+
+/** (for [var init condition update] body...) => ForStatement */
+function transformFor(list: ListNode, currentDir: string): IR.IRNode {
+  if (list.elements.length < 3) {
+    throw new Error("for requires loop parameters and a body");
+  }
+  
+  const forParams = list.elements[1] as ListNode;
+  if (forParams.elements.length < 3) {
+    throw new Error("for requires at least var, init, and condition parameters");
+  }
+  
+  const variable = forParams.elements[0] as SymbolNode;
+  const init = transformNode(forParams.elements[1], currentDir)!;
+  const condition = transformNode(forParams.elements[2], currentDir)!;
+  
+  let update = null;
+  if (forParams.elements.length > 3) {
+    update = transformNode(forParams.elements[3], currentDir)!;
+  }
+  
+  const bodyNodes = list.elements.slice(2)
+    .map(n => transformNode(n, currentDir))
+    .filter(Boolean) as IR.IRNode[];
+  
+  return {
+    type: IR.IRNodeType.ForStatement,
+    init: {
+      type: IR.IRNodeType.VariableDeclaration,
+      kind: "let",
+      id: transformSymbol(variable),
+      init: init
+    },
+    test: condition,
+    update: update,
+    body: { type: IR.IRNodeType.Block, body: bodyNodes }
+  } as IR.IRForStatement;
+}
+
+/** (set var expr) => AssignmentExpression */
+function transformSet(list: ListNode, currentDir: string): IR.IRNode {
+  if (list.elements.length !== 3) {
+    throw new Error("set requires a target and an expression");
+  }
+  
+  const target = transformNode(list.elements[1], currentDir)!;
+  const value = transformNode(list.elements[2], currentDir)!;
+  
+  return {
+    type: IR.IRNodeType.AssignmentExpression,
+    operator: "=",
+    left: target,
+    right: value
+  } as IR.IRAssignmentExpression;
+}
+
 /** (get obj "prop") => PropertyAccess */
 function transformPropertyAccess(list: ListNode, currentDir: string): IR.IRPropertyAccess {
   if (list.elements.length !== 3) throw new Error("get requires object and property arguments");
@@ -332,10 +497,29 @@ function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
     .map(n => transformNode(n, currentDir))
     .filter(Boolean) as IR.IRNode[];
   
+  // Ensure the last expression is returned
+  ensureReturnForLastExpression(bodyNodes);
+  
   return {
     type: IR.IRNodeType.Block,
     body: [...declarations, ...bodyNodes]
   };
+}
+
+/** Helper function to ensure the last expression in a block is returned */
+function ensureReturnForLastExpression(bodyNodes: IR.IRNode[]): void {
+  if (bodyNodes.length === 0) return;
+  
+  const lastIndex = bodyNodes.length - 1;
+  const lastNode = bodyNodes[lastIndex];
+  
+  // If the last node is an expression (not a statement) and not already a return statement
+  if (IR.isExpression(lastNode) && lastNode.type !== IR.IRNodeType.ReturnStatement) {
+    bodyNodes[lastIndex] = {
+      type: IR.IRNodeType.ReturnStatement,
+      argument: lastNode
+    } as IR.IRReturnStatement;
+  }
 }
 
 /** (+ a b c ...) => fold left into binary expressions */
@@ -399,6 +583,12 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
 function transformParams(list: ListNode): { params: IR.IRParameter[], namedParamIds: string[] } {
   const params: IR.IRParameter[] = [];
   const named: string[] = [];
+
+  if (!list.elements) {
+    console.warn("Warning: Empty parameter list");
+    return { params, namedParamIds: named };
+  }
+  
   for (const el of list.elements) {
     if (el.type !== "symbol") throw new Error("Parameter must be a symbol");
     const name = (el as SymbolNode).name;

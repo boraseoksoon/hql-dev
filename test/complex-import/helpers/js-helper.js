@@ -1,8 +1,8 @@
 // test/complex-import/helpers/js-helper.js
 
 // Import HQL modules (bidirectional dependency)
-import { getExtensionForFormat } from '../utils/shared-utils.hql';
-import { padLeft, padRight } from '../utils/string-utils.hql';
+import { getExtensionForFormat } from '../utils/shared-utils.js';
+import { padLeft, padRight } from '../utils/string-utils.js';
 
 /**
  * Format path information into a readable string

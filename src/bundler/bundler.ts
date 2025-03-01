@@ -3,121 +3,161 @@ import { parse } from "../transpiler/parser.ts";
 import { expandMacros } from "../macro.ts";
 import { transformAST } from "../transpiler/transformer.ts";
 import { 
-  isExternalModule, 
+  isExternalModule,
   resolveImportPath,
   hqlToJsPath,
   getDirectory,
-  ensureAbsolutePath
+  ensureAbsolutePath,
+  normalizePath
 } from "../transpiler/path-utils.ts";
-import { dirname, basename } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { dirname, basename, join } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { HQLNode, ListNode, SymbolNode, LiteralNode } from "../transpiler/hql_ast.ts";
+import { exists } from "jsr:@std/fs@1.0.13";
 
 /**
- * A module with its dependencies
+ * Enhanced module type that better represents dependencies and module nature
  */
 interface Module {
-  id: string;                       // Module identifier
+  id: string;                       // Unique module identifier
   path: string;                     // Absolute path
-  dependencies: Map<string, string>; // LocalImportId -> DependencyPath
-  code: string;                     // Transpiled code
-  isExternal: boolean;              // Whether this is an external module
-  isProcessed: boolean;             // Whether this module has been processed
-  type: 'hql' | 'js';               // Type of module
-  externalImports: Map<string, string>; // ImportStatement -> ModuleName
-  jsImports: Map<string, string>; // LocalId -> JS module path
+  type: 'hql' | 'js' | 'external';  // Module type
+  
+  // Dependencies
+  imports: ModuleImport[];          // What this module imports
+  exports: ModuleExport[];          // What this module exports
+  
+  // Source code and processing state
+  code: string;                     // Generated/source code
+  isProcessed: boolean;             // Whether module has been processed
+  
+  // Imported as
+  importedAs: Map<string, string>;  // Module ID -> Local name used in importing modules
 }
 
 /**
- * Map of file paths to their import statements
+ * Represents an import from another module
  */
-interface ImportMap {
-  [filePath: string]: string; // path -> import statement
+interface ModuleImport {
+  sourcePath: string;               // Path to source module
+  localName: string;                // Local variable name
+  importedName?: string;            // Name in source (null for default/namespace)
+  isDefault: boolean;               // Whether it's a default import
+  isNamespace: boolean;             // Whether it's a namespace import
+  isExternal: boolean;              // Whether it's an external module
 }
 
 /**
- * Interface for JS import information
+ * Represents an export from a module
  */
-interface JSImportInfo {
-  importStatement: string;
-  importPath: string;
-  isHQL: boolean;
+interface ModuleExport {
+  localName: string;                // Name in this module
+  exportedName: string;             // Name exported as
+  isDefault: boolean;               // Whether it's a default export
 }
 
 /**
- * Dependency graph to properly handle dependencies
+ * Enhanced dependency graph for better import tracking
  */
 class DependencyGraph {
   modules = new Map<string, Module>();
+  entryPath: string | null = null;
   
   /**
-   * Add a module to the graph
+   * Initialize the graph with an entry point
    */
-  addModule(path: string, type: 'hql' | 'js'): Module {
-    const isExternal = isExternalModule(path);
+  constructor(entryPath?: string) {
+    if (entryPath) {
+      this.entryPath = normalizePath(ensureAbsolutePath(entryPath));
+    }
+  }
+  
+  /**
+   * Add or retrieve a module from the graph
+   */
+  getOrAddModule(path: string, type: 'hql' | 'js' | 'external'): Module {
+    const normalizedPath = normalizePath(path);
     
-    if (!this.modules.has(path)) {
-      // Generate a unique module ID based on the path
-      const baseId = basename(path, path.endsWith('.hql') ? '.hql' : '.js');
-      const moduleId = baseId.replace(/[^a-zA-Z0-9_]/g, '_');
+    if (!this.modules.has(normalizedPath)) {
+      // Generate a unique module ID based on path
+      let baseId = basename(normalizedPath);
+      if (baseId.endsWith('.hql')) baseId = baseId.slice(0, -4);
+      if (baseId.endsWith('.js')) baseId = baseId.slice(0, -3);
       
-      this.modules.set(path, {
+      // Generate a unique, valid JS identifier
+      const moduleId = baseId.replace(/[^a-zA-Z0-9_]/g, '_') + 
+                       '_' + Math.floor(Math.random() * 10000);
+      
+      this.modules.set(normalizedPath, {
         id: moduleId,
-        path,
-        dependencies: new Map(),
-        code: "",
-        isExternal,
-        isProcessed: false,
+        path: normalizedPath,
         type,
-        externalImports: new Map(),
-        jsImports: new Map()
+        imports: [],
+        exports: [],
+        code: "",
+        isProcessed: false,
+        importedAs: new Map()
       });
     }
     
-    return this.modules.get(path)!;
+    return this.modules.get(normalizedPath)!;
   }
   
   /**
-   * Add a dependency relationship between modules
+   * Add an import to a module
    */
-  addDependency(from: string, to: string, importId: string): void {
-    const fromModule = this.modules.get(from);
-    if (fromModule) {
-      fromModule.dependencies.set(importId, to);
-    }
-  }
-  
-  /**
-   * Add an external import to a module
-   */
-  addExternalImport(modulePath: string, importStatement: string, moduleName: string): void {
-    const module = this.modules.get(modulePath);
+  addImport(modulePath: string, importInfo: ModuleImport): void {
+    const normalizedPath = normalizePath(modulePath);
+    const module = this.modules.get(normalizedPath);
     if (module) {
-      module.externalImports.set(importStatement, moduleName);
+      // Avoid duplicate imports
+      const exists = module.imports.some(imp => 
+        imp.sourcePath === importInfo.sourcePath && 
+        imp.localName === importInfo.localName
+      );
+      
+      if (!exists) {
+        module.imports.push(importInfo);
+        
+        // Update the imported-as relationship for easier code generation
+        const sourceModule = this.modules.get(normalizePath(importInfo.sourcePath));
+        if (sourceModule) {
+          sourceModule.importedAs.set(module.id, importInfo.localName);
+        }
+      }
     }
   }
   
   /**
-   * Add a JS import to an HQL module
+   * Add an export to a module
    */
-  addJSImport(hqlPath: string, localId: string, jsPath: string): void {
-    const module = this.modules.get(hqlPath);
+  addExport(modulePath: string, exportInfo: ModuleExport): void {
+    const normalizedPath = normalizePath(modulePath);
+    const module = this.modules.get(normalizedPath);
     if (module) {
-      module.jsImports.set(localId, jsPath);
+      // Avoid duplicate exports
+      const exists = module.exports.some(exp => 
+        exp.localName === exportInfo.localName && 
+        exp.exportedName === exportInfo.exportedName
+      );
+      
+      if (!exists) {
+        module.exports.push(exportInfo);
+      }
     }
   }
   
   /**
-   * Get modules in topological order
+   * Get all modules in dependency order (topological sort)
    */
-  getSortedModules(): string[] {
-    const result: string[] = [];
+  getSortedModules(): Module[] {
+    const result: Module[] = [];
     const visited = new Set<string>();
     const temp = new Set<string>();
     
     const visit = (path: string) => {
       if (temp.has(path)) {
-        // Log but don't throw for circular dependencies
-        console.warn(`Circular dependency detected: ${path} (proceeding with bundling)`);
+        // Circular dependency - we'll handle this
+        console.warn(`Circular dependency detected: ${path} (handled gracefully)`);
         return;
       }
       
@@ -127,18 +167,26 @@ class DependencyGraph {
       
       const module = this.modules.get(path);
       if (module) {
-        for (const depPath of module.dependencies.values()) {
-          if (this.modules.has(depPath)) {
-            visit(depPath);
+        for (const imp of module.imports) {
+          const sourcePath = normalizePath(imp.sourcePath);
+          if (this.modules.has(sourcePath)) {
+            visit(sourcePath);
           }
         }
       }
       
       temp.delete(path);
       visited.add(path);
-      result.push(path);
+      const mod = this.modules.get(path);
+      if (mod) result.push(mod);
     };
     
+    // Start with entry path if available
+    if (this.entryPath && this.modules.has(this.entryPath)) {
+      visit(this.entryPath);
+    }
+    
+    // Then visit any remaining modules
     for (const path of this.modules.keys()) {
       if (!visited.has(path)) {
         visit(path);
@@ -149,71 +197,23 @@ class DependencyGraph {
   }
   
   /**
-   * Get all external imports from all modules
+   * Get all external module imports in the graph
    */
-  getAllExternalImports(): Map<string, string> {
-    const allImports = new Map<string, string>();
+  getAllExternalImports(): Map<string, Set<ModuleImport>> {
+    const result = new Map<string, Set<ModuleImport>>();
     
     for (const module of this.modules.values()) {
-      for (const [importStmt, moduleName] of module.externalImports.entries()) {
-        allImports.set(importStmt, moduleName);
-      }
-    }
-    
-    return allImports;
-  }
-  
-  /**
-   * Get all JS imports needed for the entry module and its dependencies
-   */
-  getAllJSImports(): ImportMap {
-    const result: ImportMap = {};
-    
-    // For all HQL modules in the graph
-    for (const module of this.modules.values()) {
-      if (module.type === 'hql') {
-        // Add all JS imports
-        for (const [localId, jsPath] of module.jsImports.entries()) {
-          const jsModule = this.modules.get(jsPath);
-          if (jsModule && jsModule.type === 'js') {
-            const importId = `${localId}_module`;
-            result[jsPath] = `import * as ${importId} from "${jsPath}";`;
+      for (const imp of module.imports) {
+        if (imp.isExternal) {
+          if (!result.has(imp.sourcePath)) {
+            result.set(imp.sourcePath, new Set());
           }
+          result.get(imp.sourcePath)!.add(imp);
         }
       }
     }
     
     return result;
-  }
-  
-  /**
-   * Get all module variables needed for all HQL modules
-   */
-  getAllModuleVariables(): Map<string, string> {
-    const moduleVars = new Map<string, string>();
-    
-    // Process external imports
-    for (const module of this.modules.values()) {
-      // Add external module variables
-      for (const [_, moduleName] of module.externalImports.entries()) {
-        const varName = moduleName.replace('_module', '');
-        if (!moduleVars.has(varName)) {
-          moduleVars.set(varName, `const ${varName} = ${moduleName}.default !== undefined ? ${moduleName}.default : ${moduleName};`);
-        }
-      }
-      
-      // Add JS import variables for HQL modules
-      if (module.type === 'hql') {
-        for (const [localId, jsPath] of module.jsImports.entries()) {
-          const moduleName = `${localId}_module`;
-          if (!moduleVars.has(localId)) {
-            moduleVars.set(localId, `const ${localId} = ${moduleName}.default !== undefined ? ${moduleName}.default : ${moduleName};`);
-          }
-        }
-      }
-    }
-    
-    return moduleVars;
   }
 }
 
@@ -241,72 +241,30 @@ function extractImports(ast: HQLNode[]): Map<string, string> {
 }
 
 /**
- * Extract imports from a JS file
+ * Extract exports from HQL AST
  */
-function extractJSImports(source: string): Map<string, JSImportInfo> {
-  const imports = new Map<string, JSImportInfo>();
+function extractExports(ast: HQLNode[]): ModuleExport[] {
+  const exports: ModuleExport[] = [];
   
-  // Match all import statements
-  const importRegex = /^(import\s+(?:\*\s+as\s+(\w+)|\w+|\{[^}]*\})\s+from\s+["']([^"']+)["'];)/gm;
-  let match;
-  
-  while ((match = importRegex.exec(source)) !== null) {
-    const importStatement = match[1];
-    const importPath = match[3];
-    const isHQL = importPath.endsWith('.hql');
-    
-    imports.set(importPath, { 
-      importStatement, 
-      importPath, 
-      isHQL 
-    });
-  }
-  
-  return imports;
-}
-
-/**
- * Extract module variable declarations from code
- */
-function extractModuleVariables(source: string): Map<string, string> {
-  const variables = new Map<string, string>();
-  
-  // Match the pattern "const name = name_module.default !== undefined ? name_module.default : name_module;"
-  const varRegex = /const\s+(\w+)\s+=\s+(\w+)\.default\s+!==\s+undefined\s+\?\s+\2\.default\s+:\s+\2;/g;
-  let match;
-  
-  while ((match = varRegex.exec(source)) !== null) {
-    const varName = match[1];
-    const moduleName = match[2];
-    variables.set(moduleName, varName);
-  }
-  
-  return variables;
-}
-
-/**
- * Process module code to extract imports and variables
- */
-function processModuleImportsAndVars(module: Module): void {
-  if (!module.code) return;
-  
-  // Extract module variables
-  const moduleVars = extractModuleVariables(module.code);
-  
-  // Process import statements
-  const importRegex = /import\s+\*\s+as\s+(\w+)\s+from\s+["']([^"']+)["'];/g;
-  let match;
-  
-  while ((match = importRegex.exec(module.code)) !== null) {
-    const moduleName = match[1]; // e.g., "strUtil_module"
-    const importPath = match[2]; // e.g., "https://esm.sh/lodash"
-    const importStatement = match[0];
-    
-    if (isExternalModule(importPath)) {
-      // This is an external import
-      module.externalImports.set(importStatement, moduleName);
+  for (const node of ast) {
+    if (node.type === "list") {
+      const list = node as ListNode;
+      
+      // Check for (export "exportName" localSym)
+      if (isExportDeclaration(list)) {
+        const exportName = getExportName(list);
+        const localName = getExportLocalName(list);
+        
+        exports.push({
+          localName,
+          exportedName: exportName,
+          isDefault: exportName === "default"
+        });
+      }
     }
   }
+  
+  return exports;
 }
 
 /**
@@ -325,6 +283,18 @@ function isImportDeclaration(list: ListNode): boolean {
 }
 
 /**
+ * Check if a list node is an export declaration
+ */
+function isExportDeclaration(list: ListNode): boolean {
+  return list.elements.length >= 3 && 
+      list.elements[0]?.type === "symbol" && 
+      list.elements[0].name === "export" &&
+      list.elements[1]?.type === "literal" &&
+      typeof (list.elements[1] as LiteralNode).value === "string" &&
+      list.elements[2]?.type === "symbol";
+}
+
+/**
  * Get the module ID from an import declaration
  */
 function getImportModuleId(list: ListNode): string {
@@ -339,166 +309,279 @@ function getImportPath(list: ListNode): string {
 }
 
 /**
- * Fix higher-order function syntax in code
+ * Get the export name from an export declaration
  */
-function fixSpecialSyntax(code: string): string {
-  // Fix $RETURN_FUNCTION placeholder for higher-order functions
-  return code.replace(/\$RETURN_FUNCTION\s*\(\s*(function\s*\([^)]*\))/g, 'return $1');
+function getExportName(list: ListNode): string {
+  return (list.elements[1] as LiteralNode).value as string;
 }
 
 /**
- * Build a complete dependency graph starting from the entry file
+ * Get the local name being exported
+ */
+function getExportLocalName(list: ListNode): string {
+  return (list.elements[2] as SymbolNode).name;
+}
+
+/**
+ * Extract imports from a JavaScript file
+ */
+function extractJsImports(source: string): Map<string, {
+  importStatement: string;
+  importPath: string;
+  isNamespace: boolean;
+  localName: string;
+  isDefault: boolean;
+  isHQL: boolean;
+}> {
+  const imports = new Map<string, {
+    importStatement: string;
+    importPath: string;
+    isNamespace: boolean;
+    localName: string;
+    isDefault: boolean;
+    isHQL: boolean;
+  }>();
+  
+  // Match different types of import statements
+  const defaultImportRegex = /import\s+(\w+)\s+from\s+["']([^"']+)["'];/g;
+  const namedImportRegex = /import\s+\{\s*([^}]+)\s*\}\s+from\s+["']([^"']+)["'];/g;
+  const namespaceImportRegex = /import\s+\*\s+as\s+(\w+)\s+from\s+["']([^"']+)["'];/g;
+  
+  // Process default imports (import name from 'path')
+  let match;
+  while ((match = defaultImportRegex.exec(source)) !== null) {
+    const localName = match[1];
+    const importPath = match[2];
+    imports.set(localName, {
+      importStatement: match[0],
+      importPath,
+      isNamespace: false,
+      localName,
+      isDefault: true,
+      isHQL: importPath.endsWith('.hql')
+    });
+  }
+  
+  // Process named imports (import { name } from 'path')
+  while ((match = namedImportRegex.exec(source)) !== null) {
+    const importPath = match[2];
+    const importItems = match[1].split(',').map(s => s.trim());
+    
+    for (const item of importItems) {
+      // Handle potential "as" renaming
+      const [original, renamed] = item.split(/\s+as\s+/).map(s => s.trim());
+      const localName = renamed || original;
+      
+      imports.set(localName, {
+        importStatement: match[0],
+        importPath,
+        isNamespace: false,
+        localName,
+        isDefault: false,
+        isHQL: importPath.endsWith('.hql')
+      });
+    }
+  }
+  
+  // Process namespace imports (import * as name from 'path')
+  while ((match = namespaceImportRegex.exec(source)) !== null) {
+    const localName = match[1];
+    const importPath = match[2];
+    imports.set(localName, {
+      importStatement: match[0],
+      importPath,
+      isNamespace: true,
+      localName,
+      isDefault: false,
+      isHQL: importPath.endsWith('.hql')
+    });
+  }
+  
+  return imports;
+}
+
+/**
+ * Extract exports from a JavaScript file
+ */
+function extractJsExports(source: string): ModuleExport[] {
+  const exports: ModuleExport[] = [];
+  
+  // Match different types of export statements
+  const defaultExportRegex = /export\s+default\s+(\w+);/g;
+  const namedExportRegex = /export\s+\{\s*([^}]+)\s*\};/g;
+  const declaredExportRegex = /export\s+(const|let|var|function|class)\s+(\w+)/g;
+  
+  // Process default exports
+  let match;
+  while ((match = defaultExportRegex.exec(source)) !== null) {
+    const localName = match[1];
+    exports.push({
+      localName,
+      exportedName: 'default',
+      isDefault: true
+    });
+  }
+  
+  // Process named exports (export { name })
+  while ((match = namedExportRegex.exec(source)) !== null) {
+    const exportItems = match[1].split(',').map(s => s.trim());
+    
+    for (const item of exportItems) {
+      // Handle potential "as" renaming
+      const [original, renamed] = item.split(/\s+as\s+/).map(s => s.trim());
+      exports.push({
+        localName: original,
+        exportedName: renamed || original,
+        isDefault: false
+      });
+    }
+  }
+  
+  // Process declared exports (export function name())
+  while ((match = declaredExportRegex.exec(source)) !== null) {
+    const localName = match[2];
+    exports.push({
+      localName,
+      exportedName: localName,
+      isDefault: false
+    });
+  }
+  
+  return exports;
+}
+
+/**
+ * Build the dependency graph by traversing imports
  */
 async function buildDependencyGraph(
   entryPath: string,
-  currentDependencyChain = new Set<string>()
+  visited = new Set<string>()
 ): Promise<DependencyGraph> {
-  const graph = new DependencyGraph();
-  await buildDependencyGraphImpl(entryPath, graph, currentDependencyChain);
+  const graph = new DependencyGraph(entryPath);
+  await buildDependencyGraphImpl(entryPath, graph, visited);
   return graph;
 }
 
 /**
- * Implementation of dependency graph building with cycle detection
+ * Implementation of dependency graph construction
  */
 async function buildDependencyGraphImpl(
   filePath: string,
   graph: DependencyGraph,
-  currentDependencyChain = new Set<string>()
+  visited = new Set<string>()
 ): Promise<void> {
-  // Resolve to absolute path for local files
   const absPath = ensureAbsolutePath(filePath);
+  const normalizedPath = normalizePath(absPath);
   
-  // Check for circular dependency in the current chain
-  if (currentDependencyChain.has(absPath)) {
-    console.warn(`Circular dependency detected in chain: ${absPath}`);
+  // Prevent circular dependency issues
+  if (visited.has(normalizedPath)) {
     return;
   }
   
-  // Add to current dependency chain
-  const newChain = new Set(currentDependencyChain);
-  newChain.add(absPath);
+  visited.add(normalizedPath);
   
-  // Skip if module already exists in graph
-  if (graph.modules.has(absPath)) {
-    return;
-  }
-  
-  console.log(`Building dependency graph for: ${absPath}`);
-  
-  // Determine file type and add module to graph
-  let type: 'hql' | 'js';
-  if (absPath.endsWith('.hql')) {
-    type = 'hql';
-  } else if (absPath.endsWith('.js')) {
-    type = 'js';
+  // Determine module type
+  let moduleType: 'hql' | 'js' | 'external';
+  if (isExternalModule(normalizedPath)) {
+    moduleType = 'external';
+  } else if (normalizedPath.endsWith('.hql')) {
+    moduleType = 'hql';
+  } else if (normalizedPath.endsWith('.js')) {
+    moduleType = 'js';
   } else {
-    console.warn(`Skipping unsupported file type: ${absPath}`);
+    console.warn(`Unsupported file type: ${normalizedPath}`);
     return;
   }
   
-  const module = graph.addModule(absPath, type);
+  // Add or get the module
+  const module = graph.getOrAddModule(normalizedPath, moduleType);
   
   // Skip external modules for dependency processing
-  if (isExternalModule(absPath)) {
+  if (moduleType === 'external') {
     return;
   }
   
   try {
-    if (type === 'hql') {
-      await processHqlFile(absPath, graph, newChain);
-    } else if (type === 'js') {
-      await processJsFile(absPath, graph, newChain);
+    const sourceDir = dirname(normalizedPath);
+    
+    if (moduleType === 'hql') {
+      // Process HQL file
+      const source = await Deno.readTextFile(normalizedPath);
+      const ast = parse(source);
+      const expanded = expandMacros(ast);
+      
+      // Extract imports
+      const imports = extractImports(expanded);
+      for (const [importId, importPath] of imports.entries()) {
+        let fullPath = importPath;
+        
+        // Resolve relative imports
+        if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
+          fullPath = resolveImportPath(importPath, sourceDir);
+        }
+        
+        const isExt = isExternalModule(fullPath);
+        
+        // Add to the dependency graph
+        graph.addImport(normalizedPath, {
+          sourcePath: fullPath,
+          localName: importId,
+          isDefault: false,
+          isNamespace: true,
+          isExternal: isExt
+        });
+        
+        // Recursively process dependencies
+        if (!isExt) {
+          await buildDependencyGraphImpl(fullPath, graph, new Set([...visited]));
+        }
+      }
+      
+      // Extract exports
+      const exports = extractExports(expanded);
+      for (const exp of exports) {
+        graph.addExport(normalizedPath, exp);
+      }
+      
+    } else if (moduleType === 'js') {
+      // Process JS file
+      const source = await Deno.readTextFile(normalizedPath);
+      
+      // Extract imports
+      const imports = extractJsImports(source);
+      for (const [localName, importInfo] of imports.entries()) {
+        let fullPath = importInfo.importPath;
+        
+        // Resolve relative imports
+        if (!isExternalModule(fullPath) && (fullPath.startsWith('./') || fullPath.startsWith('../'))) {
+          fullPath = resolveImportPath(fullPath, sourceDir);
+        }
+        
+        const isExt = isExternalModule(fullPath);
+        
+        // Add to the dependency graph
+        graph.addImport(normalizedPath, {
+          sourcePath: fullPath,
+          localName,
+          isDefault: importInfo.isDefault,
+          isNamespace: importInfo.isNamespace,
+          isExternal: isExt
+        });
+        
+        // Recursively process dependencies
+        if (!isExt) {
+          await buildDependencyGraphImpl(fullPath, graph, new Set([...visited]));
+        }
+      }
+      
+      // Extract exports
+      const exports = extractJsExports(source);
+      for (const exp of exports) {
+        graph.addExport(normalizedPath, exp);
+      }
     }
   } catch (error) {
-    console.error(`Error processing ${absPath}:`, error);
-  }
-}
-
-/**
- * Process an HQL file to extract its dependencies
- */
-async function processHqlFile(
-  absPath: string,
-  graph: DependencyGraph,
-  dependencyChain: Set<string>
-): Promise<void> {
-  // Read and parse the HQL file
-  const source = await Deno.readTextFile(absPath);
-  const ast = parse(source);
-  const expanded = expandMacros(ast);
-  const imports = extractImports(expanded);
-  
-  const currentDir = dirname(absPath);
-  
-  // Process each import
-  for (const [importId, importPath] of imports.entries()) {
-    let fullPath = importPath;
-    
-    // Resolve relative imports
-    if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
-      fullPath = resolveImportPath(importPath, currentDir);
-    }
-    
-    // Add dependency to graph
-    graph.addDependency(absPath, fullPath, importId);
-    
-    // Track JS imports specially
-    if (fullPath.endsWith('.js') && !isExternalModule(fullPath)) {
-      graph.addJSImport(absPath, importId, fullPath);
-    }
-    
-    // If this is an external module, track it separately
-    if (isExternalModule(fullPath)) {
-      const importModuleName = `${importId}_module`;
-      const importStatement = `import * as ${importModuleName} from "${fullPath}";`;
-      graph.addExternalImport(absPath, importStatement, importModuleName);
-    } else {
-      // Process this dependency recursively
-      await buildDependencyGraphImpl(fullPath, graph, dependencyChain);
-    }
-  }
-}
-
-/**
- * Process a JS file to extract its dependencies
- */
-async function processJsFile(
-  absPath: string,
-  graph: DependencyGraph,
-  dependencyChain: Set<string>
-): Promise<void> {
-  // Read the JS file
-  const source = await Deno.readTextFile(absPath);
-  const imports = extractJSImports(source);
-  const currentDir = dirname(absPath);
-  
-  // Process each import
-  for (const [importKey, { importStatement, importPath, isHQL }] of imports.entries()) {
-    let fullPath = importPath;
-    
-    // Resolve relative imports
-    if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
-      fullPath = resolveImportPath(importPath, currentDir);
-    }
-    
-    // Add dependency to graph
-    const importId = isHQL ? 
-      `import_${graph.modules.size}_${Math.floor(Math.random() * 10000)}` : 
-      importPath.replace(/[^a-z0-9_]/gi, '_');
-    
-    graph.addDependency(absPath, fullPath, importId);
-    
-    // If this is an external module, track it
-    if (isExternalModule(fullPath)) {
-      // Extract the module name if possible
-      const moduleNameMatch = importStatement.match(/\*\s+as\s+(\w+)/);
-      const moduleName = moduleNameMatch ? moduleNameMatch[1] : importId + "_module";
-      graph.addExternalImport(absPath, importStatement, moduleName);
-    } else {
-      // Process this dependency recursively
-      await buildDependencyGraphImpl(fullPath, graph, dependencyChain);
-    }
+    console.error(`Error processing ${normalizedPath}:`, error);
   }
 }
 
@@ -506,44 +589,38 @@ async function processJsFile(
  * Process all HQL modules in the graph
  */
 async function processHQLModules(graph: DependencyGraph): Promise<void> {
-  const sortedPaths = graph.getSortedModules();
+  const modules = graph.getSortedModules();
   
-  // Process all HQL modules first
-  for (const path of sortedPaths) {
-    const module = graph.modules.get(path);
-    if (!module || module.isProcessed || module.isExternal || module.type !== 'hql') {
+  // Process HQL modules first
+  for (const module of modules) {
+    if (module.isProcessed || module.type !== 'hql') {
       continue;
     }
     
     try {
-      console.log(`Processing HQL module: ${path}`);
+      console.log(`Processing HQL module: ${module.path}`);
       
       // Read and parse the file
-      const source = await Deno.readTextFile(path);
+      const source = await Deno.readTextFile(module.path);
       const ast = parse(source);
       const expanded = expandMacros(ast);
       
       // Transform to JavaScript
-      const currentDir = dirname(path);
+      const currentDir = dirname(module.path);
       const transformed = await transformAST(expanded, currentDir, new Set(), {
         module: 'esm'
-      }, true);
+      });
       
-      // Fix any special syntax
-      const fixedCode = fixSpecialSyntax(transformed);
-      
-      // Process the module to extract imports and variables
-      module.code = fixedCode;
-      processModuleImportsAndVars(module);
-      
+      // Store the code
+      module.code = transformed;
       module.isProcessed = true;
       
       // Always write the JS file for HQL modules to support JS imports
-      const jsPath = hqlToJsPath(path);
-      await Deno.writeTextFile(jsPath, fixedCode);
+      const jsPath = hqlToJsPath(module.path);
+      await Deno.writeTextFile(jsPath, transformed);
       console.log(`Generated JS file: ${jsPath}`);
     } catch (error) {
-      console.error(`Error processing HQL module ${path}:`, error);
+      console.error(`Error processing HQL module ${module.path}:`, error);
     }
   }
 }
@@ -552,45 +629,45 @@ async function processHQLModules(graph: DependencyGraph): Promise<void> {
  * Process all JS modules in the graph
  */
 async function processJSModules(graph: DependencyGraph): Promise<void> {
-  const sortedPaths = graph.getSortedModules();
+  const modules = graph.getSortedModules();
   
   // Then process all JS modules
-  for (const path of sortedPaths) {
-    const module = graph.modules.get(path);
-    if (!module || module.isProcessed || module.isExternal || module.type !== 'js') {
+  for (const module of modules) {
+    if (module.isProcessed || module.type !== 'js') {
       continue;
     }
     
     try {
-      console.log(`Processing JS module: ${path}`);
+      console.log(`Processing JS module: ${module.path}`);
       
       // Read the file
-      let source = await Deno.readTextFile(path);
+      let source = await Deno.readTextFile(module.path);
       
-      // Extract and process imports
-      processModuleImportsAndVars(module);
-      
-      // Rewrite HQL imports to JS
-      const imports = extractJSImports(source);
+      // Rewrite HQL imports to JS imports
+      const imports = extractJsImports(source);
       let modified = false;
       
-      for (const [importKey, { importStatement, importPath, isHQL }] of imports.entries()) {
-        if (isHQL) {
+      for (const [localName, importInfo] of imports.entries()) {
+        if (importInfo.isHQL) {
           // Generate JS path
-          const jsImportPath = hqlToJsPath(importPath);
+          const jsImportPath = hqlToJsPath(importInfo.importPath);
           
           // Replace HQL import with JS import
-          const newImportStatement = importStatement.replace(importPath, jsImportPath);
-          source = source.replace(importStatement, newImportStatement);
+          const newImportStatement = importInfo.importStatement.replace(
+            importInfo.importPath, 
+            jsImportPath
+          );
+          
+          source = source.replace(importInfo.importStatement, newImportStatement);
           modified = true;
           
           // Verify that the HQL module has been processed
-          let fullHqlPath = importPath;
-          if (!isExternalModule(importPath) && (importPath.startsWith('./') || importPath.startsWith('../'))) {
-            fullHqlPath = resolveImportPath(importPath, dirname(path));
-          }
+          const fullHqlPath = resolveImportPath(
+            importInfo.importPath, 
+            dirname(module.path)
+          );
           
-          const hqlModule = graph.modules.get(fullHqlPath);
+          const hqlModule = graph.modules.get(normalizePath(fullHqlPath));
           if (hqlModule && !hqlModule.isProcessed) {
             console.warn(`Warning: HQL module ${fullHqlPath} referenced but not processed`);
           }
@@ -603,35 +680,56 @@ async function processJSModules(graph: DependencyGraph): Promise<void> {
       
       // Write modified JS file if needed
       if (modified) {
-        await Deno.writeTextFile(path, source);
-        console.log(`Updated JS imports in: ${path}`);
+        await Deno.writeTextFile(module.path, source);
+        console.log(`Updated JS imports in: ${module.path}`);
       }
     } catch (error) {
-      console.error(`Error processing JS module ${path}:`, error);
+      console.error(`Error processing JS module ${module.path}:`, error);
     }
   }
 }
 
 /**
- * Remove module variable declarations to prevent duplicates
+ * Generate bundled code from the processed modules
  */
-function removeModuleVarDeclarations(code: string): string {
-  // Match variable declarations like: const varName = moduleName.default !== undefined ? moduleName.default : moduleName;
-  const moduleVarRegex = /^\s*const\s+(\w+)\s+=\s+\w+(?:_module)?\.default\s+!==\s+undefined.*?;$/gm;
-  return code.replace(moduleVarRegex, '');
-}
 
-/**
- * Generate bundled code from the entry module and its dependencies
- */
+// Fix the entry module issue in the generateBundle function, around line 700:
 function generateBundle(entryPath: string, graph: DependencyGraph): string {
+  // Make sure we're using the string path, not an object
+  if (typeof entryPath !== 'string') {
+    console.error(`Invalid entry path type: ${typeof entryPath}`, entryPath);
+    throw new Error(`Entry path must be a string, received: ${typeof entryPath}`);
+  }
+  
   const absEntryPath = ensureAbsolutePath(entryPath);
-  const entryModule = graph.modules.get(absEntryPath);
+  const normalizedEntryPath = normalizePath(absEntryPath);
+  const entryModule = graph.modules.get(normalizedEntryPath);
   
   if (!entryModule) {
+    // Fallback: Try to find the entry module by matching against the path
+    for (const [path, module] of graph.modules.entries()) {
+      if (path.endsWith(entryPath) || normalizedEntryPath.endsWith(path) || 
+          path.includes(entryPath) || normalizedEntryPath.includes(path)) {
+        console.log(`Found entry module with alternative path matching: ${path}`);
+        return generateBundleWithModule(path, module, graph);
+      }
+    }
+    
+    console.error(`Entry module not found: ${entryPath}`);
+    console.error(`Available modules: ${Array.from(graph.modules.keys()).join(', ')}`);
     throw new Error(`Entry module not found: ${entryPath}`);
   }
   
+  return generateBundleWithModule(normalizedEntryPath, entryModule, graph);
+}
+
+
+// Refactored bundle generation logic to avoid duplication
+function generateBundleWithModule(
+  entryPath: string,
+  entryModule: Module, 
+  graph: DependencyGraph
+): string {
   // Get modules in dependency order
   const sortedPaths = graph.getSortedModules();
   
@@ -661,9 +759,10 @@ function generateBundle(entryPath: string, graph: DependencyGraph): string {
   // Process all HQL modules except the entry
   for (const path of sortedPaths) {
     // Skip entry module, we'll add it at the end
-    if (path === absEntryPath) continue;
+    if (path === entryPath) continue;
     
-    const module = graph.modules.get(path)!;
+    const module = graph.modules.get(path);
+    if (!module) continue;
     
     // Skip external modules and JS files
     if (module.isExternal || module.type !== 'hql') continue;
@@ -707,130 +806,72 @@ function generateBundle(entryPath: string, graph: DependencyGraph): string {
   return bundled;
 }
 
+
 /**
- * Process a module's code to prepare it for bundling
+ * Process module code to prepare for bundling
  */
-function processModuleCode(module: Module, moduleMap: Map<string, string>): string {
-  let moduleCode = module.code;
+function processModuleCode(code: string): string {
+  // Remove import statements
+  let processed = code.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
   
-  // Remove import statements (they've been moved to the top)
-  moduleCode = moduleCode.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
+  // Fix any redundant export statements
+  return processed;
+}
+
+/**
+ * Process JS module code
+ */
+function processJsModule(code: string): string {
+  // Replace ESM exports with CommonJS exports
+  let processed = code.replace(
+    /export\s+(?:default\s+)?(\w+);/g, 
+    'exports.$1 = $1;'
+  );
   
-  // Remove module variable declarations to prevent duplicates
-  moduleCode = removeModuleVarDeclarations(moduleCode);
-  
-  // Fix imports in the module code for bundled HQL modules
-  for (const [localId, depPath] of module.dependencies.entries()) {
-    // Handle HQL dependencies
-    if (moduleMap.has(depPath)) {
-      // Get the module ID for this dependency
-      const depModuleId = moduleMap.get(depPath);
-      
-      // Replace the import statement with a reference to the already-processed module
-      moduleCode = replaceImportStatement(moduleCode, localId, depModuleId!);
+  // Replace named export blocks
+  processed = processed.replace(
+    /export\s+\{\s*([^}]+)\s*\};/g,
+    (match, exportList) => {
+      const exports = exportList.split(',').map(e => {
+        const [name, alias] = e.trim().split(/\s+as\s+/).map(s => s.trim());
+        if (alias) {
+          return `exports.${alias} = ${name};`;
+        }
+        return `exports.${name} = ${name};`;
+      });
+      return exports.join('\n');
     }
-  }
+  );
   
-  return moduleCode;
+  // Remove import statements
+  processed = processed.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
+  
+  return processed;
 }
 
 /**
  * Process the entry module code
  */
-function processEntryModuleCode(entryModule: Module, moduleMap: Map<string, string>): string {
-  let entryCode = entryModule.code;
+function processEntryModule(code: string, graph: DependencyGraph): string {
+  // Remove import statements
+  let processed = code.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
   
-  // Remove import statements (they've been moved to the top)
-  entryCode = entryCode.replace(/^import.*?from\s+["']([^"']+)["'];/gm, '');
-  
-  // Remove module variable declarations to prevent duplicates
-  entryCode = removeModuleVarDeclarations(entryCode);
-  
-  // Fix imports in the entry code
-  for (const [localId, depPath] of entryModule.dependencies.entries()) {
-    // Handle HQL dependencies
-    if (moduleMap.has(depPath)) {
-      // Get the module ID for this dependency
-      const depModuleId = moduleMap.get(depPath);
+  // Fix references to imported modules
+  for (const module of graph.modules.values()) {
+    for (const [moduleId, importedAs] of module.importedAs.entries()) {
+      // Replace references to the imported module
+      const importedModule = Array.from(graph.modules.values())
+        .find(m => m.id === moduleId);
       
-      // Replace the import statement
-      entryCode = replaceImportStatement(entryCode, localId, depModuleId!);
+      if (importedModule && importedModule.type !== 'external') {
+        const regex = new RegExp(`const\\s+${importedAs}\\s+=.*?;`, 'g');
+        processed = processed.replace(regex, `const ${importedAs} = ${importedModule.id};`);
+      }
     }
   }
   
-  // Convert CommonJS exports to ESM exports in entry module
-  entryCode = convertExportsToESM(entryCode);
-  
-  // CRITICAL FIX: Remove any standalone file paths that would cause syntax errors
-  // This handles cases like "test/interop2/main.hql" appearing as raw text
-  entryCode = entryCode.replace(/^[a-zA-Z0-9_\-\.\/]+\.(hql|js)$/gm, '');
-  
-  // Remove any file path comments that might be causing issues
-  entryCode = entryCode.replace(/^\/\/\s*File:.*$/gm, '');
-  
-  return entryCode;
-}
-
-/**
- * Replace import statements with module references
- */
-function replaceImportStatement(code: string, localId: string, moduleId: string): string {
-  // Create a regex that matches the entire import statement for this local ID
-  const importRegex = new RegExp(
-    `const\\s+${localId}\\s+=\\s+\\(function\\(\\)\\s*\\{[\\s\\S]*?return exports;\\s*\\}\\)\\(\\);`, 
-    'g'
-  );
-  
-  if (importRegex.test(code)) {
-    return code.replace(importRegex, `const ${localId} = ${moduleId};`);
-  }
-  
-  // Alternative: match the import statement using a more general approach
-  const altImportRegex = new RegExp(`(const|let|var)\\s+${localId}\\s+=.*?;`, 'g');
-  
-  if (altImportRegex.test(code)) {
-    return code.replace(altImportRegex, `const ${localId} = ${moduleId};`);
-  }
-  
-  // If no match found, keep the code as is
-  return code;
-}
-
-/**
- * Convert CommonJS exports to ESM exports
- */
-function convertExportsToESM(code: string): string {
-  // Find all exports.x = y statements
-  const exportRegex = /exports\.(\w+)\s*=\s*(\w+)\s*;/g;
-  
-  // Collect all exports
-  const exports = new Map<string, string>();
-  let match;
-  while ((match = exportRegex.exec(code)) !== null) {
-    const exportName = match[1];
-    const localName = match[2];
-    exports.set(exportName, localName);
-  }
-  
-  // Replace CommonJS exports with nothing (we'll add ESM exports at the end)
-  let result = code.replace(exportRegex, '');
-  
-  // If we have exports, add an ESM export statement at the end
-  if (exports.size > 0) {
-    const exportsList = Array.from(exports.entries())
-      .map(([exportName, localName]) => {
-        if (exportName === localName) {
-          return localName;
-        } else {
-          return `${localName} as ${exportName}`;
-        }
-      })
-      .join(', ');
-    
-    result += `\nexport { ${exportsList} };\n`;
-  }
-  
-  return result;
+  // Keep export statements for the entry module
+  return processed;
 }
 
 /**
@@ -845,7 +886,7 @@ export async function bundleFile(
     console.log(`Bundling file: ${filePath}`);
     
     // Build the dependency graph
-    const graph = await buildDependencyGraph(filePath);
+    const graph = await buildDependencyGraph(filePath, visited);
     
     // Process all HQL modules
     await processHQLModules(graph);
@@ -854,6 +895,7 @@ export async function bundleFile(
     await processJSModules(graph);
     
     // Generate the bundled code
+    // IMPORTANT FIX: Pass the filePath string, not the graph object
     return generateBundle(filePath, graph);
   } catch (error) {
     console.error(`Error bundling file ${filePath}:`, error);
@@ -869,7 +911,7 @@ export async function bundleJSModule(filePath: string, visited = new Set<string>
   
   try {
     // Build dependency graph starting from the JS file
-    const graph = await buildDependencyGraph(filePath);
+    const graph = await buildDependencyGraph(filePath, visited);
     
     // Process HQL modules
     await processHQLModules(graph);
@@ -877,46 +919,10 @@ export async function bundleJSModule(filePath: string, visited = new Set<string>
     // Process JS modules
     await processJSModules(graph);
     
-    // For JS entry files, just return the updated source
-    const jsModule = graph.modules.get(ensureAbsolutePath(filePath));
-    return jsModule?.code || "";
+    // Generate bundle
+    return generateBundle(graph);
   } catch (error) {
     console.error(`Error bundling JS module ${filePath}:`, error);
     throw error;
   }
-}
-
-/**
- * Process ESM imports by preserving the ESM structure and generating JS files for HQL imports
- */
-export async function processESMImports(source: string, filePath: string, visited = new Set<string>()): Promise<string> {
-  // Extract all imports
-  const imports = extractJSImports(source);
-  let processedSource = source;
-  
-  // Process each import
-  for (const [importKey, { importStatement, importPath, isHQL }] of imports.entries()) {
-    if (isHQL) {
-      try {
-        // Resolve the full path
-        const fullPath = resolveImportPath(importPath, dirname(filePath));
-        
-        // Skip if already visited
-        if (visited.has(fullPath)) continue;
-        visited.add(fullPath);
-        
-        // Generate JS file for HQL import
-        const jsPath = hqlToJsPath(fullPath);
-        await bundleFile(fullPath, new Set([...visited]), true);
-        
-        // Update the import in the source
-        const jsImportPath = hqlToJsPath(importPath);
-        processedSource = processedSource.replace(importPath, jsImportPath);
-      } catch (error) {
-        console.error(`Error processing HQL import ${importPath}:`, error);
-      }
-    }
-  }
-  
-  return processedSource;
 }
