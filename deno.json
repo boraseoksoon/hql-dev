@@ -1,7 +1,9 @@
 {
   "tasks": {
-    "test": "deno task unit-tests && deno task all-interop-test",
+    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test",
     "unit-tests": "deno task parser-test && deno task hql-to-ir-test",
+    "run-test": "deno run -A ./cli/run.ts ./test/simple.hql",
+    
     "parser-test": "deno test --allow-all test/parser_test.ts",
     "hql-to-ir-test": "deno test --allow-all test/hql_to_ir_test.ts",
 
@@ -11,7 +13,7 @@
     "interop-test4": "deno run -A ./cli/transpile.ts ./test/interop3/main.hql && deno run -A ./test/interop3/main.js",
     "interop-test5": "deno run -A ./cli/transpile.ts ./test/complex-import/main.hql && deno run -A ./test/complex-import/main.js",
     "all-interop-test": "deno task interop-test && deno task interop-test2 && deno task interop-test3 && deno task interop-test4 && deno task interop-test5",
-    
+
     "quick-test": "deno run -A ./cli/run.ts ./test/test.js"
   }
 }
