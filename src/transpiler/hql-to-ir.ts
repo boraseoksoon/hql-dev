@@ -1,5 +1,5 @@
 // src/transpiler/hql-to-ir.ts
-import { HQLNode, LiteralNode, SymbolNode, ListNode, VectorNode, SetNode, MapNode } from "./hql_ast.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
 
 // Cache for commonly transformed symbols
@@ -38,15 +38,6 @@ function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
       break;
     case "list":
       result = transformList(node as ListNode, currentDir);
-      break;
-    case "vector":
-      result = transformVector(node as VectorNode, currentDir);
-      break;
-    case "set":
-      result = transformSetLiteral(node as SetNode, currentDir);
-      break;
-    case "map":
-      result = transformMap(node as MapNode, currentDir);
       break;
     default:
       throw new Error("Unknown HQL node type: " + (node as any).type);
@@ -131,8 +122,8 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
 
 function transformVectorCall(list: ListNode, currentDir: string): IR.IRCallExpression {
   const args = list.elements.slice(1)
-    .map(elem => transformNode(elem, currentDir))
-    .filter(Boolean) as IR.IRNode[];
+    .map((elem) => transformNode(elem, currentDir))
+    .filter((elem): elem is IR.IRNode => elem !== null);
   
   return {
     type: IR.IRNodeType.CallExpression,
@@ -145,11 +136,11 @@ function transformVectorCall(list: ListNode, currentDir: string): IR.IRCallExpre
   } as IR.IRCallExpression;
 }
 
-// New function to transform (list ...) to createList(...)
+// Function to transform (list ...) to createList(...)
 function transformListCall(list: ListNode, currentDir: string): IR.IRCallExpression {
   const args = list.elements.slice(1)
-    .map(elem => transformNode(elem, currentDir))
-    .filter(Boolean) as IR.IRNode[];
+    .map((x) => transformNode(x, currentDir))
+    .filter((elem): elem is IR.IRNode => elem !== null);
   
   return {
     type: IR.IRNodeType.CallExpression,
@@ -162,11 +153,11 @@ function transformListCall(list: ListNode, currentDir: string): IR.IRCallExpress
   } as IR.IRCallExpression;
 }
 
-// New function to transform (hash-set ...) to createSet(...)
+// Function to transform (hash-set ...) to createSet(...)
 function transformHashSetCall(list: ListNode, currentDir: string): IR.IRCallExpression {
   const args = list.elements.slice(1)
-    .map(elem => transformNode(elem, currentDir))
-    .filter(Boolean) as IR.IRNode[];
+    .map((elem) => transformNode(elem, currentDir))
+    .filter((elem): elem is IR.IRNode => elem !== null);
   
   return {
     type: IR.IRNodeType.CallExpression,
@@ -179,7 +170,7 @@ function transformHashSetCall(list: ListNode, currentDir: string): IR.IRCallExpr
   } as IR.IRCallExpression;
 }
 
-// New function to transform (hash-map ...) to createMap([...])
+// Function to transform (hash-map ...) to createMap([...])
 function transformHashMapCall(list: ListNode, currentDir: string): IR.IRCallExpression {
   if (list.elements.length % 2 !== 1) {
     throw new Error("hash-map requires even number of arguments (after the function name)");
@@ -295,99 +286,24 @@ function transformFn(list: ListNode, currentDir: string): IR.IRFunctionDeclarati
   } as IR.IRFunctionDeclaration;
 }
 
-/** Merged: Transform a vector node or a list with 'vector' as head into an IR array literal */
-function transformVector(node: VectorNode | ListNode, currentDir: string): IR.IRArrayLiteral {
-  let elements: IR.IRNode[];
-  if (node.type === "vector") {
-    elements = node.elements
-      .map(elem => transformNode(elem, currentDir))
-      .filter((elem): elem is IR.IRNode => elem !== null);
-  } else {
-    // For list form, skip the head symbol ("vector")
-    elements = node.elements.slice(1)
-      .map(x => transformNode(x, currentDir))
-      .filter((elem): elem is IR.IRNode => elem !== null);
+/** Helper: Transform an array literal */
+function transformArrayLiteral(elements: IR.IRNode[]): IR.IRArrayLiteral {
+  return { type: IR.IRNodeType.ArrayLiteral, elements };
+}
+
+/** (keyword "foo") => KeywordLiteral */
+function transformKeyword(list: ListNode): IR.IRKeywordLiteral {
+  if (list.elements.length !== 2) {
+    throw new Error("keyword requires exactly one argument");
   }
-  return {
-    type: IR.IRNodeType.ArrayLiteral,
-    elements
+  const arg = list.elements[1];
+  if (arg.type !== "literal" || typeof (arg as LiteralNode).value !== "string") {
+    throw new Error("keyword argument must be a string literal");
+  }
+  return { 
+    type: IR.IRNodeType.KeywordLiteral, 
+    value: (arg as LiteralNode).value as string 
   };
-}
-
-/** Helper: Transform a list as an ArrayLiteral (for 'list' literal) */
-function transformArrayLiteral(list: ListNode, currentDir: string): IR.IRArrayLiteral {
-  const elems = list.elements.slice(1)
-    .map(x => transformNode(x, currentDir))
-    .filter(Boolean) as IR.IRNode[];
-  return { type: IR.IRNodeType.ArrayLiteral, elements: elems };
-}
-
-/** (hash-map key value ... ) => ObjectLiteral */
-function transformHashMap(list: ListNode, currentDir: string): IR.IRObjectLiteral {
-  const body = list.elements.slice(1);
-  if (body.length % 2 !== 0) {
-    throw new Error("hash-map requires even number of arguments");
-  }
-  const props: IR.IRProperty[] = [];
-  for (let i = 0; i < body.length; i += 2) {
-    const k = transformNode(body[i], currentDir);
-    const v = transformNode(body[i+1], currentDir);
-    if (k && v) {
-      props.push({ 
-        type: IR.IRNodeType.Property, 
-        key: k, 
-        value: v, 
-        computed: false 
-      });
-    }
-  }
-  return { type: IR.IRNodeType.ObjectLiteral, properties: props };
-}
-
-/** (hash-set item1 item2 ...) => new Set([...]) */
-function transformHashSet(list: ListNode, currentDir: string): IR.IRNewExpression {
-  const elements = list.elements.slice(1)
-    .map(x => transformNode(x, currentDir))
-    .filter(Boolean) as IR.IRNode[];
-  return {
-    type: IR.IRNodeType.NewExpression,
-    callee: { type: IR.IRNodeType.Identifier, name: "Set" },
-    arguments: [
-      { type: IR.IRNodeType.ArrayLiteral, elements } as IR.IRArrayLiteral
-    ]
-  } as IR.IRNewExpression;
-}
-
-/** Transform a set literal node (from #[...]) to new Set([...]) */
-function transformSetLiteral(set: SetNode, currentDir: string): IR.IRNewExpression {
-  const elements = set.elements
-    .map(elem => transformNode(elem, currentDir))
-    .filter((elem): elem is IR.IRNode => elem !== null);
-  return {
-    type: IR.IRNodeType.NewExpression,
-    callee: { type: IR.IRNodeType.Identifier, name: "Set" },
-    arguments: [
-      { type: IR.IRNodeType.ArrayLiteral, elements } as IR.IRArrayLiteral
-    ]
-  } as IR.IRNewExpression;
-}
-
-/** Transform a map node to an object literal */
-function transformMap(map: MapNode, currentDir: string): IR.IRObjectLiteral {
-  const properties: IR.IRProperty[] = [];
-  for (const [key, value] of map.pairs) {
-    const keyNode = transformNode(key, currentDir);
-    const valueNode = transformNode(value, currentDir);
-    if (keyNode && valueNode) {
-      properties.push({
-        type: IR.IRNodeType.Property,
-        key: keyNode,
-        value: valueNode,
-        computed: false
-      });
-    }
-  }
-  return { type: IR.IRNodeType.ObjectLiteral, properties };
 }
 
 /** Transform a JSON object to an object literal */
@@ -440,21 +356,6 @@ function transformJSONArray(arr: any[]): IR.IRArrayLiteral {
     }
   }
   return { type: IR.IRNodeType.ArrayLiteral, elements };
-}
-
-/** (keyword "foo") => KeywordLiteral */
-function transformKeyword(list: ListNode): IR.IRKeywordLiteral {
-  if (list.elements.length !== 2) {
-    throw new Error("keyword requires exactly one argument");
-  }
-  const arg = list.elements[1];
-  if (arg.type !== "literal" || typeof (arg as LiteralNode).value !== "string") {
-    throw new Error("keyword argument must be a string literal");
-  }
-  return { 
-    type: IR.IRNodeType.KeywordLiteral, 
-    value: (arg as LiteralNode).value as string 
-  };
 }
 
 /** (defenum Name member1 member2 ...) => EnumDeclaration */
@@ -688,20 +589,37 @@ function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
     throw new Error("let requires bindings and a body");
   }
   const bindingsNode = list.elements[1];
-  let bindings: HQLNode[];
-  if (bindingsNode.type === "vector") {
-    // Normal case: a vector literal [ ... ]
-    bindings = bindingsNode.elements;
-  } else if (bindingsNode.type === "list") {
-    // If written as a list, assume the first element is the symbol "vector"
-    bindings = bindingsNode.elements.slice(1);
+  let bindings: HQLNode[] = [];
+  
+  if (bindingsNode.type === "list") {
+    // Get the list elements
+    bindings = (bindingsNode as ListNode).elements;
+    
+    // Check if first element is a symbol 'vector' (this would be from reader transformation)
+    if (bindings.length > 0 && 
+        bindings[0].type === "symbol" && 
+        (bindings[0] as SymbolNode).name === "vector") {
+      // Remove the 'vector' symbol at the beginning
+      bindings = bindings.slice(1);
+    }
+  } else if (bindingsNode.type === "literal" && Array.isArray((bindingsNode as LiteralNode).value)) {
+    // Handle when bindingsNode is a JavaScript array literal
+    const arrayValue = (bindingsNode as LiteralNode).value as any[];
+    bindings = arrayValue.map(item => {
+      if (typeof item === "string") {
+        return { type: "symbol", name: item } as SymbolNode;
+      } else {
+        return { type: "literal", value: item } as LiteralNode;
+      }
+    });
   } else {
-    throw new Error("let bindings must be a vector or (vector ...) form");
+    throw new Error("let bindings must be a list or array literal");
   }
 
   if (bindings.length % 2 !== 0) {
     throw new Error("let bindings require even number of forms");
   }
+  
   const declarations: IR.IRVariableDeclaration[] = [];
   for (let i = 0; i < bindings.length; i += 2) {
     const nameNode = bindings[i] as SymbolNode;
@@ -723,7 +641,6 @@ function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
   return { type: IR.IRNodeType.Block, body: [...declarations, ...bodyNodes] };
 }
 
-
 function ensureReturnForLastExpression(bodyNodes: IR.IRNode[]): void {
   if (bodyNodes.length === 0) return;
   const lastIndex = bodyNodes.length - 1;
@@ -733,7 +650,6 @@ function ensureReturnForLastExpression(bodyNodes: IR.IRNode[]): void {
   }
 }
 
-/** (+ a b c ...) => fold left into binary expressions */
 /** (+ a b c ...) => fold left into binary expressions */
 function transformArithmetic(list: ListNode, currentDir: string): IR.IRNode {
   if (list.elements.length < 3) {
