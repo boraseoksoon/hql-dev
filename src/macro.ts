@@ -10,17 +10,10 @@ import {
   MapNode,
 } from "./transpiler/hql_ast.ts";
 
-/**
- * Expand macros in HQL nodes
- * This converts syntactic sugar like vectors and sets into core S-expressions
- */
 export function expandMacros(nodes: HQLNode[]): HQLNode[] {
   return nodes.map(expandNode);
 }
 
-/**
- * Expand a single node, recursively expanding its children
- */
 function expandNode(node: HQLNode): HQLNode {
   switch (node.type) {
     case "vector": {
