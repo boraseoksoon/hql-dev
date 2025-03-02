@@ -1,13 +1,5 @@
-;; complex_data_structures.hql - Demonstrating complex nested data structures
-;; Compatible version that shows both JSON syntax and named parameters
-
-;; Import utility libraries
-(def lodash (import "https://esm.sh/lodash"))
-(def pathMod (import "https://deno.land/std@0.170.0/path/mod.ts"))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SECTION 1: Basic Data Structure Literals
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; test/data_structures.hql - Test for data structure literal syntax
+;; Modified to avoid using set literals in JSON (which is not valid)
 
 ;; Vector literals
 (def empty-vector [])
@@ -26,58 +18,23 @@
   }
 })
 
-;; Set literals
+;; Set literals - kept separate from JSON
 (def empty-set #[])
 (def number-set #[1, 2, 3, 4, 5])
 (def string-set #["apple", "orange", "banana"])
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SECTION 2: Named Parameter Functions
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; Define a function that uses named parameters
-(defn greet-user (name: String title: String)
-  (str "Hello, " title " " name "!")
-)
-
-;; Call the function with named parameters (preserving original syntax)
-(print (greet-user name: "Smith" title: "Dr."))
-
-;; Define a function with multiple parameters
-(defn calculate-price (base: Number tax-rate: Number quantity: Number)
-  (let [
-    subtotal (* base quantity)
-    tax (* subtotal (/ tax-rate 100))
-  ]
-    (+ subtotal tax)
-  )
-)
-
-;; Call the function with named parameters
-(print "Total price:" (calculate-price 
-  base: 19.99
-  tax-rate: 8.5
-  quantity: 3
-))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SECTION 3: Complex Data Example
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; Complex mixed structure with JSON syntax and various data structures
+;; Complex mixed structure - no sets inside JSON
 (def database {
   "users": [
     {
       "id": 1,
       "name": "Alice",
-      "roles": ["admin", "user"],
-      "tags": #["javascript", "hql"]
+      "roles": ["admin", "user"]
     },
     {
       "id": 2,
       "name": "Bob",
-      "roles": ["user"],
-      "tags": #["python", "rust"] 
+      "roles": ["user"]
     }
   ],
   "settings": {
@@ -89,27 +46,45 @@
   }
 })
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SECTION 4: Mixed Operations
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Store tags separately as sets
+(def user1-tags #["javascript", "hql"])
+(def user2-tags #["python", "rust"])
 
-;; Helper function to safely get a nested property
-(defn get-in [obj path default-value]
-  (reduce 
-    (fn [current key] 
-      (if (and current (not (= current null)))
-        (get current key)
-        null))
-    obj
-    path)
+;; Print out all data structures to verify
+(print "Empty vector:" empty-vector)
+(print "Numbers vector:" numbers)
+(print "Mixed vector:" mixed-vector)
+(print "Empty map:" empty-map)
+(print "User map:" user-map)
+(print "Nested map:" nested-map)
+(print "Empty set:" empty-set)
+(print "Number set:" number-set)
+(print "String set:" string-set)
+(print "Database:" database)
+(print "User 1 tags:" user1-tags)
+(print "User 2 tags:" user2-tags)
+
+;; Define a function that uses named parameters
+(defn greet-user (name: String title: String)
+  (str "Hello, " title " " name "!")
 )
 
-;; Process data with both JSON syntax and named parameters
+;; Call the function with named parameters
+(print (greet-user name: "Smith" title: "Dr."))
+
+;; Test more complex operations with maps and vectors
+(def get-from-vector (get numbers 2))
+(print "Element at index 2 of numbers:" get-from-vector)
+
+(def get-from-map (get user-map "name"))
+(print "Value of 'name' from user-map:" get-from-map)
+
+;; Test function with named parameters working with data structures
 (defn process-user (user-id: Number options: Object)
   (let [
+    users (get database "users")
     user-index (- user-id 1)
-    user (get-in database ["users", user-index] null)
-    settings (get database "settings")
+    user (get users user-index)
   ]
     (if (= user null)
       {"error": "User not found"}
@@ -128,11 +103,5 @@
   options: {"detailed": true, "includeInactive": false}
 ))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SECTION 5: Export
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(export "greetUser" greet-user)
-(export "calculatePrice" calculate-price)
-(export "database" database)
-(export "processUser" process-user)
+;; For validation
+(print "Test complete")

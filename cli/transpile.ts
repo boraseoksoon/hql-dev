@@ -48,7 +48,7 @@ async function transpileCLI(
       // Transform without bundling
       const transformed = await transformAST(ast, dir, new Set(), {
         module: options.module || 'esm',
-        bundle: false,
+        bundle: options.bundle,
         verbose: options.verbose
       });
       

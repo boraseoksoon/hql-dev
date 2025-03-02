@@ -676,18 +676,24 @@ export async function transpileFile(
       const outputDir = dirname(absPath);
       const tempJsPath = join(outputDir, `.${basename(absPath)}.temp.js`);
       
+      console.log("start bundling : ", tempJsPath)
+
       try {
         if (options.verbose) console.log(`Writing transpiled JS to temporary file: ${tempJsPath}`);
         
         // Write transpiled output to a temporary file
         await Deno.writeTextFile(tempJsPath, transpiled);
         
+        console.log("bundle is started")
+
         // Bundle the transpiled output
         const bundled = await bundleJavaScript(tempJsPath, { 
           format: options.module as "esm" | "commonjs", 
           verbose: options.verbose 
         });
         
+        console.log("bundle is done")
+
         // Clean up temporary file
         try {
           await Deno.remove(tempJsPath);

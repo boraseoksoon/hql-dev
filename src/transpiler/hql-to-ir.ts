@@ -105,7 +105,10 @@ function transformSymbol(sym: SymbolNode): IR.IRIdentifier {
 }
 
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
-  if (list.elements.length === 0) return null;
+  if (list.elements.length === 0) {
+    return { type: IR.IRNodeType.ArrayLiteral, elements: [] } as IR.IRArrayLiteral;
+  }
+  
   
   const head = list.elements[0];
   if (head.type === "symbol") {

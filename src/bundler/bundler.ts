@@ -20,9 +20,18 @@ export async function bundleJavaScript(
     verbose?: boolean;
   } = {}
 ): Promise<string> {
+  // Determine the temporary output path:
+  // If an explicit outputPath is provided, we will use it later to write the final bundled content.
+  // Otherwise, we use `${filePath}.bundle.js` as the temporary file.
   const tempOutputPath = options.outputPath || `${filePath}.bundle.js`;
   const format = options.format || "esm";
   const verbose = options.verbose || false;
+  
+  if (verbose) {
+    console.log(`\n[Bundler] Starting bundling process for: ${filePath}`);
+    console.log(`[Bundler] Temporary output path set to: ${tempOutputPath}`);
+    console.log(`[Bundler] Module format: ${format}`);
+  }
   
   // Create a cache key based on file path, format, and file stats
   let cacheKey: string;
@@ -35,37 +44,32 @@ export async function bundleJavaScript(
     // Check cache if available and file hasn't changed
     const cached = bundleCache.get(cacheKey);
     if (cached) {
-      if (verbose) console.log(`Using cached bundle for: ${filePath}`);
+      if (verbose) console.log(`[Bundler] Using cached bundle for: ${filePath}`);
       
       // If an output path is specified, write the cached content
       if (options.outputPath) {
         await Deno.writeTextFile(options.outputPath, cached.content);
-        if (verbose) console.log(`Wrote cached bundle to: ${options.outputPath}`);
+        if (verbose) console.log(`[Bundler] Wrote cached bundle to: ${options.outputPath}`);
       }
       
       return cached.content;
     }
   } catch (error) {
-    // If there's an error getting stats, we won't use caching
     useCache = false;
-    if (verbose) console.warn(`Cache disabled for bundling - couldn't get file stats: ${error.message}`);
+    if (verbose) console.warn(`[Bundler] Cache disabled - couldn't get file stats: ${error.message}`);
   }
   
   try {
-    if (verbose) console.log(`Bundling JavaScript file: ${filePath}`);
-    
-    // Run Deno bundle command
+    // Build the Deno bundle command
     const cmd = ["deno", "bundle"];
-    
-    // Add format option if specified
     if (format === "commonjs") {
       cmd.push("--format", "commonjs");
     }
-    
-    // Add the input and output paths
     cmd.push(filePath, tempOutputPath);
     
-    if (verbose) console.log(`Running command: ${cmd.join(' ')}`);
+    if (verbose) {
+      console.log(`[Bundler] Running command: ${cmd.join(' ')}`);
+    }
     
     // Execute the bundle command
     const process = Deno.run({
@@ -77,16 +81,31 @@ export async function bundleJavaScript(
     // Wait for the process to complete
     const status = await process.status();
     
+    // Capture stdout and stderr output for debugging
+    const stdout = new TextDecoder().decode(await process.output());
+    const stderr = new TextDecoder().decode(await process.stderrOutput());
+    
+    if (verbose) {
+      console.log(`[Bundler] Command stdout: ${stdout}`);
+      console.log(`[Bundler] Command stderr: ${stderr}`);
+    }
+    
     if (!status.success) {
-      const errorOutput = new TextDecoder().decode(await process.stderrOutput());
       process.close();
-      throw new Error(`Bundling failed: ${errorOutput}`);
+      throw new Error(`Bundling failed: ${stderr}`);
     }
     
     process.close();
     
+    if (verbose) {
+      console.log(`[Bundler] Bundling command completed successfully. Reading output from: ${tempOutputPath}`);
+    }
+    
     // Read the bundled output
     const bundled = await Deno.readTextFile(tempOutputPath);
+    if (verbose) {
+      console.log(`[Bundler] Bundled content length: ${bundled.length} characters`);
+    }
     
     // Cache the result if caching is enabled
     if (useCache && cacheKey) {
@@ -103,24 +122,29 @@ export async function bundleJavaScript(
       }
     }
     
-    // Clean up the temporary file if it's not the requested output
+    // Clean up the temporary file if no explicit output path was provided.
     if (!options.outputPath) {
       try {
         await Deno.remove(tempOutputPath);
+        if (verbose) {
+          console.log(`[Bundler] Temporary file ${tempOutputPath} removed.`);
+        }
       } catch (e) {
-        // Ignore cleanup errors
-        if (verbose) console.warn(`Failed to remove temporary bundle file: ${e.message}`);
+        if (verbose) console.warn(`[Bundler] Failed to remove temporary file: ${e.message}`);
+      }
+    } else {
+      if (verbose) {
+        console.log(`[Bundler] Final bundled output will be available at: ${options.outputPath}`);
       }
     }
     
-    if (verbose) console.log(`Successfully bundled: ${filePath}`);
+    if (verbose) {
+      console.log(`[Bundler] Successfully bundled: ${filePath}\n`);
+    }
+    
     return bundled;
   } catch (error) {
-    // Enhance error reporting
-    const errorMessage = error instanceof Error ? 
-      error.message : 
-      'Unknown error during bundling';
-    
-    throw new Error(`Bundling error for ${filePath}: ${errorMessage}`);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error during bundling';
+    throw new Error(`[Bundler] Bundling error for ${filePath}: ${errorMessage}`);
   }
 }
