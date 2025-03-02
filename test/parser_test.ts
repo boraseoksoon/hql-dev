@@ -90,7 +90,8 @@ Deno.test("parser - vector syntax with square brackets", () => {
       { type: "literal", value: 1 },
       { type: "literal", value: 2 },
       { type: "literal", value: 3 }
-    ]
+    ],
+    isArrayLiteral: true
   }]);
 });
 
@@ -106,6 +107,7 @@ Deno.test("parser - mixed expressions", () => {
         elements: [
           { type: "symbol", name: "name" }
         ]
+        // isArrayLiteral should not be present for parameter lists
       },
       {
         type: "list",
@@ -118,6 +120,55 @@ Deno.test("parser - mixed expressions", () => {
       }
     ]
   }]);
+});
+
+Deno.test("parser - function definition", () => {
+  // Test specific parameter list handling
+  const ast = parse('(fn [x y] (+ x y))');
+  assertAstEqual(ast, [{
+    type: "list",
+    elements: [
+      { type: "symbol", name: "fn" },
+      {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "x" },
+          { type: "symbol", name: "y" }
+        ]
+        // isArrayLiteral should not be present for parameter lists
+      },
+      {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "+" },
+          { type: "symbol", name: "x" },
+          { type: "symbol", name: "y" }
+        ]
+      }
+    ]
+  }]);
+});
+
+Deno.test("parser - distinction between arrays and params", () => {
+  // This should be an array literal
+  const arrAst = parse('[1 2 3]');
+  assertEquals((arrAst[0] as ListNode).isArrayLiteral, true);
+  
+  // This should be a parameter list without isArrayLiteral
+  const fnAst = parse('(defn foo [a b] (+ a b))');
+  const paramList = (fnAst[0] as ListNode).elements[2] as ListNode;
+  assertEquals(paramList.isArrayLiteral, undefined);
+});
+
+Deno.test("parser - nested parameter lists", () => {
+  const ast = parse('(defn foo [a [b c]] (+ a b c))');
+  const outer = (ast[0] as ListNode);
+  const params = outer.elements[2] as ListNode;
+  assertEquals(params.isArrayLiteral, undefined); // Outer params shouldn't be marked
+  
+  // But the inner list [b c] should be marked as an array literal since it's a nested structure
+  const innerParams = params.elements[1] as ListNode;
+  assertEquals(innerParams.isArrayLiteral, true);
 });
 
 Deno.test("parser - comments", () => {
@@ -224,6 +275,10 @@ Deno.test("parser - multiline code", () => {
   assertEquals(ast.length, 1);
   assertEquals((ast[0] as ListNode).elements[0].type, "symbol");
   assertEquals(((ast[0] as ListNode).elements[0] as SymbolNode).name, "defn");
+  
+  // Parameter list should not be marked as array literal
+  const paramList = (ast[0] as ListNode).elements[2] as ListNode;
+  assertEquals(paramList.isArrayLiteral, undefined);
 });
 
 Deno.test("parser - handling js/interop syntax", () => {

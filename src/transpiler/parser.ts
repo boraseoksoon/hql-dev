@@ -1,4 +1,4 @@
-// src/transpiler/parser.ts
+// src/transpiler/parser.ts with context-aware square bracket parsing
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import { ParseError } from "./errors.ts";
 
@@ -257,6 +257,13 @@ export function parse(input: string): HQLNode[] {
   const { tokens, positions } = tokenize(input);
   let pos = 0;
   
+  // Track parser context for making smart decisions about array literals
+  const parserContext = {
+    inFunctionDefinition: false,
+    expectingParameterList: false,
+    currentFunctionForm: null as string | null
+  };
+  
   // Cache of known symbols
   const symbolCache = new Map<string, SymbolNode>();
   // Cache of known literals
@@ -276,10 +283,29 @@ export function parse(input: string): HQLNode[] {
     
     // Handle special data structure literals
     if (token === "(") {
+      // If we're starting a list that could be a function definition
+      const oldPos = pos;
+      const firstToken = pos < tokens.length ? tokens[pos] : null;
+      
+      // Check if this is a function definition form
+      if (firstToken === "defn" || firstToken === "fn" || firstToken === "defmethod") {
+        parserContext.inFunctionDefinition = true;
+        parserContext.currentFunctionForm = firstToken;
+        // After the function name, we expect a parameter list
+        parserContext.expectingParameterList = true;
+      }
+      
       return parseList(")");
     } else if (token === "[") {
-      // For test compatibility - parse arrays directly
-      return parseListAsIs("]");
+      // For array literals with square brackets
+      const isParamList = parserContext.expectingParameterList;
+      
+      // Clear the expectation flag as we're now processing it
+      if (parserContext.expectingParameterList) {
+        parserContext.expectingParameterList = false;
+      }
+      
+      return parseListAsIs("]", isParamList);
     } else if (token === "{") {
       // JSON object literal - parse as a hash-map internally
       return parseJSONObject();
@@ -336,9 +362,23 @@ export function parse(input: string): HQLNode[] {
   
   // Parse a standard list with a given closing delimiter
   function parseList(closingDelimiter: string): ListNode {
+    // Save the current function definition context
+    const wasInFunctionDefinition = parserContext.inFunctionDefinition;
+    const oldFunctionForm = parserContext.currentFunctionForm;
+    
     const elements: HQLNode[] = [];
+    
+    // Process the elements of the list
     while (pos < tokens.length && tokens[pos] !== closingDelimiter) {
       elements.push(parseExpression());
+      
+      // If we just parsed the function name in a defn/fn form, next should be param list
+      if (parserContext.inFunctionDefinition && 
+          elements.length === 2 &&  // [defn, name]
+          elements[0].type === "symbol" && 
+          (elements[0] as SymbolNode).name === parserContext.currentFunctionForm) {
+        parserContext.expectingParameterList = true;
+      }
     }
     
     if (pos >= tokens.length) {
@@ -351,11 +391,19 @@ export function parse(input: string): HQLNode[] {
     }
     
     pos++; // skip the closing delimiter
+    
+    // Reset the function definition context on exiting the list
+    if (wasInFunctionDefinition && parserContext.currentFunctionForm === oldFunctionForm) {
+      parserContext.inFunctionDefinition = false;
+      parserContext.currentFunctionForm = null;
+      parserContext.expectingParameterList = false;
+    }
+    
     return { type: "list", elements } as ListNode;
   }
   
-  // Parse a list directly as-is for test compatibility
-  function parseListAsIs(closingDelimiter: string): ListNode {
+  // Parse a list directly as-is, but with context awareness for parameter lists
+  function parseListAsIs(closingDelimiter: string, isParameterList: boolean = false): ListNode {
     const elements: HQLNode[] = [];
     while (pos < tokens.length && tokens[pos] !== closingDelimiter) {
       elements.push(parseExpression());
@@ -370,8 +418,12 @@ export function parse(input: string): HQLNode[] {
     
     pos++; // skip the closing delimiter
   
-    // Mark this node as an array literal so the transformer knows to handle it as a literal.
-    return { type: "list", elements, isArrayLiteral: true } as ListNode;
+    // Mark this node as array literal only if it's NOT a parameter list
+    if (!isParameterList) {
+      return { type: "list", elements, isArrayLiteral: true } as ListNode;
+    } else {
+      return { type: "list", elements } as ListNode;
+    }
   }  
 
   // Parse a JSON object into (hash-map ...) form

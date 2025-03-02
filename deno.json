@@ -1,8 +1,8 @@
 {
   "tasks": {
-    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test && deno task bundle-tests",
+    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test && deno task bundle-tests && deno task data-structures-test",
     "unit-tests": "deno task parser-test && deno task hql-to-ir-test",
-    "run-test": "deno run -A ./cli/run.ts ./test/simple.hql",
+    "run-test": "deno run -A ./cli/run.ts ./test/simple.hql && deno run -A ./cli/run.ts ./test/data_structures.hql ./test/bundle.js",
     "parser-test": "deno test --allow-all test/parser_test.ts",
     "hql-to-ir-test": "deno test --allow-all test/hql_to_ir_test.ts",
     "data-structures-test": "deno test --allow-all test/data_structures_test.ts",
