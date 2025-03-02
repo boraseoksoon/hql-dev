@@ -1,4 +1,3 @@
-// src/ts-ast-types.ts
 export enum TSNodeType {
   SourceFile = "SourceFile",
   VariableStatement = "VariableStatement",
@@ -92,6 +91,8 @@ export interface TSFunctionDeclaration extends TSNode {
   name: TSIdentifier;
   parameters: TSIdentifier[];
   body: TSBlock;
+  isAnonymous?: boolean;
+  needsReturn?: boolean;
 }
 
 export interface TSBlock extends TSNode {

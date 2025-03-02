@@ -8,24 +8,32 @@ import {
   TSStringLiteral,
   TSNumericLiteral,
   TSBooleanLiteral,
+  TSNullLiteral,
   TSRaw,
-  TSExportDeclaration
+  TSExportDeclaration,
+  TSObjectLiteral,
+  TSPropertyAssignment,
+  TSBinaryExpression,
+  TSCallExpression,
+  TSVariableDeclaration,
+  TSVariableStatement,
+  TSFunctionDeclaration,
+  TSBlock,
+  TSExpressionStatement
 } from "./ts-ast-types.ts";
 import { convertImportSpecifier } from "./path-utils.ts";
 
-// Cache for node conversion results to avoid redundant transformations
+// A cache to avoid re-converting the same IR nodes
 const nodeConversionCache = new Map<IR.IRNode, TSNode | TSNode[] | null>();
 
 /**
- * Convert an IRProgram into a TSSourceFile.
+ * Main entry point: Convert an IRProgram into a TSSourceFile.
  */
 export function convertIRToTSAST(program: IR.IRProgram): TSSourceFile {
-  // Clear cache for a new conversion
   nodeConversionCache.clear();
-  
   const statements: TSNode[] = [];
-  
-  // First pass: process imports so they're at the top
+
+  // Collect import nodes first
   const imports: TSNode[] = [];
   for (const node of program.body) {
     if (isImport(node)) {
@@ -33,8 +41,8 @@ export function convertIRToTSAST(program: IR.IRProgram): TSSourceFile {
       if (importNode) imports.push(importNode);
     }
   }
-  
-  // Second pass: process all other nodes
+
+  // Process the rest of the nodes
   for (const node of program.body) {
     if (!isImport(node)) {
       const converted = convertNode(node);
@@ -44,421 +52,309 @@ export function convertIRToTSAST(program: IR.IRProgram): TSSourceFile {
       }
     }
   }
-  
-  return { type: TSNodeType.SourceFile, statements: [...imports, ...statements] };
+
+  return {
+    type: TSNodeType.SourceFile,
+    statements: [...imports, ...statements]
+  } as TSSourceFile;
 }
 
-/**
- * Check if a node is an import statement.
- */
-function isImport(node: IR.IRNode): boolean {
-  if (node.type !== IR.IRNodeType.VariableDeclaration) return false;
-  
-  const vd = node as IR.IRVariableDeclaration;
+/** Check if an IR node is a $$IMPORT variable declaration. */
+function isImport(irNode: IR.IRNode): boolean {
+  if (irNode.type !== IR.IRNodeType.VariableDeclaration) return false;
+  const vd = irNode as IR.IRVariableDeclaration;
   if (vd.init.type !== IR.IRNodeType.CallExpression) return false;
-  
   const callExpr = vd.init as IR.IRCallExpression;
-  if (callExpr.callee.type !== IR.IRNodeType.Identifier) return false;
-  
-  return (callExpr.callee as IR.IRIdentifier).name === "$$IMPORT";
+  return (
+    callExpr.callee.type === IR.IRNodeType.Identifier &&
+    (callExpr.callee as IR.IRIdentifier).name === "$$IMPORT"
+  );
 }
 
-/**
- * Process an import statement from IR to TS.
- * Enhanced to support all module systems and handle import types better.
- */
-function processImport(node: IR.IRNode): TSNode | null {
-  if (node.type !== IR.IRNodeType.VariableDeclaration) return null;
-  
-  const vd = node as IR.IRVariableDeclaration;
+/** Process a $$IMPORT node into a TSRaw import statement. */
+function processImport(irNode: IR.IRNode): TSNode | null {
+  if (irNode.type !== IR.IRNodeType.VariableDeclaration) return null;
+  const vd = irNode as IR.IRVariableDeclaration;
   const varName = vd.id.name;
-  
+
+  if (vd.init.type !== IR.IRNodeType.CallExpression) return null;
   const callExpr = vd.init as IR.IRCallExpression;
-  if (callExpr.arguments.length !== 1 || callExpr.arguments[0].type !== IR.IRNodeType.StringLiteral) {
+  if (
+    callExpr.arguments.length !== 1 ||
+    callExpr.arguments[0].type !== IR.IRNodeType.StringLiteral
+  ) {
     return null;
   }
-  
+
   let url = (callExpr.arguments[0] as IR.IRStringLiteral).value;
-  
-  // Convert import specifiers to their canonical form
   url = convertImportSpecifier(url);
-  
-  // Generate appropriate import based on file type
-  if (url.endsWith(".hql")) {
-    // HQL imports
-    return createNamespaceImport(varName, url);
-  } else if (url.endsWith(".js") || url.endsWith(".ts") || url.endsWith(".mjs")) {
-    // JavaScript/TypeScript imports
-    return createNamespaceImport(varName, url);
-  } else {
-    // External module imports
-    return createUniversalImport(varName, url);
-  }
-}
 
-/**
- * Creates a standard namespace import.
- */
-function createNamespaceImport(varName: string, url: string): TSNode {
   return {
     type: TSNodeType.Raw,
-    code: `import * as ${varName}_module from "${url}";\n` +
-          `const ${varName} = ${varName}_module.default !== undefined ? ${varName}_module.default : ${varName}_module;`
-  };
+    code:
+      `import * as ${varName}_module from "${url}";\n` +
+      `const ${varName} = ${varName}_module.default !== undefined ? ${varName}_module.default : ${varName}_module;`
+  } as TSRaw;
 }
 
-/**
- * Creates a universal import that works with both default and namespace exports.
- */
-function createUniversalImport(varName: string, url: string): TSNode {
-  return {
-    type: TSNodeType.Raw,
-    code: `import * as ${varName}_module from "${url}";\n` +
-          `const ${varName} = ${varName}_module.default !== undefined ? ${varName}_module.default : ${varName}_module;`
-  };
-}
-
-/**
- * Main IR→TS dispatcher function.
- */
-function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
-  if (!node) return null;
-  
-  // Check cache first
-  if (nodeConversionCache.has(node)) {
-    return nodeConversionCache.get(node)!;
+/** Convert a single IR node to a TS node (or array of nodes, or null). */
+function convertNode(irNode: IR.IRNode): TSNode | TSNode[] | null {
+  if (!irNode) return null;
+  if (nodeConversionCache.has(irNode)) {
+    return nodeConversionCache.get(irNode) || null;
   }
-  
+
   let result: TSNode | TSNode[] | null = null;
-  
-  switch (node.type) {
-    case IR.IRNodeType.StringLiteral: {
-      const lit = node as IR.IRStringLiteral;
-      const value = lit.value;
-      // If the string contains HQL interpolation markers, convert to a template literal.
-      if (typeof value === "string" && value.includes("\\(")) {
-        const converted = value.replace(/\\\((.*?)\)/g, '${$1}');
-        result = { type: TSNodeType.Raw, code: `\`${converted}\`` };
-      } else {
-        result = { type: TSNodeType.StringLiteral, text: JSON.stringify(value) };
-      }
+
+  switch (irNode.type) {
+    case IR.IRNodeType.StringLiteral:
+      result = convertStringLiteral(irNode as IR.IRStringLiteral);
       break;
-    }
     case IR.IRNodeType.NumericLiteral:
-      result = { type: TSNodeType.NumericLiteral, text: (node as IR.IRNumericLiteral).value.toString() };
+      result = convertNumericLiteral(irNode as IR.IRNumericLiteral);
       break;
     case IR.IRNodeType.BooleanLiteral:
-      result = { type: TSNodeType.BooleanLiteral, text: (node as IR.IRBooleanLiteral).value ? "true" : "false" };
+      result = convertBooleanLiteral(irNode as IR.IRBooleanLiteral);
       break;
     case IR.IRNodeType.NullLiteral:
-      result = { type: TSNodeType.NullLiteral };
+      result = { type: TSNodeType.NullLiteral } as TSNullLiteral;
       break;
-    case IR.IRNodeType.KeywordLiteral: {
-      const kw = node as IR.IRKeywordLiteral;
-      result = { type: TSNodeType.StringLiteral, text: JSON.stringify(kw.value) };
+    case IR.IRNodeType.KeywordLiteral:
+      result = convertKeywordLiteral(irNode as IR.IRKeywordLiteral);
       break;
-    }
-    case IR.IRNodeType.Identifier: {
-      const idNode = node as IR.IRIdentifier;
-      let name = idNode.name;
-      
-      // Remove leading dot for enum values
-      if (name.startsWith(".")) {
-        name = name.slice(1);
-        // Return as a string literal since this is an enum value
-        result = { type: TSNodeType.StringLiteral, text: JSON.stringify(name) };
-      } else {
-        result = { type: TSNodeType.Identifier, text: name };
-      }
+    case IR.IRNodeType.Identifier:
+      result = convertIdentifier(irNode as IR.IRIdentifier);
       break;
-    }
     case IR.IRNodeType.ArrayLiteral:
-      result = convertArrayLiteral(node as IR.IRArrayLiteral);
+      result = convertArrayLiteral(irNode as IR.IRArrayLiteral);
       break;
     case IR.IRNodeType.ObjectLiteral:
-      result = convertObjectLiteral(node as IR.IRObjectLiteral);
+      result = convertObjectLiteral(irNode as IR.IRObjectLiteral);
       break;
     case IR.IRNodeType.BinaryExpression:
-      result = convertBinaryExpression(node as IR.IRBinaryExpression);
+      result = convertBinaryExpression(irNode as IR.IRBinaryExpression);
       break;
     case IR.IRNodeType.AssignmentExpression:
-      result = convertAssignmentExpression(node as IR.IRAssignmentExpression);
+      result = convertAssignmentExpression(irNode as IR.IRAssignmentExpression);
       break;
     case IR.IRNodeType.ConditionalExpression:
-      result = convertConditionalExpression(node as IR.IRConditionalExpression);
+      result = convertConditionalExpression(irNode as IR.IRConditionalExpression);
       break;
     case IR.IRNodeType.CallExpression:
-      result = convertCallExpression(node as IR.IRCallExpression);
+      result = convertCallExpression(irNode as IR.IRCallExpression);
       break;
     case IR.IRNodeType.NewExpression:
-      result = convertNewExpression(node as IR.IRNewExpression);
+      result = convertNewExpression(irNode as IR.IRNewExpression);
       break;
     case IR.IRNodeType.PropertyAccess:
-      result = convertPropertyAccess(node as IR.IRPropertyAccess);
+      result = convertPropertyAccess(irNode as IR.IRPropertyAccess);
       break;
     case IR.IRNodeType.VariableDeclaration:
-      result = convertVariableDeclaration(node as IR.IRVariableDeclaration);
+      result = convertVariableDeclaration(irNode as IR.IRVariableDeclaration);
       break;
     case IR.IRNodeType.FunctionDeclaration:
-      result = convertFunctionDeclaration(node as IR.IRFunctionDeclaration);
+      result = convertFunctionDeclaration(irNode as IR.IRFunctionDeclaration);
       break;
     case IR.IRNodeType.EnumDeclaration:
-      result = convertEnumDeclaration(node as IR.IREnumDeclaration);
+      result = convertEnumDeclaration(irNode as IR.IREnumDeclaration);
       break;
     case IR.IRNodeType.ExportDeclaration:
-      result = convertExportDeclaration(node as IR.IRExportDeclaration);
+      result = convertExportDeclaration(irNode as IR.IRExportDeclaration);
       break;
     case IR.IRNodeType.ReturnStatement:
-      result = convertReturnStatement(node as IR.IRReturnStatement);
+      result = convertReturnStatement(irNode as IR.IRReturnStatement);
       break;
     case IR.IRNodeType.IfStatement:
-      result = convertIfStatement(node as IR.IRIfStatement);
+      result = convertIfStatement(irNode as IR.IRIfStatement);
       break;
     case IR.IRNodeType.ForStatement:
-      result = convertForStatement(node as IR.IRForStatement);
+      result = convertForStatement(irNode as IR.IRForStatement);
       break;
     case IR.IRNodeType.Block:
-      result = convertBlock(node as IR.IRBlock);
+      result = convertBlock(irNode as IR.IRBlock);
       break;
     default:
-      console.warn(`Unknown IR node type: ${node.type}`);
+      console.warn(`Unknown IR node type: ${(irNode as any).type}`);
       result = null;
   }
-  
-  // Cache the result
-  nodeConversionCache.set(node, result);
+
+  nodeConversionCache.set(irNode, result);
   return result;
 }
 
-/**
- * Convert a PropertyAccess node to TS AST.
- */
-function convertPropertyAccess(propAccess: IR.IRPropertyAccess): TSNode {
-  const obj = nodeToString(convertNode(propAccess.object));
-  const prop = convertNode(propAccess.property);
-  
-  if (propAccess.computed) {
-    // Use bracket notation: obj[prop]
-    return { 
-      type: TSNodeType.Raw, 
-      code: `${obj}[${nodeToString(prop)}]` 
-    };
+/** Convert string literal IR to TS. */
+function convertStringLiteral(lit: IR.IRStringLiteral): TSNode {
+  const value = lit.value;
+  if (typeof value === "string" && value.includes("\\(")) {
+    // Possibly transform \(...) to template literal
+    const converted = value.replace(/\\\((.*?)\)/g, "${$1}");
+    return { type: TSNodeType.Raw, code: `\`${converted}\`` } as TSRaw;
+  }
+  return {
+    type: TSNodeType.StringLiteral,
+    text: JSON.stringify(value)
+  } as TSStringLiteral;
+}
+
+/** Convert numeric literal IR to TS. */
+function convertNumericLiteral(numLit: IR.IRNumericLiteral): TSNode {
+  return {
+    type: TSNodeType.NumericLiteral,
+    text: numLit.value.toString()
+  } as TSNumericLiteral;
+}
+
+/** Convert boolean literal IR to TS. */
+function convertBooleanLiteral(boolLit: IR.IRBooleanLiteral): TSNode {
+  return {
+    type: TSNodeType.BooleanLiteral,
+    text: boolLit.value ? "true" : "false"
+  } as TSBooleanLiteral;
+}
+
+/** Convert keyword literal IR to TS (just store as a string). */
+function convertKeywordLiteral(kw: IR.IRKeywordLiteral): TSNode {
+  return {
+    type: TSNodeType.StringLiteral,
+    text: JSON.stringify(kw.value)
+  } as TSStringLiteral;
+}
+
+/** Convert IR identifier to a TS identifier or string literal. */
+function convertIdentifier(idNode: IR.IRIdentifier): TSNode {
+  let name = idNode.name;
+  if (name.startsWith(".")) {
+    // e.g. .foo => string literal
+    name = name.slice(1);
+    return {
+      type: TSNodeType.StringLiteral,
+      text: JSON.stringify(name)
+    } as TSStringLiteral;
   } else {
-    // Use dot notation: obj.prop - for string literals
-    if (prop?.type === TSNodeType.StringLiteral) {
-      const propName = JSON.parse((prop as TSStringLiteral).text);
-      return { 
-        type: TSNodeType.Raw, 
-        code: `${obj}.${propName}` 
-      };
-    } else {
-      // Fallback to bracket notation if not a string literal
-      return { 
-        type: TSNodeType.Raw, 
-        code: `${obj}[${nodeToString(prop)}]` 
-      };
-    }
+    return {
+      type: TSNodeType.Identifier,
+      text: name
+    } as TSIdentifier;
   }
 }
 
-/**
- * Convert an assignment expression to TS AST.
- */
-function convertAssignmentExpression(assign: IR.IRAssignmentExpression): TSNode {
-  const left = convertNode(assign.left);
-  const right = convertNode(assign.right);
-  
-  return { 
-    type: TSNodeType.Raw, 
-    code: `${nodeToString(left)} = ${nodeToString(right)}` 
-  };
+/** Convert array literal IR. */
+function convertArrayLiteral(irArr: IR.IRArrayLiteral): TSNode {
+  const elements = irArr.elements.map(e => nodeToString(convertNode(e)));
+  return {
+    type: TSNodeType.Raw,
+    code: `[${elements.join(", ")}]`
+  } as TSRaw;
 }
 
-/**
- * Convert a conditional expression to TS AST.
- */
-function convertConditionalExpression(cond: IR.IRConditionalExpression): TSNode {
-  const test = convertNode(cond.test);
-  const consequent = convertNode(cond.consequent);
-  const alternate = convertNode(cond.alternate);
-  
-  return { 
-    type: TSNodeType.Raw, 
-    code: `${nodeToString(test)} ? ${nodeToString(consequent)} : ${nodeToString(alternate)}` 
-  };
-}
+/** Convert object literal IR. */
+function convertObjectLiteral(irObj: IR.IRObjectLiteral): TSNode {
+  const props = irObj.properties.map(prop => {
+    const keyNode = convertNode(prop.key);
+    const valNode = convertNode(prop.value);
 
-/**
- * Convert a ReturnStatement node to TS AST.
- */
-function convertReturnStatement(returnStmt: IR.IRReturnStatement): TSNode {
-  if (returnStmt.argument === null) {
-    return { type: TSNodeType.Raw, code: "return;" };
-  }
-  
-  const arg = nodeToString(convertNode(returnStmt.argument));
-  return { type: TSNodeType.Raw, code: `return ${arg};` };
-}
-
-/**
- * Convert an if statement to TS AST.
- */
-function convertIfStatement(ifStmt: IR.IRIfStatement): TSNode {
-  const test = nodeToString(convertNode(ifStmt.test));
-  const consequent = nodeToString(convertNode(ifStmt.consequent));
-  
-  if (ifStmt.alternate) {
-    const alternate = nodeToString(convertNode(ifStmt.alternate));
-    return { 
-      type: TSNodeType.Raw, 
-      code: `if (${test}) ${consequent} else ${alternate}` 
-    };
-  } else {
-    return { 
-      type: TSNodeType.Raw, 
-      code: `if (${test}) ${consequent}` 
-    };
-  }
-}
-
-/**
- * Convert a for statement to TS AST.
- */
-function convertForStatement(forStmt: IR.IRForStatement): TSNode {
-  const init = nodeToString(convertNode(forStmt.init));
-  const test = nodeToString(convertNode(forStmt.test));
-  const update = forStmt.update ? nodeToString(convertNode(forStmt.update)) : '';
-  const body = nodeToString(convertNode(forStmt.body));
-  
-  return { 
-    type: TSNodeType.Raw, 
-    code: `for (${init}; ${test}; ${update}) ${body}` 
-  };
-}
-
-/**
- * Convert an array literal to a TS node.
- */
-function convertArrayLiteral(arr: IR.IRArrayLiteral): TSNode {
-  const elements = arr.elements.map(element => nodeToString(convertNode(element)));
-  return { type: TSNodeType.Raw, code: `[${elements.join(", ")}]` };
-}
-
-/**
- * Convert an object literal to a TS node with improved property handling.
- */
-function convertObjectLiteral(obj: IR.IRObjectLiteral): TSNode {
-  const props = obj.properties.map(prop => {
-    const key = convertNode(prop.key);
-    const value = convertNode(prop.value);
-    
-    // Handle computed properties
-    if (prop.computed) {
-      return `[${nodeToString(key)}]: ${nodeToString(value)}`;
-    }
-    
-    // If key is a string literal without special characters, we can use normal syntax
-    if (key?.type === TSNodeType.StringLiteral) {
-      const keyStr = (key as TSStringLiteral).text;
-      const unquoted = keyStr.slice(1, -1); // Remove quotes
-      
+    // If the key is a TSStringLiteral (not an array), we might unquote it if valid
+    if (keyNode && !Array.isArray(keyNode) && keyNode.type === TSNodeType.StringLiteral) {
+      const rawKeyText = (keyNode as TSStringLiteral).text; // includes quotes
+      const unquoted = rawKeyText.slice(1, -1);
       if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(unquoted)) {
-        return `${unquoted}: ${nodeToString(value)}`;
+        return `${unquoted}: ${nodeToString(valNode)}`;
       } else {
-        return `[${keyStr}]: ${nodeToString(value)}`;
+        return `[${rawKeyText}]: ${nodeToString(valNode)}`;
       }
     }
-    
-    return `${nodeToString(key)}: ${nodeToString(value)}`;
+
+    // Fallback
+    return `${nodeToString(keyNode)}: ${nodeToString(valNode)}`;
   });
-  
-  // For small objects (<=3 properties), use inline format
   if (props.length <= 3) {
-    return { type: TSNodeType.Raw, code: `{${props.join(", ")}}` };
+    return {
+      type: TSNodeType.Raw,
+      code: `{${props.join(", ")}}`
+    } as TSRaw;
   }
-  
-  // For larger objects, use multi-line format
-  return { 
-    type: TSNodeType.Raw, 
-    code: `{\n  ${props.join(",\n  ")}\n}` 
-  };
+  return {
+    type: TSNodeType.Raw,
+    code: `{\n  ${props.join(",\n  ")}\n}`
+  } as TSRaw;
 }
 
-/**
- * Convert a binary expression to a TS node.
- */
+/** Convert binary expression IR to TS. */
 function convertBinaryExpression(bin: IR.IRBinaryExpression): TSNode {
-  const left = convertNode(bin.left);
-  const right = convertNode(bin.right);
-  
-  // Convert HQL operators to JavaScript operators
-  let operator = bin.operator;
-  switch (operator) {
-    case '=': operator = '==='; break;
-    case '!=': operator = '!=='; break;
-    default: break;
-  }
-  
-  return { type: TSNodeType.Raw, code: `(${nodeToString(left)} ${operator} ${nodeToString(right)})` };
+  const left = nodeToString(convertNode(bin.left));
+  const right = nodeToString(convertNode(bin.right));
+  return {
+    type: TSNodeType.Raw,
+    code: `(${left} ${bin.operator} ${right})`
+  } as TSRaw;
 }
 
-/**
- * Convert a call expression to a TS node, with special handling.
- */
+/** Convert assignment expression IR to TS. */
+function convertAssignmentExpression(assign: IR.IRAssignmentExpression): TSNode {
+  const left = nodeToString(convertNode(assign.left));
+  const right = nodeToString(convertNode(assign.right));
+  return {
+    type: TSNodeType.Raw,
+    code: `${left} = ${right}`
+  } as TSRaw;
+}
+
+/** Convert conditional expression IR to TS. */
+function convertConditionalExpression(cond: IR.IRConditionalExpression): TSNode {
+  const test = nodeToString(convertNode(cond.test));
+  const cons = nodeToString(convertNode(cond.consequent));
+  const alt = nodeToString(convertNode(cond.alternate));
+  return {
+    type: TSNodeType.Raw,
+    code: `${test} ? ${cons} : ${alt}`
+  } as TSRaw;
+}
+
+/** Convert call expression IR to TS. */
 function convertCallExpression(call: IR.IRCallExpression): TSNode {
-  // Skip import calls - handled separately
-  if (isImportCall(call)) return { type: TSNodeType.Raw, code: "" };
-  
-  // Handle string concatenation special case
-  if (isStringConcatenation(call)) return handleStringConcatenation(call);
-  
-  // Regular function call
-  const callee = convertNode(call.callee);
-  const args = call.arguments.map(arg => nodeToString(convertNode(arg)));
-  
-  // For very long argument lists, format with line breaks
-  if (args.length > 3) {
-    return { 
-      type: TSNodeType.Raw, 
-      code: `${nodeToString(callee)}(\n  ${args.join(",\n  ")}\n)` 
-    };
+  // If $$IMPORT => empty raw
+  if (isImportCall(call)) {
+    return { type: TSNodeType.Raw, code: "" } as TSRaw;
   }
-  
-  return { 
-    type: TSNodeType.Raw, 
-    code: `${nodeToString(callee)}(${args.join(", ")})` 
-  };
-}
+  // if str => string concatenation
+  if (isStringConcatenation(call)) {
+    return handleStringConcatenation(call);
+  }
 
-/**
- * Check if a call is an import call.
- */
+  const callee = nodeToString(convertNode(call.callee));
+  const args = call.arguments.map(a => nodeToString(convertNode(a)));
+  if (args.length > 3) {
+    return {
+      type: TSNodeType.Raw,
+      code: `${callee}(\n  ${args.join(",\n  ")}\n)`
+    } as TSRaw;
+  }
+  return {
+    type: TSNodeType.Raw,
+    code: `${callee}(${args.join(", ")})`
+  } as TSRaw;
+}
 function isImportCall(call: IR.IRCallExpression): boolean {
-  return call.callee.type === IR.IRNodeType.Identifier &&
-         (call.callee as IR.IRIdentifier).name === "$$IMPORT";
+  return (
+    call.callee.type === IR.IRNodeType.Identifier &&
+    (call.callee as IR.IRIdentifier).name === "$$IMPORT"
+  );
 }
-
-/**
- * Check if a call is a string concatenation.
- */
 function isStringConcatenation(call: IR.IRCallExpression): boolean {
-  return call.callee.type === IR.IRNodeType.Identifier &&
-         (call.callee as IR.IRIdentifier).name === "str";
+  return (
+    call.callee.type === IR.IRNodeType.Identifier &&
+    (call.callee as IR.IRIdentifier).name === "str"
+  );
 }
-
-/**
- * Handle string concatenation - use template literals when possible.
- */
 function handleStringConcatenation(call: IR.IRCallExpression): TSNode {
-  if (call.arguments.length === 0) return { type: TSNodeType.StringLiteral, text: '""' };
-  
-  // Check if all items are string literals or identifiers
-  const allSimpleTypes = call.arguments.every(arg => 
-    arg.type === IR.IRNodeType.StringLiteral || 
-    arg.type === IR.IRNodeType.Identifier);
-  
-  // If simple types, use template literal
-  if (allSimpleTypes) {
+  if (call.arguments.length === 0) {
+    return { type: TSNodeType.StringLiteral, text: '""' } as TSStringLiteral;
+  }
+  const allSimple = call.arguments.every(
+    arg => arg.type === IR.IRNodeType.StringLiteral || arg.type === IR.IRNodeType.Identifier
+  );
+  if (allSimple) {
+    // Template literal
     const parts = call.arguments.map(arg => {
       if (arg.type === IR.IRNodeType.StringLiteral) {
         return (arg as IR.IRStringLiteral).value;
@@ -466,152 +362,219 @@ function handleStringConcatenation(call: IR.IRCallExpression): TSNode {
         return "${" + (arg as IR.IRIdentifier).name + "}";
       }
     });
-    
-    return { type: TSNodeType.Raw, code: "`" + parts.join('') + "`" };
+    return { type: TSNodeType.Raw, code: "`" + parts.join("") + "`" } as TSRaw;
   }
-  
-  // Otherwise use standard concatenation
-  const args = call.arguments.map(arg => nodeToString(convertNode(arg)));
-  return { type: TSNodeType.Raw, code: args.join(" + ") };
+  // fallback: x + y
+  const transformedArgs = call.arguments.map(a => nodeToString(convertNode(a)));
+  return {
+    type: TSNodeType.Raw,
+    code: transformedArgs.join(" + ")
+  } as TSRaw;
 }
 
-/**
- * Convert a new expression.
- */
-function convertNewExpression(newExpr: IR.IRNewExpression): TSNode {
-  const callee = nodeToString(convertNode(newExpr.callee));
-  const args = newExpr.arguments.map(arg => nodeToString(convertNode(arg)));
-  
+/** Convert new expression IR to TS. */
+function convertNewExpression(ne: IR.IRNewExpression): TSNode {
+  const callee = nodeToString(convertNode(ne.callee));
+  const args = ne.arguments.map(a => nodeToString(convertNode(a)));
   if (args.length > 3) {
-    return { 
-      type: TSNodeType.Raw, 
-      code: `new ${callee}(\n  ${args.join(",\n  ")}\n)` 
-    };
+    return {
+      type: TSNodeType.Raw,
+      code: `new ${callee}(\n  ${args.join(",\n  ")}\n)`
+    } as TSRaw;
   }
-  
-  return { 
-    type: TSNodeType.Raw, 
-    code: `new ${callee}(${args.join(", ")})` 
-  };
+  return {
+    type: TSNodeType.Raw,
+    code: `new ${callee}(${args.join(", ")})`
+  } as TSRaw;
 }
 
-/**
- * Convert a variable declaration.
- */
+/** Define convertPropertyAccess function to fix "not defined" error. */
+function convertPropertyAccess(propAccess: IR.IRPropertyAccess): TSNode {
+  const obj = nodeToString(convertNode(propAccess.object));
+  const propNode = convertNode(propAccess.property);
+  // If we can't figure out the property, fallback to bracket
+  if (!propNode || Array.isArray(propNode)) {
+    return {
+      type: TSNodeType.Raw,
+      code: `${obj}[/*invalid prop*/]`
+    } as TSRaw;
+  }
+  // If string literal, check if we can do dot
+  if (propNode.type === TSNodeType.StringLiteral) {
+    const raw = (propNode as TSStringLiteral).text; // includes quotes
+    const unquoted = raw.slice(1, -1);
+    if (propAccess.computed === false && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(unquoted)) {
+      // dot access
+      return {
+        type: TSNodeType.Raw,
+        code: `${obj}.${unquoted}`
+      } as TSRaw;
+    } else {
+      // bracket
+      return {
+        type: TSNodeType.Raw,
+        code: `${obj}[${raw}]`
+      } as TSRaw;
+    }
+  }
+  // If it's something else, fallback to bracket
+  return {
+    type: TSNodeType.Raw,
+    code: `${obj}[${nodeToString(propNode)}]`
+  } as TSRaw;
+}
+
+/** Convert variable declaration IR to TS. */
 function convertVariableDeclaration(vd: IR.IRVariableDeclaration): TSNode {
-  if (isImport(vd)) return null;
-  const varName = vd.id.name;
-  const initializer = nodeToString(convertNode(vd.init));
-  return { type: TSNodeType.Raw, code: `${vd.kind} ${varName} = ${initializer};` };
+  if (isImport(vd)) {
+    return { type: TSNodeType.Raw, code: "" } as TSRaw; // empty
+  }
+  const name = vd.id.name;
+  const initStr = nodeToString(convertNode(vd.init));
+  return {
+    type: TSNodeType.Raw,
+    code: `${vd.kind} ${name} = ${initStr};`
+  } as TSRaw;
 }
 
-/**
- * Convert a function declaration with improved formatting.
- */
+/** Convert function declaration IR to TS. */
 function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
-  const functionName = fn.id.name;
-  let parameters: string;
-  let body: string;
+  const fnName = fn.id.name;
+
+  // Convert IR params => TS param strings
+  let paramsStr: string;
+  if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
+    // Named parameters => single "params"
+    paramsStr = "params";
+  } else {
+    // Convert each IR param to TS param by calling convertNode
+    const paramNames = fn.params.map(param => {
+      const tsId = convertNode(param.id) as TSIdentifier; // <== ensure we get a TSIdentifier
+      return tsId.text;
+    });
+    paramsStr = paramNames.join(", ");
+  }
+
+  const bodyStr = buildFunctionBody(fn);
+
+  if (fn.isAnonymous) {
+    return {
+      type: TSNodeType.Raw,
+      code: `function(${paramsStr}) ${bodyStr}`
+    } as TSRaw;
+  } else {
+    return {
+      type: TSNodeType.Raw,
+      code: `function ${fnName}(${paramsStr}) ${bodyStr}`
+    } as TSRaw;
+  }
+}
+
+function buildFunctionBody(fn: IR.IRFunctionDeclaration): string {
+  const stmts = fn.body.body.map(node => nodeToString(convertNode(node))).filter(Boolean);
   
   if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
-    parameters = "params";
-    const destructuring = `const { ${fn.namedParamIds.join(", ")} } = params;`;
-    body = convertFunctionBody(fn.body, destructuring);
-  } else {
-    parameters = fn.params.map(p => p.id.name).join(", ");
-    body = convertFunctionBody(fn.body);
+    // destructure
+    stmts.unshift(`const { ${fn.namedParamIds.join(", ")} } = params;`);
   }
-  
-  // If the function is anonymous and is used as an expression (not declaration)
-  if (fn.isAnonymous) {
-    return { type: TSNodeType.Raw, code: `function(${parameters}) ${body}` };
+  if (stmts.length === 0) return "{}";
+  if (stmts.length === 1 && stmts[0].length < 60 && !stmts[0].includes("\n")) {
+    return `{ ${stmts[0]} }`;
   }
-  
-  return { type: TSNodeType.Raw, code: `function ${functionName}(${parameters}) ${body}` };
+  return `{\n  ${stmts.join("\n  ")}\n}`;
 }
 
-/**
- * Convert a function body to a string with improved formatting.
- */
-function convertFunctionBody(block: IR.IRBlock, destructuring?: string): string {
-  const statements = [...block.body];
-  if (statements.length === 0) return "{}";
-  
-  const lines = statements
-    .map(stmt => {
-      const converted = convertNode(stmt);
-      return converted ? nodeToString(converted) : "";
-    })
-    .filter(line => line.length > 0);
-  
-  if (destructuring) lines.unshift(destructuring);
-  
-  // For single-line bodies, use compact format if short enough
-  if (lines.length === 1 && lines[0].length < 40 && !lines[0].includes("\n")) {
-    return `{ ${lines[0]} }`;
+/** Convert an enum declaration IR to TS. */
+function convertEnumDeclaration(ed: IR.IREnumDeclaration): TSNode {
+  const enumName = ed.name.name;
+  const members = ed.members.map(m => `${m}: "${m}"`).join(", ");
+  if (ed.members.length <= 3) {
+    return {
+      type: TSNodeType.Raw,
+      code: `const ${enumName} = { ${members} };`
+    } as TSRaw;
   }
-  
-  // For multi-line bodies, indent properly
-  const indentedLines = lines.map(line => `  ${line}`);
-  return `{\n${indentedLines.join("\n")}\n}`;
+  const lines = ed.members.map(m => `  ${m}: "${m}"`).join(",\n");
+  return {
+    type: TSNodeType.Raw,
+    code: `const ${enumName} = {\n${lines}\n};`
+  } as TSRaw;
 }
 
-/**
- * Convert an enum declaration.
- */
-function convertEnumDeclaration(enumDecl: IR.IREnumDeclaration): TSNode {
-  const enumName = enumDecl.name.name;
-  const members = enumDecl.members.map(member => `${member}: "${member}"`).join(", ");
-  
-  // For short enums, use single-line format
-  if (enumDecl.members.length <= 3) {
-    return { type: TSNodeType.Raw, code: `const ${enumName} = { ${members} };` };
-  }
-  
-  // For longer enums, use multi-line format
-  const formattedMembers = enumDecl.members.map(member => `  ${member}: "${member}"`).join(",\n");
-  return { 
-    type: TSNodeType.Raw, 
-    code: `const ${enumName} = {\n${formattedMembers}\n};` 
-  };
-}
-
-/**
- * Convert an export declaration into a structured export node.
- */
-function convertExportDeclaration(exportDecl: IR.IRExportDeclaration): TSNode {
+/** Convert an export declaration IR to TS. */
+function convertExportDeclaration(ex: IR.IRExportDeclaration): TSNode {
   return {
     type: TSNodeType.ExportDeclaration,
-    exports: exportDecl.exports.map(exp => ({
-      local: exp.local.name,
-      exported: exp.exported
+    exports: ex.exports.map(e => ({
+      local: e.local.name,
+      exported: e.exported
     }))
   } as TSExportDeclaration;
 }
 
-/**
- * Convert a block with improved formatting for nested blocks.
- */
-function convertBlock(block: IR.IRBlock): TSNode {
-  const statements = block.body.map(stmt => nodeToString(convertNode(stmt))).filter(line => line.length > 0);
-  if (statements.length === 0) return { type: TSNodeType.Raw, code: "{}" };
-  
-  // For very short blocks with a single statement, consider inline format
-  if (statements.length === 1 && statements[0].length < 40 && !statements[0].includes("\n")) {
-    return { type: TSNodeType.Raw, code: `{ ${statements[0]} }` };
+/** Convert return statement IR to TS. */
+function convertReturnStatement(ret: IR.IRReturnStatement): TSNode {
+  if (!ret.argument) {
+    return { type: TSNodeType.Raw, code: "return;" } as TSRaw;
   }
-  
-  const indentedStatements = statements.map(stmt => `  ${stmt}`);
-  return { type: TSNodeType.Raw, code: `{\n${indentedStatements.join("\n")}\n}` };
+  const argStr = nodeToString(convertNode(ret.argument));
+  return {
+    type: TSNodeType.Raw,
+    code: `return ${argStr};`
+  } as TSRaw;
 }
 
-/**
- * Convert a TS node (or array of nodes) to a string.
- */
+/** Convert if statement IR to TS. */
+function convertIfStatement(ifStmt: IR.IRIfStatement): TSNode {
+  const test = nodeToString(convertNode(ifStmt.test));
+  const cons = nodeToString(convertNode(ifStmt.consequent));
+  if (!ifStmt.alternate) {
+    return {
+      type: TSNodeType.Raw,
+      code: `if (${test}) ${cons}`
+    } as TSRaw;
+  }
+  const alt = nodeToString(convertNode(ifStmt.alternate));
+  return {
+    type: TSNodeType.Raw,
+    code: `if (${test}) ${cons} else ${alt}`
+  } as TSRaw;
+}
+
+/** Convert for statement IR to TS. */
+function convertForStatement(forStmt: IR.IRForStatement): TSNode {
+  const init = nodeToString(convertNode(forStmt.init));
+  const test = nodeToString(convertNode(forStmt.test));
+  const update = forStmt.update ? nodeToString(convertNode(forStmt.update)) : "";
+  const body = nodeToString(convertNode(forStmt.body));
+  return {
+    type: TSNodeType.Raw,
+    code: `for (${init}; ${test}; ${update}) ${body}`
+  } as TSRaw;
+}
+
+/** Convert a block IR to TS. */
+function convertBlock(blk: IR.IRBlock): TSNode {
+  const stmts = blk.body.map(n => nodeToString(convertNode(n))).filter(Boolean);
+  if (stmts.length === 0) {
+    return { type: TSNodeType.Raw, code: "{}" } as TSRaw;
+  }
+  if (stmts.length === 1 && stmts[0].length < 40 && !stmts[0].includes("\n")) {
+    return { type: TSNodeType.Raw, code: `{ ${stmts[0]} }` } as TSRaw;
+  }
+  const joined = stmts.map(s => "  " + s).join("\n");
+  return {
+    type: TSNodeType.Raw,
+    code: `{\n${joined}\n}`
+  } as TSRaw;
+}
+
+/** Convert a TSNode or array of TSNodes to a string. */
 function nodeToString(node: TSNode | TSNode[] | null): string {
   if (!node) return "";
-  if (Array.isArray(node)) return node.map(n => nodeToString(n)).join("\n");
-  
+  if (Array.isArray(node)) {
+    return node.map(n => nodeToString(n)).join("\n");
+  }
   switch (node.type) {
     case TSNodeType.Raw:
       return (node as TSRaw).code;
@@ -626,9 +589,10 @@ function nodeToString(node: TSNode | TSNode[] | null): string {
     case TSNodeType.Identifier:
       return (node as TSIdentifier).text;
     case TSNodeType.ExportDeclaration:
+      // no direct string output
       return "";
     default:
-      console.warn(`Unhandled TS node type in nodeToString: ${(node as any).type}`);
+      console.warn(`Unhandled TS node type in nodeToString: ${node.type}`);
       return "";
   }
 }
