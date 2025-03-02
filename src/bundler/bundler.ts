@@ -1,5 +1,8 @@
 // src/bundler/bundler.ts
-import { join, dirname, basename, runCmd } from "../platform/platform.ts";
+import { join, dirname, basename } from "../platform/platform.ts";
+
+// Simple cache for bundled content
+const bundleCache = new Map<string, { content: string, timestamp: number }>();
 
 /**
  * Bundle a JavaScript file into a single self-contained file.
@@ -21,6 +24,33 @@ export async function bundleJavaScript(
   const format = options.format || "esm";
   const verbose = options.verbose || false;
   
+  // Create a cache key based on file path, format, and file stats
+  let cacheKey: string;
+  let useCache = true;
+  try {
+    const stat = await Deno.stat(filePath);
+    const mtime = stat.mtime?.getTime() || 0;
+    cacheKey = `${filePath}:${format}:${mtime}`;
+    
+    // Check cache if available and file hasn't changed
+    const cached = bundleCache.get(cacheKey);
+    if (cached) {
+      if (verbose) console.log(`Using cached bundle for: ${filePath}`);
+      
+      // If an output path is specified, write the cached content
+      if (options.outputPath) {
+        await Deno.writeTextFile(options.outputPath, cached.content);
+        if (verbose) console.log(`Wrote cached bundle to: ${options.outputPath}`);
+      }
+      
+      return cached.content;
+    }
+  } catch (error) {
+    // If there's an error getting stats, we won't use caching
+    useCache = false;
+    if (verbose) console.warn(`Cache disabled for bundling - couldn't get file stats: ${error.message}`);
+  }
+  
   try {
     if (verbose) console.log(`Bundling JavaScript file: ${filePath}`);
     
@@ -38,7 +68,7 @@ export async function bundleJavaScript(
     if (verbose) console.log(`Running command: ${cmd.join(' ')}`);
     
     // Execute the bundle command
-    const process = runCmd({
+    const process = Deno.run({
       cmd,
       stdout: "piped",
       stderr: "piped",
@@ -58,6 +88,21 @@ export async function bundleJavaScript(
     // Read the bundled output
     const bundled = await Deno.readTextFile(tempOutputPath);
     
+    // Cache the result if caching is enabled
+    if (useCache && cacheKey) {
+      bundleCache.set(cacheKey, { 
+        content: bundled, 
+        timestamp: Date.now() 
+      });
+      
+      // Limit cache size to prevent memory leaks (keep last 50 entries)
+      if (bundleCache.size > 50) {
+        const oldestKey = [...bundleCache.entries()]
+          .sort((a, b) => a[1].timestamp - b[1].timestamp)[0][0];
+        bundleCache.delete(oldestKey);
+      }
+    }
+    
     // Clean up the temporary file if it's not the requested output
     if (!options.outputPath) {
       try {
@@ -71,6 +116,11 @@ export async function bundleJavaScript(
     if (verbose) console.log(`Successfully bundled: ${filePath}`);
     return bundled;
   } catch (error) {
-    throw new Error(`Bundling error: ${error.message}`);
+    // Enhance error reporting
+    const errorMessage = error instanceof Error ? 
+      error.message : 
+      'Unknown error during bundling';
+    
+    throw new Error(`Bundling error for ${filePath}: ${errorMessage}`);
   }
 }

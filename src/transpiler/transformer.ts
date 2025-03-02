@@ -5,22 +5,25 @@ import { convertIRToTSAST } from "./ir-to-ts-ast.ts";
 import { generateTypeScript, CodeGenerationOptions } from "./ts-ast-to-code.ts";
 import { TSSourceFile, TSNodeType, TSRaw } from "./ts-ast-types.ts";
 import {
-  isExternalModule,
-  resolveImportPath,
-  hqlToJsPath,
-  getDirectory,
-  hasExtension,
-  normalizePath,
-  resolveWithExtensions,
-  convertImportSpecifier,
-  pathExists
-} from "./path-utils.ts";
+  join,
+  dirname,
+  basename,
+  resolve,
+} from "../platform/platform.ts";
 import { parse } from "./parser.ts";
-import { dirname, resolve, join, basename } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { bundleJavaScript } from "../bundler/bundler.ts";
 
 // Cache for processed imports to avoid redundant processing
 const processedImportsCache = new Map<string, Set<string>>();
+
+// Interface for import information 
+interface ImportInfo {
+  importStatement: string;
+  moduleName: string | null;
+  importPath: string;
+  isHQL: boolean;
+  isExternal: boolean;
+}
 
 /**
  * Transformation options.
@@ -56,6 +59,61 @@ function getDefaultOptions(overrides: Partial<TransformOptions> = {}): Required<
     bundle: overrides.bundle ?? false,
     verbose: overrides.verbose ?? false
   };
+}
+
+/**
+ * Check if a module is an external module based on its path.
+ */
+function isExternalModule(path: string | null | undefined): boolean {
+  if (typeof path !== 'string') {
+    return false;
+  }
+  
+  return path.startsWith('http://') ||
+         path.startsWith('https://') ||
+         path.startsWith('npm:') ||
+         path.startsWith('jsr:') ||
+         path.startsWith('deno:') ||
+         path.startsWith('std:') ||
+         path.startsWith('node:') ||
+         (!path.startsWith('./') && 
+          !path.startsWith('../') && 
+          !path.startsWith('/') &&
+          !isAbsolutePath(path) &&
+          !path.includes(':'));  // Bare specifiers (but not Windows drive letters)
+}
+
+/**
+ * Check if a path is absolute using platform-specific logic.
+ */
+function isAbsolutePath(path: string): boolean {
+  try {
+    // Handle Windows paths like C:\path
+    if (/^[a-zA-Z]:[/\\]/.test(path)) {
+      return true;
+    }
+    
+    // Unix absolute paths
+    return path.startsWith('/');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Normalize path separators for consistent usage across platforms.
+ */
+function normalizePath(filePath: string): string {
+  if (typeof filePath !== 'string') {
+    throw new Error(`Path must be a string: ${JSON.stringify(filePath)}`);
+  }
+  
+  if (isExternalModule(filePath)) {
+    return filePath;
+  }
+  
+  // Replace Windows path separators with Unix ones for consistency
+  return filePath.replace(/\\/g, '/');
 }
 
 /**
@@ -95,19 +153,7 @@ export async function transformAST(
 }
 
 /**
- * Extract import information using a type-safe structure
- */
-interface ImportInfo {
-  importStatement: string;
-  moduleName: string | null;
-  importPath: string;
-  isHQL: boolean;
-  isExternal: boolean;
-}
-
-/**
  * Process imports in the TS AST efficiently.
- * Uses a cache to avoid redundant processing.
  */
 async function processImportsInAST(
   ast: TSSourceFile,
@@ -115,9 +161,10 @@ async function processImportsInAST(
   visited: Set<string>,
   options: Required<TransformOptions>
 ): Promise<void> {
-  // Process all imports in parallel for better performance
-  const importPromises: Promise<void>[] = [];
+  // Collect all imports for parallel processing
+  const importStatements: { index: number; statement: TSRaw; info: ImportInfo }[] = [];
   
+  // First pass: identify all import statements
   for (let i = 0; i < ast.statements.length; i++) {
     const stmt = ast.statements[i];
     if (stmt.type === TSNodeType.Raw) {
@@ -125,49 +172,56 @@ async function processImportsInAST(
       if (raw.code.startsWith("import")) {
         const importInfo = extractImportInfo(raw.code);
         if (importInfo) {
-          // Queue the import processing
-          importPromises.push(
-            processImport(ast, i, importInfo, currentDir, visited, options)
-          );
+          importStatements.push({ index: i, statement: raw, info: importInfo });
         }
       }
     }
   }
   
-  // Wait for all imports to be processed
-  await Promise.all(importPromises);
+  // Process all imports in parallel for better performance
+  await Promise.all(
+    importStatements.map(({ index, statement, info }) => 
+      processImport(ast, index, info, currentDir, visited, options)
+    )
+  );
 }
 
 /**
- * Extract import information with improved regex pattern for resilience.
+ * Extract import information from an import statement.
  */
 function extractImportInfo(importStatement: string): ImportInfo | null {
-  // More robust regex that handles complex import statements
-  const pathMatch = importStatement.match(/from\s+["']([^"']+)["']/);
-  if (!pathMatch) return null;
+  // Match the import path (the part after 'from')
+  const fromMatch = importStatement.match(/from\s+["']([^"']+)["']/);
+  if (!fromMatch) return null;
   
-  const importPath = pathMatch[1];
+  const importPath = fromMatch[1];
   
-  // Match different import patterns
-  const defaultImportMatch = importStatement.match(/import\s+(\w+)\s+from/);
-  const namespaceImportMatch = importStatement.match(/import\s+\*\s+as\s+(\w+)\s+from/);
+  // Determine the import type by analyzing the structure
+  let moduleName: string | null = null;
   
-  const moduleName = 
-    (namespaceImportMatch ? namespaceImportMatch[1] : null) || 
-    (defaultImportMatch ? defaultImportMatch[1] : null);
+  // Default import: import name from 'path';
+  const defaultMatch = importStatement.match(/import\s+(\w+)\s+from/);
+  if (defaultMatch) {
+    moduleName = defaultMatch[1];
+  } else {
+    // Namespace import: import * as name from 'path';
+    const namespaceMatch = importStatement.match(/import\s+\*\s+as\s+(\w+)\s+from/);
+    if (namespaceMatch) {
+      moduleName = namespaceMatch[1];
+    }
+  }
   
   return {
     importStatement,
     moduleName,
     importPath,
-    isHQL: importPath.endsWith(".hql"),
-    isExternal: isExternalModule(importPath),
+    isHQL: importPath.endsWith('.hql'),
+    isExternal: isExternalModule(importPath)
   };
 }
 
 /**
  * Process an import based on its type.
- * Uses a cache to avoid redundant processing.
  */
 async function processImport(
   ast: TSSourceFile,
@@ -237,6 +291,50 @@ async function processImport(
       options
     );
   }
+}
+
+/**
+ * Convert an import specifier to its canonical form.
+ */
+function convertImportSpecifier(specifier: string): string {
+  // Handle npm: specifiers
+  if (specifier.startsWith('npm:')) {
+    return `https://esm.sh/${specifier.substring(4)}`;
+  }
+  
+  // Handle jsr: specifiers (JSR registry)
+  if (specifier.startsWith('jsr:')) {
+    return specifier; // Keep JSR specifiers as-is
+  }
+  
+  // Handle std: specifiers (Deno standard library)
+  if (specifier.startsWith('std:')) {
+    const version = "0.170.0"; // Could be configurable
+    const path = specifier.substring(4);
+    return `https://deno.land/std@${version}/${path}`;
+  }
+  
+  // Handle deno: specifiers
+  if (specifier.startsWith('deno:')) {
+    return specifier; // These are built-ins, so keep them as-is
+  }
+  
+  // Handle node: specifiers
+  if (specifier.startsWith('node:')) {
+    // Convert node: specifiers to Deno-compatible polyfills
+    const nodePath = specifier.substring(5);
+    return `https://deno.land/std@0.170.0/node/${nodePath}.ts`;
+  }
+  
+  // For bare specifiers (e.g., 'lodash')
+  if (isExternalModule(specifier) && 
+      !specifier.startsWith('http:') && 
+      !specifier.startsWith('https:')) {
+    // Use esm.sh as a CDN for Node packages
+    return `https://esm.sh/${specifier}`;
+  }
+  
+  return specifier;
 }
 
 /**
@@ -364,79 +462,32 @@ async function processUnknownImport(
 }
 
 /**
- * Extract all JS imports from file content with improved regex patterns.
+ * Extract JavaScript imports with a more structured approach.
  */
 function extractJsImports(jsContent: string): ImportInfo[] {
   const imports: ImportInfo[] = [];
+  const lines = jsContent.split('\n');
   
-  // Enhanced regex patterns for better import detection
-  const importRegexPatterns = [
-    // Default import: import name from 'path';
-    /import\s+(\w+)\s+from\s+["']([^"']+)["'];/g,
+  // Process each line to find import statements
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
     
-    // Named imports: import { name, x as y } from 'path';
-    /import\s+\{\s*((?:[^{}]|{[^{}]*})*?)\s*\}\s+from\s+["']([^"']+)["'];/g,
+    // Skip lines that don't contain imports
+    if (!line.startsWith('import ')) continue;
     
-    // Namespace import: import * as name from 'path';
-    /import\s+\*\s+as\s+(\w+)\s+from\s+["']([^"']+)["'];/g,
+    // Handle multi-line imports by joining lines until we find the semicolon
+    let fullImport = line;
+    let lineIndex = i;
     
-    // Mixed imports: import name, { x, y } from 'path';
-    /import\s+(\w+)\s*,\s*\{\s*((?:[^{}]|{[^{}]*})*?)\s*\}\s+from\s+["']([^"']+)["'];/g,
+    while (!fullImport.includes(';') && lineIndex < lines.length - 1) {
+      lineIndex++;
+      fullImport += ' ' + lines[lineIndex].trim();
+    }
     
-    // Side-effect only import: import 'path';
-    /import\s+["']([^"']+)["'];/g
-  ];
-  
-  for (const regex of importRegexPatterns) {
-    let match;
-    while ((match = regex.exec(jsContent)) !== null) {
-      // Handle different import types based on regex pattern
-      if (regex.source.startsWith('import\\s+\\w+\\s+from')) {
-        // Default import
-        imports.push({
-          importStatement: match[0],
-          moduleName: match[1],
-          importPath: match[2],
-          isHQL: match[2].endsWith('.hql'),
-          isExternal: isExternalModule(match[2])
-        });
-      } else if (regex.source.startsWith('import\\s+\\{')) {
-        // Named imports
-        imports.push({
-          importStatement: match[0],
-          moduleName: null,
-          importPath: match[2],
-          isHQL: match[2].endsWith('.hql'),
-          isExternal: isExternalModule(match[2])
-        });
-      } else if (regex.source.startsWith('import\\s+\\*')) {
-        // Namespace import
-        imports.push({
-          importStatement: match[0],
-          moduleName: match[1],
-          importPath: match[2],
-          isHQL: match[2].endsWith('.hql'),
-          isExternal: isExternalModule(match[2])
-        });
-      } else if (regex.source.startsWith('import\\s+\\w+\\s*,')) {
-        // Mixed import
-        imports.push({
-          importStatement: match[0],
-          moduleName: match[1],
-          importPath: match[3],
-          isHQL: match[3].endsWith('.hql'),
-          isExternal: isExternalModule(match[3])
-        });
-      } else if (regex.source.startsWith('import\\s+["\']')) {
-        // Side-effect only import
-        imports.push({
-          importStatement: match[0],
-          moduleName: null,
-          importPath: match[1],
-          isHQL: match[1].endsWith('.hql'),
-          isExternal: isExternalModule(match[1])
-        });
-      }
+    // Extract import information
+    const importInfo = extractImportInfo(fullImport);
+    if (importInfo) {
+      imports.push(importInfo);
     }
   }
   
@@ -453,7 +504,7 @@ async function processHqlImportsInJsFile(
   visited: Set<string>,
   options: Required<TransformOptions>
 ): Promise<void> {
-  const jsFileDir = getDirectory(jsFilePath);
+  const jsFileDir = dirname(jsFilePath);
   let updatedContent = jsContent;
   let contentModified = false;
   
@@ -499,6 +550,94 @@ async function processHqlImportsInJsFile(
 }
 
 /**
+ * Helper function to resolve an import path against a base directory.
+ */
+function resolveImportPath(importPath: string, currentDir: string): string {
+  if (isExternalModule(importPath)) {
+    return importPath;
+  }
+  
+  if (importPath.startsWith('./') || importPath.startsWith('../')) {
+    return normalizePath(resolve(join(currentDir, importPath)));
+  }
+  
+  if (importPath.startsWith('/') || isAbsolutePath(importPath)) {
+    return normalizePath(resolve(importPath));
+  }
+  
+  return importPath;
+}
+
+/**
+ * Convert an HQL path to its corresponding JS path.
+ */
+function hqlToJsPath(hqlPath: string): string {
+  if (isExternalModule(hqlPath)) {
+    return hqlPath;
+  }
+  return hqlPath.replace(/\.hql$/, '.js');
+}
+
+/**
+ * Check if a file path has a specific extension.
+ */
+function hasExtension(filePath: string, ext: string): boolean {
+  return filePath.endsWith(ext);
+}
+
+/**
+ * Check if a path exists (file or directory).
+ */
+async function pathExists(filePath: string): Promise<boolean> {
+  if (isExternalModule(filePath)) {
+    return true; // Assume external modules exist
+  }
+  
+  try {
+    await Deno.stat(filePath);
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Try multiple extensions to find a file.
+ */
+async function resolveWithExtensions(
+  basePath: string, 
+  extensions = ['.hql', '.js', '.ts', '.tsx']
+): Promise<string | null> {
+  // First try the path as-is
+  if (await pathExists(basePath)) {
+    return basePath;
+  }
+  
+  // Try with each extension
+  for (const ext of extensions) {
+    const pathWithExt = basePath.endsWith(ext) ? basePath : `${basePath}${ext}`;
+    if (await pathExists(pathWithExt)) {
+      return pathWithExt;
+    }
+  }
+  
+  // Try index files in directory
+  if (!basePath.endsWith('/')) {
+    for (const ext of extensions) {
+      const indexPath = `${basePath}/index${ext}`;
+      if (await pathExists(indexPath)) {
+        return indexPath;
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
  * Transpile HQL source code into JavaScript.
  */
 export async function transpile(
@@ -508,7 +647,7 @@ export async function transpile(
 ): Promise<string> {
   try {
     const ast = parse(source);
-    const currentDir = getDirectory(filePath);
+    const currentDir = dirname(filePath);
     const visited = new Set<string>([normalizePath(filePath)]);
     return await transformAST(ast, currentDir, visited, options);
   } catch (error: any) {
@@ -544,7 +683,10 @@ export async function transpileFile(
         await Deno.writeTextFile(tempJsPath, transpiled);
         
         // Bundle the transpiled output
-        const bundled = await bundleJavaScript(tempJsPath, { format: options.module as "esm" | "commonjs", verbose: options.verbose });
+        const bundled = await bundleJavaScript(tempJsPath, { 
+          format: options.module as "esm" | "commonjs", 
+          verbose: options.verbose 
+        });
         
         // Clean up temporary file
         try {
@@ -589,7 +731,7 @@ export async function writeOutput(
   outputPath: string
 ): Promise<void> {
   try {
-    const outputDir = getDirectory(outputPath);
+    const outputDir = dirname(outputPath);
     
     // Ensure the output directory exists
     try {
