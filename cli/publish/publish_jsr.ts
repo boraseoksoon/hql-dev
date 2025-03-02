@@ -1,4 +1,4 @@
-// cli/publish/publish_jsr.ts
+// cli/publish/publish_jsr.ts - Improved version
 import {
   join,
   resolve,
@@ -82,32 +82,42 @@ export async function publishJSR(options: {
       baseDir = dirname(inputPath);
     }
   } catch (error) {
-    console.error(`Error checking input path: ${error.message}`);
+    console.error(`\n❌ Error checking input path: ${error instanceof Error ? error.message : String(error)}`);
     exit(1);
   }
 
+  console.log(`\n🔨 Building module from "${inputPath}"...`);
   const distDir = await buildJsModule(inputPath);
+  console.log(`\nℹ️ Module built to "${distDir}"`);
 
+  console.log(`\n📝 Reading/updating JSR configuration...`);
   const { configPath, config, jsrUser } = await getJsrConfig(distDir, options.name, options.version);
 
   // If CLI overrides name, use it.
   if (options.name) {
     config.name = options.name.startsWith("@") ? options.name : `@${jsrUser}/${options.name}`;
+    console.log(`  → Using package name: "${config.name}"`);
   }
   await writeJSON(configPath, config);
+  console.log(`  → Updated JSR config at "${configPath}"`);
 
   // Ensure README exists.
   const readmePath = join(distDir, "README.md");
   if (!(await exists(readmePath))) {
+    console.log(`  → Creating default README.md`);
     await writeTextFile(readmePath, `# ${config.name}\n\nAuto-generated README for JSR package.\n`);
   }
 
-  console.log(`\nPublishing ${config.name}@${config.version} to JSR...`);
+  console.log(`\n🚀 Publishing ${config.name}@${config.version} to JSR...`);
   const tempDir = await makeTempDir();
+  console.log(`  → Created temporary directory: "${tempDir}"`);
   await copy(distDir, tempDir, { overwrite: true });
+  console.log(`  → Copied module files to temporary directory`);
 
   const publishFlags = ["--allow-dirty"];
   if (options.verbose) publishFlags.push("--verbose");
+  
+  console.log(`  → Running publish command: deno publish ${publishFlags.join(' ')}`);
   const publishProc = runCmd({
     cmd: ["deno", "publish", ...publishFlags],
     cwd: tempDir,
@@ -118,7 +128,7 @@ export async function publishJSR(options: {
   publishProc.close();
 
   if (!status.success) {
-    console.error(`\nJSR publish failed with code ${status.code}.`);
+    console.error(`\n❌ JSR publish failed with code ${status.code}.`);
     exit(status.code);
   }
 

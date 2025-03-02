@@ -1,8 +1,9 @@
-// cli/publish/publish.ts
+// cli/publish/publish.ts - Improved with better logging and code structure
 import { parseArgs } from "jsr:@std/cli@1.0.13/parse-args";
 import { cwd, exit } from "../../src/platform/platform.ts";
 import { publishNpm } from "./publish_npm.ts";
 import { publishJSR } from "./publish_jsr.ts";
+import { checkEnvironment } from "./publish_common.ts";
 
 export interface PublishOptions {
   platform: "jsr" | "npm";
@@ -70,7 +71,7 @@ function parsePublishArgs(args: string[]): PublishOptions {
     if (w === "npm" || w === "jsr") {
       platform = w as "jsr" | "npm";
     } else {
-      console.error(`Invalid value for -where: "${parsed.where}". Must be 'npm' or 'jsr'.`);
+      console.error(`\n❌ Invalid value for -where: "${parsed.where}". Must be 'npm' or 'jsr'.`);
       exit(1);
     }
   }
@@ -84,7 +85,7 @@ function parsePublishArgs(args: string[]): PublishOptions {
     if (maybePlatform === "npm" || maybePlatform === "jsr") {
       platform = maybePlatform as "jsr" | "npm";
     } else {
-      console.error(`Invalid platform: "${pos[1]}". Must be "npm" or "jsr".`);
+      console.error(`\n❌ Invalid platform: "${pos[1]}". Must be "npm" or "jsr".`);
       exit(1);
     }
   }
@@ -99,7 +100,7 @@ function parsePublishArgs(args: string[]): PublishOptions {
   }
 
   if (version && !/^\d+\.\d+\.\d+$/.test(version)) {
-    console.error(`Invalid version format: ${version}. Expected "X.Y.Z"`);
+    console.error(`\n❌ Invalid version format: ${version}. Expected "X.Y.Z"`);
     exit(1);
   }
 
@@ -109,24 +110,38 @@ function parsePublishArgs(args: string[]): PublishOptions {
 /** Main publish function that calls the appropriate publisher. */
 export async function publish(args: string[]): Promise<void> {
   const options = parsePublishArgs(args);
+  
   if (options.verbose) {
     console.log("Running with verbose logging enabled\n");
   }
+  
   console.log(`Publishing ${options.platform.toUpperCase()} package with:
-  Directory (what): ${options.what}
+  Directory (what): "${options.what}"
   Name: ${options.name ?? "(auto-generated)"}
-  Version: ${options.version ?? "(auto-incremented)"}
-`);
-  if (options.platform === "npm") {
-    await publishNpm(options);
-  } else {
-    await publishJSR(options);
+  Version: ${options.version ?? "(auto-incremented)"}`);
+
+  // Check environment before proceeding
+  if (!await checkEnvironment(options.platform)) {
+    console.error("\n❌ Environment check failed. Please fix the issues before publishing.");
+    exit(1);
+  }
+  
+  try {
+    if (options.platform === "npm") {
+      await publishNpm(options);
+    } else {
+      await publishJSR(options);
+    }
+    console.log("\n✅ Publishing completed successfully!");
+  } catch (error) {
+    console.error("\n❌ Publishing failed:", error instanceof Error ? error.message : String(error));
+    exit(1);
   }
 }
 
 if (import.meta.main) {
   publish(Deno.args).catch((err) => {
-    console.error("Publish failed:", err);
+    console.error("\n❌ Publish failed:", err instanceof Error ? err.message : String(err));
     exit(1);
   });
 }

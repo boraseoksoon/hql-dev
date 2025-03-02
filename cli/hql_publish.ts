@@ -58,7 +58,7 @@ async function main() {
 
 if (import.meta.main) {
   main().catch((error) => {
-    console.error("Unhandled error:", error);
+    console.error("\n❌ Unhandled error:", error.message);
     exit(1);
   });
 }

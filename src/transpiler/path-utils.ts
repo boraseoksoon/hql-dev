@@ -1,35 +1,21 @@
-// src/transpiler/path-utils.ts
-import { join, resolve, dirname, isAbsolute } from "https://deno.land/std@0.170.0/path/mod.ts";
+// src/transpiler/path-utils.ts - Consolidated path utilities
+import { join, resolve, dirname, isAbsolute } from "jsr:@std/path@1.0.8";
 
-/**
- * Cache for normalized paths to avoid redundant operations
- */
+// Caches for improved performance
 const normalizedPathCache = new Map<string, string>();
-
-/**
- * Cache for checking if a path is external
- */
 const externalPathCache = new Map<string, boolean>();
-
-/**
- * Cache for absolute path resolution
- */
 const absolutePathCache = new Map<string, string>();
-
-/**
- * Cache for resolved import paths
- */
 const importPathCache = new Map<string, Map<string, string>>();
+const extensionResolveCache = new Map<string, string | null>();
 
 /**
  * Check if a path refers to an external module
- * This includes all supported Deno module systems
- * Uses a cache to avoid redundant checks
+ * @param path The path to check
+ * @returns True if the path is an external module reference
  */
 export function isExternalModule(path: string | null | undefined): boolean {
-  // Type check to avoid errors
+  // Handle invalid input
   if (typeof path !== 'string') {
-    console.warn(`Invalid path provided to isExternalModule:`, path);
     return false;
   }
   
@@ -57,10 +43,42 @@ export function isExternalModule(path: string | null | undefined): boolean {
 }
 
 /**
+ * Normalize path separators for consistent usage
+ * @param filePath The path to normalize
+ * @returns Normalized path
+ */
+export function normalizePath(filePath: string): string {
+  // Type safety
+  if (typeof filePath !== 'string') {
+    throw new Error(`Path must be a string: ${JSON.stringify(filePath)}`);
+  }
+  
+  // Skip external modules
+  if (isExternalModule(filePath)) {
+    return filePath;
+  }
+  
+  // Check cache first
+  if (normalizedPathCache.has(filePath)) {
+    return normalizedPathCache.get(filePath)!;
+  }
+  
+  // Replace Windows path separators with Unix ones for consistency
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  
+  // Cache the result
+  normalizedPathCache.set(filePath, normalizedPath);
+  return normalizedPath;
+}
+
+/**
  * Resolve a relative import path against a base directory
- * Uses a cache to avoid redundant resolutions
+ * @param importPath The import path to resolve
+ * @param currentDir The base directory
+ * @returns Resolved absolute path
  */
 export function resolveImportPath(importPath: string, currentDir: string): string {
+  // Skip external modules
   if (isExternalModule(importPath)) {
     return importPath;
   }
@@ -91,88 +109,76 @@ export function resolveImportPath(importPath: string, currentDir: string): strin
 
 /**
  * Convert an HQL path to its corresponding JS path
+ * @param hqlPath The HQL file path
+ * @returns Equivalent JS file path
  */
 export function hqlToJsPath(hqlPath: string): string {
   if (isExternalModule(hqlPath)) {
-    // For external modules, keep the same path
     return hqlPath;
   }
   return hqlPath.replace(/\.hql$/, '.js');
 }
 
 /**
- * Get the directory from a file path
+ * Convert import specifiers to their canonical form
+ * @param specifier The import specifier
+ * @returns Canonical form of the import specifier
  */
-export function getDirectory(filePath: string): string {
-  return dirname(resolve(filePath));
+export function convertImportSpecifier(specifier: string): string {
+  // Handle npm: specifiers
+  if (specifier.startsWith('npm:')) {
+    return `https://esm.sh/${specifier.substring(4)}`;
+  }
+  
+  // Handle jsr: specifiers
+  if (specifier.startsWith('jsr:')) {
+    return specifier; // Keep JSR specifiers as-is
+  }
+  
+  // Handle std: specifiers (Deno standard library)
+  if (specifier.startsWith('std:')) {
+    const version = "0.170.0"; // Could be configurable
+    const path = specifier.substring(4);
+    return `https://deno.land/std@${version}/${path}`;
+  }
+  
+  // Handle deno: specifiers
+  if (specifier.startsWith('deno:')) {
+    return specifier; // Built-ins, keep as-is
+  }
+  
+  // Handle node: specifiers
+  if (specifier.startsWith('node:')) {
+    // Convert node: specifiers to Deno-compatible polyfills
+    const nodePath = specifier.substring(5);
+    return `https://deno.land/std@0.170.0/node/${nodePath}.ts`;
+  }
+  
+  // For bare specifiers (e.g., 'lodash')
+  if (isExternalModule(specifier) && 
+      !specifier.startsWith('http:') && 
+      !specifier.startsWith('https:')) {
+    // Use esm.sh as a CDN for Node packages
+    return `https://esm.sh/${specifier}`;
+  }
+  
+  return specifier;
 }
 
 /**
  * Check if a file path has a specific extension
+ * @param filePath The file path
+ * @param ext The extension to check
+ * @returns True if the file has the specified extension
  */
 export function hasExtension(filePath: string, ext: string): boolean {
   return filePath.endsWith(ext);
 }
 
 /**
- * Helper to ensure a file path is absolute
- * Uses a cache to avoid redundant operations
- */
-export function ensureAbsolutePath(filePath: string | any): string {
-  // Type check to avoid errors
-  if (typeof filePath !== 'string') {
-    console.error(`ensureAbsolutePath received non-string:`, filePath);
-    throw new Error(`Path must be a string. Received ${JSON.stringify(filePath)}`);
-  }
-  
-  // External modules are already absolute
-  if (isExternalModule(filePath)) {
-    return filePath;
-  }
-  
-  // Check cache first
-  if (absolutePathCache.has(filePath)) {
-    return absolutePathCache.get(filePath)!;
-  }
-  
-  const absPath = resolve(filePath);
-  
-  // Cache the result
-  absolutePathCache.set(filePath, absPath);
-  return absPath;
-}
-
-/**
- * Normalize path separators for consistent usage in maps and comparisons
- * Uses a cache to avoid redundant operations
- */
-export function normalizePath(filePath: string | any): string {
-  // Type check to avoid errors
-  if (typeof filePath !== 'string') {
-    console.error(`normalizePath received non-string:`, filePath);
-    throw new Error(`Path must be a string. Received ${JSON.stringify(filePath)}`);
-  }
-  
-  // External modules don't need normalization
-  if (isExternalModule(filePath)) {
-    return filePath;
-  }
-  
-  // Check cache first
-  if (normalizedPathCache.has(filePath)) {
-    return normalizedPathCache.get(filePath)!;
-  }
-  
-  // Replace Windows path separators with Unix ones for consistency
-  const normalizedPath = filePath.replace(/\\/g, '/');
-  
-  // Cache the result
-  normalizedPathCache.set(filePath, normalizedPath);
-  return normalizedPath;
-}
-
-/**
  * Check if a path exists (file or directory)
+ * @param filePath The path to check
+ * @returns Promise resolving to true if the path exists
  */
 export async function pathExists(filePath: string): Promise<boolean> {
   if (isExternalModule(filePath)) {
@@ -192,13 +198,23 @@ export async function pathExists(filePath: string): Promise<boolean> {
 
 /**
  * Try multiple extensions to find a file
+ * @param basePath The base path without extension
+ * @param extensions Array of extensions to try
+ * @returns Promise resolving to the found path or null
  */
 export async function resolveWithExtensions(
   basePath: string, 
   extensions = ['.hql', '.js', '.ts', '.tsx']
 ): Promise<string | null> {
+  // Check cache first
+  const cacheKey = `${basePath}:${extensions.join(',')}`;
+  if (extensionResolveCache.has(cacheKey)) {
+    return extensionResolveCache.get(cacheKey);
+  }
+
   // First try the path as-is
   if (await pathExists(basePath)) {
+    extensionResolveCache.set(cacheKey, basePath);
     return basePath;
   }
   
@@ -206,6 +222,7 @@ export async function resolveWithExtensions(
   for (const ext of extensions) {
     const pathWithExt = basePath.endsWith(ext) ? basePath : `${basePath}${ext}`;
     if (await pathExists(pathWithExt)) {
+      extensionResolveCache.set(cacheKey, pathWithExt);
       return pathWithExt;
     }
   }
@@ -215,58 +232,50 @@ export async function resolveWithExtensions(
     for (const ext of extensions) {
       const indexPath = `${basePath}/index${ext}`;
       if (await pathExists(indexPath)) {
+        extensionResolveCache.set(cacheKey, indexPath);
         return indexPath;
       }
     }
   }
   
+  // Cache the negative result
+  extensionResolveCache.set(cacheKey, null);
   return null;
 }
 
 /**
- * Convert import specifiers to their equivalent JS paths
+ * Get the directory from a file path
+ * @param filePath The file path
+ * @returns Directory containing the file
  */
-export function convertImportSpecifier(specifier: string): string {
-  // Handle npm: specifiers
-  if (specifier.startsWith('npm:')) {
-    // Convert npm: to node_modules/ (simplified for illustration)
-    return `https://esm.sh/${specifier.substring(4)}`;
+export function getDirectory(filePath: string): string {
+  return dirname(resolve(filePath));
+}
+
+/**
+ * Helper to ensure a file path is absolute
+ * @param filePath The file path
+ * @returns Absolute path
+ */
+export function ensureAbsolutePath(filePath: string): string {
+  // Type check to avoid errors
+  if (typeof filePath !== 'string') {
+    throw new Error(`Path must be a string. Received ${JSON.stringify(filePath)}`);
   }
   
-  // Handle jsr: specifiers
-  if (specifier.startsWith('jsr:')) {
-    // JSR imports can be used directly in Deno, but for bundling we
-    // may want to convert to their CDN URLs
-    return specifier;
+  // External modules are already absolute
+  if (isExternalModule(filePath)) {
+    return filePath;
   }
   
-  // Handle std: specifiers (Deno standard library)
-  if (specifier.startsWith('std:')) {
-    const version = "0.170.0"; // Could be configurable
-    const path = specifier.substring(4);
-    return `https://deno.land/std@${version}/${path}`;
+  // Check cache first
+  if (absolutePathCache.has(filePath)) {
+    return absolutePathCache.get(filePath)!;
   }
   
-  // Handle deno: specifiers
-  if (specifier.startsWith('deno:')) {
-    // These are built-ins, so keep them as is
-    return specifier;
-  }
+  const absPath = resolve(filePath);
   
-  // Handle node: specifiers
-  if (specifier.startsWith('node:')) {
-    // Convert node: specifiers to Deno-compatible polyfills
-    const nodePath = specifier.substring(5);
-    return `https://deno.land/std@0.170.0/node/${nodePath}.ts`;
-  }
-  
-  // For bare specifiers (e.g., 'lodash')
-  if (isExternalModule(specifier) && 
-      !specifier.startsWith('http:') && 
-      !specifier.startsWith('https:')) {
-    // Use esm.sh as a CDN for Node packages
-    return `https://esm.sh/${specifier}`;
-  }
-  
-  return specifier;
+  // Cache the result
+  absolutePathCache.set(filePath, absPath);
+  return absPath;
 }
