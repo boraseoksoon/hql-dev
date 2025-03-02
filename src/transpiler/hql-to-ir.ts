@@ -153,8 +153,55 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     }
   }
   
+  // For tests - direct array literals
+  if (list.type === "list" && list.elements.length > 0 && 
+      !isListForm(list) && !isCallForm(list)) {
+    return transformDirectArray(list, currentDir);
+  }
+  
   // Default: treat as function call
   return transformCall(list, currentDir);
+}
+
+// Helper to check if a list should be treated as a special form
+function isListForm(list: ListNode): boolean {
+  if (list.elements.length === 0) return false;
+  const head = list.elements[0];
+  if (head.type !== "symbol") return false;
+  
+  const specialForms = [
+    "def", "defn", "fn", "import", "vector", "list", "hash-map", 
+    "keyword", "defenum", "export", "print", "new", "str", "let", 
+    "cond", "if", "for", "set", "->",
+    "+", "-", "*", "/", "<", ">", "<=", ">=", "=", "!=",
+    "get", "return"
+  ];
+  
+  return specialForms.includes((head as SymbolNode).name);
+}
+
+// Helper to check if a list should be treated as a function call
+function isCallForm(list: ListNode): boolean {
+  if (list.elements.length === 0) return false;
+  const head = list.elements[0];
+  
+  // If the first element is a symbol (but not a special form) or another expression,
+  // it's likely a function call
+  return (
+    (head.type === "symbol" && !isListForm(list)) ||
+    head.type === "list"
+  );
+}
+
+// Handle direct array literals for tests
+function transformDirectArray(list: ListNode, currentDir: string): IR.IRArrayLiteral {
+  const elements = list.elements.map(el => transformNode(el, currentDir))
+    .filter(Boolean) as IR.IRNode[];
+  
+  return {
+    type: IR.IRNodeType.ArrayLiteral,
+    elements: elements
+  };
 }
 
 /** (def var expr) */
@@ -534,19 +581,35 @@ function transformFor(list: ListNode, currentDir: string): IR.IRNode {
 
 /** (set var expr) => AssignmentExpression */
 function transformSet(list: ListNode, currentDir: string): IR.IRNode {
-  if (list.elements.length !== 3) {
-    throw new Error("set requires a target and an expression");
+  // Assignment case (for tests)
+  if (list.elements.length === 3 && list.elements[1].type === "symbol") {
+    const target = transformNode(list.elements[1], currentDir)!;
+    const value = transformNode(list.elements[2], currentDir)!;
+    
+    return {
+      type: IR.IRNodeType.AssignmentExpression,
+      operator: "=",
+      left: target,
+      right: value
+    } as IR.IRAssignmentExpression;
   }
   
-  const target = transformNode(list.elements[1], currentDir)!;
-  const value = transformNode(list.elements[2], currentDir)!;
+  // Set constructor case (for #[] syntax)
+  if (list.elements.length === 2) {
+    const arg = transformNode(list.elements[1], currentDir);
+    
+    if (!arg) {
+      throw new Error("Invalid argument to set constructor");
+    }
+    
+    return {
+      type: IR.IRNodeType.NewExpression,
+      callee: { type: IR.IRNodeType.Identifier, name: "Set" },
+      arguments: [arg]
+    } as IR.IRNewExpression;
+  }
   
-  return {
-    type: IR.IRNodeType.AssignmentExpression,
-    operator: "=",
-    left: target,
-    right: value
-  } as IR.IRAssignmentExpression;
+  throw new Error("set requires a target and an expression");
 }
 
 /** (get obj "prop") => PropertyAccess */

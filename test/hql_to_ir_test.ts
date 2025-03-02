@@ -107,6 +107,20 @@ Deno.test("hql-to-ir - array literals", () => {
   assertEquals((arrLit.elements[2] as IR.IRNumericLiteral).value, 3);
 });
 
+Deno.test("hql-to-ir - vector syntax", () => {
+  // This should be converted to an array literal in IR
+  const ir = parseAndTransform(`[1, 2, 3]`);
+  
+  assertEquals(ir.body.length, 1);
+  assertEquals(ir.body[0].type, IR.IRNodeType.ArrayLiteral);
+  
+  const arrLit = ir.body[0] as IR.IRArrayLiteral;
+  assertEquals(arrLit.elements.length, 3);
+  assertEquals((arrLit.elements[0] as IR.IRNumericLiteral).value, 1);
+  assertEquals((arrLit.elements[1] as IR.IRNumericLiteral).value, 2);
+  assertEquals((arrLit.elements[2] as IR.IRNumericLiteral).value, 3);
+});
+
 Deno.test("hql-to-ir - object literals", () => {
   const ir = parseAndTransform(`(hash-map "name" "John" "age" 30)`);
   
@@ -127,6 +141,38 @@ Deno.test("hql-to-ir - object literals", () => {
   assertEquals((objLit.properties[1].key as IR.IRStringLiteral).value, "age");
   assertEquals(objLit.properties[1].value.type, IR.IRNodeType.NumericLiteral);
   assertEquals((objLit.properties[1].value as IR.IRNumericLiteral).value, 30);
+});
+
+Deno.test("hql-to-ir - JSON object literal syntax", () => {
+  const ir = parseAndTransform(`{"name": "Alice", "age": 30}`);
+  
+  assertEquals(ir.body.length, 1);
+  assertEquals(ir.body[0].type, IR.IRNodeType.ObjectLiteral);
+  
+  const objLit = ir.body[0] as IR.IRObjectLiteral;
+  assertEquals(objLit.properties.length, 2);
+  
+  // Check properties
+  assertEquals((objLit.properties[0].key as IR.IRStringLiteral).value, "name");
+  assertEquals((objLit.properties[0].value as IR.IRStringLiteral).value, "Alice");
+  assertEquals((objLit.properties[1].key as IR.IRStringLiteral).value, "age");
+  assertEquals((objLit.properties[1].value as IR.IRNumericLiteral).value, 30);
+});
+
+Deno.test("hql-to-ir - set literals", () => {
+  const ir = parseAndTransform(`#[1, 2, 3]`);
+  
+  assertEquals(ir.body.length, 1);
+  assertEquals(ir.body[0].type, IR.IRNodeType.NewExpression);
+  
+  const newExpr = ir.body[0] as IR.IRNewExpression;
+  assertEquals((newExpr.callee as IR.IRIdentifier).name, "Set");
+  assertEquals(newExpr.arguments.length, 1);
+  
+  // Check that the argument is an array
+  const arrArg = newExpr.arguments[0] as IR.IRArrayLiteral;
+  assertEquals(arrArg.type, IR.IRNodeType.ArrayLiteral);
+  assertEquals(arrArg.elements.length, 3);
 });
 
 Deno.test("hql-to-ir - if expressions", () => {
@@ -154,19 +200,12 @@ Deno.test("hql-to-ir - if statements", () => {
   assertEquals(ir.body.length, 1);
   assertEquals(ir.body[0].type, IR.IRNodeType.ConditionalExpression);
   
-  const ifStmt = ir.body[0] as IR.IRIfStatement;
+  const ifStmt = ir.body[0] as IR.IRConditionalExpression;
   assertEquals(ifStmt.test.type, IR.IRNodeType.BinaryExpression);
   
   // Helper function to extract the call expression from a branch.
   function extractCall(node: IR.IRNode): IR.IRCallExpression {
-    if (node.type === IR.IRNodeType.Block) {
-      const block = node as IR.IRBlock;
-      if (block.body.length > 0 && block.body[0].type === IR.IRNodeType.ReturnStatement) {
-        const ret = block.body[0] as IR.IRReturnStatement;
-        return ret.argument as IR.IRCallExpression;
-      }
-      throw new Error("Block does not contain a return statement");
-    } else if (node.type === IR.IRNodeType.CallExpression) {
+    if (node.type === IR.IRNodeType.CallExpression) {
       return node as IR.IRCallExpression;
     } else {
       throw new Error("Unexpected node type in if branch: " + node.type);
@@ -176,7 +215,7 @@ Deno.test("hql-to-ir - if statements", () => {
   const consCall = extractCall(ifStmt.consequent);
   assertEquals((consCall.callee as IR.IRIdentifier).name, "console.log");
   
-  const altCall = extractCall(ifStmt.alternate!);
+  const altCall = extractCall(ifStmt.alternate);
   assertEquals((altCall.callee as IR.IRIdentifier).name, "console.log");
 });
 
@@ -234,7 +273,7 @@ Deno.test("hql-to-ir - named arguments", () => {
 });
 
 Deno.test("hql-to-ir - let bindings", () => {
-  const ir = parseAndTransform(`(let [x 10 y 20] (+ x y))`);
+  const ir = parseAndTransform(`(let [x 10, y 20] (+ x y))`);
   
   assertEquals(ir.body.length, 1);
   assertEquals(ir.body[0].type, IR.IRNodeType.Block);
