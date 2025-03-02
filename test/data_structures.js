@@ -7,7 +7,7 @@ const nestedMap = {user: {name: "Bob", contact: {email: "bob@example.com"}}};
 const emptySet = new Set([]);
 const numberSet = new Set([1, 2, 3, 4, 5]);
 const stringSet = new Set(["apple", "orange", "banana"]);
-const database = {users: {id: 1, name: "Alice", roles: ["admin", "user"]}({id: 2, name: "Bob", roles: ["user"]}), settings: {version: "1.0.0", features: {enabled: true, list: ["search", "comments"]}}};
+const database = {users: [{id: 1, name: "Alice", roles: ["admin", "user"]}, {id: 2, name: "Bob", roles: ["user"]}], settings: {version: "1.0.0", features: {enabled: true, list: ["search", "comments"]}}};
 const user1Tags = new Set(["javascript", "hql"]);
 const user2Tags = new Set(["python", "rust"]);
 console.log("Empty vector:", emptyVector)

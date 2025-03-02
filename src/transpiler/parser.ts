@@ -363,16 +363,17 @@ export function parse(input: string): HQLNode[] {
     
     if (pos >= tokens.length) {
       throw new ParseError(
-        closingDelimiter === "]" ? "Unclosed square bracket" : 
-        "Unclosed delimiter", 
+        closingDelimiter === "]" ? "Unclosed square bracket" : "Unclosed delimiter", 
         positions[pos - 1]
       );
     }
     
     pos++; // skip the closing delimiter
-    return { type: "list", elements } as ListNode;
-  }
   
+    // Mark this node as an array literal so the transformer knows to handle it as a literal.
+    return { type: "list", elements, isArrayLiteral: true } as ListNode;
+  }  
+
   // Parse a JSON object into (hash-map ...) form
   function parseJSONObject(): ListNode {
     // Start with the hash-map symbol
@@ -427,10 +428,11 @@ export function parse(input: string): HQLNode[] {
     
     pos++; // Skip the closing bracket
     
-    // Create a vector for the elements
+    // Create a vector for the elements and mark it as an array literal
     const vectorNode: ListNode = {
       type: "list",
-      elements: vectorElements
+      elements: vectorElements,
+      isArrayLiteral: true
     };
     
     // Return (set vectorNode)
@@ -442,6 +444,7 @@ export function parse(input: string): HQLNode[] {
       ]
     } as ListNode;
   }
+  
   
   const expressions: HQLNode[] = [];
   while (pos < tokens.length) {

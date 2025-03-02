@@ -14,6 +14,7 @@ export interface SymbolNode {
 export interface ListNode {
   type: "list";
   elements: HQLNode[];
+  isArrayLiteral?: boolean;
 }
 
 // The following interfaces aren't directly part of the AST but represent 

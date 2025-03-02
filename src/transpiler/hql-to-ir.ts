@@ -105,10 +105,13 @@ function transformSymbol(sym: SymbolNode): IR.IRIdentifier {
 }
 
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
-  if (list.elements.length === 0) {
-    return { type: IR.IRNodeType.ArrayLiteral, elements: [] } as IR.IRArrayLiteral;
+  // If this list node was parsed as an array literal, always transform it as a direct array.
+  if ((list as any).isArrayLiteral) {
+    return transformDirectArray(list, currentDir);
   }
   
+  // If the list is empty (and not marked as an array literal), return null.
+  if (list.elements.length === 0) return null;
   
   const head = list.elements[0];
   if (head.type === "symbol") {
@@ -156,15 +159,16 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     }
   }
   
-  // For tests - direct array literals
-  if (list.type === "list" && list.elements.length > 0 && 
+  // For any list that is not a special form or a call form, treat it as a direct array literal.
+  if (list.type === "list" && list.elements.length > 0 &&
       !isListForm(list) && !isCallForm(list)) {
     return transformDirectArray(list, currentDir);
   }
   
-  // Default: treat as function call
+  // Default: treat the list as a function call.
   return transformCall(list, currentDir);
 }
+
 
 // Helper to check if a list should be treated as a special form
 function isListForm(list: ListNode): boolean {
