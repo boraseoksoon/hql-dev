@@ -626,15 +626,25 @@ function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
   if (list.elements.length < 3) {
     throw new Error("let requires bindings and a body");
   }
-  const bindingsNode = list.elements[1] as ListNode;
-  const bindings = bindingsNode.elements;
+  const bindingsNode = list.elements[1];
+  let bindings: HQLNode[];
+  if (bindingsNode.type === "vector") {
+    // Normal case: a vector literal [ ... ]
+    bindings = bindingsNode.elements;
+  } else if (bindingsNode.type === "list") {
+    // If written as a list, assume the first element is the symbol "vector"
+    bindings = bindingsNode.elements.slice(1);
+  } else {
+    throw new Error("let bindings must be a vector or (vector ...) form");
+  }
+
   if (bindings.length % 2 !== 0) {
     throw new Error("let bindings require even number of forms");
   }
   const declarations: IR.IRVariableDeclaration[] = [];
   for (let i = 0; i < bindings.length; i += 2) {
     const nameNode = bindings[i] as SymbolNode;
-    const valNode = bindings[i+1];
+    const valNode = bindings[i + 1];
     const valueIR = transformNode(valNode, currentDir);
     if (valueIR) {
       declarations.push({
@@ -651,6 +661,7 @@ function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
   ensureReturnForLastExpression(bodyNodes);
   return { type: IR.IRNodeType.Block, body: [...declarations, ...bodyNodes] };
 }
+
 
 function ensureReturnForLastExpression(bodyNodes: IR.IRNode[]): void {
   if (bodyNodes.length === 0) return;

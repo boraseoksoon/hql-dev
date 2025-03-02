@@ -1,4 +1,6 @@
-;; test/complex-import/main.hql - Comprehensive showcase of HQL features with complex imports
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; main.hql - Comprehensive showcase of HQL features with complex imports
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; SECTION 1: Module Imports (All supported formats)
@@ -17,7 +19,7 @@
 (def pathMod (import "https://deno.land/std@0.170.0/path/mod.ts"))
 (def fsMod (import "https://deno.land/std@0.170.0/fs/mod.ts"))
 
-;; JSR registry imports 
+;; JSR registry imports
 (def jsr1 (import "jsr:@std/path@1.0.8"))
 (def jsr2 (import "jsr:@std/fs@1.0.13"))
 
@@ -27,6 +29,9 @@
 
 ;; External URL modules
 (def chalkMod (import "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js"))
+
+;; Add a crypto import so (crypto.randomUUID) works:
+(def crypto (import "node:crypto"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; SECTION 2: Constants & Data Structures
@@ -198,7 +203,6 @@
 ;; SECTION 6: Main Demo Functions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Main function that demonstrates multiple features
 (defn runDemo ()
   (let [
     userName "Alice Smith"

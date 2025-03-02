@@ -1,3 +1,13 @@
+
+  // HQL Core Functions
+  function createList(...items) { return Array.from(items); }
+  function createVector(...items) { return [...items]; }
+  function createMap(entries) { return Object.fromEntries(entries); }
+  function createSet(...items) { return new Set(items); }
+  
+  // Helper function for string operations
+  function str(...args) { return args.join(''); }
+  
 import * as configMod_module from "./config/main-config.js";
 const configMod = configMod_module.default !== undefined ? configMod_module.default : configMod_module;
 import * as utilsMod_module from "./utils/string-utils.js";
@@ -22,6 +32,8 @@ import * as momentMod_module from "https://esm.sh/moment";
 const momentMod = momentMod_module.default !== undefined ? momentMod_module.default : momentMod_module;
 import * as chalkMod_module from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
 const chalkMod = chalkMod_module.default !== undefined ? chalkMod_module.default : chalkMod_module;
+import * as crypto_module from "https://deno.land/std@0.170.0/node/crypto.ts";
+const crypto = crypto_module.default !== undefined ? crypto_module.default : crypto_module;
 const supportedFormats = ["json", "xml", "yaml", "csv", "text"];
 const numericValues = [10, 20, 30, 40, 50];
 const defaultSettings = {
@@ -65,7 +77,7 @@ function processPath(filePath) {
 }
 }
 function classifyNumber(num) {
-  return (num < 0) ? "negative" : (num === 0) ? "zero" : (num > 0) ? "positive" : true ? "unknown" : null;
+  return (num < 0) ? "negative" : (num = 0) ? "zero" : (num > 0) ? "positive" : true ? "unknown" : null;
 }
 const multiply = function(a, b) { return (a * b); };
 function makeAdder(n) { return function(x) { return (x + n); }; }
@@ -89,7 +101,7 @@ function generateReport(data, format) {
 }
 }
 function coloredLog(message, level) {
-  return (level === LogLevel.debug) ? chalkMod.blue(message) : (level === LogLevel.info) ? chalkMod.green(message) : (level === LogLevel.warn) ? chalkMod.yellow(message) : (level === LogLevel.error) ? chalkMod.red(message) : (level === LogLevel.critical) ? chalkMod.bgRed(chalkMod.white(message)) : true ? message : null;
+  return (level = LogLevel.debug) ? chalkMod.blue(message) : (level = LogLevel.info) ? chalkMod.green(message) : (level = LogLevel.warn) ? chalkMod.yellow(message) : (level = LogLevel.error) ? chalkMod.red(message) : (level = LogLevel.critical) ? chalkMod.bgRed(chalkMod.white(message)) : true ? message : null;
 }
 function processCollection(items) {
   {

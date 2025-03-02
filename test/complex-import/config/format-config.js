@@ -1,3 +1,13 @@
+
+  // HQL Core Functions
+  function createList(...items) { return Array.from(items); }
+  function createVector(...items) { return [...items]; }
+  function createMap(entries) { return Object.fromEntries(entries); }
+  function createSet(...items) { return new Set(items); }
+  
+  // Helper function for string operations
+  function str(...args) { return args.join(''); }
+  
 import * as sharedUtils_module from "../utils/shared-utils.js";
 const sharedUtils = sharedUtils_module.default !== undefined ? sharedUtils_module.default : sharedUtils_module;
 const formatSettings = {

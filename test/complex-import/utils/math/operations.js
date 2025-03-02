@@ -1,3 +1,13 @@
+
+  // HQL Core Functions
+  function createList(...items) { return Array.from(items); }
+  function createVector(...items) { return [...items]; }
+  function createMap(entries) { return Object.fromEntries(entries); }
+  function createSet(...items) { return new Set(items); }
+  
+  // Helper function for string operations
+  function str(...args) { return args.join(''); }
+  
 function add(a, b) { return (a + b); }
 function subtract(a, b) { return (a - b); }
 function multiply(a, b) { return (a * b); }
@@ -28,9 +38,7 @@ function calculate(value, factor) {
 function reduce(array, fn, initial) {
   {
   const result = initial;
-  Array(array.forEach, function(item) {
-  return result = function() { return item; };
-})
+  Array(array.forEach, function(item) { return result = function() { return item; }; })
   return result;
 }
 }
