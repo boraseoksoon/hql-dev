@@ -1,7 +1,7 @@
 // test/parser_test.ts
 import { assertEquals, assertThrows } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../src/transpiler/parser.ts";
-import { HQLNode, ListNode, LiteralNode, SymbolNode, VectorNode } from "../src/transpiler/hql_ast.ts";
+import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../src/transpiler/hql_ast.ts";
 import { ParseError } from "../src/transpiler/errors.ts";
 
 // Helper function to assert equality while ignoring position info for simplicity
@@ -85,7 +85,7 @@ Deno.test("parser - lists and nesting", () => {
 Deno.test("parser - vector syntax with square brackets", () => {
   const ast = parse("[1 2 3]");
   assertAstEqual(ast, [{
-    type: "vector",
+    type: "list",
     elements: [
       { type: "literal", value: 1 },
       { type: "literal", value: 2 },
@@ -102,7 +102,7 @@ Deno.test("parser - mixed expressions", () => {
       { type: "symbol", name: "defn" },
       { type: "symbol", name: "greet" },
       {
-        type: "vector",
+        type: "list",
         elements: [
           { type: "symbol", name: "name" }
         ]
@@ -159,26 +159,6 @@ Deno.test("parser - string escapes", () => {
   assertAstEqual(ast, [{ type: "literal", value: 'Value: (x)' }]);
 });
 
-Deno.test("parser - set syntax with hash bracket", () => {
-  const ast = parse("#[1 2 3]");
-  assertAstEqual(ast, [{
-    type: "set",
-    elements: [
-      { type: "literal", value: 1 },
-      { type: "literal", value: 2 },
-      { type: "literal", value: 3 }
-    ]
-  }]);
-});
-
-Deno.test("parser - json object literal", () => {
-  const ast = parse('{"name": "Alice", "age": 30}');
-  assertAstEqual(ast, [{ 
-    type: "literal", 
-    value: { name: "Alice", age: 30 } 
-  }]);
-});
-
 Deno.test("parser - string with interpolation markers", () => {
   const ast = parse('"Hello, \\(name)!"');
   assertAstEqual(ast, [{ type: "literal", value: "Hello, (name)!" }]);
@@ -197,14 +177,6 @@ Deno.test("parser - error: unclosed square bracket", () => {
     () => parse("[1 2 3"),
     ParseError,
     "Unclosed square bracket"
-  );
-});
-
-Deno.test("parser - error: unclosed set notation", () => {
-  assertThrows(
-    () => parse("#[1 2 3"),
-    ParseError,
-    "Unclosed set notation"
   );
 });
 

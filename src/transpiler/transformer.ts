@@ -12,8 +12,6 @@ import {
 } from "../platform/platform.ts";
 import { parse } from "./parser.ts";
 import { bundleJavaScript } from "../bundler/bundler.ts";
-import { expandMacros } from "../macro.ts";
-import { generatePrelude } from "./core-functions.ts";
 
 // Cache for processed imports to avoid redundant processing
 const processedImportsCache = new Map<string, Set<string>>();
@@ -132,11 +130,8 @@ export async function transformAST(
   const opts = getDefaultOptions(options);
   if (inModule) opts.module = "commonjs";
 
-  // Apply macro expansion to all nodes
-  const expandedNodes = expandMacros(nodes);
-
   // Step 1: Transform HQL to IR.
-  const irProgram = transformToIR(expandedNodes, currentDir);
+  const irProgram = transformToIR(nodes, currentDir);
   
   // Step 2: Convert IR to TS AST.
   let tsAST = convertIRToTSAST(irProgram);
@@ -154,13 +149,7 @@ export async function transformAST(
     module: opts.module,
   };
 
-  // Generate the TypeScript code
-  const generatedCode = generateTypeScript(tsAST, codeOptions);
-  
-  // Add the prelude (core functions) to the generated code
-  const prelude = generatePrelude();
-  
-  return prelude + "\n" + generatedCode;
+  return generateTypeScript(tsAST, codeOptions);
 }
 
 /**
@@ -624,139 +613,139 @@ async function resolveWithExtensions(
 ): Promise<string | null> {
   // First try the path as-is
   if (await pathExists(basePath)) {
-  return basePath;
-}
-
-// Try with each extension
-for (const ext of extensions) {
-  const pathWithExt = basePath.endsWith(ext) ? basePath : `${basePath}${ext}`;
-  if (await pathExists(pathWithExt)) {
-    return pathWithExt;
+    return basePath;
   }
-}
-
-// Try index files in directory
-if (!basePath.endsWith('/')) {
+  
+  // Try with each extension
   for (const ext of extensions) {
-    const indexPath = `${basePath}/index${ext}`;
-    if (await pathExists(indexPath)) {
-      return indexPath;
+    const pathWithExt = basePath.endsWith(ext) ? basePath : `${basePath}${ext}`;
+    if (await pathExists(pathWithExt)) {
+      return pathWithExt;
     }
   }
-}
-
-return null;
+  
+  // Try index files in directory
+  if (!basePath.endsWith('/')) {
+    for (const ext of extensions) {
+      const indexPath = `${basePath}/index${ext}`;
+      if (await pathExists(indexPath)) {
+        return indexPath;
+      }
+    }
+  }
+  
+  return null;
 }
 
 /**
-* Transpile HQL source code into JavaScript.
-*/
+ * Transpile HQL source code into JavaScript.
+ */
 export async function transpile(
-source: string,
-filePath: string = ".",
-options: TransformOptions = {}
+  source: string,
+  filePath: string = ".",
+  options: TransformOptions = {}
 ): Promise<string> {
-try {
-  const ast = parse(source);
-  const currentDir = dirname(filePath);
-  const visited = new Set<string>([normalizePath(filePath)]);
-  return await transformAST(ast, currentDir, visited, options);
-} catch (error: any) {
-  throw new Error(`Transpile error: ${error.message}`);
-}
-}
-
-/**
-* Transpile an HQL file to JavaScript.
-*/
-export async function transpileFile(
-inputPath: string,
-outputPath?: string,
-options: TransformOptions = {}
-): Promise<string> {
-try {
-  const absPath = resolve(inputPath);
-  if (options.verbose) console.log(`Transpiling file: ${absPath}`);
-  const source = await Deno.readTextFile(absPath);
-  
-  // Transpile HQL to JS
-  const transpiled = await transpile(source, absPath, options);
-  
-  // If bundling is requested, write the transpiled output to a temporary file and bundle it
-  if (options.bundle) {
-    const outputDir = dirname(absPath);
-    const tempJsPath = join(outputDir, `.${basename(absPath)}.temp.js`);
-    
-    try {
-      if (options.verbose) console.log(`Writing transpiled JS to temporary file: ${tempJsPath}`);
-      
-      // Write transpiled output to a temporary file
-      await Deno.writeTextFile(tempJsPath, transpiled);
-      
-      // Bundle the transpiled output
-      const bundled = await bundleJavaScript(tempJsPath, { 
-        format: options.module as "esm" | "commonjs", 
-        verbose: options.verbose 
-      });
-      
-      // Clean up temporary file
-      try {
-        await Deno.remove(tempJsPath);
-      } catch (e) {
-        // Ignore cleanup errors
-        if (options.verbose) console.warn(`Failed to remove temporary file: ${e.message}`);
-      }
-      
-      // Write output if outputPath is provided
-      if (outputPath) {
-        await writeOutput(bundled, outputPath);
-        if (options.verbose) console.log(`Bundled output written to: ${outputPath}`);
-      }
-      
-      return bundled;
-    } catch (error) {
-      throw new Error(`Bundling error: ${error.message}`);
-    }
-  }
-  
-  // Write output if outputPath is provided
-  if (outputPath) {
-    await writeOutput(transpiled, outputPath);
-    if (options.verbose) console.log(`Transpiled output written to: ${outputPath}`);
-  }
-  
-  return transpiled;
-} catch (error) {
-  if (error instanceof Deno.errors.NotFound) {
-    throw new Error(`File not found: ${inputPath}`);
-  }
-  throw error;
-}
-}
-
-/**
-* Write the transpiled code to a file.
-*/
-export async function writeOutput(
-code: string, 
-outputPath: string
-): Promise<void> {
-try {
-  const outputDir = dirname(outputPath);
-  
-  // Ensure the output directory exists
   try {
-    await Deno.mkdir(outputDir, { recursive: true });
-  } catch (error) {
-    if (!(error instanceof Deno.errors.AlreadyExists)) {
-      throw error;
-    }
+    const ast = parse(source);
+    const currentDir = dirname(filePath);
+    const visited = new Set<string>([normalizePath(filePath)]);
+    return await transformAST(ast, currentDir, visited, options);
+  } catch (error: any) {
+    throw new Error(`Transpile error: ${error.message}`);
   }
-  
-  await Deno.writeTextFile(outputPath, code);
-} catch (error: any) {
-  throw new Error(`Failed to write output: ${error.message}`);
 }
+
+/**
+ * Transpile an HQL file to JavaScript.
+ */
+export async function transpileFile(
+  inputPath: string,
+  outputPath?: string,
+  options: TransformOptions = {}
+): Promise<string> {
+  try {
+    const absPath = resolve(inputPath);
+    if (options.verbose) console.log(`Transpiling file: ${absPath}`);
+    const source = await Deno.readTextFile(absPath);
+    
+    // Transpile HQL to JS
+    const transpiled = await transpile(source, absPath, options);
+    
+    // If bundling is requested, write the transpiled output to a temporary file and bundle it
+    if (options.bundle) {
+      const outputDir = dirname(absPath);
+      const tempJsPath = join(outputDir, `.${basename(absPath)}.temp.js`);
+      
+      try {
+        if (options.verbose) console.log(`Writing transpiled JS to temporary file: ${tempJsPath}`);
+        
+        // Write transpiled output to a temporary file
+        await Deno.writeTextFile(tempJsPath, transpiled);
+        
+        // Bundle the transpiled output
+        const bundled = await bundleJavaScript(tempJsPath, { 
+          format: options.module as "esm" | "commonjs", 
+          verbose: options.verbose 
+        });
+        
+        // Clean up temporary file
+        try {
+          await Deno.remove(tempJsPath);
+        } catch (e) {
+          // Ignore cleanup errors
+          if (options.verbose) console.warn(`Failed to remove temporary file: ${e.message}`);
+        }
+        
+        // Write output if outputPath is provided
+        if (outputPath) {
+          await writeOutput(bundled, outputPath);
+          if (options.verbose) console.log(`Bundled output written to: ${outputPath}`);
+        }
+        
+        return bundled;
+      } catch (error) {
+        throw new Error(`Bundling error: ${error.message}`);
+      }
+    }
+    
+    // Write output if outputPath is provided
+    if (outputPath) {
+      await writeOutput(transpiled, outputPath);
+      if (options.verbose) console.log(`Transpiled output written to: ${outputPath}`);
+    }
+    
+    return transpiled;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      throw new Error(`File not found: ${inputPath}`);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Write the transpiled code to a file.
+ */
+export async function writeOutput(
+  code: string, 
+  outputPath: string
+): Promise<void> {
+  try {
+    const outputDir = dirname(outputPath);
+    
+    // Ensure the output directory exists
+    try {
+      await Deno.mkdir(outputDir, { recursive: true });
+    } catch (error) {
+      if (!(error instanceof Deno.errors.AlreadyExists)) {
+        throw error;
+      }
+    }
+    
+    await Deno.writeTextFile(outputPath, code);
+  } catch (error: any) {
+    throw new Error(`Failed to write output: ${error.message}`);
+  }
 }
 
 export default transpile;
