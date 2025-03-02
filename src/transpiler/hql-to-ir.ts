@@ -1,5 +1,5 @@
 // src/transpiler/hql-to-ir.ts
-import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode, VectorNode, SetNode, MapNode } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
 
 // Cache for commonly transformed symbols
@@ -40,6 +40,15 @@ function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
     case "list":
       result = transformList(node as ListNode, currentDir);
       break;
+    case "vector":
+      result = transformVector(node as VectorNode, currentDir);
+      break;
+    case "set":
+      result = transformSet(node as SetNode, currentDir);
+      break;
+    case "map":
+      result = transformMap(node as MapNode, currentDir);
+      break;
     default:
       throw new Error("Unknown HQL node type: " + (node as any).type);
   }
@@ -66,6 +75,11 @@ function transformLiteral(lit: LiteralNode): IR.IRNode {
   
   if (v === null) {
     return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+  }
+  
+  if (typeof v === "object") {
+    // Handle JSON objects
+    return transformJSONObject(v);
   }
   
   throw new Error("Unsupported literal: " + v);
@@ -120,6 +134,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "vector": return transformVector(list, currentDir);
       case "list": return transformArrayLiteral(list, currentDir);
       case "hash-map": return transformHashMap(list, currentDir);
+      case "hash-set": return transformHashSet(list, currentDir);
       case "keyword": return transformKeyword(list);
       case "defenum": return transformDefenum(list);
       case "export": return transformExport(list, currentDir);
@@ -253,6 +268,18 @@ function transformFn(list: ListNode, currentDir: string): IR.IRFunctionDeclarati
   } as IR.IRFunctionDeclaration;
 }
 
+/** Transform a vector node to an IR array literal */
+function transformVector(vec: VectorNode, currentDir: string): IR.IRArrayLiteral {
+  const elements = vec.elements
+    .map(elem => transformNode(elem, currentDir))
+    .filter(elem => elem !== null) as IR.IRNode[];
+  
+  return {
+    type: IR.IRNodeType.ArrayLiteral,
+    elements
+  };
+}
+
 /** Helper: Transform a list as a Vector (JavaScript array) */
 function transformVector(list: ListNode, currentDir: string): IR.IRArrayLiteral {
   const elems = list.elements.slice(1)
@@ -296,6 +323,135 @@ function transformHashMap(list: ListNode, currentDir: string): IR.IRObjectLitera
   }
   
   return { type: IR.IRNodeType.ObjectLiteral, properties: props };
+}
+
+/** (hash-set item1 item2 ...) => Set */
+function transformHashSet(list: ListNode, currentDir: string): IR.IRNode {
+  const elements = list.elements.slice(1)
+    .map(x => transformNode(x, currentDir))
+    .filter(Boolean) as IR.IRNode[];
+  
+  return {
+    type: IR.IRNodeType.NewExpression,
+    callee: { type: IR.IRNodeType.Identifier, name: "Set" },
+    arguments: [
+      {
+        type: IR.IRNodeType.ArrayLiteral,
+        elements
+      }
+    ]
+  } as IR.IRNewExpression;
+}
+
+/** Transform a set node to a Set constructor */
+function transformSet(set: SetNode, currentDir: string): IR.IRNode {
+  const elements = set.elements
+    .map(elem => transformNode(elem, currentDir))
+    .filter(elem => elem !== null) as IR.IRNode[];
+  
+  return {
+    type: IR.IRNodeType.NewExpression,
+    callee: { type: IR.IRNodeType.Identifier, name: "Set" },
+    arguments: [
+      {
+        type: IR.IRNodeType.ArrayLiteral,
+        elements
+      }
+    ]
+  } as IR.IRNewExpression;
+}
+
+/** Transform a map node to an object literal */
+function transformMap(map: MapNode, currentDir: string): IR.IRObjectLiteral {
+  const properties: IR.IRProperty[] = [];
+  
+  for (const [key, value] of map.pairs) {
+    const keyNode = transformNode(key, currentDir);
+    const valueNode = transformNode(value, currentDir);
+    
+    if (keyNode && valueNode) {
+      properties.push({
+        type: IR.IRNodeType.Property,
+        key: keyNode,
+        value: valueNode,
+        computed: false
+      });
+    }
+  }
+  
+  return {
+    type: IR.IRNodeType.ObjectLiteral,
+    properties
+  };
+}
+
+/** Transform a JSON object to an object literal */
+function transformJSONObject(obj: object): IR.IRObjectLiteral {
+  const properties: IR.IRProperty[] = [];
+  
+  for (const [key, value] of Object.entries(obj)) {
+    const keyLiteral: IR.IRStringLiteral = {
+      type: IR.IRNodeType.StringLiteral,
+      value: key
+    };
+    
+    let valueNode: IR.IRNode;
+    
+    if (value === null) {
+      valueNode = { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+    } else if (typeof value === "string") {
+      valueNode = { type: IR.IRNodeType.StringLiteral, value } as IR.IRStringLiteral;
+    } else if (typeof value === "number") {
+      valueNode = { type: IR.IRNodeType.NumericLiteral, value } as IR.IRNumericLiteral;
+    } else if (typeof value === "boolean") {
+      valueNode = { type: IR.IRNodeType.BooleanLiteral, value } as IR.IRBooleanLiteral;
+    } else if (Array.isArray(value)) {
+      valueNode = transformJSONArray(value);
+    } else if (typeof value === "object") {
+      valueNode = transformJSONObject(value);
+    } else {
+      // Shouldn't happen with valid JSON, but fallback to null
+      valueNode = { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+    }
+    
+    properties.push({
+      type: IR.IRNodeType.Property,
+      key: keyLiteral,
+      value: valueNode,
+      computed: false
+    });
+  }
+  
+  return {
+    type: IR.IRNodeType.ObjectLiteral,
+    properties
+  };
+}
+
+/** Transform a JSON array to an array literal */
+function transformJSONArray(arr: any[]): IR.IRArrayLiteral {
+  const elements: IR.IRNode[] = [];
+  
+  for (const value of arr) {
+    if (value === null) {
+      elements.push({ type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral);
+    } else if (typeof value === "string") {
+      elements.push({ type: IR.IRNodeType.StringLiteral, value } as IR.IRStringLiteral);
+    } else if (typeof value === "number") {
+      elements.push({ type: IR.IRNodeType.NumericLiteral, value } as IR.IRNumericLiteral);
+    } else if (typeof value === "boolean") {
+      elements.push({ type: IR.IRNodeType.BooleanLiteral, value } as IR.IRBooleanLiteral);
+    } else if (Array.isArray(value)) {
+      elements.push(transformJSONArray(value));
+    } else if (typeof value === "object") {
+      elements.push(transformJSONObject(value));
+    }
+  }
+  
+  return {
+    type: IR.IRNodeType.ArrayLiteral,
+    elements
+  };
 }
 
 /** (keyword "foo") => KeywordLiteral */

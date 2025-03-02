@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test && deno task bundle-tests",
+    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test && deno task bundle-tests && deno task data-structures-test",
     "unit-tests": "deno task parser-test && deno task hql-to-ir-test",
     "run-test": "deno run -A ./cli/run.ts ./test/simple.hql",
     "parser-test": "deno test --allow-all test/parser_test.ts",
@@ -18,6 +18,8 @@
     "bundle-interop": "deno run -A ./cli/transpile.ts ./test/interop3/main.hql ./test/interop3/main.bundle.js --bundle && deno run -A ./test/interop3/main.bundle.js",
     "bundle-interop2": "deno run -A ./cli/transpile.ts ./test/interop2/main.hql ./test/interop2/main.bundle.js --bundle && deno run -A ./test/interop2/main.bundle.js",
     "bundle-run": "deno run -A ./cli/run.ts ./test/simple.hql --bundle",
-    "bundle-cleanup": "find ./test -name \"*.bundle.js\" -type f -delete && rm -rf ./.test-publish"
+    "bundle-cleanup": "find ./test -name \"*.bundle.js\" -type f -delete && rm -rf ./.test-publish",
+    "data-structures-test": "deno test --allow-all test/data_structures_test.ts",
+    "data-structure-example": "deno run -A ./cli/transpile.ts ./test/data_structures.hql && deno run -A ./test/data_structures.js"
   }
 }

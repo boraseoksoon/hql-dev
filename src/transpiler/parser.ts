@@ -1,5 +1,5 @@
 // src/transpiler/parser.ts
-import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode, VectorNode, SetNode, MapNode } from "./hql_ast.ts";
 import { ParseError } from "./errors.ts";
 
 // Constant for quickly checking whitespace characters
@@ -101,6 +101,8 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
   
   let current = "";
   let inString = false;
+  let inJsonObject = false;
+  let jsonBraceCount = 0;
   let stringStartLine = 0;
   let stringStartColumn = 0;
   
@@ -123,8 +125,57 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
           current = "";
           inString = false;
         }
+      } else if (inJsonObject) {
+        current += ch;
+        if (ch === '{') {
+          jsonBraceCount++;
+        } else if (ch === '}') {
+          jsonBraceCount--;
+          if (jsonBraceCount === 0) {
+            tokens.push(current);
+            positions.push({
+              line: actualLineIndex + 1,
+              column: colIndex - current.length + 2,
+              offset: 0
+            });
+            current = "";
+            inJsonObject = false;
+          }
+        }
       } else {
-        if (ch === '"' ) {
+        // Handle set notation #[
+        if (ch === '#' && colIndex + 1 < line.length && line[colIndex + 1] === '[') {
+          if (current.length > 0) {
+            tokens.push(current);
+            positions.push({
+              line: actualLineIndex + 1,
+              column: colIndex - current.length + 1,
+              offset: 0
+            });
+            current = "";
+          }
+          tokens.push("#[");
+          positions.push({
+            line: actualLineIndex + 1,
+            column: colIndex + 1,
+            offset: 0
+          });
+          colIndex++; // Skip the '['
+        } else if (ch === '{') {
+          // Start of a JSON object
+          if (current.length > 0) {
+            tokens.push(current);
+            positions.push({
+              line: actualLineIndex + 1,
+              column: colIndex - current.length + 1,
+              offset: 0
+            });
+            current = "";
+          }
+          current = "{";
+          inJsonObject = true;
+          jsonBraceCount = 1;
+        } else if (ch === '"') {
           if (current.length > 0) {
             tokens.push(current);
             positions.push({
@@ -172,7 +223,7 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
     
     if (inString) {
       current += "\n";
-    } else if (current.length > 0) {
+    } else if (current.length > 0 && !inJsonObject) {
       tokens.push(current);
       positions.push({
         line: actualLineIndex + 1,
@@ -183,7 +234,7 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
     }
   }
   
-  if (current.length > 0) {
+  if (current.length > 0 && !inJsonObject) {
     tokens.push(current);
     positions.push({
       line: lines.length,
@@ -196,6 +247,14 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
     throw new ParseError("Unclosed string literal", {
       line: stringStartLine + 1,
       column: stringStartColumn + 1,
+      offset: 0
+    });
+  }
+  
+  if (inJsonObject) {
+    throw new ParseError("Unclosed JSON object", {
+      line: lines.length,
+      column: lines[lines.length - 1].length,
       offset: 0
     });
   }
@@ -227,21 +286,49 @@ export function parse(input: string): HQLNode[] {
     const position = positions[pos];
     pos++;
     
-    if (token === "(" || token === "[") {
-      const closing = token === "(" ? ")" : "]";
+    if (token === "(") {
+      // Parse list
       const elements: HQLNode[] = [];
-      while (pos < tokens.length && tokens[pos] !== closing) {
+      while (pos < tokens.length && tokens[pos] !== ")") {
         elements.push(parseExpression());
       }
       if (pos >= tokens.length) {
-        // Use expected error message.
-        throw new ParseError(
-          token === "(" ? "Unclosed parenthesis" : "Unclosed square bracket", 
-          position
-        );
+        throw new ParseError("Unclosed parenthesis", position);
       }
-      pos++; // skip the closing delimiter
+      pos++; // Skip the closing parenthesis
       return { type: "list", elements } as ListNode;
+    } else if (token === "[") {
+      // Parse vector
+      const elements: HQLNode[] = [];
+      while (pos < tokens.length && tokens[pos] !== "]") {
+        elements.push(parseExpression());
+      }
+      if (pos >= tokens.length) {
+        throw new ParseError("Unclosed square bracket", position);
+      }
+      pos++; // Skip the closing bracket
+      return { type: "vector", elements } as VectorNode;
+    } else if (token === "#[") {
+      // Parse set
+      const elements: HQLNode[] = [];
+      while (pos < tokens.length && tokens[pos] !== "]") {
+        elements.push(parseExpression());
+      }
+      if (pos >= tokens.length) {
+        throw new ParseError("Unclosed set notation", position);
+      }
+      pos++; // Skip the closing bracket
+      return { type: "set", elements } as SetNode;
+    } else if (token.startsWith("{")) {
+      // Parse JSON object
+      try {
+        // Try parsing as JSON
+        const jsonStr = token;
+        const jsonObj = JSON.parse(jsonStr);
+        return { type: "literal", value: jsonObj } as LiteralNode;
+      } catch (e) {
+        throw new ParseError(`Invalid JSON object: ${e.message}`, position);
+      }
     } else if (token === ")" || token === "]") {
       throw new ParseError(
         token === ")" ? "Unexpected ')'" : "Unexpected ']'", 
