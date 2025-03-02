@@ -77,7 +77,7 @@ function processPath(filePath) {
 }
 }
 function classifyNumber(num) {
-  return (num < 0) ? "negative" : (num === 0) ? "zero" : (num > 0) ? "positive" : true ? "unknown" : null;
+  return (num < 0) ? "negative" : (num = 0) ? "zero" : (num > 0) ? "positive" : true ? "unknown" : null;
 }
 const multiply = function(a, b) { return (a * b); };
 function makeAdder(n) { return function(x) { return (x + n); }; }
@@ -101,7 +101,7 @@ function generateReport(data, format) {
 }
 }
 function coloredLog(message, level) {
-  return (level === LogLevel.debug) ? chalkMod.blue(message) : (level === LogLevel.info) ? chalkMod.green(message) : (level === LogLevel.warn) ? chalkMod.yellow(message) : (level === LogLevel.error) ? chalkMod.red(message) : (level === LogLevel.critical) ? chalkMod.bgRed(chalkMod.white(message)) : true ? message : null;
+  return (level = LogLevel.debug) ? chalkMod.blue(message) : (level = LogLevel.info) ? chalkMod.green(message) : (level = LogLevel.warn) ? chalkMod.yellow(message) : (level = LogLevel.error) ? chalkMod.red(message) : (level = LogLevel.critical) ? chalkMod.bgRed(chalkMod.white(message)) : true ? message : null;
 }
 function processCollection(items) {
   {

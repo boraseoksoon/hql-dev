@@ -115,103 +115,42 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "defn": return transformDefn(list, currentDir);
       case "fn": return transformFn(list, currentDir);
       case "import": return transformImport(list, currentDir);
-      case "vector": return transformVectorCall(list, currentDir);
-      case "list": return transformListCall(list, currentDir);
-      case "hash-map": return transformHashMapCall(list, currentDir);
-      case "hash-set": return transformHashSetCall(list, currentDir);
+      case "vector": return transformVector(list, currentDir); // list form for vector literal
+      case "list": return transformArrayLiteral(list, currentDir);
+      case "hash-map": return transformHashMap(list, currentDir);
+      case "hash-set": return transformHashSet(list, currentDir);
       case "keyword": return transformKeyword(list);
-      // ... other existing cases
+      case "defenum": return transformDefenum(list);
+      case "export": return transformExport(list, currentDir);
+      case "print": return transformPrint(list, currentDir);
+      case "new": return transformNew(list, currentDir);
+      case "str": return transformStr(list, currentDir);
+      case "let": return transformLet(list, currentDir);
+      case "cond": return transformCond(list, currentDir);
+      case "if": return transformIf(list, currentDir);
+      case "for": return transformFor(list, currentDir);
+      case "set": return transformSetAssignment(list, currentDir); // assignment form: (set x expr)
+      case "->": return null;
+      // Arithmetic and comparison operators
+      case "+":
+      case "-":
+      case "*":
+      case "/":
+      case "<":
+      case ">":
+      case "<=":
+      case ">=":
+      case "=":
+      case "!=":
+        return transformArithmetic(list, currentDir);
+      case "get": return transformPropertyAccess(list, currentDir);
+      case "return": return transformReturnStatement(list, currentDir);
       default: break;
     }
   }
   
   // Default: treat as function call
   return transformCall(list, currentDir);
-}
-
-function transformVectorCall(list: ListNode, currentDir: string): IR.IRCallExpression {
-  const args = list.elements.slice(1)
-    .map(elem => transformNode(elem, currentDir))
-    .filter(Boolean) as IR.IRNode[];
-  
-  return {
-    type: IR.IRNodeType.CallExpression,
-    callee: { 
-      type: IR.IRNodeType.Identifier, 
-      name: "createVector" 
-    } as IR.IRIdentifier,
-    arguments: args,
-    isNamedArgs: false
-  } as IR.IRCallExpression;
-}
-
-// New function to transform (list ...) to createList(...)
-function transformListCall(list: ListNode, currentDir: string): IR.IRCallExpression {
-  const args = list.elements.slice(1)
-    .map(elem => transformNode(elem, currentDir))
-    .filter(Boolean) as IR.IRNode[];
-  
-  return {
-    type: IR.IRNodeType.CallExpression,
-    callee: { 
-      type: IR.IRNodeType.Identifier, 
-      name: "createList" 
-    } as IR.IRIdentifier,
-    arguments: args,
-    isNamedArgs: false
-  } as IR.IRCallExpression;
-}
-
-// New function to transform (hash-set ...) to createSet(...)
-function transformHashSetCall(list: ListNode, currentDir: string): IR.IRCallExpression {
-  const args = list.elements.slice(1)
-    .map(elem => transformNode(elem, currentDir))
-    .filter(Boolean) as IR.IRNode[];
-  
-  return {
-    type: IR.IRNodeType.CallExpression,
-    callee: { 
-      type: IR.IRNodeType.Identifier, 
-      name: "createSet" 
-    } as IR.IRIdentifier,
-    arguments: args,
-    isNamedArgs: false
-  } as IR.IRCallExpression;
-}
-
-// New function to transform (hash-map ...) to createMap([...])
-function transformHashMapCall(list: ListNode, currentDir: string): IR.IRCallExpression {
-  if (list.elements.length % 2 !== 1) {
-    throw new Error("hash-map requires even number of arguments (after the function name)");
-  }
-  
-  const entries: IR.IRArrayLiteral[] = [];
-  for (let i = 1; i < list.elements.length; i += 2) {
-    const key = transformNode(list.elements[i], currentDir);
-    const value = transformNode(list.elements[i + 1], currentDir);
-    
-    if (key && value) {
-      entries.push({
-        type: IR.IRNodeType.ArrayLiteral,
-        elements: [key, value]
-      } as IR.IRArrayLiteral);
-    }
-  }
-  
-  const arrayLiteral: IR.IRArrayLiteral = {
-    type: IR.IRNodeType.ArrayLiteral,
-    elements: entries
-  };
-  
-  return {
-    type: IR.IRNodeType.CallExpression,
-    callee: { 
-      type: IR.IRNodeType.Identifier, 
-      name: "createMap" 
-    } as IR.IRIdentifier,
-    arguments: [arrayLiteral],
-    isNamedArgs: false
-  } as IR.IRCallExpression;
 }
 
 /** (def var expr) */
@@ -734,23 +673,18 @@ function ensureReturnForLastExpression(bodyNodes: IR.IRNode[]): void {
 }
 
 /** (+ a b c ...) => fold left into binary expressions */
-/** (+ a b c ...) => fold left into binary expressions */
 function transformArithmetic(list: ListNode, currentDir: string): IR.IRNode {
   if (list.elements.length < 3) {
     throw new Error("Arithmetic operator requires at least two operands");
   }
   const op = (list.elements[0] as SymbolNode).name;
-  
-  // Convert '=' operator to '===' in JavaScript for equality checks
-  const jsOp = op === "=" ? "===" : op;
-  
   let expr = transformNode(list.elements[1], currentDir)!;
   for (let i = 2; i < list.elements.length; i++) {
     const rightNode = transformNode(list.elements[i], currentDir);
     if (rightNode) {
       expr = {
         type: IR.IRNodeType.BinaryExpression,
-        operator: jsOp,  // Use the adjusted operator
+        operator: op,
         left: expr,
         right: rightNode
       } as IR.IRBinaryExpression;
