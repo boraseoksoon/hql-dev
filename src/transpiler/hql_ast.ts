@@ -1,17 +1,5 @@
 // src/transpiler/hql_ast.ts
-export type HQLNode = 
-  | LiteralNode 
-  | SymbolNode 
-  | ListNode 
-  | VectorNode 
-  | SetNode 
-  | MapNode;
-
-export interface MapNode {
-  type: "map";
-  pairs: [HQLNode, HQLNode][];  // Key-value pairs
-}
-
+export type HQLNode = LiteralNode | SymbolNode | ListNode | VectorNode | SetNode | MapNode;
 
 export interface LiteralNode {
   type: "literal";

@@ -1,13 +1,3 @@
-
-  // HQL Core Functions
-  function createList(...items) { return Array.from(items); }
-  function createVector(...items) { return [...items]; }
-  function createMap(entries) { return Object.fromEntries(entries); }
-  function createSet(...items) { return new Set(items); }
-  
-  // Helper function for string operations
-  function str(...args) { return args.join(''); }
-  
 import * as mod_module from "./simple2.js";
 const mod = mod_module.default !== undefined ? mod_module.default : mod_module;
 import * as strUtil_module from "https://esm.sh/lodash";
@@ -24,10 +14,16 @@ import * as datetime_module from "https://deno.land/std@0.170.0/datetime/mod.ts"
 const datetime = datetime_module.default !== undefined ? datetime_module.default : datetime_module;
 import * as uuidModule_module from "https://deno.land/std@0.170.0/uuid/mod.ts";
 const uuidModule = uuidModule_module.default !== undefined ? uuidModule_module.default : uuidModule_module;
-function greet(name) { return mod.sayHi(name) + " Welcome to HQL."; }
+function greet(name) {
+  return mod.sayHi(name) + " Welcome to HQL.";
+}
 console.log(greet("Alice"))
-function greetRemote(name) { return strUtil.upperCase("Hello, ") + name + "!"; }
-function greetTwice(name) { return greetRemote(name) + " " + greetRemote(name); }
+function greetRemote(name) {
+  return strUtil.upperCase("Hello, ") + name + "!";
+}
+function greetTwice(name) {
+  return greetRemote(name) + " " + greetRemote(name);
+}
 console.log(greetRemote("jss"))
 console.log(chalk.blue("hello hql!"))
 console.log(chalk2.red("hello hql?"))

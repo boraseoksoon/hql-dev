@@ -251,7 +251,7 @@ async function processImport(
       ast.statements[statementIndex] = {
         type: TSNodeType.Raw,
         code: importStatement.replace(importPath, convertedPath),
-      } as TSRaw;
+      };
     }
     return;
   }
@@ -277,7 +277,7 @@ async function processImport(
     ast.statements[statementIndex] = {
       type: TSNodeType.Raw,
       code: importStatement.replace(importPath, jsImportPath),
-    } as TSRaw;
+    };
     
     // Process HQL file if needed
     if (needsProcessing && !visited.has(normalizePath(fullPath))) {
@@ -449,7 +449,7 @@ async function processUnknownImport(
     ast.statements[statementIndex] = {
       type: TSNodeType.Raw,
       code: importStatement.replace(importPath, jsImportPath),
-    } as TSRaw;
+    };
     
     await processHqlImport(resolvedPath, visited, options);
   } else if (resolvedPath.endsWith(".js")) {
@@ -458,7 +458,7 @@ async function processUnknownImport(
     ast.statements[statementIndex] = {
       type: TSNodeType.Raw,
       code: importStatement.replace(importPath, relativePath),
-    } as TSRaw;
+    };
     
     await processJsImport(resolvedPath, visited, options);
   } else {
@@ -468,7 +468,7 @@ async function processUnknownImport(
     ast.statements[statementIndex] = {
       type: TSNodeType.Raw,
       code: importStatement.replace(importPath, relativePath),
-    } as TSRaw;
+    };
   }
 }
 
