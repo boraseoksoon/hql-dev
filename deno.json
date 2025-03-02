@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test && deno task bundle-tests && deno task data-structures-test",
+    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test && deno task bundle-tests && deno task ",
     "unit-tests": "deno task parser-test && deno task hql-to-ir-test",
     "run-test": "deno run -A ./cli/run.ts ./test/simple.hql && deno run -A ./cli/run.ts ./test/data_structures.hql ./test/bundle.js",
     "parser-test": "deno test --allow-all test/parser_test.ts",

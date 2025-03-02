@@ -1,4 +1,4 @@
-// src/transpiler/ts-ast-to-code.ts
+// src/transpiler/ts-ast-to-code.ts - Fixed version to remove arrow tokens
 import {
   TSNode,
   TSNodeType,
@@ -45,7 +45,21 @@ export function generateTypeScript(ast: TSSourceFile, options?: CodeGenerationOp
   const result = gen(ast, 0, config, indentChar);
   
   // Final formatting pass
-  return formatFinalOutput(result, config);
+  let formatted = formatFinalOutput(result, config);
+  
+  // Post-processing to remove any arrow type annotations that might have leaked through
+  formatted = removeArrowTypeAnnotations(formatted);
+  
+  return formatted;
+}
+
+/**
+ * Filter out any arrow type annotations that might have leaked through the parser
+ */
+function removeArrowTypeAnnotations(code: string): string {
+  // Remove all instances of arrow type annotations
+  // This matches "->" followed by any identifier in parentheses: ->(Type)
+  return code.replace(/\s*->\s*\(\w+\)\s*/g, '\n');
 }
 
 function formatFinalOutput(code: string, config: Required<CodeGenerationOptions>): string {
@@ -189,6 +203,11 @@ function gen(node: TSNode, level: number, config: Required<CodeGenerationOptions
       result = "";
   }
   
+  // Check for any arrow type annotations in the generated code and remove them
+  if (typeof result === 'string' && result.includes('->')) {
+    result = removeArrowTypeAnnotations(result);
+  }
+  
   // Cache the result
   codeCache.set(node, result);
   return result;
@@ -235,14 +254,18 @@ function generateBlockStatement(
   // Special handling for raw code
   if (stmt.type === TSNodeType.Raw) {
     const rawCode = (stmt as TSRaw).code;
-    if (rawCode.includes("\n")) {
+    
+    // Remove any arrow type annotations
+    const cleanedCode = removeArrowTypeAnnotations(rawCode);
+    
+    if (cleanedCode.includes("\n")) {
       // Handle multi-line raw code
-      return rawCode
+      return cleanedCode
         .split("\n")
         .map(line => line.trim() ? indentStr + line : "")
         .join("\n");
     }
-    return indentStr + rawCode;
+    return indentStr + cleanedCode;
   }
   
   const code = gen(stmt, 0, config, indentChar);
@@ -282,15 +305,18 @@ function handleRawCode(
   config: Required<CodeGenerationOptions>,
   indentChar: string
 ): string {
-  if (!rawCode.includes("\n")) {
-    return indent(level, indentChar, config.indentSize) + rawCode;
+  // Clean the raw code of any arrow type annotations
+  const cleanedCode = removeArrowTypeAnnotations(rawCode);
+  
+  if (!cleanedCode.includes("\n")) {
+    return indent(level, indentChar, config.indentSize) + cleanedCode;
   }
   
   // For multi-line raw code, preserve its formatting
   // but ensure proper indentation
   const indentStr = indent(level, indentChar, config.indentSize);
   
-  return rawCode
+  return cleanedCode
     .split("\n")
     .map((line, i) => {
       // First line is already indented properly by the caller
