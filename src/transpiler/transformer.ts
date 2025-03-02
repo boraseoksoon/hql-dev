@@ -1,4 +1,4 @@
-// src/transpiler/transformer.ts
+// src/transpiler/transformer.ts - Fully refactored with improved error handling and logging
 import { HQLNode } from "./hql_ast.ts";
 import { transformToIR } from "./hql-to-ir.ts";
 import { convertIRToTSAST } from "./ir-to-ts-ast.ts";
@@ -12,6 +12,17 @@ import {
 } from "../platform/platform.ts";
 import { parse } from "./parser.ts";
 import { bundleJavaScript } from "../bundler/bundler.ts";
+import {
+  isExternalModule,
+  normalizePath,
+  resolveImportPath,
+  hqlToJsPath,
+  convertImportSpecifier,
+  hasExtension,
+  pathExists,
+  resolveWithExtensions,
+  ensureAbsolutePath
+} from "./path-utils.ts";
 
 // Cache for processed imports to avoid redundant processing
 const processedImportsCache = new Map<string, Set<string>>();
@@ -38,8 +49,8 @@ export interface TransformOptions {
   useSpaces?: boolean;
   preserveImports?: boolean; // Whether to keep import statements
   inlineSourceMaps?: boolean; // Add inline source maps
-  bundle?: boolean; // New: bundle the output to a single file
-  verbose?: boolean; // New: enable verbose logging
+  bundle?: boolean; // Bundle the output to a single file
+  verbose?: boolean; // Enable verbose logging
 }
 
 /**
@@ -62,62 +73,7 @@ function getDefaultOptions(overrides: Partial<TransformOptions> = {}): Required<
 }
 
 /**
- * Check if a module is an external module based on its path.
- */
-function isExternalModule(path: string | null | undefined): boolean {
-  if (typeof path !== 'string') {
-    return false;
-  }
-  
-  return path.startsWith('http://') ||
-         path.startsWith('https://') ||
-         path.startsWith('npm:') ||
-         path.startsWith('jsr:') ||
-         path.startsWith('deno:') ||
-         path.startsWith('std:') ||
-         path.startsWith('node:') ||
-         (!path.startsWith('./') && 
-          !path.startsWith('../') && 
-          !path.startsWith('/') &&
-          !isAbsolutePath(path) &&
-          !path.includes(':'));  // Bare specifiers (but not Windows drive letters)
-}
-
-/**
- * Check if a path is absolute using platform-specific logic.
- */
-function isAbsolutePath(path: string): boolean {
-  try {
-    // Handle Windows paths like C:\path
-    if (/^[a-zA-Z]:[/\\]/.test(path)) {
-      return true;
-    }
-    
-    // Unix absolute paths
-    return path.startsWith('/');
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Normalize path separators for consistent usage across platforms.
- */
-function normalizePath(filePath: string): string {
-  if (typeof filePath !== 'string') {
-    throw new Error(`Path must be a string: ${JSON.stringify(filePath)}`);
-  }
-  
-  if (isExternalModule(filePath)) {
-    return filePath;
-  }
-  
-  // Replace Windows path separators with Unix ones for consistency
-  return filePath.replace(/\\/g, '/');
-}
-
-/**
- * Transform HQL AST to JavaScript code.
+ * Transform HQL AST to JavaScript code with better error handling.
  * Main entry point for the transformation pipeline.
  */
 export async function transformAST(
@@ -129,27 +85,47 @@ export async function transformAST(
 ): Promise<string> {
   const opts = getDefaultOptions(options);
   if (inModule) opts.module = "commonjs";
-
-  // Step 1: Transform HQL to IR.
-  const irProgram = transformToIR(nodes, currentDir);
   
-  // Step 2: Convert IR to TS AST.
-  let tsAST = convertIRToTSAST(irProgram);
-  
-  // Step 3: Process imports efficiently in a single pass
-  if (!opts.preserveImports) {
-    await processImportsInAST(tsAST, currentDir, visited, opts);
+  if (opts.verbose) {
+    console.log(`\n🔄 Transforming HQL AST in directory "${currentDir}"`);
+    console.log(`  → Module type: ${opts.module}`);
+    console.log(`  → Bundle: ${opts.bundle ? 'enabled' : 'disabled'}`);
   }
-  
-  // Step 4: Generate code with optimized options.
-  const codeOptions: CodeGenerationOptions = {
-    formatting: opts.formatting,
-    indentSize: opts.indentSize,
-    useSpaces: opts.useSpaces,
-    module: opts.module,
-  };
 
-  return generateTypeScript(tsAST, codeOptions);
+  try {
+    // Step 1: Transform HQL to IR.
+    const irProgram = transformToIR(nodes, currentDir);
+    if (opts.verbose) console.log(`  → Transformed HQL AST to IR with ${irProgram.body.length} nodes`);
+    
+    // Step 2: Convert IR to TS AST.
+    let tsAST = convertIRToTSAST(irProgram);
+    if (opts.verbose) console.log(`  → Converted IR to TS AST with ${tsAST.statements.length} statements`);
+    
+    // Step 3: Process imports efficiently in a single pass
+    if (!opts.preserveImports) {
+      await processImportsInAST(tsAST, currentDir, visited, opts);
+      if (opts.verbose) console.log(`  → Processed imports in TS AST`);
+    }
+    
+    // Step 4: Generate code with optimized options.
+    const codeOptions: CodeGenerationOptions = {
+      formatting: opts.formatting,
+      indentSize: opts.indentSize,
+      useSpaces: opts.useSpaces,
+      module: opts.module,
+    };
+
+    const code = generateTypeScript(tsAST, codeOptions);
+    if (opts.verbose) console.log(`  → Generated TypeScript code (${code.length} bytes)`);
+    
+    return code;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`\n❌ AST transformation failed: ${errorMessage}`);
+    
+    // Re-throw with a more descriptive message
+    throw new Error(`Failed to transform HQL AST: ${errorMessage}`);
+  }
 }
 
 /**
@@ -294,50 +270,6 @@ async function processImport(
 }
 
 /**
- * Convert an import specifier to its canonical form.
- */
-function convertImportSpecifier(specifier: string): string {
-  // Handle npm: specifiers
-  if (specifier.startsWith('npm:')) {
-    return `https://esm.sh/${specifier.substring(4)}`;
-  }
-  
-  // Handle jsr: specifiers (JSR registry)
-  if (specifier.startsWith('jsr:')) {
-    return specifier; // Keep JSR specifiers as-is
-  }
-  
-  // Handle std: specifiers (Deno standard library)
-  if (specifier.startsWith('std:')) {
-    const version = "0.170.0"; // Could be configurable
-    const path = specifier.substring(4);
-    return `https://deno.land/std@${version}/${path}`;
-  }
-  
-  // Handle deno: specifiers
-  if (specifier.startsWith('deno:')) {
-    return specifier; // These are built-ins, so keep them as-is
-  }
-  
-  // Handle node: specifiers
-  if (specifier.startsWith('node:')) {
-    // Convert node: specifiers to Deno-compatible polyfills
-    const nodePath = specifier.substring(5);
-    return `https://deno.land/std@0.170.0/node/${nodePath}.ts`;
-  }
-  
-  // For bare specifiers (e.g., 'lodash')
-  if (isExternalModule(specifier) && 
-      !specifier.startsWith('http:') && 
-      !specifier.startsWith('https:')) {
-    // Use esm.sh as a CDN for Node packages
-    return `https://esm.sh/${specifier}`;
-  }
-  
-  return specifier;
-}
-
-/**
  * Process an HQL import.
  */
 async function processHqlImport(
@@ -351,7 +283,7 @@ async function processHqlImport(
   visited.add(normalizedPath);
   
   try {
-    if (options.verbose) console.log(`Transpiling HQL import: ${fullPath}`);
+    if (options.verbose) console.log(`Transpiling HQL import: "${fullPath}"`);
     
     // Read and transform the HQL file
     const source = await Deno.readTextFile(fullPath);
@@ -369,9 +301,9 @@ async function processHqlImport(
     // Write the JS file
     const jsFullPath = hqlToJsPath(fullPath);
     await Deno.writeTextFile(jsFullPath, transformed);
-    if (options.verbose) console.log(`Generated JS file: ${jsFullPath}`);
+    if (options.verbose) console.log(`Generated JS file: "${jsFullPath}"`);
   } catch (error) {
-    console.error(`Error processing HQL import ${fullPath}:`, error);
+    console.error(`\n❌ Error processing HQL import ${fullPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -392,7 +324,7 @@ async function processJsImport(
   try {
     // Check if file exists
     if (!await pathExists(fullPath)) {
-      console.warn(`JS import file not found: ${fullPath}`);
+      console.warn(`\n⚠️ JS import file not found: "${fullPath}"`);
       return;
     }
     
@@ -407,7 +339,7 @@ async function processJsImport(
       await processHqlImportsInJsFile(fullPath, jsContent, hqlImports, visited, options);
     }
   } catch (error) {
-    console.error(`Error processing JS import ${fullPath}:`, error);
+    console.error(`\n❌ Error processing JS import "${fullPath}": ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -428,7 +360,7 @@ async function processUnknownImport(
   const resolvedPath = await resolveWithExtensions(basePath);
   
   if (!resolvedPath) {
-    console.warn(`Could not resolve import: ${importPath}`);
+    console.warn(`\n⚠️ Could not resolve import: "${importPath}"`);
     return;
   }
   
@@ -545,96 +477,8 @@ async function processHqlImportsInJsFile(
   // Write the updated file if needed
   if (contentModified) {
     await Deno.writeTextFile(jsFilePath, updatedContent);
-    if (options.verbose) console.log(`Updated JS imports in: ${jsFilePath}`);
+    if (options.verbose) console.log(`Updated JS imports in: "${jsFilePath}"`);
   }
-}
-
-/**
- * Helper function to resolve an import path against a base directory.
- */
-function resolveImportPath(importPath: string, currentDir: string): string {
-  if (isExternalModule(importPath)) {
-    return importPath;
-  }
-  
-  if (importPath.startsWith('./') || importPath.startsWith('../')) {
-    return normalizePath(resolve(join(currentDir, importPath)));
-  }
-  
-  if (importPath.startsWith('/') || isAbsolutePath(importPath)) {
-    return normalizePath(resolve(importPath));
-  }
-  
-  return importPath;
-}
-
-/**
- * Convert an HQL path to its corresponding JS path.
- */
-function hqlToJsPath(hqlPath: string): string {
-  if (isExternalModule(hqlPath)) {
-    return hqlPath;
-  }
-  return hqlPath.replace(/\.hql$/, '.js');
-}
-
-/**
- * Check if a file path has a specific extension.
- */
-function hasExtension(filePath: string, ext: string): boolean {
-  return filePath.endsWith(ext);
-}
-
-/**
- * Check if a path exists (file or directory).
- */
-async function pathExists(filePath: string): Promise<boolean> {
-  if (isExternalModule(filePath)) {
-    return true; // Assume external modules exist
-  }
-  
-  try {
-    await Deno.stat(filePath);
-    return true;
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-/**
- * Try multiple extensions to find a file.
- */
-async function resolveWithExtensions(
-  basePath: string, 
-  extensions = ['.hql', '.js', '.ts', '.tsx']
-): Promise<string | null> {
-  // First try the path as-is
-  if (await pathExists(basePath)) {
-    return basePath;
-  }
-  
-  // Try with each extension
-  for (const ext of extensions) {
-    const pathWithExt = basePath.endsWith(ext) ? basePath : `${basePath}${ext}`;
-    if (await pathExists(pathWithExt)) {
-      return pathWithExt;
-    }
-  }
-  
-  // Try index files in directory
-  if (!basePath.endsWith('/')) {
-    for (const ext of extensions) {
-      const indexPath = `${basePath}/index${ext}`;
-      if (await pathExists(indexPath)) {
-        return indexPath;
-      }
-    }
-  }
-  
-  return null;
 }
 
 /**
@@ -656,81 +500,101 @@ export async function transpile(
 }
 
 /**
- * Transpile an HQL file to JavaScript.
+ * Transpile an HQL file to JavaScript with improved error handling.
  */
 export async function transpileFile(
   inputPath: string,
   outputPath?: string,
   options: TransformOptions = {}
 ): Promise<string> {
+  const opts = getDefaultOptions(options);
+  const absPath = resolve(inputPath);
+  
   try {
-    const absPath = resolve(inputPath);
-    if (options.verbose) console.log(`Transpiling file: ${absPath}`);
+    if (opts.verbose) console.log(`\n🔨 Transpiling file: "${absPath}"`);
+    
+    // Check if the file exists
+    try {
+      await Deno.stat(absPath);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        throw new Error(`File not found: "${absPath}"`);
+      }
+      throw error;
+    }
+    
+    // Read the source
     const source = await Deno.readTextFile(absPath);
+    if (opts.verbose) console.log(`  → Read source file (${source.length} bytes)`);
     
     // Transpile HQL to JS
-    const transpiled = await transpile(source, absPath, options);
+    if (opts.verbose) console.log(`  → Transpiling HQL source to JavaScript`);
+    const transpiled = await transpile(source, absPath, opts);
     
     // If bundling is requested, write the transpiled output to a temporary file and bundle it
-    if (options.bundle) {
+    if (opts.bundle) {
       const outputDir = dirname(absPath);
       const tempJsPath = join(outputDir, `.${basename(absPath)}.temp.js`);
       
-      console.log("start bundling : ", tempJsPath)
-
       try {
-        if (options.verbose) console.log(`Writing transpiled JS to temporary file: ${tempJsPath}`);
+        if (opts.verbose) console.log(`  → Writing transpiled JS to temporary file: "${tempJsPath}"`);
         
         // Write transpiled output to a temporary file
         await Deno.writeTextFile(tempJsPath, transpiled);
         
-        console.log("bundle is started")
-
+        if (opts.verbose) console.log(`  → Bundling the transpiled JavaScript`);
         // Bundle the transpiled output
         const bundled = await bundleJavaScript(tempJsPath, { 
-          format: options.module as "esm" | "commonjs", 
-          verbose: options.verbose 
+          outputPath: outputPath,
+          format: opts.module as "esm" | "commonjs", 
+          verbose: opts.verbose 
         });
         
-        console.log("bundle is done")
-
         // Clean up temporary file
         try {
           await Deno.remove(tempJsPath);
+          if (opts.verbose) console.log(`  → Removed temporary file: "${tempJsPath}"`);
         } catch (e) {
           // Ignore cleanup errors
-          if (options.verbose) console.warn(`Failed to remove temporary file: ${e.message}`);
+          if (opts.verbose) console.warn(`  ⚠️ Failed to remove temporary file: ${e instanceof Error ? e.message : String(e)}`);
         }
         
-        // Write output if outputPath is provided
-        if (outputPath) {
+        // Write output if outputPath is provided but hasn't been written by bundleJavaScript
+        if (outputPath && !await pathExists(outputPath)) {
           await writeOutput(bundled, outputPath);
-          if (options.verbose) console.log(`Bundled output written to: ${outputPath}`);
+          if (opts.verbose) console.log(`  → Bundled output written to: "${outputPath}"`);
         }
         
         return bundled;
       } catch (error) {
-        throw new Error(`Bundling error: ${error.message}`);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`\n❌ Bundling error: ${errorMessage}`);
+        throw new Error(`Bundling failed: ${errorMessage}`);
       }
     }
     
     // Write output if outputPath is provided
     if (outputPath) {
       await writeOutput(transpiled, outputPath);
-      if (options.verbose) console.log(`Transpiled output written to: ${outputPath}`);
+      if (opts.verbose) console.log(`  → Transpiled output written to: "${outputPath}"`);
     }
     
+    if (opts.verbose) console.log(`\n✅ Successfully transpiled: "${absPath}"`);
     return transpiled;
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`\n❌ Transpilation failed: ${errorMessage}`);
+    
+    // Re-throw with a clearer message
     if (error instanceof Deno.errors.NotFound) {
-      throw new Error(`File not found: ${inputPath}`);
+      throw new Error(`File not found: "${inputPath}"`);
     }
-    throw error;
+    throw new Error(`Failed to transpile "${inputPath}": ${errorMessage}`);
   }
 }
 
 /**
- * Write the transpiled code to a file.
+ * Write the transpiled code to a file with better error handling.
  */
 export async function writeOutput(
   code: string, 
@@ -749,8 +613,9 @@ export async function writeOutput(
     }
     
     await Deno.writeTextFile(outputPath, code);
-  } catch (error: any) {
-    throw new Error(`Failed to write output: ${error.message}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to write output to "${outputPath}": ${errorMessage}`);
   }
 }
 
