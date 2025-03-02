@@ -132,25 +132,23 @@ export async function transformAST(
   const opts = getDefaultOptions(options);
   if (inModule) opts.module = "commonjs";
 
-  // Step 1: Apply the reader transformation and macro expansion
-  // This ensures JavaScript literals are converted to S-expressions
+  // Apply macro expansion to all nodes
   const expandedNodes = expandMacros(nodes);
 
-  // Step 2: Transform HQL to IR.
+  // Step 1: Transform HQL to IR.
   const irProgram = transformToIR(expandedNodes, currentDir);
   
-  // Step 3: Convert IR to TS AST.
+  // Step 2: Convert IR to TS AST.
   let tsAST = convertIRToTSAST(irProgram);
   
-  // Step 4: Process imports efficiently in a single pass
+  // Step 3: Process imports efficiently in a single pass
   if (!opts.preserveImports) {
     await processImportsInAST(tsAST, currentDir, visited, opts);
   }
   
-  // Step 5: Generate code with optimized options.
-  // Force minimal formatting for consistent output matching test expectations
+  // Step 4: Generate code with optimized options.
   const codeOptions: CodeGenerationOptions = {
-    formatting: "minimal", // Force minimal formatting
+    formatting: opts.formatting,
     indentSize: opts.indentSize,
     useSpaces: opts.useSpaces,
     module: opts.module,
@@ -654,18 +652,18 @@ return null;
 * Transpile HQL source code into JavaScript.
 */
 export async function transpile(
-  source: string,
-  filePath: string = ".",
-  options: TransformOptions = {}
+source: string,
+filePath: string = ".",
+options: TransformOptions = {}
 ): Promise<string> {
-  try {
-    const ast = parse(source);
-    const currentDir = dirname(filePath);
-    const visited = new Set<string>([normalizePath(filePath)]);
-    return await transformAST(ast, currentDir, visited, options);
-  } catch (error: any) {
-    throw new Error(`Transpile error: ${error.message}`);
-  }
+try {
+  const ast = parse(source);
+  const currentDir = dirname(filePath);
+  const visited = new Set<string>([normalizePath(filePath)]);
+  return await transformAST(ast, currentDir, visited, options);
+} catch (error: any) {
+  throw new Error(`Transpile error: ${error.message}`);
+}
 }
 
 /**

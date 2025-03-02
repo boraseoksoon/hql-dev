@@ -1,6 +1,6 @@
 // src/transpiler/parser.ts
 
-import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode, VectorNode, SetNode, MapNode } from "./hql_ast.ts";
 import { ParseError } from "./errors.ts";
 
 const WHITESPACE_CHARS = new Set([' ', '\t', '\n', '\r']);
@@ -256,7 +256,7 @@ export function parse(input: string): HQLNode[] {
     pos++;
 
     if (token === "(") {
-      // Parse list
+      // parse list
       const elements: HQLNode[] = [];
       while (pos < tokens.length && tokens[pos] !== ")") {
         elements.push(parseExpression());
@@ -268,49 +268,42 @@ export function parse(input: string): HQLNode[] {
       return { type: "list", elements };
 
     } else if (token === "[") {
-      // Vector immediately becomes (vector ...)
-      const vectorElements: HQLNode[] = [];
-      // Add the 'vector' symbol as the first element
-      vectorElements.push({ type: "symbol", name: "vector" });
-      
-      // Parse the vector elements
+      // parse vector
+      const elements: HQLNode[] = [];
       while (pos < tokens.length && tokens[pos] !== "]") {
-        vectorElements.push(parseExpression());
+        elements.push(parseExpression());
       }
       if (pos >= tokens.length) {
         throw new ParseError("Unclosed square bracket", position);
       }
       pos++;
-      // Return as a list node with 'vector' as the first element
-      return { type: "list", elements: vectorElements };
+      return { type: "vector", elements };
 
     } else if (token === "#[") {
-      // Set immediately becomes (hash-set ...)
-      const setElements: HQLNode[] = [];
-      // Add the 'hash-set' symbol as the first element
-      setElements.push({ type: "symbol", name: "hash-set" });
-      
-      // Parse the set elements
+      // parse set
+      const elements: HQLNode[] = [];
       while (pos < tokens.length && tokens[pos] !== "]") {
-        setElements.push(parseExpression());
+        elements.push(parseExpression());
       }
       if (pos >= tokens.length) {
         throw new ParseError("Unclosed set notation", position);
       }
       pos++;
-      // Return as a list node with 'hash-set' as the first element
-      return { type: "list", elements: setElements };
+      return { type: "set", elements };
+
+    } else if (token === "{") {
+      // multi-token curly braces => parse as map
+      return parseMap(position);
 
     } else if (token.startsWith("{") && token.endsWith("}")) {
-      // Single-token JSON object
+      // single-token curly
       try {
-        // Try to parse as JSON
         const obj = JSON.parse(token);
-        // Convert JSON object to (hash-map k1 v1 k2 v2...)
-        return convertJsonToHashMap(obj, position);
-      } catch (e) {
-        // If not valid JSON, use a more direct approach
-        throw new ParseError(`Invalid JSON: ${token}`, position);
+        // if it works => treat as literal
+        return { type: "literal", value: obj };
+      } catch {
+        // else parse as HQL map with reentrant parse
+        return parseCurlyStringAsMap(token, position);
       }
 
     } else if (token === ")" || token === "]") {
@@ -348,58 +341,190 @@ export function parse(input: string): HQLNode[] {
   }
 
   /**
-   * Convert a JSON object to a (hash-map k1 v1 k2 v2...) form
+   * parse a curly map from multiple tokens until '}'.
    */
-  function convertJsonToHashMap(
-    obj: any, 
-    position: { line: number; column: number; offset: number }
-  ): ListNode {
-    const elements: HQLNode[] = [];
-    // Add the 'hash-map' symbol as the first element
-    elements.push({ type: "symbol", name: "hash-map" });
+  function parseMap(startPos: { line: number; column: number; offset: number }): MapNode {
+    const pairs: [HQLNode, HQLNode][] = [];
+    while (true) {
+      if (pos >= tokens.length) {
+        throw new ParseError("Unclosed curly brace", startPos);
+      }
+      const tk = tokens[pos];
+      if (tk === "}") {
+        pos++;
+        break;
+      }
+      const key = parseExpression();
+      if (pos >= tokens.length) {
+        throw new ParseError("Map missing value for last key", startPos);
+      }
+      if (tokens[pos] === "}") {
+        throw new ParseError("Map missing value for last key", positions[pos]);
+      }
+      const val = parseExpression();
+      pairs.push([key, val]);
+    }
+    return { type: "map", pairs };
+  }
+
+  /**
+   * If single-token '{...}' not valid JSON, parse it as HQL map by reentrant parse
+   * *without* reassigning tokens. We create a new parse() call on the inside text.
+   */
+  // In parser.ts
+function parseCurlyStringAsMap(tokenStr: string, startPos: { line: number; column: number; offset: number }): MapNode {
+  // Remove outer braces
+  const content = tokenStr.slice(1, -1).trim();
+  const pairs: [HQLNode, HQLNode][] = [];
+  
+  // Empty object case
+  if (!content) {
+    return { type: "map", pairs };
+  }
+  
+  // Try to parse as JSON first
+  try {
+    const jsonObj = JSON.parse(tokenStr);
+    // Successfully parsed as JSON, convert to MapNode
+    for (const key in jsonObj) {
+      const value = jsonObj[key];
+      pairs.push([
+        { type: "literal", value: key },
+        { type: "literal", value: value }
+      ]);
+    }
+    return { type: "map", pairs };
+  } catch (e) {
+    // Not valid JSON - use a simpler key-value pair extraction
+    // This is a simplified approach for demonstration - real implementation
+    // would need to handle nested structures, quoted strings, etc.
+    const keyValuePairs = content.split(',');
     
-    // Add key-value pairs
-    for (const [key, value] of Object.entries(obj)) {
-      // Add key
-      elements.push({ type: "literal", value: key });
+    for (const pair of keyValuePairs) {
+      const [key, value] = pair.split(':').map(s => s.trim());
+      if (!key || !value) {
+        throw new ParseError(`Invalid map entry: ${pair}`, startPos);
+      }
       
-      // Add value (recursively converting nested objects/arrays)
-      if (value === null) {
-        elements.push({ type: "literal", value: null });
-      } else if (Array.isArray(value)) {
-        // Handle arrays as vectors
-        const vectorElements: HQLNode[] = [];
-        vectorElements.push({ type: "symbol", name: "vector" });
-        for (const item of value) {
-          if (typeof item === "object" && item !== null) {
-            if (Array.isArray(item)) {
-              // Nested array
-              const nestedVectorElements: HQLNode[] = [];
-              nestedVectorElements.push({ type: "symbol", name: "vector" });
-              for (const nestedItem of item) {
-                nestedVectorElements.push({ type: "literal", value: nestedItem });
-              }
-              vectorElements.push({ type: "list", elements: nestedVectorElements });
-            } else {
-              // Nested object
-              vectorElements.push(convertJsonToHashMap(item, position));
-            }
-          } else {
-            // Simple value
-            vectorElements.push({ type: "literal", value: item });
-          }
-        }
-        elements.push({ type: "list", elements: vectorElements });
-      } else if (typeof value === "object" && value !== null) {
-        // Handle nested objects
-        elements.push(convertJsonToHashMap(value, position));
+      // Try to parse key and value as simple literals or symbols
+      // (This is simplified and would need more robust parsing)
+      let keyNode: HQLNode;
+      let valueNode: HQLNode;
+      
+      // Simple literal or symbol parsing
+      if (key.startsWith('"') && key.endsWith('"')) {
+        keyNode = { type: "literal", value: key.slice(1, -1) };
+      } else if (!isNaN(Number(key))) {
+        keyNode = { type: "literal", value: Number(key) };
       } else {
-        // Handle simple values
-        elements.push({ type: "literal", value: value || null });
+        keyNode = { type: "symbol", name: key };
+      }
+      
+      if (value.startsWith('"') && value.endsWith('"')) {
+        valueNode = { type: "literal", value: value.slice(1, -1) };
+      } else if (!isNaN(Number(value))) {
+        valueNode = { type: "literal", value: Number(value) };
+      } else if (value === "true") {
+        valueNode = { type: "literal", value: true };
+      } else if (value === "false") {
+        valueNode = { type: "literal", value: false };
+      } else if (value === "null") {
+        valueNode = { type: "literal", value: null };
+      } else {
+        valueNode = { type: "symbol", name: value };
+      }
+      
+      pairs.push([keyNode, valueNode]);
+    }
+    
+    return { type: "map", pairs };
+  }
+}
+  
+  // Helper function to convert JSON to MapNode
+  function convertJsonToMapNode(json: any): MapNode {
+    const pairs: [HQLNode, HQLNode][] = [];
+    for (const key in json) {
+      pairs.push([
+        { type: "literal", value: key },
+        convertJsonValueToNode(json[key])
+      ]);
+    }
+    return { type: "map", pairs };
+  }
+  
+  // Helper to convert JSON values to appropriate nodes
+  function convertJsonValueToNode(value: any): HQLNode {
+    if (value === null) return { type: "literal", value: null };
+    if (typeof value === "string") return { type: "literal", value };
+    if (typeof value === "number") return { type: "literal", value };
+    if (typeof value === "boolean") return { type: "literal", value };
+    if (Array.isArray(value)) {
+      return { type: "vector", elements: value.map(v => convertJsonValueToNode(v)) };
+    }
+    if (typeof value === "object") {
+      return convertJsonToMapNode(value);
+    }
+    return { type: "literal", value: String(value) };
+  }
+  
+  // Split a string by a delimiter, preserving structure of {} [] ()
+  function splitPreservingStructure(str: string, delimiter: string): string[] {
+    const result: string[] = [];
+    let current = "";
+    let depth = 0;
+    let inString = false;
+    
+    for (let i = 0; i < str.length; i++) {
+      const char = str[i];
+      
+      if (char === '"' && (i === 0 || str[i-1] !== '\\')) {
+        inString = !inString;
+        current += char;
+      } else if (inString) {
+        current += char;
+      } else if (char === '{' || char === '[' || char === '(') {
+        depth++;
+        current += char;
+      } else if (char === '}' || char === ']' || char === ')') {
+        depth--;
+        current += char;
+      } else if (char === delimiter && depth === 0) {
+        result.push(current);
+        current = "";
+      } else {
+        current += char;
       }
     }
     
-    return { type: "list", elements };
+    if (current) {
+      result.push(current);
+    }
+    
+    return result;
+  }
+  
+  // Parse a simple value without calling the full parser
+  function parseSimpleValue(value: string, pos: { line: number; column: number; offset: number }): HQLNode {
+    value = value.trim();
+    
+    // Handle string literals
+    if (value.startsWith('"') && value.endsWith('"')) {
+      return { type: "literal", value: value.slice(1, -1) };
+    }
+    
+    // Handle numbers
+    if (!isNaN(Number(value))) {
+      return { type: "literal", value: Number(value) };
+    }
+    
+    // Handle boolean and null
+    if (value === "true") return { type: "literal", value: true };
+    if (value === "false") return { type: "literal", value: false };
+    if (value === "null") return { type: "literal", value: null };
+    
+    // Default to treating as a symbol
+    return { type: "symbol", name: value };
   }
 
   const results: HQLNode[] = [];

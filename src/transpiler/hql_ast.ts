@@ -1,16 +1,21 @@
 // src/transpiler/hql_ast.ts
-
-/**
- * Simplified AST types - focusing only on core S-expression components
- */
 export type HQLNode = 
   | LiteralNode 
   | SymbolNode 
-  | ListNode;
+  | ListNode 
+  | VectorNode 
+  | SetNode 
+  | MapNode;
+
+export interface MapNode {
+  type: "map";
+  pairs: [HQLNode, HQLNode][];  // Key-value pairs
+}
+
 
 export interface LiteralNode {
   type: "literal";
-  value: string | number | boolean | null | object;  // Object covers JS objects, arrays, etc.
+  value: string | number | boolean | null | object;  // Added object for JSON support
 }
 
 export interface SymbolNode {
@@ -21,4 +26,20 @@ export interface SymbolNode {
 export interface ListNode {
   type: "list";
   elements: HQLNode[];
+}
+
+// New node types for Clojure-like data structures
+export interface VectorNode {
+  type: "vector";
+  elements: HQLNode[];
+}
+
+export interface SetNode {
+  type: "set";
+  elements: HQLNode[];
+}
+
+export interface MapNode {
+  type: "map";
+  pairs: [HQLNode, HQLNode][];  // Key-value pairs
 }

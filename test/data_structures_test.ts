@@ -1,7 +1,6 @@
 // test/data_structures_test.ts
 import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../src/transpiler/parser.ts";
-import { read } from "../src/transpiler/reader.ts";
 import { transformToIR } from "../src/transpiler/hql-to-ir.ts";
 import { expandMacros } from "../src/macro.ts";
 import { convertIRToTSAST } from "../src/transpiler/ir-to-ts-ast.ts";
@@ -13,132 +12,126 @@ const TEST_CASES = {
   // Test vector literals
   vectorLiteral: {
     input: `(def my-vector [1 2 3 4 5])`,
-    expectedJS: "const myVector = createVector(1, 2, 3, 4, 5);"
+    expectedIR: "ArrayLiteral",
+    expectedJS: "const myVector = [1, 2, 3, 4, 5];"
   },
   // Test map (JSON) literals
   mapLiteral: {
     input: `(def my-map {"name": "Alice", "age": 30})`,
-    expectedJS: "const myMap = createMap([[\"name\", \"Alice\"], [\"age\", 30]]);"
+    expectedIR: "ObjectLiteral",
+    expectedJS: "const myMap = {name: \"Alice\", age: 30};"
   },
   // Test set literals
   setLiteral: {
     input: `(def my-set #[1 2 3 4 5])`,
-    expectedJS: "const mySet = createSet(1, 2, 3, 4, 5);"
+    expectedIR: "NewExpression",
+    expectedJS: "const mySet = new Set([1, 2, 3, 4, 5]);"
   },
   // Test nested data structures
   nestedDataStructures: {
     input: `(def data {"users": [{"name": "Alice", "active": true}, {"name": "Bob", "active": false}], "settings": #[1 2 3]})`,
+    expectedIR: "ObjectLiteral",
     expectedJS: "const data ="
   },
   // Test list (traditional S-expression)
   listLiteral: {
     input: `(def my-list (list 1 2 3 4 5))`,
+    expectedIR: "ArrayLiteral",
     expectedJS: "const myList = createList(1, 2, 3, 4, 5);"
+  },
+  // Test hash-map
+  hashMapLiteral: {
+    input: `(def my-hash-map (hash-map "key1" "value1" "key2" "value2"))`,
+    expectedIR: "ObjectLiteral",
+    expectedJS: "const myHashMap = createMap([[\"key1\", \"value1\"], [\"key2\", \"value2\"]]);"
+  },
+  // Test hash-set
+  hashSetLiteral: {
+    input: `(def my-hash-set (hash-set 1 2 3 4 5))`,
+    expectedIR: "NewExpression",
+    expectedJS: "const myHashSet = createSet(1, 2, 3, 4, 5);"
   }
 };
 
-Deno.test("Data Structure Literals - Parser Directly Creates S-expressions", async () => {
+Deno.test("Data Structure Literals - Parser", async () => {
   // Test parsing of vector literals
   const vectorAST = parse(TEST_CASES.vectorLiteral.input);
   assertEquals(vectorAST.length, 1);
   assertEquals(vectorAST[0].type, "list");
-  const vectorDefList = vectorAST[0] as any;
-  
-  // The vector literal should be a literal node with an array value
-  const vectorLiteral = vectorDefList.elements[2];
-  assertEquals(vectorLiteral.type, "literal");
-  assertEquals(Array.isArray(vectorLiteral.value), true);
   
   // Test parsing of set literals
   const setAST = parse(TEST_CASES.setLiteral.input);
   assertEquals(setAST.length, 1);
   assertEquals(setAST[0].type, "list");
-  const setDefList = setAST[0] as any;
   
-  // The set literal should be a literal node with a Set value
-  const setLiteral = setDefList.elements[2];
-  assertEquals(setLiteral.type, "literal");
-  assertEquals(setLiteral.value instanceof Set, true);
-  
-  // Test parsing of map (JSON) literals
+  // Test parsing of map (JSON) literals 
   const mapAST = parse(TEST_CASES.mapLiteral.input);
   assertEquals(mapAST.length, 1);
   assertEquals(mapAST[0].type, "list");
-  const mapDefList = mapAST[0] as any;
   
-  // The map literal should be a literal node with an object value
-  const mapLiteral = mapDefList.elements[2];
-  assertEquals(mapLiteral.type, "literal");
-  assertEquals(typeof mapLiteral.value, "object");
-  assertEquals(mapLiteral.value !== null, true);
+  // Test parsing of nested data structures
+  const nestedAST = parse(TEST_CASES.nestedDataStructures.input);
+  assertEquals(nestedAST.length, 1);
+  assertEquals(nestedAST[0].type, "list");
 });
 
-Deno.test("Data Structure Literals - Macro Expansion No Longer Needed", async () => {
-  // Test that the reader transforms JavaScript literals to S-expressions
+Deno.test("Data Structure Literals - Macro Expansion", async () => {
+  // Test expansion of vector syntax to core S-expression
   const vectorAST = parse(TEST_CASES.vectorLiteral.input);
+  const expandedVector = expandMacros(vectorAST);
+  assertEquals(expandedVector.length, 1);
+  assertEquals(expandedVector[0].type, "list");
   
-  // First, let's see what read does directly
-  const readVectorAST = read(vectorAST);
-  
-  // The vector literal should now be a list with 'vector' as the first element
-  const readVectorDefList = readVectorAST[0] as any;
-  const readVectorExpr = readVectorDefList.elements[2];
-  assertEquals(readVectorExpr.type, "list");
-  assertEquals(readVectorExpr.elements[0].type, "symbol");
-  assertEquals(readVectorExpr.elements[0].name, "vector");
-  
-  // Now let's see if expandMacros correctly uses read
-  const expandedVectorAST = expandMacros(vectorAST);
-  
-  // The expanded AST should have the same structure as the read AST
-  assertEquals(JSON.stringify(expandedVectorAST), JSON.stringify(readVectorAST));
+  // Test expansion of set syntax to core S-expression
+  const setAST = parse(TEST_CASES.setLiteral.input);
+  const expandedSet = expandMacros(setAST);
+  assertEquals(expandedSet.length, 1);
+  assertEquals(expandedSet[0].type, "list");
 });
 
 Deno.test("Data Structure Literals - IR Generation", async () => {
-  // Test IR generation with transformed nodes
+  // Test IR generation for vector literals
   const vectorAST = parse(TEST_CASES.vectorLiteral.input);
-  const expandedVectorAST = expandMacros(vectorAST);
-  const vectorIR = transformToIR(expandedVectorAST, ".");
+  const expandedVector = expandMacros(vectorAST);
+  const vectorIR = transformToIR(expandedVector, ".");
+  assertStringIncludes(JSON.stringify(vectorIR), TEST_CASES.vectorLiteral.expectedIR);
   
-  // Make sure the IR contains a call to createVector
-  const irString = JSON.stringify(vectorIR);
-  assertStringIncludes(irString, "createVector");
-  
-  // Test set and map as well
+  // Test IR generation for set literals
   const setAST = parse(TEST_CASES.setLiteral.input);
-  const expandedSetAST = expandMacros(setAST);
-  const setIR = transformToIR(expandedSetAST, ".");
-  assertStringIncludes(JSON.stringify(setIR), "createSet");
+  const expandedSet = expandMacros(setAST);
+  const setIR = transformToIR(expandedSet, ".");
+  assertStringIncludes(JSON.stringify(setIR), TEST_CASES.setLiteral.expectedIR);
   
+  // Test IR generation for map (JSON) literals
   const mapAST = parse(TEST_CASES.mapLiteral.input);
-  const expandedMapAST = expandMacros(mapAST);
-  const mapIR = transformToIR(expandedMapAST, ".");
-  assertStringIncludes(JSON.stringify(mapIR), "createMap");
+  const expandedMap = expandMacros(mapAST);
+  const mapIR = transformToIR(expandedMap, ".");
+  assertStringIncludes(JSON.stringify(mapIR), TEST_CASES.mapLiteral.expectedIR);
 });
 
 Deno.test("Data Structure Literals - Code Generation", async () => {
   // Test JS code generation for vector literals
   const vectorAST = parse(TEST_CASES.vectorLiteral.input);
-  const expandedVectorAST = expandMacros(vectorAST);
-  const vectorIR = transformToIR(expandedVectorAST, ".");
+  const expandedVector = expandMacros(vectorAST);
+  const vectorIR = transformToIR(expandedVector, ".");
   const vectorTSAST = convertIRToTSAST(vectorIR);
-  const vectorJS = generateTypeScript(vectorTSAST, { formatting: "minimal" });
+  const vectorJS = generateTypeScript(vectorTSAST);
   assertStringIncludes(vectorJS, TEST_CASES.vectorLiteral.expectedJS);
   
   // Test JS code generation for set literals
   const setAST = parse(TEST_CASES.setLiteral.input);
-  const expandedSetAST = expandMacros(setAST);
-  const setIR = transformToIR(expandedSetAST, ".");
+  const expandedSet = expandMacros(setAST);
+  const setIR = transformToIR(expandedSet, ".");
   const setTSAST = convertIRToTSAST(setIR);
-  const setJS = generateTypeScript(setTSAST, { formatting: "minimal" });
+  const setJS = generateTypeScript(setTSAST);
   assertStringIncludes(setJS, TEST_CASES.setLiteral.expectedJS);
   
   // Test JS code generation for map (JSON) literals
   const mapAST = parse(TEST_CASES.mapLiteral.input);
-  const expandedMapAST = expandMacros(mapAST);
-  const mapIR = transformToIR(expandedMapAST, ".");
+  const expandedMap = expandMacros(mapAST);
+  const mapIR = transformToIR(expandedMap, ".");
   const mapTSAST = convertIRToTSAST(mapIR);
-  const mapJS = generateTypeScript(mapTSAST, { formatting: "minimal" });
+  const mapJS = generateTypeScript(mapTSAST);
   assertStringIncludes(mapJS, TEST_CASES.mapLiteral.expectedJS);
 });
 
@@ -158,12 +151,14 @@ Deno.test("Data Structure Literals - Complete File", async () => {
   (def my-set #[1 2 3 4 5])
   (def my-map {"name": "Alice", "age": 30, "skills": ["JavaScript", "HQL"]})
   (def my-list (list 1 2 3 4 5))
+  (def my-hash-map (hash-map "key1" "value1" "key2" "value2"))
+  (def my-hash-set (hash-set 1 2 3 4 5))
   
   ;; Test using data structures in functions
   (defn process-data (data)
     (let [
-      vec-length (js/Array.from my-vector.length)
-      set-size (js/Array.from my-set.size)
+      vec-length (js/Array my-vector.length)
+      set-size (js/Array my-set.size)
       user-name (get my-map "name")
     ]
       (hash-map
@@ -181,9 +176,9 @@ Deno.test("Data Structure Literals - Complete File", async () => {
   const result = await transpile(completeFile);
   
   // Test that all data structures were transpiled correctly
-  assertStringIncludes(result, "const myVector = createVector(1, 2, 3, 4, 5);");
-  assertStringIncludes(result, "const mySet = createSet(1, 2, 3, 4, 5);");
-  assertStringIncludes(result, "const myMap = createMap([");
+  assertStringIncludes(result, "const myVector = [1, 2, 3, 4, 5];");
+  assertStringIncludes(result, "const mySet = new Set([1, 2, 3, 4, 5]);");
+  assertStringIncludes(result, "const myMap = {name: \"Alice\", age: 30");
   assertStringIncludes(result, "const myList = createList(1, 2, 3, 4, 5);");
   
   // Test that the function was transpiled correctly

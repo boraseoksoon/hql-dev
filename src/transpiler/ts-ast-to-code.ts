@@ -37,8 +37,7 @@ export function generateTypeScript(ast: TSSourceFile, options?: CodeGenerationOp
   const config = {
     indentSize: options?.indentSize ?? 2,
     useSpaces: options?.useSpaces !== false,
-    // Force minimal formatting to match test expectations
-    formatting: options?.formatting ?? "minimal",
+    formatting: options?.formatting ?? "standard",
     module: options?.module ?? "esm"
   };
   
@@ -264,8 +263,14 @@ function generateCallExpression(
   const callee = gen(ce.expression, level, config, indentChar);
   const args = ce.arguments.map(arg => gen(arg, level, config, indentChar));
   
-  // Always use compact format for call expressions to match test expectations
-  return `${callee}(${args.join(", ")})`;
+  // For simple calls with few args, use compact format
+  if (args.length <= 3 && args.every(a => a.length < 30) && config.formatting !== "pretty") {
+    return `${callee}(${args.join(", ")})`;
+  }
+  
+  // For complex calls, use multi-line format
+  const indentStr = indent(level + 1, indentChar, config.indentSize);
+  return `${callee}(\n${args.map(a => indentStr + a).join(",\n")}\n${indent(level, indentChar, config.indentSize)})`;
 }
 
 /**
@@ -307,9 +312,18 @@ function generateObjectLiteral(
   if (obj.properties.length === 0) return "{}";
   
   // For minimal formatting, use single line
-  // Forcing minimal formatting here
-  const props = obj.properties.map(p => gen(p, 0, config, indentChar)).join(", ");
-  return `{${props}}`;
+  if (config.formatting === "minimal" && obj.properties.length <= 3) {
+    const props = obj.properties.map(p => gen(p, 0, config, indentChar)).join(", ");
+    return `{${props}}`;
+  }
+  
+  // Otherwise, use multi-line format
+  const indentStr = indent(level + 1, indentChar, config.indentSize);
+  const props = obj.properties
+    .map(p => indentStr + gen(p, 0, config, indentChar))
+    .join(",\n");
+    
+  return `{\n${props}\n${indent(level, indentChar, config.indentSize)}}`;
 }
 
 /**
