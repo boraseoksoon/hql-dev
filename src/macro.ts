@@ -1,14 +1,5 @@
 // src/macro.ts
-
-import {
-  HQLNode,
-  LiteralNode,
-  SymbolNode,
-  ListNode,
-  VectorNode,
-  SetNode,
-  MapNode,
-} from "./transpiler/hql_ast.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode, VectorNode, SetNode, MapNode } from "./transpiler/hql_ast.ts";
 
 /**
  * Expand macros in HQL nodes
@@ -23,60 +14,52 @@ export function expandMacros(nodes: HQLNode[]): HQLNode[] {
  */
 function expandNode(node: HQLNode): HQLNode {
   switch (node.type) {
-    case "vector": {
+    case "vector":
       // Convert [a b c] to (vector a b c)
       const vectorElements = (node as VectorNode).elements.map(expandNode);
       return {
         type: "list",
         elements: [
           { type: "symbol", name: "vector" } as SymbolNode,
-          ...vectorElements,
-        ],
+          ...vectorElements
+        ]
       } as ListNode;
-    }
-
-    case "set": {
+      
+    case "set":
       // Convert #[a b c] to (hash-set a b c)
       const setElements = (node as SetNode).elements.map(expandNode);
       return {
         type: "list",
         elements: [
           { type: "symbol", name: "hash-set" } as SymbolNode,
-          ...setElements,
-        ],
+          ...setElements
+        ]
       } as ListNode;
-    }
-
-    case "map": {
+      
+    case "map":
       // Convert map to (hash-map k1 v1 k2 v2 ...)
       const mapPairs = (node as MapNode).pairs;
-      const mapElements: HQLNode[] = [
-        { type: "symbol", name: "hash-map" } as SymbolNode,
-      ];
-
+      const mapElements: HQLNode[] = [{ type: "symbol", name: "hash-map" } as SymbolNode];
+      
       for (const [key, value] of mapPairs) {
         mapElements.push(expandNode(key));
         mapElements.push(expandNode(value));
       }
-
+      
       return {
         type: "list",
-        elements: mapElements,
+        elements: mapElements
       } as ListNode;
-    }
-
-    case "list": {
+      
+    case "list":
       // Recursively expand list elements
-      const listNode = node as ListNode;
       return {
         type: "list",
-        elements: listNode.elements.map(expandNode),
+        elements: (node as ListNode).elements.map(expandNode)
       } as ListNode;
-    }
-
-    default: {
-      // For literals and symbols, no transformation needed
+      
+    // For literals and symbols, no transformation needed
+    default:
       return node;
-    }
   }
 }
