@@ -55,17 +55,17 @@ function addN(x, y) { return (x + y); }
 console.log(addN(2, 3))
 function minus(params) {
   const { x, y } = params;
-return (x - y);
+  return (x - y);
 }
 console.log(minus({x: 100, y: 20}))
 console.log("====== Sync/Async Exports ======")
 const syncAdd = function(params) {
   const { x, y } = params;
-return (x + y);
+  return (x + y);
 };
 const syncMinus = function(params) {
   const { x, y } = params;
-return (x - y);
+  return (x - y);
 };
 export { syncAdd };
 export { syncMinus };
@@ -80,7 +80,7 @@ function send(params) {
 }
 function send2(params) {
   const { message, to } = params;
-return message;
+  return message;
 }
 console.log(send({message: "hello1", to: "hlvm"}))
 console.log(send2({message: "hello2", to: Destination.hlvm}))
@@ -93,7 +93,7 @@ export { greetTwice };
 console.log("====== Named Parameter Tests ======")
 function calculateArea(params) {
   const { width, height } = params;
-return (width * height);
+  return (width * height);
 }
 console.log("Area of 5x10 rectangle: ", calculateArea({width: 5, height: 10}))
 function formatName(params) {
@@ -105,28 +105,27 @@ function point3d(x, y, z) { return [x, y, z]; }
 console.log("3D Point: ", point3d(10, 20, 30))
 function applyTax(params) {
   const { amount, rate } = params;
-return (amount * (1 + (rate / 100)));
+  return (amount * (1 + (rate / 100)));
 }
 function calculateTotal(params) {
   const { price, qty, taxRate } = params;
-return applyTax({amount: (price * qty), rate: taxRate});
+  return applyTax({amount: (price * qty), rate: taxRate});
 }
 console.log("Total price with tax: ", calculateTotal({price: 19.99, qty: 3, taxRate: 8.5}))
 function makeAdder(params) {
   const { increment } = params;
-  ->(->(Number, Number))
   return function(x) { return (x + increment); };
 }
 const add5 = makeAdder({increment: 5});
 console.log("Result of add5(10): ", add5(10))
 function complexMath(params) {
   const { a, b, c } = params;
-return ((a * b) + (c / (a + b)));
+  return ((a * b) + (c / (a + b)));
 }
 console.log("Complex math result: ", complexMath({a: 5, b: 3, c: 30}))
 function processData(params) {
   const { data, options } = params;
-return (data * options.factor);
+  return (data * options.factor);
 }
 console.log("Processed data: ", processData({data: 100, options: {factor: 1.5}}))
 export { calculateArea };

@@ -1,4 +1,4 @@
-// src/transpiler/hql_ir.ts - Updated to support extended function definitions
+// src/transpiler/hql_ir.ts
 export enum IRNodeType {
   Program,
   StringLiteral,
@@ -137,8 +137,6 @@ export interface IRVariableDeclaration extends IRNode {
 export interface IRParameter extends IRNode {
   type: IRNodeType.Parameter;
   id: IRIdentifier;
-  // Optional type annotation (not used in JavaScript output)
-  typeAnnotation?: IRNode;
 }
 
 export interface IRBlock extends IRNode {
@@ -154,8 +152,6 @@ export interface IRFunctionDeclaration extends IRNode {
   isAnonymous: boolean;
   isNamedParams: boolean;
   namedParamIds?: string[];
-  // Added to support explicit return type
-  returnType?: IRNode | null;
 }
 
 export interface IREnumDeclaration extends IRNode {
