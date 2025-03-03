@@ -1,10 +1,7 @@
 {
   "tasks": {
-    "test": "deno task unit-tests && deno task run-test && deno task extended-defn-run && deno task all-interop-test && deno task bundle-tests && deno task ",
-    "unit-tests": "deno task parser-test && deno task hql-to-ir-test && deno task extended-defn-test",
-    "extended-defn-test": "deno test --allow-all test/extended_defn_test.ts",
-    "extended-defn-run": "deno run -A ./cli/run.ts ./test/extended_defn_sample.hql",
-    "empty-collections-test": "deno run -A ./cli/run.ts ./test/empty_collections.hql",
+    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test && deno task bundle-tests && deno task ",
+    "unit-tests": "deno task parser-test && deno task hql-to-ir-test",
     "run-test": "deno run -A ./cli/run.ts ./test/simple.hql && deno run -A ./cli/run.ts ./test/data_structures.hql ./test/bundle.js",
     "parser-test": "deno test --allow-all test/parser_test.ts",
     "hql-to-ir-test": "deno test --allow-all test/hql_to_ir_test.ts",

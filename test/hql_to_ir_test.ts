@@ -23,31 +23,31 @@ Deno.test("hql-to-ir - basic variable definition", () => {
   assertEquals((varDecl.init as IR.IRNumericLiteral).value, 10);
 });
 
-// Deno.test("hql-to-ir - function definition", () => {
-//   const ir = parseAndTransform(`(defn add [a b] (+ a b))`);
+Deno.test("hql-to-ir - function definition", () => {
+  const ir = parseAndTransform(`(defn add [a b] (+ a b))`);
   
-//   assertEquals(ir.body.length, 1);
+  assertEquals(ir.body.length, 1);
   
-//   const fnDecl = ir.body[0] as IR.IRFunctionDeclaration;
-//   assertEquals(fnDecl.type, IR.IRNodeType.FunctionDeclaration);
-//   assertEquals(fnDecl.id.name, "add");
-//   assertEquals(fnDecl.params.length, 2);
-//   assertEquals(fnDecl.params[0].id.name, "a");
-//   assertEquals(fnDecl.params[1].id.name, "b");
+  const fnDecl = ir.body[0] as IR.IRFunctionDeclaration;
+  assertEquals(fnDecl.type, IR.IRNodeType.FunctionDeclaration);
+  assertEquals(fnDecl.id.name, "add");
+  assertEquals(fnDecl.params.length, 2);
+  assertEquals(fnDecl.params[0].id.name, "a");
+  assertEquals(fnDecl.params[1].id.name, "b");
   
-//   // Check that body includes a return statement
-//   const body = fnDecl.body;
-//   assertEquals(body.body.length, 1);
-//   const returnStmt = body.body[0] as IR.IRReturnStatement;
-//   if (!returnStmt.argument) {
-//     throw new Error("Expected a return argument in function definition");
-//   }
-//   const binExpr = returnStmt.argument as IR.IRBinaryExpression;
-//   assertEquals(binExpr.type, IR.IRNodeType.BinaryExpression);
-//   assertEquals(binExpr.operator, "+");
-//   assertEquals((binExpr.left as IR.IRIdentifier).name, "a");
-//   assertEquals((binExpr.right as IR.IRIdentifier).name, "b");
-// });
+  // Check that body includes a return statement
+  const body = fnDecl.body;
+  assertEquals(body.body.length, 1);
+  const returnStmt = body.body[0] as IR.IRReturnStatement;
+  if (!returnStmt.argument) {
+    throw new Error("Expected a return argument in function definition");
+  }
+  const binExpr = returnStmt.argument as IR.IRBinaryExpression;
+  assertEquals(binExpr.type, IR.IRNodeType.BinaryExpression);
+  assertEquals(binExpr.operator, "+");
+  assertEquals((binExpr.left as IR.IRIdentifier).name, "a");
+  assertEquals((binExpr.right as IR.IRIdentifier).name, "b");
+});
 
 Deno.test("hql-to-ir - anonymous function", () => {
   const ir = parseAndTransform(`(def adder (fn [x] (+ x 1)))`);
@@ -460,32 +460,3 @@ Deno.test("hql-to-ir - js interop", () => {
   assertEquals(identifier.name, "console.log");
   assertEquals(identifier.isJSAccess, true);
 });
-
-Deno.test("hql-to-ir - empty collections", () => {
-    const ir = parseAndTransform(`
-      (def empty-vector [])
-      (def empty-set #[])
-      (print empty-vector empty-set)
-    `);
-    
-    assertEquals(ir.body.length, 3);
-    
-    // Check empty vector definition
-    const emptyVectorDef = ir.body[0] as IR.IRVariableDeclaration;
-    assertEquals(emptyVectorDef.type, IR.IRNodeType.VariableDeclaration);
-    assertEquals(emptyVectorDef.id.name, "emptyVector");
-    assertEquals(emptyVectorDef.init.type, IR.IRNodeType.ArrayLiteral);
-    assertEquals((emptyVectorDef.init as IR.IRArrayLiteral).elements.length, 0);
-    
-    // Check empty set definition
-    const emptySetDef = ir.body[1] as IR.IRVariableDeclaration;
-    assertEquals(emptySetDef.type, IR.IRNodeType.VariableDeclaration);
-    assertEquals(emptySetDef.id.name, "emptySet");
-    assertEquals(emptySetDef.init.type, IR.IRNodeType.NewExpression);
-    
-    const newExpr = emptySetDef.init as IR.IRNewExpression;
-    assertEquals((newExpr.callee as IR.IRIdentifier).name, "Set");
-    assertEquals(newExpr.arguments.length, 1);
-    assertEquals(newExpr.arguments[0].type, IR.IRNodeType.ArrayLiteral);
-    assertEquals((newExpr.arguments[0] as IR.IRArrayLiteral).elements.length, 0);
-  });

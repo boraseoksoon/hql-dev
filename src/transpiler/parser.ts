@@ -1,4 +1,4 @@
-// src/transpiler/parser.ts - Fixed implementation that properly handles extended syntax
+// src/transpiler/parser.ts - Fixed implementation that removes all arrow tokens
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import { ParseError } from "./errors.ts";
 
@@ -92,7 +92,7 @@ function removeInlineComments(line: string): string {
 }
 
 /**
- * Advanced tokenizer with support for type annotations, default values, and named parameters
+ * Advanced tokenizer with support for JSON-style object literals, named parameters, and set literals
  */
 function tokenize(input: string): { tokens: string[], positions: { line: number; column: number; offset: number; }[] } {
   // Pre-split lines and pre-filter comment-only lines for efficiency
@@ -104,8 +104,7 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
   
   for (let i = 0; i < rawLines.length; i++) {
     const line = rawLines[i].trim();
-    if (!line.startsWith(";")) {
-      // Even if the line is empty, push it (it will produce no tokens but helps preserve line breaks)
+    if (line.length > 0 && !line.startsWith(";")) {
       lines.push(line);
       lineMap.push(i);
     }
@@ -168,19 +167,6 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
           offset: lineOffset + colIndex - current.length + 1
         });
         current = "";
-        continue;
-      }
-      
-      // Handle standalone colon for type annotations
-      if (!inString && ch === ':' && 
-          (current.length === 0 || isWhitespace(line[colIndex - 1])) &&
-          (colIndex + 1 >= line.length || isWhitespace(line[colIndex + 1]))) {
-        tokens.push(":");
-        positions.push({
-          line: actualLineIndex + 1,
-          column: colIndex + 1,
-          offset: lineOffset + colIndex
-        });
         continue;
       }
       
@@ -396,12 +382,6 @@ export function parse(input: string): HQLNode[] {
     } else if (token === ":") {
       // Standalone colon token - used in JSON object parsing
       return { type: "symbol", name: ":" } as SymbolNode;
-    } else if (token === "=") {
-      // Equals token - used for default parameter values
-      return { type: "symbol", name: "=" } as SymbolNode;
-    } else if (token === "->") {
-      // Arrow token - used for return type annotations
-      return { type: "symbol", name: "->" } as SymbolNode;
     } else if (token.startsWith('"')) {
       try {
         const processedString = processStringLiteral(token, position);
@@ -439,7 +419,36 @@ export function parse(input: string): HQLNode[] {
     
     // Process the elements of the list
     while (pos < tokens.length && tokens[pos] !== closingDelimiter) {
+      // Skip the arrow token and the following type in defn or fn definitions
+      if (parserContext.inFunctionDefinition && 
+          tokens[pos] === "->" &&
+          pos + 1 < tokens.length && 
+          tokens[pos + 1] !== closingDelimiter) {
+        pos++; // Skip ->
+        
+        // Create a return-type list node
+        const returnTypeElements = [
+          { type: "symbol", name: "return-type" } as SymbolNode,
+          parseExpression() // Parse the type
+        ];
+        
+        elements.push({
+          type: "list",
+          elements: returnTypeElements
+        } as ListNode);
+        
+        continue;
+      }
+      
       elements.push(parseExpression());
+      
+      // If we just parsed the function name in a defn/fn form, next should be param list
+      if (parserContext.inFunctionDefinition && 
+          elements.length === 1 &&  // [defn]
+          elements[0].type === "symbol" && 
+          (elements[0] as SymbolNode).name === parserContext.currentFunctionForm) {
+        parserContext.expectingParameterList = true;
+      }
     }
     
     if (pos >= tokens.length) {
@@ -463,42 +472,42 @@ export function parse(input: string): HQLNode[] {
     return { type: "list", elements } as ListNode;
   }
   
-/**
- * Parse an array literal (square brackets) with context awareness for parameter lists
- */
-function parseArrayLiteral(closingDelimiter: string, isParameterList: boolean = false): ListNode {
-  const elements: HQLNode[] = [];
-  const startPos = pos - 1; // Position of the opening delimiter
-  
-  while (pos < tokens.length && tokens[pos] !== closingDelimiter) {
-    elements.push(parseExpression());
+  /**
+   * Parse an array literal (square brackets) with context awareness for parameter lists
+   */
+  function parseArrayLiteral(closingDelimiter: string, isParameterList: boolean = false): ListNode {
+    const elements: HQLNode[] = [];
+    const startPos = pos - 1; // Position of the opening delimiter
+    
+    while (pos < tokens.length && tokens[pos] !== closingDelimiter) {
+      elements.push(parseExpression());
+    }
+    
+    if (pos >= tokens.length) {
+      throw new ParseError(
+        closingDelimiter === "]" ? 
+          `Unclosed square bracket starting at line ${positions[startPos].line}, column ${positions[startPos].column}` : 
+          `Unclosed ${closingDelimiter} delimiter starting at line ${positions[startPos].line}, column ${positions[startPos].column}`, 
+        positions[startPos]
+      );
+    }
+    
+    pos++; // skip the closing delimiter
+    
+    // For backward compatibility:
+    // - Parameter lists (in function definitions) should NOT have isArrayLiteral flag
+    // - Regular array literals should have the isArrayLiteral flag
+    const result: ListNode = { 
+      type: "list", 
+      elements: elements, 
+    };
+    
+    if (!isParameterList) {
+      result.isArrayLiteral = true;
+    }
+    
+    return result;
   }
-  
-  if (pos >= tokens.length) {
-    throw new ParseError(
-      closingDelimiter === "]" ? 
-        `Unclosed square bracket starting at line ${positions[startPos].line}, column ${positions[startPos].column}` : 
-        `Unclosed ${closingDelimiter} delimiter starting at line ${positions[startPos].line}, column ${positions[startPos].column}`, 
-      positions[startPos]
-    );
-  }
-  
-  pos++; // skip the closing delimiter
-  
-  // For backward compatibility:
-  // - Parameter lists (in function definitions) should NOT have isArrayLiteral flag
-  // - Regular array literals should have the isArrayLiteral flag
-  const result: ListNode = { 
-    type: "list", 
-    elements: elements 
-  };
-  
-  if (!isParameterList) {
-    result.isArrayLiteral = true;
-  }
-  
-  return result;
-}
   
   /**
    * Parse a JSON object into (hash-map ...) form
@@ -595,10 +604,182 @@ function parseArrayLiteral(closingDelimiter: string, isParameterList: boolean = 
     nodes.push(parseExpression());
   }
   
+  // Now that we have the raw AST, process it to transform the new syntax forms
+  const processedNodes = transformExtendedSyntax(nodes);
+  
   // Reset global variables to avoid memory leaks
   tokens = [];
   positions = [];
   pos = 0;
   
-  return nodes;
+  return processedNodes;
+}
+
+/**
+ * Transform type annotations and other extended syntax forms in the AST
+ */
+function transformExtendedSyntax(nodes: HQLNode[]): HQLNode[] {
+  return nodes.map(node => transformNode(node));
+}
+
+/**
+ * Transform a single node and its children
+ */
+function transformNode(node: HQLNode): HQLNode {
+  if (node.type !== "list") {
+    return node;
+  }
+  
+  const list = node as ListNode;
+  
+  // Start with recursively transforming all child elements
+  const transformedElements = list.elements.map(transformNode);
+  
+  // Create a new list with the transformed elements
+  const transformedList: ListNode = {
+    type: "list",
+    elements: transformedElements
+  };
+  
+  // Preserve the isArrayLiteral flag if it exists
+  if (list.isArrayLiteral) {
+    transformedList.isArrayLiteral = true;
+  }
+  
+  // If this is a function definition (defn or fn), we need to process type annotations and return types
+  if (transformedElements.length >= 3 && 
+      transformedElements[0].type === "symbol") {
+      
+    const headSymbol = transformedElements[0] as SymbolNode;
+    if (headSymbol.name === "defn" || headSymbol.name === "fn") {
+      return transformFunctionDef(transformedList);
+    }
+  }
+  
+  // Otherwise, just return the transformed list
+  return transformedList;
+}
+
+/**
+ * Transform a function definition with type annotations and return type
+ */
+function transformFunctionDef(list: ListNode): ListNode {
+  const elements = list.elements;
+  
+  // Check if we have enough elements for a function definition
+  if (elements.length < 3) {
+    return list;
+  }
+  
+  const head = elements[0] as SymbolNode; // "defn" or "fn"
+  const funcName = elements[1]; // Name for defn, first param for fn
+  const paramList = elements[2] as ListNode; // Parameter list
+  
+  // Check for return type annotation - should be a (return-type Type) node
+  let bodyStart = 3;
+  let returnTypeNode: HQLNode | null = null;
+  
+  // Scan through body elements to find any return-type nodes
+  for (let i = 3; i < elements.length; i++) {
+    if (elements[i].type === "list") {
+      const listNode = elements[i] as ListNode;
+      if (listNode.elements.length >= 2 && 
+          listNode.elements[0].type === "symbol" &&
+          (listNode.elements[0] as SymbolNode).name === "return-type") {
+        returnTypeNode = listNode;
+        // Remove this node from the elements
+        elements.splice(i, 1);
+        break;
+      }
+    }
+  }
+  
+  // Transform parameter list to handle type annotations and default values
+  const transformedParams = transformParamList(paramList);
+  
+  // Build the new function definition
+  const newElements: HQLNode[] = [
+    head,
+    funcName,
+    transformedParams
+  ];
+  
+  // Add return type if present
+  if (returnTypeNode) {
+    newElements.push(returnTypeNode);
+  }
+  
+  // Add the function body (everything after param list and return type)
+  for (let i = 3; i < elements.length; i++) {
+    newElements.push(elements[i]);
+  }
+  
+  return {
+    type: "list",
+    elements: newElements
+  } as ListNode;
+}
+
+/**
+ * Transform a parameter list with type annotations and default values
+ */
+function transformParamList(paramList: ListNode): ListNode {
+  const newElements: HQLNode[] = [];
+  const params = paramList.elements;
+  
+  // Process each parameter
+  for (let i = 0; i < params.length; i++) {
+    const param = params[i];
+    
+    // Skip non-symbol parameters
+    if (param.type !== "symbol") {
+      newElements.push(param);
+      continue;
+    }
+    
+    const paramName = (param as SymbolNode).name;
+    
+    // Check for type annotation (param: Type)
+    if (paramName.includes(":") && !paramName.endsWith(":")) {
+      const [name, type] = paramName.split(":");
+      
+      // Create canonical form (type-annotated param type)
+      newElements.push({
+        type: "list",
+        elements: [
+          { type: "symbol", name: "type-annotated" } as SymbolNode,
+          { type: "symbol", name: name.trim() } as SymbolNode,
+          { type: "symbol", name: type.trim() } as SymbolNode
+        ]
+      } as ListNode);
+    }
+    // Check for default value (param = defaultValue)
+    else if (i + 2 < params.length && 
+             params[i + 1].type === "symbol" && 
+             (params[i + 1] as SymbolNode).name === "=") {
+      
+      // Create canonical form (default-param param defaultValue)
+      newElements.push({
+        type: "list",
+        elements: [
+          { type: "symbol", name: "default-param" } as SymbolNode,
+          param,
+          params[i + 2]
+        ]
+      } as ListNode);
+      
+      // Skip the equals sign and default value in the next iterations
+      i += 2;
+    }
+    // Normal parameter
+    else {
+      newElements.push(param);
+    }
+  }
+  
+  // Return the transformed parameter list without isArrayLiteral flag
+  return {
+    type: "list",
+    elements: newElements
+  } as ListNode;
 }

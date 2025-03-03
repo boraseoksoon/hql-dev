@@ -1,4 +1,4 @@
-// src/transpiler/ir-to-ts-ast.ts - Improved handling of function definitions
+// src/transpiler/ir-to-ts-ast.ts
 import * as IR from "./hql_ir.ts";
 import {
   TSNodeType,
@@ -15,14 +15,6 @@ import { convertImportSpecifier } from "./path-utils.ts";
 
 // Cache for node conversion results to avoid redundant transformations
 const nodeConversionCache = new Map<IR.IRNode, TSNode | TSNode[] | null>();
-
-// Debug logging for function conversion
-const DEBUG = !!Deno.env.get("HQL_DEBUG");
-function debugLog(module: string, ...args: any[]) {
-  if (DEBUG) {
-    console.log(`[DEBUG:${module}]`, ...args);
-  }
-}
 
 /**
  * Convert an IRProgram into a TSSourceFile.
@@ -254,23 +246,18 @@ function convertPropertyAccess(propAccess: IR.IRPropertyAccess): TSNode {
   } else {
     // Use dot notation: obj.prop - for string literals
     if (prop?.type === TSNodeType.StringLiteral) {
-      try {
-        const propName = JSON.parse((prop as TSStringLiteral).text);
-        
-        // Check if property name is valid for dot notation
-        if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propName)) {
-          return { type: TSNodeType.Raw, code: `${obj}.${propName}` };
-        }
-      } catch (e) {
-        // If parsing fails, fall back to bracket notation
-      }
+      const propName = JSON.parse((prop as TSStringLiteral).text);
+      return { 
+        type: TSNodeType.Raw, 
+        code: `${obj}.${propName}` 
+      };
+    } else {
+      // Fallback to bracket notation if not a string literal
+      return { 
+        type: TSNodeType.Raw, 
+        code: `${obj}[${nodeToString(prop)}]` 
+      };
     }
-    
-    // Fallback to bracket notation if not a string literal or not a valid identifier
-    return { 
-      type: TSNodeType.Raw, 
-      code: `${obj}[${nodeToString(prop)}]` 
-    };
   }
 }
 
@@ -358,42 +345,42 @@ function convertArrayLiteral(arr: IR.IRArrayLiteral): TSNode {
 }
 
 /**
- * Convert an object literal to a TS node.
+ * Convert an object literal to a TS node with improved property handling.
  */
 function convertObjectLiteral(obj: IR.IRObjectLiteral): TSNode {
-  if (obj.properties.length === 0) {
-    return { type: TSNodeType.Raw, code: "{}" };
-  }
-  
-  // Generate properties
   const props = obj.properties.map(prop => {
     const key = convertNode(prop.key);
     const value = convertNode(prop.value);
     
-    let keyStr: string;
-    
-    // Handle different key types
-    if (prop.key.type === IR.IRNodeType.StringLiteral) {
-      const strValue = (prop.key as IR.IRStringLiteral).value;
-      if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(strValue)) {
-        // Use identifier format for valid property names
-        keyStr = strValue;
-      } else {
-        // Use quoted format for other property names
-        keyStr = JSON.stringify(strValue);
-      }
-    } else {
-      // Use computed property for other key types
-      keyStr = nodeToString(key);
+    // Handle computed properties
+    if (prop.computed) {
+      return `[${nodeToString(key)}]: ${nodeToString(value)}`;
     }
     
-    return `${keyStr}: ${nodeToString(value)}`;
+    // If key is a string literal without special characters, we can use normal syntax
+    if (key?.type === TSNodeType.StringLiteral) {
+      const keyStr = (key as TSStringLiteral).text;
+      const unquoted = keyStr.slice(1, -1); // Remove quotes
+      
+      if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(unquoted)) {
+        return `${unquoted}: ${nodeToString(value)}`;
+      } else {
+        return `[${keyStr}]: ${nodeToString(value)}`;
+      }
+    }
+    
+    return `${nodeToString(key)}: ${nodeToString(value)}`;
   });
   
-  // Format as object literal
+  // For small objects (<=3 properties), use inline format
+  if (props.length <= 3) {
+    return { type: TSNodeType.Raw, code: `{${props.join(", ")}}` };
+  }
+  
+  // For larger objects, use multi-line format
   return { 
     type: TSNodeType.Raw, 
-    code: `{${props.join(", ")}}` 
+    code: `{\n  ${props.join(",\n  ")}\n}` 
   };
 }
 
@@ -427,16 +414,6 @@ function convertCallExpression(call: IR.IRCallExpression): TSNode {
   
   // Regular function call
   const callee = convertNode(call.callee);
-  
-  // Special handling for named parameter calls
-  if (call.isNamedArgs && call.arguments.length === 1 && 
-      call.arguments[0].type === IR.IRNodeType.ObjectLiteral) {
-    const objLiteral = call.arguments[0] as IR.IRObjectLiteral;
-    const objStr = nodeToString(convertNode(objLiteral));
-    return { type: TSNodeType.Raw, code: `${nodeToString(callee)}(${objStr})` };
-  }
-  
-  // Regular argument list
   const args = call.arguments.map(arg => nodeToString(convertNode(arg)));
   
   // For very long argument lists, format with line breaks
@@ -529,66 +506,34 @@ function convertVariableDeclaration(vd: IR.IRVariableDeclaration): TSNode {
 }
 
 /**
- * Convert a function declaration with improved named parameter support.
+ * Convert a function declaration with improved formatting.
  */
 function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
   const functionName = fn.id.name;
+  let parameters: string;
+  let body: string;
   
-  // Log function details for debugging
-  if (DEBUG) {
-    debugLog('convertFunctionDeclaration', `Converting function: ${functionName}`);
-    debugLog('convertFunctionDeclaration', `isNamedParams: ${fn.isNamedParams}`);
-    debugLog('convertFunctionDeclaration', `isAnonymous: ${fn.isAnonymous}`);
-    debugLog('convertFunctionDeclaration', `params: ${fn.params.map(p => p.id.name).join(', ')}`);
-    if (fn.namedParamIds) {
-      debugLog('convertFunctionDeclaration', `namedParamIds: ${fn.namedParamIds.join(', ')}`);
-    }
-  }
-  
-  // Generate appropriate function signature based on whether it has named parameters
   if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
-    // For named parameters, use a single 'params' parameter and destructure
-    const paramsDestructuring = `const { ${fn.namedParamIds.join(", ")} } = params;`;
-    let bodyCode = convertFunctionBodyWithExtraCode(fn.body, paramsDestructuring);
-    
-    // For anonymous functions
-    if (fn.isAnonymous) {
-      return { 
-        type: TSNodeType.Raw, 
-        code: `function(params) ${bodyCode}` 
-      };
-    }
-    
-    // For named functions
-    return { 
-      type: TSNodeType.Raw, 
-      code: `function ${functionName}(params) ${bodyCode}` 
-    };
+    parameters = "params";
+    const destructuring = `const { ${fn.namedParamIds.join(", ")} } = params;`;
+    body = convertFunctionBody(fn.body, destructuring);
   } else {
-    // Regular parameters
-    const paramNames = fn.params.map(p => p.id.name).join(", ");
-    let bodyCode = convertFunctionBody(fn.body);
-    
-    // For anonymous functions
-    if (fn.isAnonymous) {
-      return { 
-        type: TSNodeType.Raw, 
-        code: `function(${paramNames}) ${bodyCode}` 
-      };
-    }
-    
-    // For named functions
-    return { 
-      type: TSNodeType.Raw, 
-      code: `function ${functionName}(${paramNames}) ${bodyCode}` 
-    };
+    parameters = fn.params.map(p => p.id.name).join(", ");
+    body = convertFunctionBody(fn.body);
   }
+  
+  // If the function is anonymous and is used as an expression (not declaration)
+  if (fn.isAnonymous) {
+    return { type: TSNodeType.Raw, code: `function(${parameters}) ${body}` };
+  }
+  
+  return { type: TSNodeType.Raw, code: `function ${functionName}(${parameters}) ${body}` };
 }
 
 /**
- * Convert a function body to JS code.
+ * Convert a function body to a string with improved formatting.
  */
-function convertFunctionBody(block: IR.IRBlock): string {
+function convertFunctionBody(block: IR.IRBlock, destructuring?: string): string {
   const statements = [...block.body];
   if (statements.length === 0) return "{}";
   
@@ -599,6 +544,8 @@ function convertFunctionBody(block: IR.IRBlock): string {
     })
     .filter(line => line.length > 0);
   
+  if (destructuring) lines.unshift(destructuring);
+  
   // For single-line bodies, use compact format if short enough
   if (lines.length === 1 && lines[0].length < 40 && !lines[0].includes("\n")) {
     return `{ ${lines[0]} }`;
@@ -607,25 +554,6 @@ function convertFunctionBody(block: IR.IRBlock): string {
   // For multi-line bodies, indent properly
   const indentedLines = lines.map(line => `  ${line}`);
   return `{\n${indentedLines.join("\n")}\n}`;
-}
-
-/**
- * Convert a function body with extra setup code (like destructuring for named params).
- */
-function convertFunctionBodyWithExtraCode(block: IR.IRBlock, setupCode: string): string {
-  const statements = [...block.body];
-  if (statements.length === 0) return `{\n  ${setupCode}\n}`;
-  
-  const lines = statements
-    .map(stmt => {
-      const converted = convertNode(stmt);
-      return converted ? nodeToString(converted) : "";
-    })
-    .filter(line => line.length > 0);
-  
-  // Always use multi-line format with setup code
-  const indentedLines = lines.map(line => `  ${line}`);
-  return `{\n  ${setupCode}\n${indentedLines.join("\n")}\n}`;
 }
 
 /**
@@ -680,14 +608,10 @@ function convertBlock(block: IR.IRBlock): TSNode {
 /**
  * Convert a TS node (or array of nodes) to a string.
  */
-function nodeToString(node: TSNode | TSNode[] | null | undefined): string {
-  // Handle undefined or null
-  if (node === undefined || node === null) return "{}"; // Default to empty object
-  
-  // Handle arrays
+function nodeToString(node: TSNode | TSNode[] | null): string {
+  if (!node) return "";
   if (Array.isArray(node)) return node.map(n => nodeToString(n)).join("\n");
   
-  // Handle individual nodes
   switch (node.type) {
     case TSNodeType.Raw:
       return (node as TSRaw).code;
@@ -702,9 +626,9 @@ function nodeToString(node: TSNode | TSNode[] | null | undefined): string {
     case TSNodeType.Identifier:
       return (node as TSIdentifier).text;
     case TSNodeType.ExportDeclaration:
-      return ""; // Export declarations are handled separately
+      return "";
     default:
-      console.warn(`Unhandled TS node type in nodeToString: ${(node as any)?.type}`);
-      return "{}"; // Default to empty object instead of empty string
+      console.warn(`Unhandled TS node type in nodeToString: ${(node as any).type}`);
+      return "";
   }
 }
