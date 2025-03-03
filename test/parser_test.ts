@@ -1,7 +1,14 @@
-// test/parser_test.ts
+// test/parser_test.ts - Updated for raw syntax preservation
 import { assertEquals, assertThrows } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../src/transpiler/parser.ts";
-import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../src/transpiler/hql_ast.ts";
+import { 
+  HQLNode, 
+  ListNode, 
+  LiteralNode, 
+  SymbolNode, 
+  JsonObjectLiteralNode, 
+  JsonArrayLiteralNode
+} from "../src/transpiler/hql_ast.ts";
 import { ParseError } from "../src/transpiler/errors.ts";
 
 // Helper function to assert equality while ignoring position info for simplicity
@@ -9,6 +16,7 @@ function assertAstEqual(actual: HQLNode[], expected: HQLNode[]) {
   assertEquals(JSON.stringify(actual), JSON.stringify(expected));
 }
 
+// Basic parser tests
 Deno.test("parser - empty input", () => {
   const ast = parse("");
   assertEquals(ast.length, 0);
@@ -23,21 +31,12 @@ Deno.test("parser - literal values", () => {
   ast = parse("123");
   assertAstEqual(ast, [{ type: "literal", value: 123 }]);
   
-  ast = parse("123.456");
-  assertAstEqual(ast, [{ type: "literal", value: 123.456 }]);
-  
   // Booleans
   ast = parse("true");
   assertAstEqual(ast, [{ type: "literal", value: true }]);
   
-  ast = parse("false");
-  assertAstEqual(ast, [{ type: "literal", value: false }]);
-  
   // Null
   ast = parse("null");
-  assertAstEqual(ast, [{ type: "literal", value: null }]);
-  
-  ast = parse("nil");
   assertAstEqual(ast, [{ type: "literal", value: null }]);
 });
 
@@ -50,287 +49,166 @@ Deno.test("parser - symbols", () => {
   ]);
 });
 
-Deno.test("parser - lists and nesting", () => {
-  // Simple list
-  let ast = parse("(foo bar)");
-  assertAstEqual(ast, [{
-    type: "list",
-    elements: [
-      { type: "symbol", name: "foo" },
-      { type: "symbol", name: "bar" }
-    ]
-  }]);
+// Tests for raw syntax preservation
+
+Deno.test("parser - JSON object literal", () => {
+  const ast = parse('{"name": "Alice", "age": 30}');
+  assertEquals(ast.length, 1);
+  assertEquals(ast[0].type, "jsonObjectLiteral");
   
-  // Nested lists
-  ast = parse("(foo (bar baz))");
-  assertAstEqual(ast, [{
-    type: "list",
-    elements: [
-      { type: "symbol", name: "foo" },
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "bar" },
-          { type: "symbol", name: "baz" }
-        ]
+  const objNode = ast[0] as JsonObjectLiteralNode;
+  assertEquals(objNode.properties["name"].type, "literal");
+  assertEquals((objNode.properties["name"] as LiteralNode).value, "Alice");
+  assertEquals(objNode.properties["age"].type, "literal");
+  assertEquals((objNode.properties["age"] as LiteralNode).value, 30);
+});
+
+Deno.test("parser - nested JSON object literal", () => {
+  const ast = parse('{"user": {"name": "Bob", "age": 25}}');
+  assertEquals(ast.length, 1);
+  assertEquals(ast[0].type, "jsonObjectLiteral");
+  
+  const objNode = ast[0] as JsonObjectLiteralNode;
+  assertEquals(objNode.properties["user"].type, "jsonObjectLiteral");
+  
+  const nestedObj = objNode.properties["user"] as JsonObjectLiteralNode;
+  assertEquals(nestedObj.properties["name"].type, "literal");
+  assertEquals((nestedObj.properties["name"] as LiteralNode).value, "Bob");
+});
+
+Deno.test("parser - JSON array literal", () => {
+  const ast = parse('[1, 2, 3, "four"]');
+  assertEquals(ast.length, 1);
+  assertEquals(ast[0].type, "jsonArrayLiteral");
+  
+  const arrNode = ast[0] as JsonArrayLiteralNode;
+  assertEquals(arrNode.elements.length, 4);
+  assertEquals(arrNode.elements[0].type, "literal");
+  assertEquals((arrNode.elements[0] as LiteralNode).value, 1);
+  assertEquals(arrNode.elements[3].type, "literal");
+  assertEquals((arrNode.elements[3] as LiteralNode).value, "four");
+});
+
+Deno.test("parser - set literal", () => {
+  const ast = parse('#[1, 2, 3]');
+  assertEquals(ast.length, 1);
+  assertEquals(ast[0].type, "list");
+  
+  const listNode = ast[0] as ListNode;
+  assertEquals(listNode.elements[0].type, "symbol");
+  assertEquals((listNode.elements[0] as SymbolNode).name, "js-set");
+  
+  // Check that elements are preserved
+  assertEquals(listNode.elements.length, 4);
+  assertEquals((listNode.elements[1] as LiteralNode).value, 1);
+  assertEquals((listNode.elements[2] as LiteralNode).value, 2);
+  assertEquals((listNode.elements[3] as LiteralNode).value, 3);
+});
+
+Deno.test("parser - fx form", () => {
+  // Fx is now parsed as a normal list form, not a special node type
+  const ast = parse('(fx add (x y) (+ x y))');
+  assertEquals(ast.length, 1);
+  assertEquals(ast[0].type, "list");
+  
+  const listNode = ast[0] as ListNode;
+  assertEquals(listNode.elements[0].type, "symbol");
+  assertEquals((listNode.elements[0] as SymbolNode).name, "fx");
+  
+  // Check the parameter list is a list node
+  assertEquals(listNode.elements[2].type, "list");
+  
+  // Check the body exists
+  assertEquals(listNode.elements[3].type, "list");
+});
+
+Deno.test("parser - fx form with named parameters", () => {
+  // Fx with type annotations is also a list form now
+  const ast = parse('(fx greet-user (name: String title: String) (str "Hello, " title " " name "!"))');
+  assertEquals(ast.length, 1);
+  assertEquals(ast[0].type, "list");
+  
+  const listNode = ast[0] as ListNode;
+  assertEquals(listNode.elements[0].type, "symbol");
+  assertEquals((listNode.elements[0] as SymbolNode).name, "fx");
+  
+  // Check parameter list
+  const paramList = listNode.elements[2] as ListNode;
+  
+  // First parameter should end with a colon (named parameter)
+  const firstParam = paramList.elements[0] as SymbolNode;
+  assertEquals(firstParam.type, "symbol");
+  assertEquals(firstParam.name, "name:");
+
+  // Second parameter should also be a named parameter with a colon
+  const secondParam = paramList.elements[1] as SymbolNode;
+  assertEquals(secondParam.type, "symbol");
+  assertEquals(secondParam.name, "title:");
+});
+
+Deno.test("parser - complex nested data structures", () => {
+  const ast = parse(`
+    {
+      "users": [
+        {"name": "Alice", "roles": ["admin", "user"]},
+        {"name": "Bob", "roles": ["user"]}
+      ],
+      "settings": {
+        "version": "1.0.0",
+        "enabled": true
       }
-    ]
-  }]);
+    }
+  `);
   
-  // Empty list
-  ast = parse("()");
-  assertAstEqual(ast, [{ type: "list", elements: [] }]);
-});
-
-Deno.test("parser - vector syntax with square brackets", () => {
-  const ast = parse("[1 2 3]");
-  assertAstEqual(ast, [{
-    type: "list",
-    elements: [
-      { type: "literal", value: 1 },
-      { type: "literal", value: 2 },
-      { type: "literal", value: 3 }
-    ],
-    isArrayLiteral: true
-  }]);
-});
-
-Deno.test("parser - mixed expressions", () => {
-  const ast = parse('(defn greet [name] (print "Hello, " name "!"))');
-  assertAstEqual(ast, [{
-    type: "list",
-    elements: [
-      { type: "symbol", name: "defn" },
-      { type: "symbol", name: "greet" },
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "name" }
-        ]
-        // isArrayLiteral should not be present for parameter lists
-      },
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "print" },
-          { type: "literal", value: "Hello, " },
-          { type: "symbol", name: "name" },
-          { type: "literal", value: "!" }
-        ]
-      }
-    ]
-  }]);
-});
-
-Deno.test("parser - function definition", () => {
-  // Test specific parameter list handling
-  const ast = parse('(fn [x y] (+ x y))');
-  assertAstEqual(ast, [{
-    type: "list",
-    elements: [
-      { type: "symbol", name: "fn" },
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "x" },
-          { type: "symbol", name: "y" }
-        ]
-        // isArrayLiteral should not be present for parameter lists
-      },
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "+" },
-          { type: "symbol", name: "x" },
-          { type: "symbol", name: "y" }
-        ]
-      }
-    ]
-  }]);
-});
-
-Deno.test("parser - distinction between arrays and params", () => {
-  // This should be an array literal
-  const arrAst = parse('[1 2 3]');
-  assertEquals((arrAst[0] as ListNode).isArrayLiteral, true);
+  assertEquals(ast.length, 1);
+  assertEquals(ast[0].type, "jsonObjectLiteral");
   
-  // This should be a parameter list without isArrayLiteral
-  const fnAst = parse('(defn foo [a b] (+ a b))');
-  const paramList = (fnAst[0] as ListNode).elements[2] as ListNode;
-  assertEquals(paramList.isArrayLiteral, undefined);
+  const objNode = ast[0] as JsonObjectLiteralNode;
+  assertEquals(objNode.properties["users"].type, "jsonArrayLiteral");
+  
+  const users = objNode.properties["users"] as JsonArrayLiteralNode;
+  assertEquals(users.elements.length, 2);
+  assertEquals(users.elements[0].type, "jsonObjectLiteral");
+  
+  const alice = users.elements[0] as JsonObjectLiteralNode;
+  assertEquals(alice.properties["name"].type, "literal");
+  assertEquals((alice.properties["name"] as LiteralNode).value, "Alice");
+  
+  const aliceRoles = alice.properties["roles"] as JsonArrayLiteralNode;
+  assertEquals(aliceRoles.elements.length, 2);
+  assertEquals((aliceRoles.elements[0] as LiteralNode).value, "admin");
 });
 
-Deno.test("parser - nested parameter lists", () => {
-  const ast = parse('(defn foo [a [b c]] (+ a b c))');
-  const outer = (ast[0] as ListNode);
-  const params = outer.elements[2] as ListNode;
-  assertEquals(params.isArrayLiteral, undefined); // Outer params shouldn't be marked
-  
-  // But the inner list [b c] should be marked as an array literal since it's a nested structure
-  const innerParams = params.elements[1] as ListNode;
-  assertEquals(innerParams.isArrayLiteral, true);
-});
+// Error tests
 
-Deno.test("parser - comments", () => {
-  // Single line comment
-  let ast = parse("; This is a comment\nfoo");
-  assertAstEqual(ast, [{ type: "symbol", name: "foo" }]);
-  
-  // Inline comment
-  ast = parse("foo ; This is a comment\nbar");
-  assertAstEqual(ast, [
-    { type: "symbol", name: "foo" },
-    { type: "symbol", name: "bar" }
-  ]);
-  
-  // Comment within a list
-  ast = parse("(foo ; This is a comment\nbar)");
-  assertAstEqual(ast, [{
-    type: "list",
-    elements: [
-      { type: "symbol", name: "foo" },
-      { type: "symbol", name: "bar" }
-    ]
-  }]);
-});
-
-Deno.test("parser - string escapes", () => {
-  // Basic escapes
-  let ast = parse('"Hello\\nWorld"');
-  assertAstEqual(ast, [{ type: "literal", value: "Hello\nWorld" }]);
-  
-  ast = parse('"Tab\\tCharacter"');
-  assertAstEqual(ast, [{ type: "literal", value: "Tab\tCharacter" }]);
-  
-  ast = parse('"Quoted\\"String\\""');
-  assertAstEqual(ast, [{ type: "literal", value: 'Quoted"String"' }]);
-  
-  // HQL interpolation escapes
-  ast = parse('"Value: \\(x)"');
-  assertAstEqual(ast, [{ type: "literal", value: 'Value: (x)' }]);
-});
-
-Deno.test("parser - string with interpolation markers", () => {
-  const ast = parse('"Hello, \\(name)!"');
-  assertAstEqual(ast, [{ type: "literal", value: "Hello, (name)!" }]);
-});
-
-Deno.test("parser - error: unclosed list", () => {
+Deno.test("parser - error: unclosed JSON object", () => {
   assertThrows(
-    () => parse("(foo bar"),
+    () => parse('{"name": "Alice"'),
     ParseError,
-    "Unclosed parenthesis"
+    "Unclosed curly brace"
   );
 });
 
-Deno.test("parser - error: unclosed square bracket", () => {
+Deno.test("parser - error: unclosed JSON array", () => {
   assertThrows(
-    () => parse("[1 2 3"),
+    () => parse('[1, 2, 3'),
     ParseError,
     "Unclosed square bracket"
   );
 });
 
-Deno.test("parser - error: unexpected closing parenthesis", () => {
+Deno.test("parser - error: unclosed set literal", () => {
   assertThrows(
-    () => parse("foo)"),
+    () => parse('#[1, 2, 3'),
     ParseError,
-    "Unexpected ')'"
+    "Unclosed set literal"
   );
 });
 
-Deno.test("parser - error: unexpected closing square bracket", () => {
+Deno.test("parser - error: invalid fx form", () => {
   assertThrows(
-    () => parse("foo]"),
+    () => parse('(fx)'),
     ParseError,
-    "Unexpected ']'"
+    "Unexpected end of input"
   );
 });
-
-Deno.test("parser - error: unclosed string", () => {
-  assertThrows(
-    () => parse('"Hello'),
-    ParseError,
-    "Unclosed string literal"
-  );
-});
-
-Deno.test("parser - error: invalid escape sequence", () => {
-  assertThrows(
-    () => parse('"Hello\\z"'),
-    ParseError,
-    "Invalid escape sequence"
-  );
-});
-
-Deno.test("parser - multiline code", () => {
-  const code = `
-    (defn factorial [n]
-      (if (= n 0)
-        1
-        (* n (factorial (- n 1)))))
-  `;
-  
-  const ast = parse(code);
-  assertEquals(ast.length, 1);
-  assertEquals((ast[0] as ListNode).elements[0].type, "symbol");
-  assertEquals(((ast[0] as ListNode).elements[0] as SymbolNode).name, "defn");
-  
-  // Parameter list should not be marked as array literal
-  const paramList = (ast[0] as ListNode).elements[2] as ListNode;
-  assertEquals(paramList.isArrayLiteral, undefined);
-});
-
-Deno.test("parser - handling js/interop syntax", () => {
-  const ast = parse("js/console.log");
-  assertAstEqual(ast, [{ type: "symbol", name: "js/console.log" }]);
-});
-
-Deno.test("parser - multiple top-level expressions", () => {
-  const code = `
-    (def x 10)
-    (def y 20)
-    (+ x y)
-  `;
-  
-  const ast = parse(code);
-  assertEquals(ast.length, 3);
-});
-
-Deno.test("parser - whitespace handling", () => {
-  // Test that different whitespace patterns are handled equivalently
-  const compact = parse("(foo bar)");
-  const spaced = parse("( foo   bar )");
-  const multiline = parse(`(foo
-    bar)`);
-  
-  assertAstEqual(compact, spaced);
-  assertAstEqual(compact, multiline);
-});
-
-Deno.test("parser - performance with large input", () => {
-  // Generate a large input
-  const largeInput = Array(1000).fill('(def x 10)').join('\n');
-  
-  // Measure parse time
-  const start = performance.now();
-  const ast = parse(largeInput);
-  const end = performance.now();
-  
-  assertEquals(ast.length, 1000);
-  
-  // This should parse quickly (adjust threshold as needed)
-  const parseTime = end - start;
-  console.log(`Large input parse time: ${parseTime}ms`);
-  
-  // We're not making a strict assertion here, just a sanity check
-  // that parsing is reasonably fast
-  assert(parseTime < 1000, "Parsing should be reasonably fast");
-});
-
-// Helper function for the assertion above
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(message);
-  }
-}

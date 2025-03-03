@@ -3,11 +3,14 @@ import { assertEquals } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { transformToIR } from "../src/transpiler/hql-to-ir.ts";
 import { parse } from "../src/transpiler/parser.ts";
 import * as IR from "../src/transpiler/hql_ir.ts";
+import { expandMacros } from "../src/macro.ts";
 
 // Helper to parse HQL and transform to IR
 function parseAndTransform(code: string): IR.IRProgram {
   const ast = parse(code);
-  return transformToIR(ast, ".");
+  // Apply macro expansion before transforming to IR
+  const expandedAst = ast.map(node => expandMacros(node));
+  return transformToIR(expandedAst, ".");
 }
 
 Deno.test("hql-to-ir - basic variable definition", () => {

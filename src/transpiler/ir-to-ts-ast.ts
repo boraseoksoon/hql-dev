@@ -1,4 +1,4 @@
-// src/transpiler/ir-to-ts-ast.ts
+// src/transpiler/ir-to-ts-ast.ts - Fixed type issues
 import * as IR from "./hql_ir.ts";
 import {
   TSNodeType,
@@ -232,6 +232,7 @@ function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
 
 /**
  * Convert a PropertyAccess node to TS AST.
+ * Fixed type check for property
  */
 function convertPropertyAccess(propAccess: IR.IRPropertyAccess): TSNode {
   const obj = nodeToString(convertNode(propAccess.object));
@@ -245,7 +246,8 @@ function convertPropertyAccess(propAccess: IR.IRPropertyAccess): TSNode {
     };
   } else {
     // Use dot notation: obj.prop - for string literals
-    if (prop?.type === TSNodeType.StringLiteral) {
+    // Add explicit type check for StringLiteral
+    if (prop && !Array.isArray(prop) && prop.type === TSNodeType.StringLiteral) {
       const propName = JSON.parse((prop as TSStringLiteral).text);
       return { 
         type: TSNodeType.Raw, 
@@ -346,6 +348,7 @@ function convertArrayLiteral(arr: IR.IRArrayLiteral): TSNode {
 
 /**
  * Convert an object literal to a TS node with improved property handling.
+ * Fixed type check for property key
  */
 function convertObjectLiteral(obj: IR.IRObjectLiteral): TSNode {
   const props = obj.properties.map(prop => {
@@ -358,7 +361,7 @@ function convertObjectLiteral(obj: IR.IRObjectLiteral): TSNode {
     }
     
     // If key is a string literal without special characters, we can use normal syntax
-    if (key?.type === TSNodeType.StringLiteral) {
+    if (key && !Array.isArray(key) && key.type === TSNodeType.StringLiteral) {
       const keyStr = (key as TSStringLiteral).text;
       const unquoted = keyStr.slice(1, -1); // Remove quotes
       
@@ -497,9 +500,14 @@ function convertNewExpression(newExpr: IR.IRNewExpression): TSNode {
 
 /**
  * Convert a variable declaration.
+ * Fixed return type issue for imports
  */
 function convertVariableDeclaration(vd: IR.IRVariableDeclaration): TSNode {
-  if (isImport(vd)) return null;
+  if (isImport(vd)) {
+    // Return an empty node instead of null
+    return { type: TSNodeType.Raw, code: "" };
+  }
+  
   const varName = vd.id.name;
   const initializer = nodeToString(convertNode(vd.init));
   return { type: TSNodeType.Raw, code: `${vd.kind} ${varName} = ${initializer};` };
@@ -511,23 +519,45 @@ function convertVariableDeclaration(vd: IR.IRVariableDeclaration): TSNode {
 function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
   const functionName = fn.id.name;
   let parameters: string;
+  
+  if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
+    // For named parameters, we assume a destructuring approach
+    parameters = "params";
+    
+    // Check if we need to include default parameters
+    const defaultParams = fn.params
+      .filter(p => p.defaultValue)
+      .map(p => `${p.id.name} = ${nodeToString(convertNode(p.defaultValue!))}`);
+    
+    if (defaultParams.length > 0) {
+      parameters = `params = {${defaultParams.join(", ")}}`;
+    }
+  } else {
+    parameters = fn.params.map(p => {
+      // If the IR parameter has a defaultValue, convert it to code.
+      if ((p as any).defaultValue) {
+        const defaultCode = nodeToString(convertNode((p as any).defaultValue));
+        return `${p.id.name} = ${defaultCode}`;
+      }
+      return p.id.name;
+    }).join(", ");
+  }
+  
+  // Determine function body and handle destructuring
   let body: string;
   
   if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
-    parameters = "params";
+    // Create destructuring pattern for named parameters
     const destructuring = `const { ${fn.namedParamIds.join(", ")} } = params;`;
     body = convertFunctionBody(fn.body, destructuring);
   } else {
-    parameters = fn.params.map(p => p.id.name).join(", ");
     body = convertFunctionBody(fn.body);
   }
   
-  // If the function is anonymous and is used as an expression (not declaration)
-  if (fn.isAnonymous) {
-    return { type: TSNodeType.Raw, code: `function(${parameters}) ${body}` };
+  if (!fn.isAnonymous) {
+    return { type: TSNodeType.Raw, code: `function ${functionName}(${parameters}) ${body}` };
   }
-  
-  return { type: TSNodeType.Raw, code: `function ${functionName}(${parameters}) ${body}` };
+  return { type: TSNodeType.Raw, code: `function(${parameters}) ${body}` };
 }
 
 /**

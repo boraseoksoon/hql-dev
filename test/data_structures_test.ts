@@ -1,282 +1,316 @@
-// test/parser_test.ts
-import { assertEquals, assertThrows } from "https://deno.land/std@0.170.0/testing/asserts.ts";
+// test/data_structures_test.ts - Comprehensive tests for data structure literals
+import { assertEquals } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../src/transpiler/parser.ts";
-import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../src/transpiler/hql_ast.ts";
-import { ParseError } from "../src/transpiler/errors.ts";
+import { expandMacros } from "../src/macro.ts";
+import { transpile } from "../src/transpiler/transformer.ts";
+import { 
+  JsonObjectLiteralNode, 
+  JsonArrayLiteralNode, 
+  ListNode,
+  SymbolNode
+} from "../src/transpiler/hql_ast.ts";
 
-// Helper function to assert equality while ignoring position info for simplicity
-function assertAstEqual(actual: HQLNode[], expected: HQLNode[]) {
-  assertEquals(JSON.stringify(actual), JSON.stringify(expected));
+// Helper function to normalize whitespace for comparison
+function normalizeWhitespace(str: string): string {
+  return str.replace(/\s+/g, ' ').trim();
 }
 
-Deno.test("parser - empty input", () => {
-  const ast = parse("");
-  assertEquals(ast.length, 0);
+// JSON OBJECT LITERALS
+
+Deno.test("data structures - empty object", async () => {
+  const source = '(def empty-map {})';
+  const result = await transpile(source);
+  
+  assertEquals(result.includes("const emptyMap = {}"), true);
 });
 
-Deno.test("parser - literal values", () => {
-  // String
-  let ast = parse('"hello"');
-  assertAstEqual(ast, [{ type: "literal", value: "hello" }]);
+Deno.test("data structures - simple object", async () => {
+  const source = '(def user {"name": "Alice", "age": 30})';
+  const result = await transpile(source);
   
-  // Numbers
-  ast = parse("123");
-  assertAstEqual(ast, [{ type: "literal", value: 123 }]);
-  
-  ast = parse("123.456");
-  assertAstEqual(ast, [{ type: "literal", value: 123.456 }]);
-  
-  // Booleans
-  ast = parse("true");
-  assertAstEqual(ast, [{ type: "literal", value: true }]);
-  
-  ast = parse("false");
-  assertAstEqual(ast, [{ type: "literal", value: false }]);
-  
-  // Null
-  ast = parse("null");
-  assertAstEqual(ast, [{ type: "literal", value: null }]);
-  
-  ast = parse("nil");
-  assertAstEqual(ast, [{ type: "literal", value: null }]);
+  assertEquals(result.includes("const user = {"), true);
+  assertEquals(result.includes("name: \"Alice\""), true);
+  assertEquals(result.includes("age: 30"), true);
 });
 
-Deno.test("parser - symbols", () => {
-  const ast = parse("foo bar baz");
-  assertAstEqual(ast, [
-    { type: "symbol", name: "foo" },
-    { type: "symbol", name: "bar" },
-    { type: "symbol", name: "baz" }
-  ]);
-});
-
-Deno.test("parser - lists and nesting", () => {
-  // Simple list
-  let ast = parse("(foo bar)");
-  assertAstEqual(ast, [{
-    type: "list",
-    elements: [
-      { type: "symbol", name: "foo" },
-      { type: "symbol", name: "bar" }
-    ]
-  }]);
-  
-  // Nested lists
-  ast = parse("(foo (bar baz))");
-  assertAstEqual(ast, [{
-    type: "list",
-    elements: [
-      { type: "symbol", name: "foo" },
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "bar" },
-          { type: "symbol", name: "baz" }
-        ]
-      }
-    ]
-  }]);
-  
-  // Empty list
-  ast = parse("()");
-  assertAstEqual(ast, [{ type: "list", elements: [] }]);
-});
-
-Deno.test("parser - vector syntax with square brackets", () => {
-  const ast = parse("[1 2 3]");
-  assertAstEqual(ast, [{
-    type: "list",
-    elements: [
-      { type: "literal", value: 1 },
-      { type: "literal", value: 2 },
-      { type: "literal", value: 3 }
-    ],
-    isArrayLiteral: true
-  }]);
-});
-
-Deno.test("parser - mixed expressions", () => {
-    const ast = parse('(defn greet [name] (print "Hello, " name "!"))');
-    assertAstEqual(ast, [{
-      type: "list",
-      elements: [
-        { type: "symbol", name: "defn" },
-        { type: "symbol", name: "greet" },
-        {
-          type: "list",
-          elements: [
-            { type: "symbol", name: "name" }
-          ]
-        },
-        {
-          type: "list",
-          elements: [
-            { type: "symbol", name: "print" },
-            { type: "literal", value: "Hello, " },
-            { type: "symbol", name: "name" },
-            { type: "literal", value: "!" }
-          ]
+Deno.test("data structures - nested object", async () => {
+  const source = `
+    (def nested-map {
+      "user": {
+        "name": "Bob", 
+        "contact": {
+          "email": "bob@example.com"
         }
-      ]
-    }]);
-  });
-
-Deno.test("parser - comments", () => {
-  // Single line comment
-  let ast = parse("; This is a comment\nfoo");
-  assertAstEqual(ast, [{ type: "symbol", name: "foo" }]);
-  
-  // Inline comment
-  ast = parse("foo ; This is a comment\nbar");
-  assertAstEqual(ast, [
-    { type: "symbol", name: "foo" },
-    { type: "symbol", name: "bar" }
-  ]);
-  
-  // Comment within a list
-  ast = parse("(foo ; This is a comment\nbar)");
-  assertAstEqual(ast, [{
-    type: "list",
-    elements: [
-      { type: "symbol", name: "foo" },
-      { type: "symbol", name: "bar" }
-    ]
-  }]);
-});
-
-Deno.test("parser - string escapes", () => {
-  // Basic escapes
-  let ast = parse('"Hello\\nWorld"');
-  assertAstEqual(ast, [{ type: "literal", value: "Hello\nWorld" }]);
-  
-  ast = parse('"Tab\\tCharacter"');
-  assertAstEqual(ast, [{ type: "literal", value: "Tab\tCharacter" }]);
-  
-  ast = parse('"Quoted\\"String\\""');
-  assertAstEqual(ast, [{ type: "literal", value: 'Quoted"String"' }]);
-  
-  // HQL interpolation escapes
-  ast = parse('"Value: \\(x)"');
-  assertAstEqual(ast, [{ type: "literal", value: 'Value: (x)' }]);
-});
-
-Deno.test("parser - string with interpolation markers", () => {
-  const ast = parse('"Hello, \\(name)!"');
-  assertAstEqual(ast, [{ type: "literal", value: "Hello, (name)!" }]);
-});
-
-Deno.test("parser - error: unclosed list", () => {
-  assertThrows(
-    () => parse("(foo bar"),
-    ParseError,
-    "Unclosed parenthesis"
-  );
-});
-
-Deno.test("parser - error: unclosed square bracket", () => {
-  assertThrows(
-    () => parse("[1 2 3"),
-    ParseError,
-    "Unclosed square bracket"
-  );
-});
-
-Deno.test("parser - error: unexpected closing parenthesis", () => {
-  assertThrows(
-    () => parse("foo)"),
-    ParseError,
-    "Unexpected ')'"
-  );
-});
-
-Deno.test("parser - error: unexpected closing square bracket", () => {
-  assertThrows(
-    () => parse("foo]"),
-    ParseError,
-    "Unexpected ']'"
-  );
-});
-
-Deno.test("parser - error: unclosed string", () => {
-  assertThrows(
-    () => parse('"Hello'),
-    ParseError,
-    "Unclosed string literal"
-  );
-});
-
-Deno.test("parser - error: invalid escape sequence", () => {
-  assertThrows(
-    () => parse('"Hello\\z"'),
-    ParseError,
-    "Invalid escape sequence"
-  );
-});
-
-Deno.test("parser - multiline code", () => {
-  const code = `
-    (defn factorial [n]
-      (if (= n 0)
-        1
-        (* n (factorial (- n 1)))))
+      }
+    })
   `;
+  const result = await transpile(source);
   
-  const ast = parse(code);
-  assertEquals(ast.length, 1);
-  assertEquals((ast[0] as ListNode).elements[0].type, "symbol");
-  assertEquals(((ast[0] as ListNode).elements[0] as SymbolNode).name, "defn");
+  assertEquals(result.includes("const nestedMap = {"), true);
+  assertEquals(result.includes("user: {"), true);
+  assertEquals(result.includes("name: \"Bob\""), true);
+  assertEquals(result.includes("contact: {"), true);
+  assertEquals(result.includes("email: \"bob@example.com\""), true);
 });
 
-Deno.test("parser - handling js/interop syntax", () => {
-  const ast = parse("js/console.log");
-  assertAstEqual(ast, [{ type: "symbol", name: "js/console.log" }]);
+// JSON ARRAY LITERALS
+
+Deno.test("data structures - empty array", async () => {
+  const source = '(def empty-vector [])';
+  const result = await transpile(source);
+  
+  assertEquals(result.includes("const emptyVector = []"), true);
 });
 
-Deno.test("parser - multiple top-level expressions", () => {
-  const code = `
-    (def x 10)
-    (def y 20)
-    (+ x y)
+Deno.test("data structures - numeric array", async () => {
+  const source = '(def numbers [1, 2, 3, 4, 5])';
+  const result = await transpile(source);
+  
+  assertEquals(result.includes("const numbers = [1, 2, 3, 4, 5]"), true);
+});
+
+Deno.test("data structures - mixed array", async () => {
+  const source = '(def mixed-vector [1, "two", true, null])';
+  const result = await transpile(source);
+  
+  assertEquals(result.includes("const mixedVector = [1, \"two\", true, null]"), true);
+});
+
+// SET LITERALS
+
+Deno.test("data structures - empty set", async () => {
+  const source = '(def empty-set #[])';
+  const result = await transpile(source);
+  
+  assertEquals(result.includes("const emptySet = new Set([])"), true);
+});
+
+Deno.test("data structures - number set", async () => {
+  const source = '(def number-set #[1, 2, 3, 4, 5])';
+  const result = await transpile(source);
+  
+  assertEquals(result.includes("const numberSet = new Set([1, 2, 3, 4, 5])"), true);
+});
+
+Deno.test("data structures - string set", async () => {
+  const source = '(def string-set #["apple", "orange", "banana"])';
+  const result = await transpile(source);
+  
+  assertEquals(result.includes("const stringSet = new Set([\"apple\", \"orange\", \"banana\"])"), true);
+});
+
+// COMPLEX MIXED STRUCTURES
+
+Deno.test("data structures - complex nested structures", async () => {
+  const source = `
+    (def database {
+      "users": [
+        {"id": 1, "name": "Alice", "roles": ["admin", "user"]},
+        {"id": 2, "name": "Bob", "roles": ["user"]}
+      ],
+      "settings": {
+        "version": "1.0.0",
+        "features": {
+          "enabled": true,
+          "list": ["search", "comments"]
+        }
+      }
+    })
   `;
+  const result = await transpile(source);
   
-  const ast = parse(code);
-  assertEquals(ast.length, 3);
+  // Check all levels of nesting in the resulting JavaScript
+  assertEquals(result.includes("const database = {"), true);
+  assertEquals(result.includes("users: ["), true);
+  assertEquals(result.includes("id: 1"), true);
+  assertEquals(result.includes("name: \"Alice\""), true);
+  assertEquals(result.includes("roles: [\"admin\", \"user\"]"), true);
+  assertEquals(result.includes("id: 2"), true);
+  assertEquals(result.includes("name: \"Bob\""), true);
+  assertEquals(result.includes("settings: {"), true);
+  assertEquals(result.includes("version: \"1.0.0\""), true);
+  assertEquals(result.includes("features: {"), true);
+  assertEquals(result.includes("enabled: true"), true);
+  assertEquals(result.includes("list: [\"search\", \"comments\"]"), true);
 });
 
-Deno.test("parser - whitespace handling", () => {
-  // Test that different whitespace patterns are handled equivalently
-  const compact = parse("(foo bar)");
-  const spaced = parse("( foo   bar )");
-  const multiline = parse(`(foo
-    bar)`);
+Deno.test("data structures - mixed with set literals", async () => {
+  const source = `
+    (def user-data {
+      "name": "Charlie",
+      "tags": #["javascript", "hql", "typescript"]
+    })
+  `;
+  const result = await transpile(source);
   
-  assertAstEqual(compact, spaced);
-  assertAstEqual(compact, multiline);
+  assertEquals(result.includes("const userData = {"), true);
+  assertEquals(result.includes("name: \"Charlie\""), true);
+  assertEquals(result.includes("tags: new Set([\"javascript\", \"hql\", \"typescript\"])"), true);
 });
 
-Deno.test("parser - performance with large input", () => {
-  // Generate a large input
-  const largeInput = Array(1000).fill('(def x 10)').join('\n');
+// ACCESSING DATA STRUCTURES
+
+Deno.test("data structures - accessing array elements", async () => {
+  const source = `
+    (def numbers [10, 20, 30, 40, 50])
+    (def third (get numbers 2))
+    (print third)
+  `;
+  const result = await transpile(source);
   
-  // Measure parse time
-  const start = performance.now();
-  const ast = parse(largeInput);
-  const end = performance.now();
-  
-  assertEquals(ast.length, 1000);
-  
-  // This should parse quickly (adjust threshold as needed)
-  const parseTime = end - start;
-  console.log(`Large input parse time: ${parseTime}ms`);
-  
-  // We're not making a strict assertion here, just a sanity check
-  // that parsing is reasonably fast
-  assert(parseTime < 1000, "Parsing should be reasonably fast");
+  assertEquals(result.includes("const numbers = [10, 20, 30, 40, 50]"), true);
+  assertEquals(result.includes("const third = numbers[2]"), true);
+  assertEquals(result.includes("console.log(third)"), true);
 });
 
-// Helper function for the assertion above
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
+Deno.test("data structures - accessing object properties", async () => {
+  const source = `
+    (def user {"name": "Alice", "age": 30})
+    (def user-name (get user "name"))
+    (print user-name)
+  `;
+  const result = await transpile(source);
+  
+  assertEquals(result.includes("const user = {name: \"Alice\", age: 30}"), true);
+  assertEquals(result.includes("const userName = user.name"), true);
+  assertEquals(result.includes("console.log(userName)"), true);
+});
+
+// INTEROPERABILITY WITH TRADITIONAL FORMS
+
+Deno.test("data structures - compatibility with traditional forms", async () => {
+  const source = `
+    ;; Traditional hash-map
+    (def traditional-map (hash-map (keyword "name") "Alice" (keyword "age") 30))
+    
+    ;; JSON-style object
+    (def json-map {"name": "Alice", "age": 30})
+    
+    ;; Traditional vector
+    (def traditional-vector (vector 1 2 3 4 5))
+    
+    ;; JSON-style array
+    (def json-array [1, 2, 3, 4, 5])
+    
+    ;; Traditional set
+    (def traditional-set (new Set (vector "a" "b" "c")))
+    
+    ;; Modern set literal
+    (def modern-set #["a", "b", "c"])
+    
+    ;; Using both together
+    (def combined {
+      "traditional": traditional-map,
+      "modern": json-map,
+      "vectors": [traditional-vector, json-array],
+      "sets": [traditional-set, modern-set]
+    })
+  `;
+  const result = await transpile(source);
+  
+  // Both forms should produce equivalent JavaScript
+  assertEquals(result.includes("const traditionalMap = {name: \"Alice\", age: 30}"), true);
+  assertEquals(result.includes("const jsonMap = {name: \"Alice\", age: 30}"), true);
+  assertEquals(result.includes("const traditionalVector = [1, 2, 3, 4, 5]"), true);
+  assertEquals(result.includes("const jsonArray = [1, 2, 3, 4, 5]"), true);
+  assertEquals(result.includes("const traditionalSet = new Set([\"a\", \"b\", \"c\"])"), true);
+  assertEquals(result.includes("const modernSet = new Set([\"a\", \"b\", \"c\"])"), true);
+  
+  // Combining both styles should work 
+  assertEquals(result.includes("const combined = {"), true);
+  assertEquals(result.includes("traditional: traditionalMap"), true);
+  assertEquals(result.includes("modern: jsonMap"), true);
+  assertEquals(result.includes("vectors: [traditionalVector, jsonArray]"), true);
+  assertEquals(result.includes("sets: [traditionalSet, modernSet]"), true);
+});
+
+// OPERATIONS WITH DATA STRUCTURES
+
+Deno.test("data structures - operations and transformations", async () => {
+  const source = `
+    (def users [
+      {"name": "Alice", "active": true},
+      {"name": "Bob", "active": false},
+      {"name": "Charlie", "active": true}
+    ])
+    
+    (def active-users (filter users (fn (user) (get user "active"))))
+    (def user-names (map users (fn (user) (get user "name"))))
+    
+    (print "Active users:" active-users)
+    (print "User names:" user-names)
+  `;
+  const result = await transpile(source);
+  
+  assertEquals(result.includes("const users = ["), true);
+  assertEquals(result.includes("{name: \"Alice\", active: true}"), true);
+  assertEquals(result.includes("{name: \"Bob\", active: false}"), true);
+  assertEquals(result.includes("{name: \"Charlie\", active: true}"), true);
+  
+  // Check for users.filter and users.map operations without being strict about the exact formatting
+  const hasFilter = result.includes("users.filter") || result.includes("filter(users");
+  const hasMap = result.includes("users.map") || result.includes("map(users");
+  
+  assertEquals(hasFilter, true, "Result should include a call to filter");
+  assertEquals(hasMap, true, "Result should include a call to map");
+  
+  // Check for user.active and user.name without strict formatting requirements
+  const hasActiveAccess = result.includes("user.active");
+  const hasNameAccess = result.includes("user.name");
+  
+  assertEquals(hasActiveAccess, true, "Result should access user.active");
+  assertEquals(hasNameAccess, true, "Result should access user.name");
+});
+
+// DATA STRUCTURE LITERALS WITH FX
+
+Deno.test("data structures - integration with fx", async () => {
+  const source = `
+    (fx process-users (users filter-fn)
+      (map (filter users filter-fn)
+        (fn (user) {
+          "name": (get user "name"),
+          "processed": true
+        })
+      )
+    )
+    
+    (def users [
+      {"name": "Alice", "active": true},
+      {"name": "Bob", "active": false}
+    ])
+    
+    (def result (process-users 
+      users: users 
+      filter-fn: (fn (user) (get user "active"))
+    ))
+    
+    (print result)
+  `;
+  const result = await transpile(source);
+  
+  // Check function definition
+  assertEquals(result.includes("function processUsers("), true);
+  
+  // Check for parameter destructuring (might be present in different forms)
+  const hasParameterDestructuring = 
+    result.includes("const { users, filterFn } = params") || 
+    result.includes("const users = params.users") ||
+    result.includes("users = params.users");
+  
+  assertEquals(hasParameterDestructuring, true);
+  
+  // Check the array literal
+  assertEquals(result.includes("const users = ["), true);
+  assertEquals(result.includes("{name: \"Alice\", active: true}"), true);
+  
+  // Check the function call with named parameters (allowing different formats)
+  const hasFunctionCall = 
+    result.includes("const result = processUsers(") || 
+    result.includes("processUsers({");
+  
+  assertEquals(hasFunctionCall, true);
+  
+  // Check that user.active is referenced somewhere
+  assertEquals(result.includes("user.active"), true);
+});

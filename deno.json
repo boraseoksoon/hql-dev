@@ -1,11 +1,13 @@
 {
   "tasks": {
-    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test && deno task bundle-tests && deno task data-structures-test",
+    "test": "deno task unit-tests && deno task run-test && deno task all-interop-test && deno task bundle-tests && deno task data-structures-test && deno task fx-test && deno task macro-test",
     "unit-tests": "deno task parser-test && deno task hql-to-ir-test",
     "run-test": "deno run -A ./cli/run.ts ./test/simple.hql && deno run -A ./cli/run.ts ./test/data_structures.hql ./test/bundle.js",
     "parser-test": "deno test --allow-all test/parser_test.ts",
     "hql-to-ir-test": "deno test --allow-all test/hql_to_ir_test.ts",
     "data-structures-test": "deno test --allow-all test/data_structures_test.ts",
+    "fx-test": "deno test --allow-all test/fx_test.ts",
+    "macro-test": "deno test --allow-all test/macro_test.ts",
     "interop-test": "deno run -A ./cli/transpile.ts ./test/simple.hql && deno run -A ./test/simple.js",
     "interop-test2": "deno run -A ./cli/transpile.ts ./test/issue.hql && deno run -A ./test/issue.js",
     "interop-test3": "deno run -A ./cli/transpile.ts ./test/interop2/main.hql && deno run -A ./test/interop2/main.js",

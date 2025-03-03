@@ -1,4 +1,4 @@
-// src/ts-ast-types.ts
+// src/transpiler/ts-ast-types.ts
 export enum TSNodeType {
   SourceFile = "SourceFile",
   VariableStatement = "VariableStatement",
@@ -21,6 +21,8 @@ export enum TSNodeType {
 
 export interface TSNode {
   type: TSNodeType;
+  code?: string;  // Added code property for Raw nodes
+  text?: string;  // Added text property for literal nodes
 }
 
 export interface TSSourceFile extends TSNode {
@@ -59,7 +61,7 @@ export interface TSObjectLiteral extends TSNode {
 
 export interface TSPropertyAssignment extends TSNode {
   type: TSNodeType.PropertyAssignment;
-  key: TSIdentifier;
+  key: TSIdentifier | TSStringLiteral;
   initializer: TSNode;
 }
 

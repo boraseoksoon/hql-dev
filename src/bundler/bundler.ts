@@ -1,4 +1,4 @@
-// src/bundler/bundler.ts - Improved bundler module with better error handling
+// src/bundler/bundler.ts - Fixed variable initialization issue
 import { join, dirname, basename } from "../platform/platform.ts";
 
 // Simple cache for bundled content
@@ -31,28 +31,32 @@ export async function bundleJavaScript(
   }
   
   // Create a cache key based on file path, format, and file stats
-  let cacheKey: string;
+  let cacheKey: string | undefined;
   let useCache = true;
+  
   try {
     const stat = await Deno.stat(filePath);
     const mtime = stat.mtime?.getTime() || 0;
     cacheKey = `${filePath}:${format}:${mtime}`;
     
     // Check cache if available and file hasn't changed
-    const cached = bundleCache.get(cacheKey);
-    if (cached) {
-      if (verbose) console.log(`  → Using cached bundle (${cached.content.length} bytes)`);
-      
-      // If an output path is specified, write the cached content
-      if (options.outputPath) {
-        await Deno.writeTextFile(options.outputPath, cached.content);
-        if (verbose) console.log(`  → Wrote cached bundle to: "${options.outputPath}"`);
+    if (cacheKey && bundleCache.has(cacheKey)) {
+      const cached = bundleCache.get(cacheKey);
+      if (cached) {
+        if (verbose) console.log(`  → Using cached bundle (${cached.content.length} bytes)`);
+        
+        // If an output path is specified, write the cached content
+        if (options.outputPath) {
+          await Deno.writeTextFile(options.outputPath, cached.content);
+          if (verbose) console.log(`  → Wrote cached bundle to: "${options.outputPath}"`);
+        }
+        
+        return cached.content;
       }
-      
-      return cached.content;
     }
   } catch (error) {
     useCache = false;
+    cacheKey = undefined;
     if (verbose) console.warn(`⚠️ Cache disabled - couldn't get file stats: ${error instanceof Error ? error.message : String(error)}`);
   }
   

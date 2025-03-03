@@ -1,1 +1,2 @@
-console.log(crypto.randomUUID())
+function add(x, y = 0) { return (x + y); }
+console.log(add(100, 20))

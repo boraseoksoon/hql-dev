@@ -1,4 +1,4 @@
-import * as mod_module from "./simple2.js";
+import * as mod_module from "./simple2.hql";
 const mod = mod_module.default !== undefined ? mod_module.default : mod_module;
 import * as strUtil_module from "https://esm.sh/lodash";
 const strUtil = strUtil_module.default !== undefined ? strUtil_module.default : strUtil_module;

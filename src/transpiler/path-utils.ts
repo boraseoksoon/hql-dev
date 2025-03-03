@@ -1,4 +1,4 @@
-// src/transpiler/path-utils.ts - Consolidated path utilities
+// src/transpiler/path-utils.ts - Fixed return type issue
 import { join, resolve, dirname, isAbsolute } from "jsr:@std/path@1.0.8";
 
 // Caches for improved performance
@@ -6,7 +6,7 @@ const normalizedPathCache = new Map<string, string>();
 const externalPathCache = new Map<string, boolean>();
 const absolutePathCache = new Map<string, string>();
 const importPathCache = new Map<string, Map<string, string>>();
-const extensionResolveCache = new Map<string, string | null>();
+const extensionResolveCache = new Map<string, string | null | undefined>();
 
 /**
  * Check if a path refers to an external module
@@ -208,8 +208,9 @@ export async function resolveWithExtensions(
 ): Promise<string | null> {
   // Check cache first
   const cacheKey = `${basePath}:${extensions.join(',')}`;
-  if (extensionResolveCache.has(cacheKey)) {
-    return extensionResolveCache.get(cacheKey);
+  const cachedResult = extensionResolveCache.get(cacheKey);
+  if (cachedResult !== undefined) {
+    return cachedResult;
   }
 
   // First try the path as-is
