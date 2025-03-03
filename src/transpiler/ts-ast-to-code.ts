@@ -1,4 +1,4 @@
-// src/transpiler/ts-ast-to-code.ts - Fixed version to remove arrow tokens
+// src/transpiler/ts-ast-to-code.ts - Improved to handle enhanced function syntax
 import {
   TSNode,
   TSNodeType,
@@ -30,6 +30,14 @@ export interface CodeGenerationOptions {
 // Cache for generated code fragments to avoid redundant string operations
 const codeCache = new Map<TSNode, string>();
 
+// Debug mode
+const DEBUG = !!Deno.env.get("HQL_DEBUG");
+function debugLog(module: string, ...args: any[]) {
+  if (DEBUG) {
+    console.log(`[DEBUG:${module}]`, ...args);
+  }
+}
+
 export function generateTypeScript(ast: TSSourceFile, options?: CodeGenerationOptions): string {
   // Clear cache for a fresh generation
   codeCache.clear();
@@ -47,19 +55,51 @@ export function generateTypeScript(ast: TSSourceFile, options?: CodeGenerationOp
   // Final formatting pass
   let formatted = formatFinalOutput(result, config);
   
-  // Post-processing to remove any arrow type annotations that might have leaked through
+  // Apply our robust arrow type annotation removal
   formatted = removeArrowTypeAnnotations(formatted);
+  
+  // Additional cleanup: remove any lines with just type annotations
+  formatted = formatted.replace(/^\s*:\s*\w+\s*;?\s*$/gm, '');
+  
+  // Clean up any multiple consecutive empty lines
+  formatted = formatted.replace(/\n\s*\n\s*\n/g, '\n\n');
   
   return formatted;
 }
 
 /**
  * Filter out any arrow type annotations that might have leaked through the parser
+ * This is a crucial function that prevents type annotations from appearing in JavaScript output
  */
 function removeArrowTypeAnnotations(code: string): string {
-  // Remove all instances of arrow type annotations
-  // This matches "->" followed by any identifier in parentheses: ->(Type)
-  return code.replace(/\s*->\s*\(\w+\)\s*/g, '\n');
+  // First, fix the specific issue with extra parentheses after params destructuring
+  let result = code.replace(/params\s*;\s*\)/g, 'params)');
+  
+  // Handle single-line arrow types (both simple and complex)
+  result = result.replace(/\s*->\s*(?:\w+|\([^)]*\))\s*/g, ' ');
+  
+  // Handle arrow types that span multiple lines or have nested structures
+  result = result.replace(/\s*->\s*[^;{]*(?=;|\{|$)/g, ' ');
+  
+  // Handle higher-order function type patterns like -> (-> Number Number)
+  result = result.replace(/\s*->\s*\(\s*->\s*[^)]*\)/g, ' ');
+  
+  // Remove any standalone arrow lines in function bodies
+  result = result.replace(/^\s*->.*$/gm, '');
+  
+  // Remove any higher-order function type patterns that might remain
+  result = result.replace(/\(\s*->\s*\([^)]*\)[^)]*\)/g, '');
+  
+  // Remove any "HigherOrderFunctionType:" strings that we might have added
+  result = result.replace(/["']HigherOrderFunctionType:.*?["']/g, '""');
+  
+  // Final cleanup: fix any extra closing parentheses that might have been left behind
+  result = result.replace(/;\s*\)(\s*return|\s*{)/g, '$1');
+  
+  // Clean up any type annotations that were missed
+  result = result.replace(/:\s*\w+\s*(?=[\),])/g, '');
+  
+  return result;
 }
 
 function formatFinalOutput(code: string, config: Required<CodeGenerationOptions>): string {
@@ -214,7 +254,7 @@ function gen(node: TSNode, level: number, config: Required<CodeGenerationOptions
 }
 
 /**
- * Generate a function declaration with proper formatting
+ * Generate a function declaration with proper formatting for parameters
  */
 function generateFunctionDeclaration(
   fn: TSFunctionDeclaration,
@@ -286,14 +326,39 @@ function generateCallExpression(
   const callee = gen(ce.expression, level, config, indentChar);
   const args = ce.arguments.map(arg => gen(arg, level, config, indentChar));
   
+  // For object literals as the single argument, this might be a named parameter call
+  const isNamedParamObject = ce.arguments.length === 1 && 
+                           ce.arguments[0].type === TSNodeType.ObjectLiteral;
+                           
+  // For named parameter calls, format the object nicely
+  if (isNamedParamObject) {
+    const obj = ce.arguments[0] as TSObjectLiteral;
+    const props = obj.properties;
+    
+    // For small objects, use inline format
+    if (props.length <= 3 && config.formatting !== "pretty") {
+      return `${nodeToString(callee)}({${props.map(p => 
+        `${nodeToString(gen(p.key, 0, config, indentChar))}: ${nodeToString(gen(p.initializer, 0, config, indentChar))}`
+      ).join(", ")}})`;
+    }
+    
+    // For larger objects, use multi-line format
+    const indentStr = indent(level + 1, indentChar, config.indentSize);
+    return `${nodeToString(callee)}({\n${props.map(p => 
+      `${indentStr}${nodeToString(gen(p.key, 0, config, indentChar))}: ${nodeToString(gen(p.initializer, 0, config, indentChar))}`
+    ).join(",\n")}\n${indent(level, indentChar, config.indentSize)}})`;
+  }
+  
   // For simple calls with few args, use compact format
-  if (args.length <= 3 && args.every(a => a.length < 30) && config.formatting !== "pretty") {
-    return `${callee}(${args.join(", ")})`;
+  if (args.length <= 3 && args.every(a => nodeToString(a).length < 30) && config.formatting !== "pretty") {
+    return `${nodeToString(callee)}(${args.map(a => nodeToString(a)).join(", ")})`;
   }
   
   // For complex calls, use multi-line format
   const indentStr = indent(level + 1, indentChar, config.indentSize);
-  return `${callee}(\n${args.map(a => indentStr + a).join(",\n")}\n${indent(level, indentChar, config.indentSize)})`;
+  return `${nodeToString(callee)}(\n${args.map(a => 
+    `${indentStr}${nodeToString(a)}`
+  ).join(",\n")}\n${indent(level, indentChar, config.indentSize)})`;
 }
 
 /**
@@ -383,4 +448,58 @@ function generateExportDeclaration(
  */
 function indent(level: number, indentChar: string, indentSize: number): string {
   return indentChar.repeat(level * indentSize);
+}
+
+/**
+ * Convert a node to a string 
+ */
+function nodeToString(node: TSNode | TSNode[] | null | undefined): string {
+  // Handle undefined or null
+  if (node === undefined || node === null) return "{}"; // Default to empty object
+  
+  // Handle arrays
+  if (Array.isArray(node)) return node.map(n => nodeToString(n)).join("\n");
+  
+  // Handle individual nodes
+  switch (node.type) {
+    case TSNodeType.Raw:
+      return (node as TSRaw).code;
+    case TSNodeType.StringLiteral:
+      return (node as TSStringLiteral).text;
+    case TSNodeType.NumericLiteral:
+      return (node as TSNumericLiteral).text;
+    case TSNodeType.BooleanLiteral:
+      return (node as TSBooleanLiteral).text;
+    case TSNodeType.NullLiteral:
+      return "null";
+    case TSNodeType.Identifier:
+      return (node as TSIdentifier).text;
+    case TSNodeType.ExportDeclaration:
+      return ""; // Export declarations are handled separately
+    default:
+      console.warn(`Unhandled TS node type in nodeToString: ${(node as any)?.type}`);
+      return "{}"; // Default to empty object instead of empty string
+  }
+}
+
+/**
+ * Filter out all type annotations from generated code
+ * This serves as a final safeguard against any type annotations leaking through
+ * @param code The generated JavaScript code
+ * @returns Clean JavaScript code without type annotations
+ */
+function filterTypeAnnotations(code: string): string {
+  // First pass: Remove arrow type annotations
+  let result = removeArrowTypeAnnotations(code);
+  
+  // Second pass: Remove any encoded type annotations (__TYPE__...)
+  result = result.replace(/\s*__TYPE__\{.*?\}\s*/g, ' ');
+  
+  // Third pass: Remove any lines that only contain type annotations
+  result = result.replace(/^\s*:?\s*\w+\s*;?\s*$/gm, '');
+  
+  // Cleanup: Remove empty lines and normalize whitespace
+  result = result.replace(/\n\s*\n/g, '\n\n');
+  
+  return result;
 }

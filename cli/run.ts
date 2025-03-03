@@ -2,21 +2,26 @@
 
 import { resolve, extname } from "jsr:@std/path@1.0.8";
 import transpileCLI from "./transpile.ts";
+import * as logger from "../src/logger.ts";
 
 /**
  * Import and run a JavaScript module
  * @param filePath Path to the JavaScript file to run
  */
 async function runModule(filePath: string): Promise<void> {
+  const log = logger.createLogger("runner");
+  
   try {
-    console.log(`\n▶️ Executing module: "${filePath}"`);
+    log.info(`Executing module: "${filePath}"`);
+    
+    // Use dynamic import to run the transpiled JavaScript
     await import("file://" + filePath);
-    console.log(`\n✅ Module execution completed successfully`);
+    
+    log.success(`Module execution completed successfully`);
   } catch (error) {
-    console.error(`\n❌ Module execution failed: ${error instanceof Error ? error.message : String(error)}`);
-    if (error instanceof Error && error.stack) {
-      console.error(`\nStack trace:\n${error.stack}`);
-    }
+    log.error(`Module execution failed: ${error instanceof Error ? error.message : String(error)}`, error);
+    
+    // Exit with error code
     Deno.exit(1);
   }
 }
@@ -64,6 +69,10 @@ async function main() {
     else if (!arg.startsWith('--') && !target) target = arg;
   }
   
+  // Configure logging based on verbose flag
+  logger.setLogLevel(logger.verboseToLogLevel(verbose));
+  const log = logger.createLogger("hql-runner");
+  
   // Show help if requested or if no target file is provided
   if (showHelpFlag || !target) {
     showHelp();
@@ -71,8 +80,8 @@ async function main() {
   }
   
   // Print execution info
-  console.log("\n✨ HQL Runner ✨");
-  console.log(`\nRunning with options:
+  log.info(`HQL Runner started`);
+  log.info(`Running with options:
   Target: "${target}"
   Bundle: ${bundle ? 'enabled' : 'disabled'}
   Format: ${format}
@@ -86,35 +95,34 @@ async function main() {
     // If HQL file, transpile to JS first
     if (ext === ".hql") {
       if (bundle) {
-        console.log("\n🔄 Bundle mode enabled - transpiling to a self-contained JavaScript file");
+        log.info(`Bundle mode enabled - transpiling to a self-contained JavaScript file`);
       }
       
-      console.log(`\n🔨 Transpiling HQL file: "${targetPath}"`);
-      await transpileCLI(targetPath, undefined, { bundle, verbose, module: format });
+      log.start(`Transpiling HQL file: "${targetPath}"`);
+      await transpileCLI(targetPath, undefined, { 
+        bundle, 
+        verbose, 
+        module: format 
+      });
+      
       modulePath = targetPath.replace(/\.hql$/, ".js");
-      console.log(`\n✅ Transpilation complete: "${modulePath}"`);
+      log.success(`Transpilation complete: "${modulePath}"`);
     } else if (ext !== ".js") {
-      console.error(`\n❌ Unsupported file type: "${ext}". Please provide a .hql or .js file.`);
+      log.error(`Unsupported file type: "${ext}". Please provide a .hql or .js file.`);
       Deno.exit(1);
     }
     
     // Run the module
     await runModule(modulePath);
   } catch (error) {
-    console.error(`\n❌ Error running module: ${error instanceof Error ? error.message : String(error)}`);
-    if (error instanceof Error && error.stack) {
-      console.error(`\nStack trace:\n${error.stack}`);
-    }
+    log.error(`Error running module`, error);
     Deno.exit(1);
   }
 }
 
 if (import.meta.main) {
   main().catch(error => {
-    console.error(`\n❌ Unhandled error: ${error instanceof Error ? error.message : String(error)}`);
-    if (error instanceof Error && error.stack) {
-      console.error(`\nStack trace:\n${error.stack}`);
-    }
+    logger.logError(`Unhandled error`, error);
     Deno.exit(1);
   });
 }

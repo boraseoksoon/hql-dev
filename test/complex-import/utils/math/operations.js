@@ -4,13 +4,6 @@ function multiply(a, b) { return (a * b); }
 function divide(a, b) { return (a / b); }
 function square(x) { return (x * x); }
 function cube(x) { return ((x * x) * x); }
-function average(nums) {
-  {
-  const sum = reduce(nums, function(acc, val) { return (acc + val); }, 0);
-  const count = Array(nums.length);
-  return (sum / count);
-}
-}
 function calculate(value, factor) {
   {
   const squared = square(value);
@@ -25,20 +18,10 @@ function calculate(value, factor) {
 };
 }
 }
-function reduce(array, fn, initial) {
-  {
-  const result = initial;
-  Array(array.forEach, function(item) {
-  return result = function() { return item; };
-})
-  return result;
-}
-}
 export { add };
 export { subtract };
 export { multiply };
 export { divide };
 export { square };
 export { cube };
-export { average };
 export { calculate };

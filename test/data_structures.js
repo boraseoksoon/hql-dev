@@ -1,10 +1,8 @@
-const emptyVector = [];
 const numbers = [1, 2, 3, 4, 5];
 const mixedVector = [1, "two", true, null];
 const emptyMap = {};
 const userMap = {name: "Alice", age: 30, active: true};
 const nestedMap = {user: {name: "Bob", contact: {email: "bob@example.com"}}};
-const emptySet = new Set([]);
 const numberSet = new Set([1, 2, 3, 4, 5]);
 const stringSet = new Set(["apple", "orange", "banana"]);
 const database = {users: [{id: 1, name: "Alice", roles: ["admin", "user"]}, {id: 2, name: "Bob", roles: ["user"]}], settings: {version: "1.0.0", features: {enabled: true, list: ["search", "comments"]}}};

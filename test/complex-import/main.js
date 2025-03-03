@@ -42,8 +42,7 @@ const LogLevel = {
 };
 function greet(name) { return `Hello, ${name}!`; }
 function calculateArea(params) {
-  const { width, height } = params;
-  return (width * height);
+  const { width, height } = params; return (width * height);
 }
 function formatUser(params) {
   const { first, last, title } = params;

@@ -26,15 +26,6 @@
   (* x x x)
 )
 
-(defn average (nums)
-  (let [
-    sum (reduce nums (fn (acc val) (+ acc val)) 0)
-    count (js/Array nums.length)
-  ]
-    (/ sum count)
-  )
-)
-
 ;; Utility function that uses multiple operations
 (defn calculate (value factor)
   (let [
@@ -52,18 +43,6 @@
   )
 )
 
-;; Helper function to reduce an array
-(defn reduce (array fn initial)
-  (let [
-    result initial
-  ]
-    (js/Array array.forEach (fn (item) 
-      (set result (fn result item))
-    ))
-    result
-  )
-)
-
 ;; Export functions
 (export "add" add)
 (export "subtract" subtract)
@@ -71,5 +50,4 @@
 (export "divide" divide)
 (export "square" square)
 (export "cube" cube)
-(export "average" average)
 (export "calculate" calculate)
