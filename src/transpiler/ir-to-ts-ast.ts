@@ -13,6 +13,22 @@ import {
 } from "./ts-ast-types.ts";
 import { convertImportSpecifier } from "./path-utils.ts";
 
+// Define CodeGenerationOptions interface
+interface CodeGenerationOptions {
+  indentSize: number;
+  useSpaces: boolean;
+  formatting: "minimal" | "standard" | "pretty";
+  module: "esm" | "commonjs";
+}
+
+// Define default configuration
+const DEFAULT_CONFIG: Required<CodeGenerationOptions> = {
+  indentSize: 2,
+  useSpaces: true,
+  formatting: "standard",
+  module: "esm"
+};
+
 // Cache for node conversion results to avoid redundant transformations
 const nodeConversionCache = new Map<IR.IRNode, TSNode | TSNode[] | null>();
 
@@ -514,76 +530,60 @@ function convertVariableDeclaration(vd: IR.IRVariableDeclaration): TSNode {
 }
 
 /**
- * Convert a function declaration with improved formatting.
+ * Convert a function declaration without unnecessary indentation logic
  */
 function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
   const functionName = fn.id.name;
-  let parameters: string;
   
-  if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
-    // For named parameters, we assume a destructuring approach
-    parameters = "params";
-    
-    // Check if we need to include default parameters
-    const defaultParams = fn.params
-      .filter(p => p.defaultValue)
-      .map(p => `${p.id.name} = ${nodeToString(convertNode(p.defaultValue!))}`);
-    
-    if (defaultParams.length > 0) {
-      parameters = `params = {${defaultParams.join(", ")}}`;
+  // Handle named parameters - if we have namedParamIds, use a single params parameter
+  const isNamedParams = fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0;
+  
+  let parameters = isNamedParams 
+    ? "params" 
+    : fn.params.map(p => {
+        // Handle default parameter values
+        if (p.defaultValue) {
+          const defaultValue = convertNode(p.defaultValue);
+          return `${p.id.name} = ${nodeToString(defaultValue)}`;
+        }
+        return p.id.name;
+      }).join(", ");
+  
+  // Generate function body
+  const bodyStatements = [...fn.body.body];
+  const bodyCode: string[] = [];
+  
+  // If using named parameters, add destructuring at the beginning
+  if (isNamedParams) {
+    const paramNames = fn.namedParamIds?.join(", ");
+    bodyCode.push(`const { ${paramNames} } = params;`);
+  }
+  
+  // Process body statements
+  for (const stmt of bodyStatements) {
+    const converted = convertNode(stmt);
+    if (converted) {
+      bodyCode.push(nodeToString(converted));
     }
-  } else {
-    parameters = fn.params.map(p => {
-      // If the IR parameter has a defaultValue, convert it to code.
-      if ((p as any).defaultValue) {
-        const defaultCode = nodeToString(convertNode((p as any).defaultValue));
-        return `${p.id.name} = ${defaultCode}`;
-      }
-      return p.id.name;
-    }).join(", ");
   }
   
-  // Determine function body and handle destructuring
-  let body: string;
+  // Format body - simple approach with fixed indentation
+  const bodyStr = bodyCode.length > 0
+    ? `{\n  ${bodyCode.join(";\n  ")}\n}`
+    : "{}";
   
-  if (fn.isNamedParams && fn.namedParamIds && fn.namedParamIds.length > 0) {
-    // Create destructuring pattern for named parameters
-    const destructuring = `const { ${fn.namedParamIds.join(", ")} } = params;`;
-    body = convertFunctionBody(fn.body, destructuring);
-  } else {
-    body = convertFunctionBody(fn.body);
+  // Generate the function declaration
+  if (fn.isAnonymous) {
+    return { 
+      type: TSNodeType.Raw, 
+      code: `function(${parameters}) ${bodyStr}` 
+    };
   }
   
-  if (!fn.isAnonymous) {
-    return { type: TSNodeType.Raw, code: `function ${functionName}(${parameters}) ${body}` };
-  }
-  return { type: TSNodeType.Raw, code: `function(${parameters}) ${body}` };
-}
-
-/**
- * Convert a function body to a string with improved formatting.
- */
-function convertFunctionBody(block: IR.IRBlock, destructuring?: string): string {
-  const statements = [...block.body];
-  if (statements.length === 0) return "{}";
-  
-  const lines = statements
-    .map(stmt => {
-      const converted = convertNode(stmt);
-      return converted ? nodeToString(converted) : "";
-    })
-    .filter(line => line.length > 0);
-  
-  if (destructuring) lines.unshift(destructuring);
-  
-  // For single-line bodies, use compact format if short enough
-  if (lines.length === 1 && lines[0].length < 40 && !lines[0].includes("\n")) {
-    return `{ ${lines[0]} }`;
-  }
-  
-  // For multi-line bodies, indent properly
-  const indentedLines = lines.map(line => `  ${line}`);
-  return `{\n${indentedLines.join("\n")}\n}`;
+  return { 
+    type: TSNodeType.Raw, 
+    code: `function ${functionName}(${parameters}) ${bodyStr}` 
+  };
 }
 
 /**

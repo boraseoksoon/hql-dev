@@ -1,2 +1,4 @@
-function sayBye(name) { return `Bye, ${name}!`; }
+function sayBye(name) {
+  return `Bye, ${name}!`;
+}
 export { sayBye };

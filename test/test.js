@@ -1,2 +1,2 @@
-function add(x, y = 0) { return (x + y); }
-console.log(add(100, 20))
+console.log("Random number:", Math.random())
+console.log("Uppercase:", String("hello", "toUpperCase"))

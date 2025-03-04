@@ -1,161 +1,246 @@
-;; complex_data_structures.hql - Demonstrating complex nested data structures
-;; Compatible version that shows both JSON syntax and named parameters
-
-;; Import utility libraries
-(def lodash (import "https://esm.sh/lodash"))
-(def pathMod (import "https://deno.land/std@0.170.0/path/mod.ts"))
+;; HQL Complete Showcase
+;; This file demonstrates all HQL syntax features with proper syntax
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SECTION 1: Basic Data Structure Literals
+;; IMPORTS & MODULES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Vector literals
-(def empty-vector [])
-(def numbers [1, 2, 3, 4, 5])
-(def mixed-vector [1, "two", true, null])
+;; Local module import
+(def utils (import "./utils.hql"))
 
-;; Map literals with JSON syntax
-(def empty-map {})
-(def user-map {"name": "Alice", "age": 30, "active": true})
-(def nested-map {
-  "user": {
-    "name": "Bob", 
-    "contact": {
-      "email": "bob@example.com"
+;; Remote module imports (various formats)
+(def lodash (import "npm:lodash"))
+(def path (import "https://deno.land/std@0.170.0/path/mod.ts"))
+(def jsr (import "jsr:@std/path@1.0.8"))
+(def chalk (import "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js"))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; DATA STRUCTURE LITERALS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; 1. Object literals - transform to JavaScript objects
+(def empty-object {})
+(def user {
+  "name": "Alice",
+  "age": 30,
+  "isActive": true,
+  "tags": ["developer", "designer"]
+})
+
+(def nested-data {
+  "users": [
+    {"id": 1, "name": "Alice"},
+    {"id": 2, "name": "Bob"}
+  ],
+  "config": {
+    "version": "1.0.0",
+    "features": {
+      "darkMode": true,
+      "analytics": false
     }
   }
 })
 
-;; Set literals
-(def empty-set #[])
-(def number-set #[1, 2, 3, 4, 5])
-(def string-set #["apple", "orange", "banana"])
+;; 2. Array literals - transform to JavaScript arrays
+(def empty-array [])
+(def numbers [1, 2, 3, 4, 5])
+(def mixed-array [1, "two", true, null, {"key": "value"}])
+
+;; 3. Set literals - transform to JavaScript Sets
+(def tags #["javascript", "typescript", "hql"])
+(def unique-numbers #[1, 2, 3, 3, 4, 4, 5])  ;; Duplicates removed in Sets
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SECTION 2: Defn
+;; FUNCTION DEFINITIONS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Case 1: Implicit return type, explicit parameter types, no defaults
-(defn add (x: Int y: Int)
-  (+ x y))
-
-;; Case 2: Explicit return type, explicit parameter types, no defaults
-(defn add (x: Int y: Int) -> Int
-  (+ x y))
-
-;; Case 3: All types inferred (parameters and return), no defaults
+;; 1. Basic function definition (defn)
 (defn add (x y)
   (+ x y))
 
-;; Case 4: Implicit return type, explicit parameter types with default value
-(defn add (x: Int y: Int = 0)
-  (+ x y))
+;; 2. Anonymous function (fn)
+(def multiply (fn (x y)
+  (* x y)))
 
-;; Case 5: Explicit return type, explicit parameter types with default value
-(defn add (x: Int y: Int = 0) -> Int
-  (+ x y))
+;; 3. Extended function (fx) with type annotations
+(fx calculate-area (width: Number height: Number) -> Number
+  (* width height))
 
-;; Case 6: Implicit return type, inferred parameter types with default value
-(defn add (x y = 0)
-  (+ x y))
+;; 4. Extended function with default parameter value
+(fx greet (name: String greeting: String = "Hello") -> String
+  (str greeting ", " name "!"))
 
-;; Case 7: Explicit return type, inferred parameter types with default value
-(defn add (x y = 0) -> Int
-  (+ x y))
-
-;; Call the function with named parameters (preserving original syntax)
-(print (greet-user name: "Smith" title: "Dr."))
-
-;; Define a function with multiple parameters
-(defn calculate-price (base: Number tax-rate: Number quantity: Number)
+;; 5. Extended function with explicit return
+(fx format-user (user: Object) -> String
   (let [
-    subtotal (* base quantity)
-    tax (* subtotal (/ tax-rate 100))
+    name (get user "name")
+    age (get user "age")
   ]
-    (+ subtotal tax)
-  )
-)
+    (return (str name " is " age " years old"))
+  ))
 
-;; Call the function with named parameters
-(print "Total price:" (calculate-price 
-  base: 19.99
-  tax-rate: 8.5
-  quantity: 3
-))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SECTION 3: Complex Data Example
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; Complex mixed structure with JSON syntax and various data structures
-(def database {
-  "users": [
-    {
-      "id": 1,
-      "name": "Alice",
-      "roles": ["admin", "user"],
-      "tags": #["javascript", "hql"]
-    },
-    {
-      "id": 2,
-      "name": "Bob",
-      "roles": ["user"],
-      "tags": #["python", "rust"] 
-    }
-  ],
-  "settings": {
-    "version": "1.0.0",
-    "features": {
-      "enabled": true,
-      "list": ["search", "comments"]
-    }
-  }
-})
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SECTION 4: Mixed Operations
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; Helper function to safely get a nested property
-(defn get-in [obj path default-value]
-  (reduce 
-    (fn [current key] 
-      (if (and current (not (= current null)))
-        (get current key)
-        null))
-    obj
-    path)
-)
-
-;; Process data with both JSON syntax and named parameters
-(defn process-user (user-id: Number options: Object)
+;; 6. Extended function with named parameters (calling style)
+(fx process-data (data: Array options: Object = {"verbose": false}) -> Object
   (let [
-    user-index (- user-id 1)
-    user (get-in database ["users", user-index] null)
-    settings (get database "settings")
+    processed {"result": data, "options": options}
   ]
-    (if (= user null)
-      {"error": "User not found"}
-      {"user": {
-        "name": (get user "name"),
-        "roles": (get user "roles"),
-        "options": options
-      }}
-    )
-  )
-)
-
-;; Call with named parameters and create JSON objects
-(print "User data:" (process-user 
-  user-id: 1 
-  options: {"detailed": true, "includeInactive": false}
-))
+    processed
+  ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; SECTION 5: Export
+;; CONTROL FLOW & VARIABLES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(export "greetUser" greet-user)
-(export "calculatePrice" calculate-price)
-(export "database" database)
-(export "processUser" process-user)
+;; 1. Let binding for local variables
+(let [
+  x 10
+  y 20
+  z (+ x y)
+]
+  (print "Sum:" z))
+
+;; 2. If expression (conditional)
+(def age 25)
+(if (>= age 18)
+  (print "Adult")
+  (print "Minor"))
+
+;; 3. Cond expression (multi-branch conditional)
+(def score 85)
+(def grade
+  (cond
+    (>= score 90) "A"
+    (>= score 80) "B"
+    (>= score 70) "C"
+    (>= score 60) "D"
+    true "F"))
+(print "Grade:" grade)
+
+;; 4. For loop
+;; HQL For Loop Examples
+;; This file demonstrates a few simple forms of the pure S‑expression "for" loop in HQL.
+
+;; 1. Basic List Comprehension
+;; Iterates over a range and computes the square of each number.
+(for ((x (range 5)))
+  (* x x))
+
+;; 2. Implicit Binding Form
+;; A shorthand version that produces the same result as the basic form.
+(for (x (range 5))
+  (* x x))
+
+;; 3. Imperative-Style Loop
+;; Uses initialization, a condition, and an update expression to mimic a traditional C-style loop.
+(for ((i 0) (< i 5) (+ i 1))
+  (print "Loop iteration:" i))
+
+;; 4. filter
+(for ((x (filter even? (range 10)))) x)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; JAVASCRIPT INTEROP
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; 1. Creating JavaScript objects
+(def today (new Date))
+(print "Current date:" today)
+
+;; 2. Accessing JavaScript APIs
+(print "Random number:" (js/Math.random))
+(print "Uppercase:" (js/String "hello".toUpperCase))
+
+;; 3. Using imported JavaScript libraries
+(print "Lodash chunk:" (lodash.chunk [1, 2, 3, 4, 5, 6] 2))
+(print "Path join:" (path.join "folder" "subfolder" "file.txt"))
+(print "Colored text:" (chalk.blue "This text is blue"))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; SPECIAL FORMS & ENUMS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; 1. Define an enum
+(defenum TaskStatus PENDING ACTIVE COMPLETED ARCHIVED)
+
+;; 2. Using enum values
+(defn get-status-message (status)
+  (cond
+    (= status TaskStatus.PENDING) "Task is waiting to start"
+    (= status TaskStatus.ACTIVE) "Task is in progress"
+    (= status TaskStatus.COMPLETED) "Task is finished"
+    (= status TaskStatus.ARCHIVED) "Task is archived"
+    true "Unknown status"))
+
+;; 3. Set (assignment)
+(def counter 0)
+(set counter 10)
+(print "Counter value:" counter)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; USING FUNCTIONS WITH DIFFERENT CALLING STYLES
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; 1. Regular function call
+(print "Regular add:" (add 5 10))
+
+;; 2. Anonymous function call
+(print "Anonymous multiply:" (multiply 4 5))
+
+;; 3. Extended function with positional arguments
+(print "Area calculation:" (calculate-area 5 10))
+
+;; 4. Extended function with named arguments
+(print "Named parameters:" (calculate-area width: 8 height: 6))
+
+;; 5. Extended function with default parameter
+(print "Default greeting:" (greet name: "Alice"))
+(print "Custom greeting:" (greet name: "Bob" greeting: "Hi"))
+
+;; 6. Complex example with nested function calls
+(print "Processed data:" (process-data 
+  data: [1, 2, 3, 4, 5] 
+  options: {"verbose": true, "maxItems": 3}))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; DEMO OF MACRO EXPANSION (FOR ILLUSTRATION)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; This is how the HQL macros work behind the scenes:
+
+;; 1. Object literal: {"name": "Alice"}
+;;    Expands to: (hash-map (keyword "name") "Alice")
+;;    Becomes JavaScript: { name: "Alice" }
+
+;; 2. Array literal: [1, 2, 3]
+;;    Expands to: (vector 1 2 3)
+;;    Becomes JavaScript: [1, 2, 3]
+
+;; 3. Set literal: #[1, 2, 3]
+;;    Expands to: (new Set (vector 1 2 3))
+;;    Becomes JavaScript: new Set([1, 2, 3])
+
+;; 4. fx form: (fx add (x: Number y: Number) -> Number (+ x y))
+;;    Expands to: (defun add (x y) (+ x y))
+;;    With type information preserved for transpilation
+;;    Becomes JavaScript: function add(x, y) { return x + y; }
+
+;; 5. Named parameter call: (add-typed x: 10 y: 20)
+;;    Becomes JavaScript: addTyped({ x: 10, y: 20 })
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; EXPORTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(export "add" add)
+(export "calculateArea" calculate-area)
+(export "greet" greet)
+(export "TaskStatus" TaskStatus)
+(export "formatUser" format-user)
+(export "processData" process-data)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; MAIN EXECUTION
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(print "\n=== HQL Showcase Complete ===\n")
+(print "Try using the exported functions in your application!")

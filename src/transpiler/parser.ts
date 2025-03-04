@@ -545,16 +545,7 @@ function parseExtendedParam(paramNode: HQLNode): ExtendedParam {
   return { name: "param" };
 }
 
-// src/transpiler/parser.ts - Fixed parsing for fx type annotations
-
-/**
- * Parse an extended parameter for fx macro with robust type annotation handling
- */
-// src/transpiler/parser.ts - Fixed parsing for fx type annotations
-
-/**
- * Parse an extended parameter for fx macro with robust type annotation handling
- */
+// Updated parseFxExpression function in src/transpiler/parser.ts
 function parseFxExpression(): ExtendedDefnNode {
   // Parse function name
   if (pos >= tokens.length) {
@@ -566,7 +557,7 @@ function parseFxExpression(): ExtendedDefnNode {
   if (!nameToken || nameToken === "(" || nameToken === ")" ||
       nameToken === "[" || nameToken === "]" ||
       nameToken === "{" || nameToken === "}") {
-    throw new ParseError("Unexpected end of input", positions[pos - 1]);
+    throw new ParseError("Unexpected token: " + nameToken, positions[pos - 1]);
   }
 
   // Expect and parse the parameter list
@@ -578,14 +569,14 @@ function parseFxExpression(): ExtendedDefnNode {
   // Parse parameters
   const params: ExtendedParam[] = [];
   while (pos < tokens.length && tokens[pos] !== ")") {
-    // Check for named parameter (with colon suffix)
+    // Case 1: Named parameter with colon at the end (name:)
     if (tokens[pos].endsWith(":")) {
       const paramName = tokens[pos].slice(0, -1);
       pos++; // Consume parameter name
       
       // Check for type annotation
       let type: string | undefined;
-      if (pos < tokens.length && tokens[pos] !== ")" && !tokens[pos].endsWith(":")) {
+      if (pos < tokens.length && tokens[pos] !== ")" && !tokens[pos].endsWith(":") && tokens[pos] !== "=") {
         type = tokens[pos];
         pos++; // Consume type
       }
@@ -601,16 +592,16 @@ function parseFxExpression(): ExtendedDefnNode {
       
       params.push({ name: paramName, type, defaultValue, isNamed: true });
     } 
-    // Regular parameter
+    // Case 2: Regular parameter or complex parameter form
     else {
       const paramNode = parseExpression();
-      let name: string;
-      let type: string | undefined;
-      let defaultValue: HQLNode | undefined;
       
       if (paramNode.type === "symbol") {
-        name = (paramNode as SymbolNode).name;
-      } else if (paramNode.type === "list") {
+        // Simple parameter (just a name)
+        params.push({ name: (paramNode as SymbolNode).name });
+      } 
+      else if (paramNode.type === "list") {
+        // Complex parameter form (x: Type = default) or (x = default)
         const elements = (paramNode as ListNode).elements;
         if (elements.length === 0) {
           throw new ParseError("Empty parameter list", positions[pos - 1]);
@@ -620,7 +611,9 @@ function parseFxExpression(): ExtendedDefnNode {
           throw new ParseError("Parameter name must be a symbol", positions[pos - 1]);
         }
         
-        name = (elements[0] as SymbolNode).name;
+        const name = (elements[0] as SymbolNode).name;
+        let type: string | undefined;
+        let defaultValue: HQLNode | undefined;
         
         // Check for type annotation
         let typeIndex = -1;
@@ -647,11 +640,12 @@ function parseFxExpression(): ExtendedDefnNode {
         if (eqIndex !== -1 && eqIndex + 1 < elements.length) {
           defaultValue = elements[eqIndex + 1];
         }
-      } else {
+        
+        params.push({ name, type, defaultValue });
+      } 
+      else {
         throw new ParseError("Invalid parameter", positions[pos - 1]);
       }
-      
-      params.push({ name, type, defaultValue });
     }
   }
   
