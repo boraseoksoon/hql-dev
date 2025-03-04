@@ -1,4 +1,4 @@
-// src/macro.ts
+// src/macro.ts - Fix for let bindings in macro expansion
 import {
   HQLNode,
   SymbolNode,
@@ -6,7 +6,8 @@ import {
   LiteralNode,
   JsonObjectLiteralNode,
   JsonArrayLiteralNode,
-  ExtendedDefnNode
+  ExtendedDefnNode,
+  ExtendedParam
 } from "./transpiler/hql_ast.ts";
 
 /** 
@@ -81,7 +82,7 @@ function expandListMacros(node: ListNode): HQLNode {
 
 /**
  * Expand a JSON object literal into a canonical hash-map form.
- * It transforms {"key": value} into (hash-map (keyword "key") value ...).
+ * Transforms {"key": value} into (hash-map (keyword "key") value ...).
  */
 function expandJsonObjectLiteral(node: JsonObjectLiteralNode): HQLNode {
   const elements: HQLNode[] = [
@@ -102,7 +103,7 @@ function expandJsonObjectLiteral(node: JsonObjectLiteralNode): HQLNode {
 
 /**
  * Expand a JSON array literal into a canonical vector form.
- * It transforms [a, b, c] into (vector a b c).
+ * Transforms [a, b, c] into (vector a b c).
  */
 function expandJsonArrayLiteral(node: JsonArrayLiteralNode): HQLNode {
   const elements: HQLNode[] = [
@@ -112,88 +113,93 @@ function expandJsonArrayLiteral(node: JsonArrayLiteralNode): HQLNode {
   return { type: "list", elements } as ListNode;
 }
 
-function parseExtendedParams(paramList: ListNode): Array<{
-  name: string;
-  type?: string;
-  defaultValue?: HQLNode;
-  isNamed?: boolean;
-}> {
-  const params: Array<{ name: string; type?: string; defaultValue?: HQLNode; isNamed?: boolean }> = [];
-  
-  for (let i = 0; i < paramList.elements.length; i++) {
-    const param = paramList.elements[i];
-    
-    // Simple symbol case
-    if (param.type === "symbol") {
-      const symbolName = (param as SymbolNode).name;
-      if (symbolName.endsWith(":")) {
-        // Named parameter
-        const paramName = symbolName.slice(0, -1);
-        
-        // Check for type indication
-        let type = undefined;
-        let defaultValue = undefined;
-        
-        // Look ahead for type
-        if (i + 1 < paramList.elements.length && 
-            paramList.elements[i + 1].type === "symbol") {
-          type = (paramList.elements[i + 1] as SymbolNode).name;
-          i++;
-          
-          // Look ahead for default value
-          if (i + 2 < paramList.elements.length && 
-              paramList.elements[i + 1].type === "symbol" && 
-              (paramList.elements[i + 1] as SymbolNode).name === "=" &&
-              i + 3 < paramList.elements.length) {
-            defaultValue = paramList.elements[i + 2];
-            i += 2;
-          }
-        }
-        
-        params.push({ name: paramName, type, defaultValue, isNamed: true });
+/**
+ * Group the flat parameter list for fx forms.
+ * For any symbol that ends with ":", group it together with the next token.
+ */
+export function groupFxParams(paramList: ListNode): ListNode {
+  const newElements: HQLNode[] = [];
+  let i = 0;
+  while (i < paramList.elements.length) {
+    const curr = paramList.elements[i];
+    if (curr.type === "symbol" && (curr as SymbolNode).name.endsWith(":")) {
+      if (i + 1 < paramList.elements.length) {
+        const grouped: ListNode = {
+          type: "list",
+          elements: [curr, paramList.elements[i + 1]]
+        };
+        newElements.push(groupFxParams(grouped)); // Recursively group if needed.
+        i += 2;
       } else {
-        // Regular parameter
-        params.push({ name: symbolName });
+        newElements.push(curr);
+        i++;
       }
-    } else if (param.type === "list") {
-      // Complex parameter with type annotations, default values, etc.
-      const elements = (param as ListNode).elements;
-      if (elements.length >= 1 && elements[0].type === "symbol") {
-        let paramName = (elements[0] as SymbolNode).name;
-        let isNamed = false;
-        
-        if (paramName.endsWith(":")) {
-          paramName = paramName.slice(0, -1);
-          isNamed = true;
-        }
-        
-        let type: string | undefined;
-        let defaultValue: HQLNode | undefined;
-        
-        // Look for type annotation
-        if (elements.length >= 3 &&
-            elements[1].type === "symbol" &&
-            (elements[1] as SymbolNode).name === ":") {
-          if (elements[2].type === "symbol") {
-            type = (elements[2] as SymbolNode).name;
-          }
-        }
-        
-        // Look for default value
-        const eqIndex = elements.findIndex(el =>
-          el.type === "symbol" && (el as SymbolNode).name === "="
-        );
-        
-        if (eqIndex !== -1 && eqIndex + 1 < elements.length) {
-          defaultValue = elements[eqIndex + 1];
-        }
-        
-        params.push({ name: paramName, type, defaultValue, isNamed });
+    } else {
+      newElements.push(curr);
+      i++;
+    }
+  }
+  return { type: "list", elements: newElements };
+}
+
+function parseExtendedParam(paramNode: HQLNode): ExtendedParam {
+  if (paramNode.type === "symbol") {
+    // Handle plain symbol parameters and named parameters (ending with colon)
+    let name = (paramNode as SymbolNode).name;
+    let hasNamed = false;
+    
+    if (name.endsWith(":")) {
+      name = name.slice(0, -1);
+      hasNamed = true;
+    }
+    
+    // Don't apply hyphenToCamel here, we want to preserve the original name
+    return { name, isNamed: hasNamed };
+  }
+  
+  if (paramNode.type === "list") {
+    const elements = (paramNode as ListNode).elements;
+    if (elements.length >= 1 && elements[0].type === "symbol") {
+      let paramName = (elements[0] as SymbolNode).name;
+      let hasNamed = false;
+      
+      // Handle named parameter with colon
+      if (paramName.endsWith(":")) {
+        paramName = paramName.slice(0, -1);
+        hasNamed = true;
       }
+      
+      let type: string | undefined;
+      let defaultValue: HQLNode | undefined;
+      
+      // Check for type annotation, e.g. (name : Type)
+      if (elements.length >= 3 &&
+          elements[1].type === "symbol" &&
+          (elements[1] as SymbolNode).name === ":") {
+        if (elements[2].type === "symbol") {
+          type = (elements[2] as SymbolNode).name;
+        }
+      }
+      
+      // Check for default value, e.g. (name = defaultValue)
+      const eqIndex = elements.findIndex(el =>
+        el.type === "symbol" && (el as SymbolNode).name === "="
+      );
+      if (eqIndex !== -1 && eqIndex + 1 < elements.length) {
+        defaultValue = elements[eqIndex + 1];
+      }
+      
+      // Don't apply hyphenToCamel here, we want to preserve the original name
+      return { name: paramName, type, defaultValue, isNamed: hasNamed };
     }
   }
   
-  return params;
+  // Fallback if the parameter is not recognized
+  return { name: "param" };
+}
+
+function hyphenToCamel(name: string): string {
+  return name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 }
 
 function expandExtendedDefn(node: ExtendedDefnNode): HQLNode {
@@ -201,7 +207,7 @@ function expandExtendedDefn(node: ExtendedDefnNode): HQLNode {
   const params = node.params;
   const body = node.body;
 
-  const hasNamed = params.some(p => p.isNamed === true || p.isNamed);
+  const hasNamed = params.some(p => p.isNamed === true);
   
   if (!hasNamed) {
     const required: string[] = [];
@@ -250,30 +256,76 @@ function expandExtendedDefn(node: ExtendedDefnNode): HQLNode {
     } as ListNode;
   } else {
     // For named parameters, use a single parameter "params"
-    // and prepend the function body with a let binding that destructures the named parameters.
-    const namedParams = params.map(p => p.name);
+    // and prepend the function body with a let binding that destructures the named parameters
     
-    const destructuringLet: HQLNode = {
-      type: "list",
-      elements: [
-        { type: "symbol", name: "let" } as SymbolNode,
-        {
-          type: "list",
-          elements: [
-            {
-              type: "list",
-              elements: [
-                { type: "symbol", name: "{" } as SymbolNode,
-                ...namedParams.map(n => ({ type: "symbol", name: n } as SymbolNode)),
-                { type: "symbol", name: "}" } as SymbolNode
-              ]
-            } as ListNode,
-            { type: "symbol", name: "params" } as SymbolNode
-          ]
-        } as ListNode,
-        ...body.map(expandMacros)
-      ]
-    } as ListNode;
+    // IMPORTANT: Apply hyphenToCamel to parameter names for valid JavaScript identifiers
+    const namedParams = params.map(p => hyphenToCamel(p.name));
+    
+    // Handle default values for named parameters
+    const defaultBindings: [string, HQLNode][] = params
+      .filter(p => p.defaultValue)
+      .map(p => [hyphenToCamel(p.name), p.defaultValue!]);
+    
+    // Create destructuring let for named parameters
+    let destructuringLet: HQLNode;
+    
+    if (defaultBindings.length > 0) {
+      // With default values
+      const bindingPairs: HQLNode[] = [];
+      for (const param of namedParams) {
+        bindingPairs.push({ type: "symbol", name: param } as SymbolNode);
+        
+        // Find default value if exists
+        const defaultEntry = defaultBindings.find(([name]) => name === param);
+        if (defaultEntry) {
+          bindingPairs.push(expandMacros(defaultEntry[1]));
+        } else {
+          // For params without defaults, use destructuring from params object
+          bindingPairs.push({
+            type: "list",
+            elements: [
+              { type: "symbol", name: "get" } as SymbolNode,
+              { type: "symbol", name: "params" } as SymbolNode,
+              { type: "literal", value: param } as LiteralNode
+            ]
+          } as ListNode);
+        }
+      }
+      
+      destructuringLet = {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "let" } as SymbolNode,
+          { type: "list", elements: bindingPairs } as ListNode,
+          ...body.map(expandMacros)
+        ]
+      } as ListNode;
+    } else {
+      // Simple destructuring without defaults
+      const destructuringBindings: HQLNode[] = [];
+      
+      // First add the destructuring pattern
+      destructuringBindings.push({
+        type: "list",
+        elements: [
+          { type: "symbol", name: "{" } as SymbolNode,
+          ...namedParams.map(n => ({ type: "symbol", name: n } as SymbolNode)),
+          { type: "symbol", name: "}" } as SymbolNode
+        ]
+      } as ListNode);
+      
+      // Then add the object to destructure
+      destructuringBindings.push({ type: "symbol", name: "params" } as SymbolNode);
+      
+      destructuringLet = {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "let" } as SymbolNode,
+          { type: "list", elements: destructuringBindings } as ListNode,
+          ...body.map(expandMacros)
+        ]
+      } as ListNode;
+    }
     
     return {
       type: "list",
@@ -295,17 +347,115 @@ defineMacro("fx", (node: ListNode): HQLNode => {
   if (node.elements.length < 4) {
     throw new Error("fx requires at least a name, parameter list, and a body");
   }
+  
+  // Extract function name
+  if (node.elements[1].type !== "symbol") {
+    throw new Error("Function name must be a symbol");
+  }
   const name = (node.elements[1] as SymbolNode).name;
+  
+  // Extract parameter list
+  if (node.elements[2].type !== "list") {
+    throw new Error("Parameter list must be a list");
+  }
   const paramList = node.elements[2] as ListNode;
+  
+  // Check for return type annotation after parameter list
   let bodyStart = 3;
   let returnType: HQLNode | undefined = undefined;
-  if (node.elements[3].type === "symbol" &&
+  
+  if (node.elements.length > 3 && 
+      node.elements[3].type === "symbol" &&
       (node.elements[3] as SymbolNode).name === "->") {
+    if (node.elements.length < 5) {
+      throw new Error("Return type annotation requires a type");
+    }
     returnType = node.elements[4];
     bodyStart = 5;
   }
-  const params = parseExtendedParams(paramList);
+  
+  // Extract function body
   const body = node.elements.slice(bodyStart);
+  
+  // Parse parameters
+  const params: ExtendedParam[] = [];
+  
+  for (let i = 0; i < paramList.elements.length; i++) {
+    const param = paramList.elements[i];
+    
+    // Named parameter case (ending with colon)
+    if (param.type === "symbol" && (param as SymbolNode).name.endsWith(":")) {
+      const paramName = (param as SymbolNode).name.slice(0, -1);
+      
+      // Look for type after named parameter
+      let type: string | undefined;
+      let defaultValue: HQLNode | undefined;
+      
+      if (i + 1 < paramList.elements.length && 
+          paramList.elements[i + 1].type === "symbol") {
+        type = (paramList.elements[i + 1] as SymbolNode).name;
+        i++;
+        
+        // Look for default value
+        if (i + 2 < paramList.elements.length && 
+            paramList.elements[i + 1].type === "symbol" && 
+            (paramList.elements[i + 1] as SymbolNode).name === "=" && 
+            i + 3 <= paramList.elements.length) {
+          defaultValue = paramList.elements[i + 2];
+          i += 2;
+        }
+      }
+      
+      params.push({ 
+        name: paramName, 
+        type, 
+        defaultValue, 
+        isNamed: true 
+      });
+    }
+    // Regular parameter or parameter with default
+    else if (param.type === "symbol") {
+      params.push({ name: (param as SymbolNode).name });
+    }
+    // Complex parameter form (x: Type = default) or (x = default)
+    else if (param.type === "list") {
+      const paramElements = (param as ListNode).elements;
+      
+      if (paramElements.length === 0 || paramElements[0].type !== "symbol") {
+        throw new Error("Invalid parameter");
+      }
+      
+      const paramName = (paramElements[0] as SymbolNode).name;
+      let type: string | undefined;
+      let defaultValue: HQLNode | undefined;
+      
+      // Check for type annotation (x : Type)
+      for (let j = 1; j < paramElements.length - 1; j++) {
+        if (paramElements[j].type === "symbol" && 
+            (paramElements[j] as SymbolNode).name === ":" && 
+            paramElements[j + 1].type === "symbol") {
+          type = (paramElements[j + 1] as SymbolNode).name;
+          break;
+        }
+      }
+      
+      // Check for default value (x = value)
+      for (let j = 1; j < paramElements.length - 1; j++) {
+        if (paramElements[j].type === "symbol" && 
+            (paramElements[j] as SymbolNode).name === "=") {
+          defaultValue = paramElements[j + 1];
+          break;
+        }
+      }
+      
+      params.push({ name: paramName, type, defaultValue });
+    }
+    else {
+      throw new Error("Invalid parameter");
+    }
+  }
+  
+  // Create extended definition node
   const extDefn: ExtendedDefnNode = {
     type: "extendedDefn",
     name,
@@ -313,6 +463,7 @@ defineMacro("fx", (node: ListNode): HQLNode => {
     returnType,
     body
   };
+  
   return expandExtendedDefn(extDefn);
 });
 
@@ -345,7 +496,7 @@ defineMacro("js-map", (node: ListNode): HQLNode => {
 
 /**
  * Define the js-array macro.
- * Transforms a literal array into a vector.
+ * Transforms an array literal into a vector.
  */
 defineMacro("js-array", (node: ListNode): HQLNode => {
   const elements: HQLNode[] = [
@@ -383,128 +534,3 @@ defineMacro("js-set", (node: ListNode): HQLNode => {
     ]
   } as ListNode;
 });
-
-/**
- * Initialize the system-level macros.
- */
-export function initializeSystemMacros(): void {
-  // fx macro - for extended function definition
-  defineMacro("fx", (node: ListNode): HQLNode => {
-    if (node.elements.length < 4) {
-      throw new Error("fx requires at least a name, parameter list, and body");
-    }
-    
-    const name = (node.elements[1] as SymbolNode).name;
-    const paramList = node.elements[2] as ListNode;
-    let bodyStart = 3;
-    let returnType = null;
-    
-    // Check for return type annotation
-    if (node.elements[3].type === "symbol" && 
-        (node.elements[3] as SymbolNode).name === "->") {
-      returnType = node.elements[4];
-      bodyStart = 5;
-    }
-    
-    // Extract parameters with type annotations and defaults
-    const params = parseExtendedParams(paramList);
-    
-    // Extract body
-    const body = node.elements.slice(bodyStart);
-    
-    // Create extended defn node
-    return {
-      type: "extendedDefn",
-      name,
-      params,
-      returnType,
-      body
-    } as ExtendedDefnNode;
-  });
-  
-  // js-map macro - for object literals
-  defineMacro("js-map", (node: ListNode): HQLNode => {
-    if (node.elements.length <= 1) {
-      return { type: "list", elements: [{ type: "symbol", name: "hash-map" }] };
-    }
-    
-    const elements: HQLNode[] = [
-      { type: "symbol", name: "hash-map" } as SymbolNode
-    ];
-    
-    // Process pairs of key-value
-    for (let i = 1; i < node.elements.length; i++) {
-      const pair = node.elements[i] as ListNode;
-      const key = pair.elements[0];
-      const value = pair.elements[1];
-      
-      // Add (keyword key)
-      elements.push({
-        type: "list",
-        elements: [
-          { type: "symbol", name: "keyword" } as SymbolNode,
-          key
-        ]
-      } as ListNode);
-      
-      // Add value
-      elements.push(value);
-    }
-    
-    return {
-      type: "list",
-      elements
-    } as ListNode;
-  });
-  
-  // js-array macro - for array literals
-  defineMacro("js-array", (node: ListNode): HQLNode => {
-    const elements: HQLNode[] = [
-      { type: "symbol", name: "vector" } as SymbolNode,
-      ...node.elements.slice(1)
-    ];
-    
-    return {
-      type: "list",
-      elements
-    } as ListNode;
-  });
-  
-  // js-set macro - for set literals
-  defineMacro("js-set", (node: ListNode): HQLNode => {
-    if (node.elements.length <= 1) {
-      // Empty set case
-      return {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "new" } as SymbolNode,
-          { type: "symbol", name: "Set" } as SymbolNode,
-          { 
-            type: "list", 
-            elements: [
-              { type: "symbol", name: "vector" } as SymbolNode
-            ]
-          } as ListNode
-        ]
-      } as ListNode;
-    }
-    
-    // Create array from passed elements
-    const arrayElements: HQLNode[] = [
-      { type: "symbol", name: "vector" } as SymbolNode,
-      ...node.elements.slice(1)
-    ];
-    
-    // Create (new Set [elements])
-    return {
-      type: "list",
-      elements: [
-        { type: "symbol", name: "new" } as SymbolNode,
-        { type: "symbol", name: "Set" } as SymbolNode,
-        { type: "list", elements: arrayElements } as ListNode
-      ]
-    } as ListNode;
-  });
-}
-
-initializeSystemMacros();

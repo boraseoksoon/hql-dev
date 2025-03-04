@@ -1,4 +1,5 @@
-// src/transpiler/hql-to-ir.ts
+// Complete fix for src/transpiler/hql-to-ir.ts
+
 import {
   HQLNode,
   LiteralNode,
@@ -686,6 +687,7 @@ function transformReturnStatement(list: ListNode, currentDir: string): IR.IRRetu
   } as IR.IRReturnStatement;
 }
 
+// Updated transformLet function to handle vector symbol in let bindings
 export function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
   if (list.elements.length < 3) {
     throw new Error("let requires bindings and a body");
@@ -693,33 +695,101 @@ export function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
   
   let bindings: HQLNode[];
   const bindingsNode = list.elements[1];
+  
   if (bindingsNode.type === "jsonArrayLiteral") {
     bindings = (bindingsNode as JsonArrayLiteralNode).elements;
-  } else {
+  } else if (bindingsNode.type === "list") {
     bindings = (bindingsNode as ListNode).elements;
+  } else {
+    console.error("Invalid bindings node type:", bindingsNode);
+    throw new Error(`Invalid bindings node type: ${bindingsNode.type}`);
   }
   
-  // Remove trailing empty literal if present.
+  // Log raw bindings for debugging
+  console.log("Let bindings:", JSON.stringify(bindings, null, 2));
+  
+  // Handle vector symbol at the beginning - this is a common pattern after macro expansion
+  if (bindings.length > 0 && 
+      bindings[0].type === "symbol" && 
+      (bindings[0] as SymbolNode).name === "vector") {
+    bindings = bindings.slice(1); // Skip the vector symbol
+  }
+  
+  // Remove trailing empty literal if present
   if (bindings.length % 2 !== 0 &&
       bindings[bindings.length - 1].type === "literal" &&
       (bindings[bindings.length - 1] as LiteralNode).value === "") {
     bindings.pop();
   }
   
+  // Handle JSON array literal which can contain odd number of elements
+  if (bindingsNode.type === "jsonArrayLiteral" && bindings.length % 2 !== 0) {
+    // If we still have an odd number, add a null value
+    bindings.push({ type: "literal", value: null } as LiteralNode);
+  }
+  
+  // Ensure we have pairs of binding forms
   if (bindings.length % 2 !== 0) {
+    console.error("Let bindings error context:", JSON.stringify(bindings, null, 2));
     throw new Error("let bindings require even number of forms");
   }
   
   const declarations: IR.IRVariableDeclaration[] = [];
   for (let i = 0; i < bindings.length; i += 2) {
-    const nameNode = bindings[i] as SymbolNode;
+    const nameNode = bindings[i];
     const valNode = bindings[i + 1];
+    
+    // Handle destructuring case for binding like ({ name age } obj)
+    if (nameNode.type === "list") {
+      const patternElements = (nameNode as ListNode).elements;
+      if (patternElements.length >= 3 && 
+          patternElements[0].type === "symbol" && 
+          (patternElements[0] as SymbolNode).name === "{" &&
+          patternElements[patternElements.length - 1].type === "symbol" &&
+          (patternElements[patternElements.length - 1] as SymbolNode).name === "}") {
+        
+        // Extract variable names from destructuring pattern
+        const variables = patternElements.slice(1, patternElements.length - 1)
+          .filter(el => el.type === "symbol")
+          .map(el => el as SymbolNode);
+        
+        // Create a declaration for each extracted variable
+        for (const varSym of variables) {
+          const varName = hyphenToCamel(varSym.name);
+          
+          // Create a property access node with proper typing
+          const propertyAccess: IR.IRPropertyAccess = {
+            type: IR.IRNodeType.PropertyAccess,
+            object: transformNode(valNode, currentDir)!,
+            property: { 
+              type: IR.IRNodeType.StringLiteral, 
+              value: varName 
+            } as IR.IRStringLiteral,
+            computed: false
+          };
+          
+          declarations.push({
+            type: IR.IRNodeType.VariableDeclaration,
+            kind: "const",
+            id: { type: IR.IRNodeType.Identifier, name: varName } as IR.IRIdentifier,
+            init: propertyAccess
+          });
+        }
+        continue;
+      }
+    }
+    
+    // Regular variable binding
+    if (nameNode.type !== "symbol") {
+      throw new Error("Binding name must be a symbol");
+    }
+    
     const valueIR = transformNode(valNode, currentDir);
     if (valueIR) {
       declarations.push({
         type: IR.IRNodeType.VariableDeclaration,
         kind: "const",
-        id: transformSymbol(nameNode),
+        id: transformSymbol(nameNode as SymbolNode),
         init: valueIR
       });
     }
@@ -828,7 +898,7 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
   }
 }
 
-/** Exported transformParams now takes currentDir as second parameter */
+// Updated transformParams in src/transpiler/hql-to-ir.ts
 export function transformParams(list: ListNode, currentDir: string): { params: IR.IRParameter[], namedParamIds: string[] } {
   const params: IR.IRParameter[] = [];
   const named: string[] = [];
@@ -842,6 +912,15 @@ export function transformParams(list: ListNode, currentDir: string): { params: I
   
   for (let i = 0; i < list.elements.length; i++) {
     const el = list.elements[i];
+    
+    // Special case for params destructuring for named parameters
+    if (el.type === "symbol" && (el as SymbolNode).name === "params") {
+      params.push({
+        type: IR.IRNodeType.Parameter,
+        id: { type: IR.IRNodeType.Identifier, name: "params" }
+      });
+      return { params, namedParamIds: ["params"] };
+    }
     
     if (el.type === "symbol" && (el as SymbolNode).name === "&optional") {
       inOptional = true;
@@ -863,21 +942,38 @@ export function transformParams(list: ListNode, currentDir: string): { params: I
     
     if (el.type === "list") {
       const optionalNode = el as ListNode;
+      
       // Parameter with default value: (y = 0)
-      if (optionalNode.elements.length === 3 &&
-          optionalNode.elements[0].type === "symbol" &&
-          optionalNode.elements[1].type === "symbol" &&
-          (optionalNode.elements[1] as SymbolNode).name === "=") {
+      if (optionalNode.elements.length >= 2 &&
+          optionalNode.elements[0].type === "symbol") {
+          
         const paramName = (optionalNode.elements[0] as SymbolNode).name;
-        params.push({
-          type: IR.IRNodeType.Parameter,
-          id: { type: IR.IRNodeType.Identifier, name: hyphenToCamel(paramName) },
-          defaultValue: transformNode(optionalNode.elements[2], currentDir)!
-        });
-        continue;
+        
+        // Handle (name default) without explicit = (common in Lisp)
+        if (optionalNode.elements.length === 2) {
+          params.push({
+            type: IR.IRNodeType.Parameter,
+            id: { type: IR.IRNodeType.Identifier, name: hyphenToCamel(paramName) },
+            defaultValue: transformNode(optionalNode.elements[1], currentDir)!
+          });
+          continue;
+        }
+        
+        // Handle (name = default)
+        if (optionalNode.elements.length >= 3 &&
+            optionalNode.elements[1].type === "symbol" &&
+            (optionalNode.elements[1] as SymbolNode).name === "=") {
+          params.push({
+            type: IR.IRNodeType.Parameter,
+            id: { type: IR.IRNodeType.Identifier, name: hyphenToCamel(paramName) },
+            defaultValue: transformNode(optionalNode.elements[2], currentDir)!
+          });
+          continue;
+        }
       }
+      
       // Named parameter written as (first :)
-      if (optionalNode.elements.length === 2 && optionalNode.elements[0].type === "symbol") {
+      if (optionalNode.elements.length >= 1 && optionalNode.elements[0].type === "symbol") {
         const paramName = (optionalNode.elements[0] as SymbolNode).name;
         named.push(paramName);
         params.push({

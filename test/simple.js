@@ -1,4 +1,4 @@
-import * as mod_module from "./simple2.hql";
+import * as mod_module from "./simple2.js";
 const mod = mod_module.default !== undefined ? mod_module.default : mod_module;
 import * as strUtil_module from "https://esm.sh/lodash";
 const strUtil = strUtil_module.default !== undefined ? strUtil_module.default : strUtil_module;
@@ -108,7 +108,7 @@ function applyTax(params) {
   return (amount * (1 + (rate / 100)));
 }
 function calculateTotal(params) {
-  const { price, qty, taxRate } = params;
+  const { price, qty, tax-rate } = params;
   return applyTax({amount: (price * qty), rate: taxRate});
 }
 console.log("Total price with tax: ", calculateTotal({price: 19.99, qty: 3, taxRate: 8.5}))
