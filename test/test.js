@@ -7,13 +7,15 @@ function map(f, coll) {
 function filter(pred, coll) {
   return Array.prototype.filter.call(coll, pred);
 }
-function log(&, rest) {
-  return console.log.apply(console, rest);
+const log = console.log;
+function average(nums) {
+  {
+  const sum = reduce(nums, function(acc, val) {
+  return (acc + val);
+}, 0);
+  const count = nums.length;
+  return (sum / count);
 }
-log(
-  1,
-  2,
-  3,
-  4,
-  5
-)
+}
+log([1, 2, 3, 4, 5])
+log(average([1, 2, 3, 4, 5]))

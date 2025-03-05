@@ -1,13 +1,27 @@
-function add(a, b) { return (a + b); }
-function subtract(a, b) { return (a - b); }
-function multiply(a, b) { return (a * b); }
-function divide(a, b) { return (a / b); }
-function square(x) { return (x * x); }
-function cube(x) { return ((x * x) * x); }
+function add(a, b) {
+  return (a + b);
+}
+function subtract(a, b) {
+  return (a - b);
+}
+function multiply(a, b) {
+  return (a * b);
+}
+function divide(a, b) {
+  return (a / b);
+}
+function square(x) {
+  return (x * x);
+}
+function cube(x) {
+  return ((x * x) * x);
+}
 function average(nums) {
   {
-  const sum = reduce(nums, function(acc, val) { return (acc + val); }, 0);
-  const count = Array(nums.length);
+  const sum = reduce(nums, function(acc, val) {
+  return (acc + val);
+}, 0);
+  const count = nums.length;
   return (sum / count);
 }
 }
@@ -29,7 +43,9 @@ function reduce(array, fn, initial) {
   {
   const result = initial;
   Array(array.forEach, function(item) {
-  return result = function() { return item; };
+  return result = function() {
+  return item;
+};
 })
   return result;
 }

@@ -1,4 +1,4 @@
-// src/transpiler/parser.ts - Refactored to preserve raw syntax
+// src/transpiler/parser.ts - Balanced cleanup with fx support retained
 import { HQLNode, LiteralNode, SymbolNode, ListNode, JsonObjectLiteralNode, JsonArrayLiteralNode, ExtendedDefnNode, ExtendedParam } from "./hql_ast.ts";
 import { ParseError } from "./errors.ts";
 
@@ -44,8 +44,8 @@ function processStringLiteral(
         case 'r': result += '\r'; break;
         case '\\': result += '\\'; break;
         case '"': result += '"'; break;
-        case '(': result += '('; break; // For string interpolation
-        case ')': result += ')'; break; // For string interpolation
+        case '(': result += '('; break;
+        case ')': result += ')'; break;
         default:
           throw new ParseError(
             `Invalid escape sequence \\${next} in string`, 
@@ -545,7 +545,7 @@ function parseExtendedParam(paramNode: HQLNode): ExtendedParam {
   return { name: "param" };
 }
 
-// Updated parseFxExpression function in src/transpiler/parser.ts
+// Restored from previous implementation to support fx tests
 function parseFxExpression(): ExtendedDefnNode {
   // Parse function name
   if (pos >= tokens.length) {

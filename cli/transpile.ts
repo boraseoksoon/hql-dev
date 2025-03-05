@@ -4,8 +4,11 @@ import { loadStandardLibrary } from "../lib/loader.ts";
 import { transformAST, transpileFile } from "../src/transpiler/transformer.ts";
 import { parse } from "../src/transpiler/parser.ts";
 
+// A conditional log function that only prints when verbose logging is enabled.
 function log(message: string) {
-  console.log(message);
+  if (Deno.env.get("HQL_DEBUG") === "1") {
+    console.log(message);
+  }
 }
 
 async function transpileCLI(
@@ -131,6 +134,7 @@ if (import.meta.main) {
     if (arg === '--format=commonjs') format = "commonjs";
   }
   
+  // Set the environment flag for verbose logging.
   if (verbose) {
     Deno.env.set("HQL_DEBUG", "1");
     console.log("Verbose logging enabled");

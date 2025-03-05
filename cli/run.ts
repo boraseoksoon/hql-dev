@@ -4,34 +4,41 @@ import { loadStandardLibrary } from "../lib/loader.ts";
 import { transpile } from "../src/transpiler/transformer.ts";
 
 async function main() {
-  const args = Deno.args;
+  // Filter out flags from the target path argument.
+  const args = Deno.args.filter(arg => !arg.startsWith("--"));
+  const verbose = Deno.args.includes("--verbose");
+
   if (args.length < 1) {
-    console.error("Usage: deno run -A cli/run.ts <target.hql>");
+    console.error("Usage: deno run -A cli/run.ts <target.hql> [--verbose]");
     Deno.exit(1);
   }
   
   const target = args[0];
   const targetPath = resolve(target);
-  console.log(`Transpiling HQL file: "${targetPath}"`);
+  if (verbose) {
+    console.log(`Transpiling HQL file: "${targetPath}"`);
+  }
 
   const preludeSource = await loadStandardLibrary();
   const userSource = await Deno.readTextFile(targetPath);
   const combinedSource = preludeSource + "\n" + userSource;
   
-  // Transpile the combined source.
+  // Pass the verbose flag to your transpile function.
   const transpiled = await transpile(combinedSource, targetPath, {
     bundle: false,
-    verbose: false,
+    verbose,  // now dynamic
     module: "esm"
   });
   
   // Write the output file.
   const outputPath = targetPath.replace(/\.hql$/, ".js");
   await Deno.writeTextFile(outputPath, transpiled);
-  console.log(`Successfully transpiled "${targetPath}" -> "${outputPath}"`);
+  if (verbose) {
+    console.log(`Successfully transpiled "${targetPath}" -> "${outputPath}"`);
+    console.log(`Executing module: "${outputPath}"`);
+  }
   
   // Execute the generated module.
-  console.log(`Executing module: "${outputPath}"`);
   await import("file://" + outputPath);
 }
 

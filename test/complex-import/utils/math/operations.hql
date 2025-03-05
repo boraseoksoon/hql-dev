@@ -29,7 +29,7 @@
 (defn average (nums)
   (let [
     sum (reduce nums (fn (acc val) (+ acc val)) 0)
-    count (js/Array nums.length)
+    count nums.length
   ]
     (/ sum count)
   )
