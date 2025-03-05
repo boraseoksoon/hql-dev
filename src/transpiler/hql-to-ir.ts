@@ -1,11 +1,10 @@
-// Complete src/transpiler/hql-to-ir.ts
+// Updated src/transpiler/hql-to-ir.ts for simplified AST structure
 
 import {
   HQLNode,
   LiteralNode,
   SymbolNode,
-  ListNode,
-  JsonArrayLiteralNode
+  ListNode
 } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
 import { expandMacros } from "../macro.ts";
@@ -64,7 +63,7 @@ export function transformNode(node: HQLNode, currentDir: string): IR.IRNode | nu
             } as IR.IRArrayLiteral;
             break;
           }
-          case "js-set": {
+          case "set": {
             // First create the array literal node
             const arrayLiteral: IR.IRArrayLiteral = {
               type: IR.IRNodeType.ArrayLiteral,
@@ -91,20 +90,6 @@ export function transformNode(node: HQLNode, currentDir: string): IR.IRNode | nu
       }
       break;
     }
-    // These cases should be handled by macro expansion before reaching here
-    // If not, apply macro expansion directly
-    case "jsonObjectLiteral":
-      // Apply macro expansion and transform the expanded node
-      result = transformNode(expandMacros(node), currentDir);
-      break;
-    case "jsonArrayLiteral":
-      // Apply macro expansion and transform the expanded node
-      result = transformNode(expandMacros(node), currentDir);
-      break;
-    case "extendedDefn":
-      // Apply macro expansion and transform the expanded node
-      result = transformNode(expandMacros(node), currentDir);
-      break;
     default:
       throw new Error(`Unknown HQL node type: ${(node as any).type}`);
   }
@@ -166,12 +151,7 @@ function transformSymbol(sym: SymbolNode): IR.IRIdentifier {
 }
 
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
-  // If this list node was parsed as an array literal, always transform it as a direct array.
-  if ((list as any).isArrayLiteral) {
-    return transformDirectArray(list, currentDir);
-  }
-  
-  // If the list is empty (and not marked as an array literal), return null.
+  // If the list is empty, return null.
   if (list.elements.length === 0) return null;
   
   const head = list.elements[0];
@@ -184,7 +164,6 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "defn": return transformDefn(list, currentDir);
       case "defun": return transformDefun(list, currentDir); // For macro expansion
       case "fn": return transformFn(list, currentDir);
-      case "defmacro": return transformDefmacro(list, currentDir);
       case "import": return transformImport(list, currentDir);
       case "vector": return transformVector(list, currentDir);
       case "list": return transformArrayLiteral(list, currentDir);
@@ -199,7 +178,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "cond": return transformCond(list, currentDir);
       case "if": return transformIf(list, currentDir);
       case "for": return transformFor(list, currentDir);
-      case "set": return transformSet(list, currentDir);
+      case "set!": return transformSet(list, currentDir);
       case "->": return null; // Ignore type annotations
       
       // Arithmetic and comparison operators
@@ -222,51 +201,8 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     }
   }
   
-  // For any list that is not a special form or a call form, treat it as a direct array literal.
-  if (list.type === "list" && list.elements.length > 0 &&
-      !isListForm(list) && !isCallForm(list)) {
-    return transformDirectArray(list, currentDir);
-  }
-  
   // Default: treat the list as a function call.
   return transformCall(list, currentDir);
-}
-
-function isListForm(list: ListNode): boolean {
-  if (list.elements.length === 0) return false;
-  const head = list.elements[0];
-  if (head.type !== "symbol") return false;
-  
-  const specialForms = [
-    "def", "defn", "defun", "fn", "defmacro", "import", "vector", "list", "hash-map", 
-    "keyword", "defenum", "export", "print", "new", "str", "let", 
-    "cond", "if", "for", "set", "->",
-    "+", "-", "*", "/", "<", ">", "<=", ">=", "=", "!=",
-    "get", "return"
-  ];
-  
-  return specialForms.includes((head as SymbolNode).name);
-}
-
-function isCallForm(list: ListNode): boolean {
-  if (list.elements.length === 0) return false;
-  const head = list.elements[0];
-  
-  // If the first element is a symbol (but not a special form) or another expression,
-  // it's likely a function call
-  return (
-    (head.type === "symbol" && !isListForm(list)) ||
-    head.type === "list"
-  );
-}
-
-function transformDirectArray(list: ListNode, currentDir: string): IR.IRArrayLiteral {
-  const elements = list.elements.map(el => transformNode(el, currentDir))
-    .filter(Boolean) as IR.IRNode[];
-  return {
-    type: IR.IRNodeType.ArrayLiteral,
-    elements: elements
-  };
 }
 
 /** (def var expr) */
@@ -390,12 +326,6 @@ function transformDefun(list: ListNode, currentDir: string): IR.IRFunctionDeclar
     isNamedParams: namedParamIds.length > 0,
     namedParamIds
   } as IR.IRFunctionDeclaration;
-}
-
-/** (defmacro name (params) body...) */
-function transformDefmacro(list: ListNode, currentDir: string): IR.IRNode | null {
-  // Defmacro forms don't produce runtime code - they're evaluated during macro expansion
-  return null;
 }
 
 function transformFn(list: ListNode, currentDir: string): IR.IRFunctionDeclaration {
@@ -742,42 +672,24 @@ function transformFor(list: ListNode, currentDir: string): IR.IRNode {
 }
 
 function transformSet(list: ListNode, currentDir: string): IR.IRNode {
-  // Add defensive check - make sure we have a valid list with expected elements
-  if (!list || !list.elements) {
-    throw new Error("Invalid set expression");
+  // Ensure we have a valid list with at least 3 elements (set! target value)
+  if (list.elements.length < 3) {
+    throw new Error("set! requires a target and an expression");
   }
   
-  if (list.elements.length === 3 && list.elements[1] && list.elements[1].type === "symbol") {
-    const target = transformNode(list.elements[1], currentDir);
-    const value = list.elements[2] ? transformNode(list.elements[2], currentDir) : null;
-    
-    if (!target || !value) {
-      throw new Error("Invalid set expression: target or value is null");
-    }
-    
-    return {
-      type: IR.IRNodeType.AssignmentExpression,
-      operator: "=",
-      left: target,
-      right: value
-    } as IR.IRAssignmentExpression;
+  const target = transformNode(list.elements[1], currentDir);
+  const value = transformNode(list.elements[2], currentDir);
+  
+  if (!target || !value) {
+    throw new Error("Invalid set! expression: target or value is null");
   }
   
-  if (list.elements.length === 2) {
-    const arg = list.elements[1] ? transformNode(list.elements[1], currentDir) : null;
-    
-    if (!arg) {
-      throw new Error("Invalid argument to set constructor");
-    }
-    
-    return {
-      type: IR.IRNodeType.NewExpression,
-      callee: { type: IR.IRNodeType.Identifier, name: "Set" },
-      arguments: [arg]
-    } as IR.IRNewExpression;
-  }
-  
-  throw new Error("set requires a target and an expression");
+  return {
+    type: IR.IRNodeType.AssignmentExpression,
+    operator: "=",
+    left: target,
+    right: value
+  } as IR.IRAssignmentExpression;
 }
 
 function transformPropertyAccess(list: ListNode, currentDir: string): IR.IRPropertyAccess {
@@ -826,9 +738,7 @@ export function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
   let bindings: HQLNode[];
   const bindingsNode = list.elements[1];
   
-  if (bindingsNode.type === "jsonArrayLiteral") {
-    bindings = (bindingsNode as JsonArrayLiteralNode).elements;
-  } else if (bindingsNode.type === "list") {
+  if (bindingsNode.type === "list") {
     bindings = (bindingsNode as ListNode).elements;
   } else {
     console.error("Invalid bindings node type:", bindingsNode);
@@ -988,41 +898,17 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
   const callee = transformNode(head, currentDir)!;
   const args = list.elements.slice(1);
 
-  // Determine if arguments are written in a named style with better checking
-  let isNamed = false;
-  if (args.length >= 2 && args.length % 2 === 0) {
-    isNamed = args.every((n, i) =>
-      i % 2 === 0 ? (n && n.type === "symbol" && (n as SymbolNode).name.endsWith(":")) : true
-    );
-  }
-  
-  if (isNamed) {
-    // Instead of building an object literal, extract the values in order.
-    const positionalArgs: IR.IRNode[] = [];
-    for (let i = 0; i < args.length; i += 2) {
-      const valueNode = transformNode(args[i+1], currentDir);
-      if (valueNode) {
-        positionalArgs.push(valueNode);
-      }
-    }
-    return {
-      type: IR.IRNodeType.CallExpression,
-      callee,
-      arguments: positionalArgs,
-      isNamedArgs: false  // now treat as positional
-    } as IR.IRCallExpression;
-  } else {
-    // Regular call
-    const transformedArgs = args
-      .map(x => transformNode(x, currentDir))
-      .filter(Boolean) as IR.IRNode[];
-    return {
-      type: IR.IRNodeType.CallExpression,
-      callee,
-      arguments: transformedArgs,
-      isNamedArgs: false
-    } as IR.IRCallExpression;
-  }
+  // Transform arguments to standard positional form
+  const transformedArgs = args
+    .map(x => transformNode(x, currentDir))
+    .filter(Boolean) as IR.IRNode[];
+
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee,
+    arguments: transformedArgs,
+    isNamedArgs: false
+  } as IR.IRCallExpression;
 }
 
 export function transformParams(list: ListNode, currentDir: string): { params: IR.IRParameter[], namedParamIds: string[] } {
@@ -1133,12 +1019,16 @@ export function transformParams(list: ListNode, currentDir: string): { params: I
         }
       }
       
-      // Named parameter written as (first :)
-      if (optionalNode.elements && optionalNode.elements.length >= 1 && 
-          optionalNode.elements[0] && optionalNode.elements[0].type === "symbol") {
-        const paramName = (optionalNode.elements[0] as SymbolNode).name;
+      // Named parameter written as (param "name") from our new structure
+      if (optionalNode.elements && optionalNode.elements.length >= 2 && 
+          optionalNode.elements[0] && optionalNode.elements[0].type === "symbol" &&
+          (optionalNode.elements[0] as SymbolNode).name === "param" &&
+          optionalNode.elements[1] && optionalNode.elements[1].type === "literal") {
+        
+        const paramName = (optionalNode.elements[1] as LiteralNode).value as string;
         const camelName = hyphenToCamel(paramName);
         namedParamIds.push(camelName);
+        
         params.push({
           type: IR.IRNodeType.Parameter,
           id: { type: IR.IRNodeType.Identifier, name: camelName }

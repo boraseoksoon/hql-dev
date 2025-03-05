@@ -1,11 +1,10 @@
-// Add this import at the top of src/transpiler/transformer.ts
+// src/transpiler/transformer.ts - Updated for macro-based system
 import { HQLNode, SymbolNode } from "./hql_ast.ts";
-// Make sure the import for expandMacros is also present
 import { expandMacros } from "../macro.ts";
 import { transformToIR } from "./hql-to-ir.ts";
 import { convertIRToTSAST } from "./ir-to-ts-ast.ts";
 import { generateTypeScript, CodeGenerationOptions } from "./ts-ast-to-code.ts";
-import { TSSourceFile, TSNodeType, TSRaw } from "./ts-ast-types.ts";  // Added TSNodeType and TSRaw
+import { TSSourceFile, TSNodeType, TSRaw } from "./ts-ast-types.ts";
 import {
   join,
   dirname,
@@ -25,6 +24,7 @@ import {
   pathExists,
   resolveWithExtensions,
 } from "./path-utils.ts";
+import { loadAndInitializeMacros } from "../../lib/loader.ts";
 
 // Cache for processed imports to avoid redundant processing
 const processedImportsCache = new Map<string, Set<string>>();
@@ -81,6 +81,19 @@ function expandMacrosInAST(nodes: HQLNode[]): HQLNode[] {
   return nodes.map(node => expandMacros(node));
 }
 
+// Flag to track if macros have been initialized
+let macrosInitialized = false;
+
+/**
+ * Ensure macros are loaded and initialized
+ */
+async function ensureMacrosInitialized(): Promise<void> {
+  if (!macrosInitialized) {
+    await loadAndInitializeMacros();
+    macrosInitialized = true;
+  }
+}
+
 /**
  * Transform HQL AST to JavaScript code with better error handling.
  * Main entry point for the transformation pipeline.
@@ -102,18 +115,10 @@ export async function transformAST(
   }
 
   try {
-    // Step 1: Process defmacro nodes first to register macros
-    for (const node of nodes) {
-      if (node.type === "list" &&
-          node.elements.length > 0 &&
-          node.elements[0].type === "symbol" &&
-          (node.elements[0] as SymbolNode).name === "defmacro") {
-        // Just expand this node to register the macro, but don't include it in output
-        expandMacros(node);
-      }
-    }
+    // Ensure macros are initialized
+    await ensureMacrosInitialized();
     
-    // Step 2: Perform macro expansion on all nodes
+    // Step 1: Expand macros on all nodes
     const expandedNodes = nodes.map(node => {
       try {
         return expandMacros(node);
@@ -127,7 +132,7 @@ export async function transformAST(
       logVerbose(`Expanded macros in HQL AST with ${expandedNodes.length} nodes`);
     }
     
-    // Step 3: Transform expanded HQL to IR.
+    // Step 2: Transform expanded HQL to IR.
     let irProgram;
     try {
       irProgram = transformToIR(expandedNodes, currentDir);
@@ -140,7 +145,7 @@ export async function transformAST(
       logVerbose(`Transformed expanded HQL AST to IR with ${irProgram.body.length} nodes`);
     }
     
-    // Step 4: Convert IR to TS AST.
+    // Step 3: Convert IR to TS AST.
     let tsAST;
     try {
       tsAST = convertIRToTSAST(irProgram);
@@ -153,7 +158,7 @@ export async function transformAST(
       logVerbose(`Converted IR to TS AST with ${tsAST.statements.length} statements`);
     }
     
-    // Step 5: Process imports efficiently in a single pass
+    // Step 4: Process imports efficiently in a single pass
     if (!opts.preserveImports) {
       try {
         await processImportsInAST(tsAST, currentDir, visited, opts);
@@ -167,7 +172,7 @@ export async function transformAST(
       }
     }
     
-    // Step 6: Generate code with optimized options.
+    // Step 5: Generate code with optimized options.
     const codeOptions: CodeGenerationOptions = {
       formatting: opts.formatting,
       indentSize: opts.indentSize,
@@ -562,6 +567,9 @@ export async function transpile(
   options: TransformOptions = {}
 ): Promise<string> {
   try {
+    // Ensure macros are initialized
+    await ensureMacrosInitialized();
+    
     // Parse the source code to AST
     const ast = parse(source);
     

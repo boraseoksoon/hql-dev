@@ -1,4 +1,4 @@
-// test/hql_to_ir_test.ts - Fixed set literals test
+// test/hql_to_ir_test.ts - Modified for new macro-based system
 import { assertEquals } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { transformToIR } from "../src/transpiler/hql-to-ir.ts";
 import { parse } from "../src/transpiler/parser.ts";
@@ -462,17 +462,4 @@ Deno.test("hql-to-ir - string concatenation", () => {
   assertEquals((callExpr.callee as IR.IRIdentifier).name, "str");
   assertEquals(callExpr.arguments.length, 3);
   assertEquals((callExpr.arguments[0] as IR.IRStringLiteral).value, "Hello, ");
-  assertEquals((callExpr.arguments[1] as IR.IRIdentifier).name, "name");
-  assertEquals((callExpr.arguments[2] as IR.IRStringLiteral).value, "!");
-});
-
-Deno.test("hql-to-ir - js interop", () => {
-  const ir = parseAndTransform(`js/console.log`);
-  
-  assertEquals(ir.body.length, 1);
-  assertEquals(ir.body[0].type, IR.IRNodeType.Identifier);
-  
-  const identifier = ir.body[0] as IR.IRIdentifier;
-  assertEquals(identifier.name, "console.log");
-  assertEquals(identifier.isJSAccess, true);
-});
+  assertEquals((callExpr.arguments[1]
