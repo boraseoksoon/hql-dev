@@ -1,4 +1,5 @@
-// src/macro.ts - Fix for let bindings in macro expansion
+// src/macro.ts - Updated with fixes for fx macro expansion
+
 import {
   HQLNode,
   SymbolNode,
@@ -22,6 +23,11 @@ export type MacroFunction = (node: ListNode) => HQLNode;
 const macroRegistry: Map<string, MacroFunction> = new Map();
 
 /**
+ * Registry for HQL-defined macros via defmacro
+ */
+const hqlMacroRegistry: Map<string, { params: ListNode, body: HQLNode[] }> = new Map();
+
+/**
  * Define a macro by registering its name and function.
  */
 export function defineMacro(name: string, macroFn: MacroFunction): void {
@@ -32,7 +38,7 @@ export function defineMacro(name: string, macroFn: MacroFunction): void {
  * Check whether a symbol name has an associated macro.
  */
 export function isMacro(symbolName: string): boolean {
-  return macroRegistry.has(symbolName);
+  return macroRegistry.has(symbolName) || hqlMacroRegistry.has(symbolName);
 }
 
 /**
@@ -43,6 +49,13 @@ export function applyMacro(node: ListNode): HQLNode {
   const first = node.elements[0];
   if (first.type !== "symbol") return node;
   const symbolName = (first as SymbolNode).name;
+  
+  // Check HQL macros first
+  if (hqlMacroRegistry.has(symbolName)) {
+    return expandHQLMacro(symbolName, node);
+  }
+  
+  // Fall back to regular macro registry
   const macroFn = macroRegistry.get(symbolName);
   if (!macroFn) return node;
   return macroFn(node);
@@ -72,7 +85,15 @@ export function expandMacros(node: HQLNode): HQLNode {
 function expandListMacros(node: ListNode): HQLNode {
   if (node.elements.length > 0 && node.elements[0].type === "symbol") {
     const symbolName = (node.elements[0] as SymbolNode).name;
-    if (macroRegistry.has(symbolName)) {
+    
+    // Handle defmacro special form
+    if (symbolName === "defmacro") {
+      registerHQLMacro(node);
+      return { type: "list", elements: [] }; // Return empty list for defmacro (no runtime code)
+    }
+    
+    // Expand regular macros
+    if (isMacro(symbolName)) {
       const expanded = applyMacro(node);
       return expandMacros(expanded);
     }
@@ -89,6 +110,7 @@ function expandJsonObjectLiteral(node: JsonObjectLiteralNode): HQLNode {
   const elements: HQLNode[] = [
     { type: "symbol", name: "hash-map" } as SymbolNode
   ];
+  
   for (const [key, value] of Object.entries(node.properties)) {
     elements.push({
       type: "list",
@@ -99,6 +121,7 @@ function expandJsonObjectLiteral(node: JsonObjectLiteralNode): HQLNode {
     } as ListNode);
     elements.push(expandMacros(value));
   }
+  
   return { type: "list", elements } as ListNode;
 }
 
@@ -111,6 +134,7 @@ function expandJsonArrayLiteral(node: JsonArrayLiteralNode): HQLNode {
     { type: "symbol", name: "vector" } as SymbolNode,
     ...node.elements.map(expandMacros)
   ];
+  
   return { type: "list", elements } as ListNode;
 }
 
@@ -143,62 +167,407 @@ export function groupFxParams(paramList: ListNode): ListNode {
   return { type: "list", elements: newElements };
 }
 
-function parseExtendedParam(paramNode: HQLNode): ExtendedParam {
-  if (paramNode.type === "symbol") {
-    // Handle plain symbol parameters and named parameters (ending with colon)
-    let name = (paramNode as SymbolNode).name;
-    let hasNamed = false;
-    
-    if (name.endsWith(":")) {
-      name = name.slice(0, -1);
-      hasNamed = true;
-    }
-    
-    // Don't apply hyphenToCamel here, we want to preserve the original name
-    return { name, isNamed: hasNamed };
-  }
+/**
+ * Process parameters that have type annotations
+ */
+function processTypedParameters(params: ListNode): ExtendedParam[] {
+  const result: ExtendedParam[] = [];
   
-  if (paramNode.type === "list") {
-    const elements = (paramNode as ListNode).elements;
-    if (elements.length >= 1 && elements[0].type === "symbol") {
-      let paramName = (elements[0] as SymbolNode).name;
-      let hasNamed = false;
+  for (const param of params.elements) {
+    if (param.type === "list") {
+      // This is a parameter with type annotation or default value
+      const paramList = param as ListNode;
+      const elements = paramList.elements;
       
-      // Handle named parameter with colon
-      if (paramName.endsWith(":")) {
-        paramName = paramName.slice(0, -1);
-        hasNamed = true;
-      }
-      
-      let type: string | undefined;
-      let defaultValue: HQLNode | undefined;
-      
-      // Check for type annotation, e.g. (name : Type)
-      if (elements.length >= 3 &&
-          elements[1].type === "symbol" &&
-          (elements[1] as SymbolNode).name === ":") {
-        if (elements[2].type === "symbol") {
-          type = (elements[2] as SymbolNode).name;
+      if (elements.length >= 3 && elements[1].type === "symbol" && (elements[1] as SymbolNode).name === ":") {
+        // Parameter with type annotation
+        const paramName = (elements[0] as SymbolNode).name;
+        const paramType = (elements[2] as SymbolNode).name;
+        
+        // Check for default value
+        let defaultValue: HQLNode | undefined = undefined;
+        if (elements.length > 4 && elements[3].type === "symbol" && (elements[3] as SymbolNode).name === "=") {
+          defaultValue = elements[4];
         }
+        
+        result.push({
+          name: paramName,
+          type: paramType,
+          defaultValue,
+          isNamed: false
+        });
+      } else if (elements.length >= 1) {
+        // Regular parameter, possibly with default value
+        const paramName = (elements[0] as SymbolNode).name;
+        
+        // Check for default value
+        let defaultValue: HQLNode | undefined = undefined;
+        if (elements.length > 2 && elements[1].type === "symbol" && (elements[1] as SymbolNode).name === "=") {
+          defaultValue = elements[2];
+        }
+        
+        result.push({
+          name: paramName,
+          defaultValue,
+          isNamed: false
+        });
       }
+    } else if (param.type === "symbol") {
+      // Simple parameter or named parameter
+      const paramName = (param as SymbolNode).name;
       
-      // Check for default value, e.g. (name = defaultValue)
-      const eqIndex = elements.findIndex(el =>
-        el.type === "symbol" && (el as SymbolNode).name === "="
-      );
-      if (eqIndex !== -1 && eqIndex + 1 < elements.length) {
-        defaultValue = elements[eqIndex + 1];
+      if (paramName.endsWith(":")) {
+        // Named parameter
+        result.push({
+          name: paramName.slice(0, -1), // Remove the colon
+          isNamed: true
+        });
+      } else {
+        // Regular parameter
+        result.push({
+          name: paramName,
+          isNamed: false
+        });
       }
-      
-      // Don't apply hyphenToCamel here, we want to preserve the original name
-      return { name: paramName, type, defaultValue, isNamed: hasNamed };
     }
   }
   
-  // Fallback if the parameter is not recognized
-  return { name: "param" };
+  return result;
 }
 
+/**
+ * Register an HQL-defined macro from defmacro form
+ */
+function registerHQLMacro(node: ListNode): void {
+  // Validate defmacro form
+  if (node.elements.length < 4) {
+    throw new Error("defmacro requires a name, parameter list, and body");
+  }
+  
+  const nameSym = node.elements[1] as SymbolNode;
+  const name = nameSym.name;
+  const paramList = node.elements[2] as ListNode;
+  const body = node.elements.slice(3);
+  
+  // Store the macro definition
+  hqlMacroRegistry.set(name, { params: paramList, body });
+  
+  // Also register a function to evaluate this macro
+  defineMacro(name, (callNode: ListNode): HQLNode => {
+    return expandHQLMacro(name, callNode);
+  });
+}
+
+/**
+ * Expand an HQL-defined macro
+ */
+function expandHQLMacro(name: string, callNode: ListNode): HQLNode {
+  const macroDef = hqlMacroRegistry.get(name);
+  if (!macroDef) {
+    throw new Error(`Macro ${name} not found`);
+  }
+  
+  // Create bindings by matching parameters to arguments
+  const bindings = createBindings(macroDef.params, callNode);
+  
+  // Evaluate the macro body with these bindings
+  return evalMacroBody(macroDef.body, bindings);
+}
+
+/**
+ * Create bindings for macro parameters
+ */
+function createBindings(params: ListNode, callNode: ListNode): Map<string, HQLNode> {
+  const bindings = new Map<string, HQLNode>();
+  const args = callNode.elements.slice(1); // Skip the macro name
+  
+  let restParam: string | null = null;
+  let position = 0;
+  
+  // Process parameters
+  for (let i = 0; i < params.elements.length; i++) {
+    const param = params.elements[i];
+    
+    // Check for rest parameter
+    if (param.type === "symbol" && (param as SymbolNode).name === "&") {
+      if (i + 1 < params.elements.length && params.elements[i + 1].type === "symbol") {
+        restParam = (params.elements[i + 1] as SymbolNode).name;
+        i++; // Skip the next parameter as we've processed it
+      }
+      continue;
+    }
+    
+    if (param.type === "symbol") {
+      const paramName = (param as SymbolNode).name;
+      
+      if (position < args.length) {
+        bindings.set(paramName, args[position]);
+        position++;
+      } else {
+        // Parameter with no matching argument
+        bindings.set(paramName, { type: "list", elements: [] } as ListNode);
+      }
+    }
+  }
+  
+  // Handle rest parameter
+  if (restParam) {
+    bindings.set(restParam, {
+      type: "list",
+      elements: args.slice(position)
+    } as ListNode);
+  }
+  
+  return bindings;
+}
+
+/**
+ * Evaluate a macro body with bindings
+ */
+function evalMacroBody(body: HQLNode[], bindings: Map<string, HQLNode>): HQLNode {
+  if (body.length === 0) {
+    return { type: "list", elements: [] } as ListNode;
+  }
+  
+  // For simplicity, just evaluate the first form in the body
+  return evalMacroForm(body[0], bindings);
+}
+
+/**
+ * Evaluate a single macro form with bindings
+ */
+function evalMacroForm(form: HQLNode, bindings: Map<string, HQLNode>): HQLNode {
+  // Symbol reference
+  if (form.type === "symbol") {
+    const name = (form as SymbolNode).name;
+    
+    // Handle quoted symbols
+    if (name.startsWith("'")) {
+      return { type: "symbol", name: name.slice(1) } as SymbolNode;
+    }
+    
+    return bindings.get(name) || form;
+  }
+  
+  // Literal evaluation
+  if (form.type === "literal") {
+    return form;
+  }
+  
+  // List evaluation (function call or special form)
+  if (form.type === "list") {
+    const list = form as ListNode;
+    if (list.elements.length === 0) {
+      return list;
+    }
+    
+    // Special forms
+    if (list.elements[0].type === "symbol") {
+      const op = (list.elements[0] as SymbolNode).name;
+      
+      switch (op) {
+        case "quote":
+          // (quote form) - return form unevaluated
+          if (list.elements.length < 2) {
+            throw new Error("quote requires an argument");
+          }
+          return list.elements[1];
+          
+        case "list":
+          // (list a b c) -> evaluate each argument and return a list
+          return {
+            type: "list",
+            elements: list.elements.slice(1).map(el => evalMacroForm(el, bindings))
+          } as ListNode;
+          
+        case "if":
+          // (if condition then else) - conditional evaluation
+          if (list.elements.length < 3) {
+            throw new Error("if requires at least 2 arguments");
+          }
+          
+          const condition = evalMacroForm(list.elements[1], bindings);
+          const isTruthy = isTruthyValue(condition);
+          
+          if (isTruthy) {
+            return evalMacroForm(list.elements[2], bindings);
+          } else if (list.elements.length > 3) {
+            return evalMacroForm(list.elements[3], bindings);
+          } else {
+            return { type: "list", elements: [] } as ListNode;
+          }
+          
+        case "do":
+          // (do expr1 expr2 ...) - evaluate all expressions, return last
+          if (list.elements.length < 2) {
+            return { type: "list", elements: [] } as ListNode;
+          }
+          
+          let lastResult: HQLNode = { type: "list", elements: [] } as ListNode;
+          for (let i = 1; i < list.elements.length; i++) {
+            lastResult = evalMacroForm(list.elements[i], bindings);
+          }
+          return lastResult;
+          
+        case "let":
+          // (let [name1 val1, name2 val2...] body...)
+          if (list.elements.length < 3 || list.elements[1].type !== "list") {
+            throw new Error("let requires a binding vector and body");
+          }
+          
+          const bindingList = list.elements[1] as ListNode;
+          const localBindings = new Map(bindings);
+          
+          // Process bindings in pairs
+          for (let i = 0; i < bindingList.elements.length; i += 2) {
+            if (i + 1 >= bindingList.elements.length) break;
+            
+            if (bindingList.elements[i].type !== "symbol") {
+              throw new Error("let binding name must be a symbol");
+            }
+            
+            const bindingName = (bindingList.elements[i] as SymbolNode).name;
+            const bindingValue = evalMacroForm(bindingList.elements[i + 1], localBindings);
+            localBindings.set(bindingName, bindingValue);
+          }
+          
+          // Evaluate body with local bindings
+          let result: HQLNode = { type: "list", elements: [] } as ListNode;
+          for (let i = 2; i < list.elements.length; i++) {
+            result = evalMacroForm(list.elements[i], localBindings);
+          }
+          return result;
+          
+        case "and":
+          // (and expr1 expr2 ...) - short-circuit logical AND
+          let andResult: HQLNode = { type: "literal", value: true } as LiteralNode;
+          for (let i = 1; i < list.elements.length; i++) {
+            andResult = evalMacroForm(list.elements[i], bindings);
+            if (!isTruthyValue(andResult)) {
+              return { type: "literal", value: false } as LiteralNode;
+            }
+          }
+          return andResult;
+          
+        case "or":
+          // (or expr1 expr2 ...) - short-circuit logical OR
+          for (let i = 1; i < list.elements.length; i++) {
+            const orResult = evalMacroForm(list.elements[i], bindings);
+            if (isTruthyValue(orResult)) {
+              return orResult;
+            }
+          }
+          return { type: "literal", value: false } as LiteralNode;
+          
+        case "str":
+          // (str a b c) - string concatenation
+          let strResult = "";
+          for (let i = 1; i < list.elements.length; i++) {
+            const val = evalMacroForm(list.elements[i], bindings);
+            strResult += stringifyHQLNode(val);
+          }
+          return { type: "literal", value: strResult } as LiteralNode;
+          
+        case "concat":
+          // (concat l1 l2...) - list concatenation
+          const elements: HQLNode[] = [];
+          for (let i = 1; i < list.elements.length; i++) {
+            const val = evalMacroForm(list.elements[i], bindings);
+            if (val.type === "list") {
+              elements.push(...(val as ListNode).elements);
+            } else {
+              elements.push(val);
+            }
+          }
+          return { type: "list", elements } as ListNode;
+          
+        case "car":
+        case "first":
+          // (first coll) - get first element
+          if (list.elements.length < 2) {
+            throw new Error("first requires a collection argument");
+          }
+          
+          const coll = evalMacroForm(list.elements[1], bindings);
+          if (coll.type !== "list") {
+            throw new Error("first requires a list argument");
+          }
+          
+          return (coll as ListNode).elements[0] || { type: "list", elements: [] } as ListNode;
+          
+        case "cdr":
+        case "rest":
+          // (rest coll) - get all but first element
+          if (list.elements.length < 2) {
+            throw new Error("rest requires a collection argument");
+          }
+          
+          const restColl = evalMacroForm(list.elements[1], bindings);
+          if (restColl.type !== "list") {
+            throw new Error("rest requires a list argument");
+          }
+          
+          return {
+            type: "list",
+            elements: (restColl as ListNode).elements.slice(1)
+          } as ListNode;
+      }
+    }
+    
+    // List form, evaluate all elements
+    return {
+      type: "list",
+      elements: list.elements.map(el => evalMacroForm(el, bindings))
+    } as ListNode;
+  }
+  
+  // Default: return the form as is
+  return form;
+}
+
+/**
+ * Check if a value is truthy in the macro system
+ */
+function isTruthyValue(node: HQLNode): boolean {
+  if (node.type === "literal") {
+    const val = (node as LiteralNode).value;
+    if (val === false || val === null || val === 0 || val === "") {
+      return false;
+    }
+    return true;
+  }
+  
+  if (node.type === "list") {
+    return (node as ListNode).elements.length > 0;
+  }
+  
+  return true;
+}
+
+/**
+ * Convert an HQLNode to a string for string operations
+ */
+function stringifyHQLNode(node: HQLNode): string {
+  if (node.type === "literal") {
+    const val = (node as LiteralNode).value;
+    return val === null ? "null" : String(val);
+  }
+  
+  if (node.type === "symbol") {
+    return (node as SymbolNode).name;
+  }
+  
+  if (node.type === "list") {
+    const elements = (node as ListNode).elements;
+    return `(${elements.map(stringifyHQLNode).join(" ")})`;
+  }
+  
+  return JSON.stringify(node);
+}
+
+/**
+ * Expand an ExtendedDefn node into a canonical defun form.
+ */
 function expandExtendedDefn(node: ExtendedDefnNode): HQLNode {
   const fnName = node.name;
   const params = node.params;
@@ -340,170 +709,95 @@ function expandExtendedDefn(node: ExtendedDefnNode): HQLNode {
   }
 }
 
-/**
- * Define the fx macro.
- * The fx macro transforms an extended function definition into a canonical defun form.
- */
+// Initialize built-in macros
 defineMacro("fx", (node: ListNode): HQLNode => {
   if (node.elements.length < 4) {
-    throw new Error("fx requires at least a name, parameter list, and a body");
+    throw new Error("fx form requires a name, parameter list, and body");
   }
   
-  // Extract function name
-  if (node.elements[1].type !== "symbol") {
-    throw new Error("Function name must be a symbol");
-  }
-  const name = (node.elements[1] as SymbolNode).name;
-  
-  // Extract parameter list
-  if (node.elements[2].type !== "list") {
-    throw new Error("Parameter list must be a list");
-  }
+  const name = node.elements[1] as SymbolNode;
   const paramList = node.elements[2] as ListNode;
   
-  // Check for return type annotation after parameter list
-  let bodyStart = 3;
-  let returnType: HQLNode | undefined = undefined;
+  // Check for return type annotation
+  let hasReturnType = false;
+  let returnTypePos = 3;
   
-  if (node.elements.length > 3 && 
-      node.elements[3].type === "symbol" &&
+  if (node.elements.length > 4 && 
+      node.elements[3].type === "symbol" && 
       (node.elements[3] as SymbolNode).name === "->") {
-    if (node.elements.length < 5) {
-      throw new Error("Return type annotation requires a type");
-    }
-    returnType = node.elements[4];
-    bodyStart = 5;
+    hasReturnType = true;
+    returnTypePos = 4;
   }
   
-  // Extract function body
-  const body = node.elements.slice(bodyStart);
+  // Process parameters, handling type annotations and default values
+  const processedParams = processTypedParameters(paramList);
   
-  // Parse parameters
-  const params: ExtendedParam[] = [];
-  
-  for (let i = 0; i < paramList.elements.length; i++) {
-    const param = paramList.elements[i];
-    
-    // Named parameter case (ending with colon)
-    if (param.type === "symbol" && (param as SymbolNode).name.endsWith(":")) {
-      const paramName = (param as SymbolNode).name.slice(0, -1);
-      
-      // Check for type annotation
-      let type: string | undefined;
-      if (i + 1 < paramList.elements.length && 
-          paramList.elements[i + 1].type === "symbol" && 
-          !(paramList.elements[i + 1] as SymbolNode).name.endsWith(":") && 
-          (paramList.elements[i + 1] as SymbolNode).name !== "=") {
-        type = (paramList.elements[i + 1] as SymbolNode).name;
-        i++;
-      }
-      
-      // Check for default value
-      let defaultValue: HQLNode | undefined;
-      if (i + 2 < paramList.elements.length && 
-          paramList.elements[i + 1].type === "symbol" && 
-          (paramList.elements[i + 1] as SymbolNode).name === "=" && 
-          i + 3 <= paramList.elements.length) {
-        defaultValue = paramList.elements[i + 2];
-        i += 2;
-      }
-      
-      params.push({ 
-        name: paramName, 
-        type, 
-        defaultValue, 
-        isNamed: true 
-      });
-    } 
-    // Regular parameter or parameter with default
-    else if (param.type === "symbol") {
-      params.push({ name: (param as SymbolNode).name });
-    }
-    // Complex parameter form (x: Type = default) or (x = default)
-    else if (param.type === "list") {
-      params.push(parseExtendedParam(param));
-    }
-    else {
-      throw new Error("Invalid parameter");
-    }
-  }
-  
-  // Create extended definition node
-  const extDefn: ExtendedDefnNode = {
+  // Create an ExtendedDefnNode to expand
+  const extendedDefn: ExtendedDefnNode = {
     type: "extendedDefn",
-    name,
-    params,
-    returnType,
-    body
+    name: name.name,
+    params: processedParams,
+    returnType: hasReturnType ? node.elements[returnTypePos] : undefined,
+    body: node.elements.slice(hasReturnType ? returnTypePos + 1 : 3)
   };
   
-  return expandExtendedDefn(extDefn);
+  // Expand the ExtendedDefnNode to defun
+  return expandExtendedDefn(extendedDefn);
 });
 
-/**
- * Define the js-map macro.
- * Transforms a JSON-like object literal into a canonical hash-map form.
- */
-defineMacro("js-map", (node: ListNode): HQLNode => {
-  if (node.elements.length <= 1) {
-    return { type: "list", elements: [{ type: "symbol", name: "hash-map" }] };
+// Register other built-in macros (examples) 
+defineMacro("when", (node: ListNode): HQLNode => {
+  if (node.elements.length < 3) {
+    throw new Error("when requires a condition and a body");
   }
-  const elements: HQLNode[] = [
-    { type: "symbol", name: "hash-map" } as SymbolNode
-  ];
-  for (let i = 1; i < node.elements.length; i++) {
-    const pair = node.elements[i] as ListNode;
-    const key = pair.elements[0];
-    const value = pair.elements[1];
-    elements.push({
-      type: "list",
-      elements: [
-        { type: "symbol", name: "keyword" } as SymbolNode,
-        key
-      ]
-    } as ListNode);
-    elements.push(value);
-  }
-  return { type: "list", elements } as ListNode;
-});
-
-/**
- * Define the js-array macro.
- * Transforms an array literal into a vector.
- */
-defineMacro("js-array", (node: ListNode): HQLNode => {
-  const elements: HQLNode[] = [
-    { type: "symbol", name: "vector" } as SymbolNode,
-    ...node.elements.slice(1)
-  ];
-  return { type: "list", elements } as ListNode;
-});
-
-/**
- * Define the js-set macro.
- * Transforms a set literal #[ ... ] into a new Set call wrapping a vector.
- */
-defineMacro("js-set", (node: ListNode): HQLNode => {
-  if (node.elements.length <= 1) {
-    return {
-      type: "list",
-      elements: [
-        { type: "symbol", name: "new" } as SymbolNode,
-        { type: "symbol", name: "Set" } as SymbolNode,
-        { type: "list", elements: [{ type: "symbol", name: "vector" }] } as ListNode
-      ]
-    } as ListNode;
-  }
-  const arrayElements: HQLNode[] = [
-    { type: "symbol", name: "vector" } as SymbolNode,
-    ...node.elements.slice(1)
-  ];
+  
+  const condition = node.elements[1];
+  const body = node.elements.slice(2);
+  
   return {
     type: "list",
     elements: [
-      { type: "symbol", name: "new" } as SymbolNode,
-      { type: "symbol", name: "Set" } as SymbolNode,
-      { type: "list", elements: arrayElements } as ListNode
+      { type: "symbol", name: "if" } as SymbolNode,
+      condition,
+      {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "do" } as SymbolNode,
+          ...body
+        ]
+      } as ListNode,
+      { type: "literal", value: null } as LiteralNode
+    ]
+  } as ListNode;
+});
+
+defineMacro("unless", (node: ListNode): HQLNode => {
+  if (node.elements.length < 3) {
+    throw new Error("unless requires a condition and a body");
+  }
+  
+  const condition = node.elements[1];
+  const body = node.elements.slice(2);
+  
+  return {
+    type: "list",
+    elements: [
+      { type: "symbol", name: "if" } as SymbolNode,
+      {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "not" } as SymbolNode,
+          condition
+        ]
+      } as ListNode,
+      {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "do" } as SymbolNode,
+          ...body
+        ]
+      } as ListNode,
+      { type: "literal", value: null } as LiteralNode
     ]
   } as ListNode;
 });

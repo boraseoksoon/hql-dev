@@ -1,4 +1,4 @@
-// test/fx_test.ts
+// test/fx_test.ts - Updated to fix failing tests
 import { assertEquals } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../src/transpiler/parser.ts";
 import { expandMacros } from "../src/macro.ts";
@@ -53,6 +53,11 @@ Deno.test("fx - macro expansion with default parameters", () => {
   const expanded = expandMacros(ast[0]);
   assertEquals(expanded.type, "list");
   const listNode = expanded as ListNode;
+  
+  // The expanded form should be a defun with &optional parameter
+  assertEquals((listNode.elements[0] as SymbolNode).name, "defun");
+  
+  // Check for &optional token in the parameter list
   const paramList = listNode.elements[2] as ListNode;
   let hasOptional = false;
   for (const param of paramList.elements) {
@@ -61,6 +66,7 @@ Deno.test("fx - macro expansion with default parameters", () => {
       break;
     }
   }
+  
   assertEquals(hasOptional, true);
 });
 
@@ -69,7 +75,8 @@ Deno.test("fx - macro expansion with default parameters", () => {
 Deno.test("fx - transpile basic form", async () => {
   const source = '(fx add (x y) (+ x y))';
   const result = await transpile(source);
-  // Expect a positional function signature.
+  
+  // The transpiled result should be a function with two parameters
   assertEquals(result.includes("function add(x, y)"), true);
   assertEquals(result.includes("return (x + y)"), true);
 });
@@ -77,7 +84,8 @@ Deno.test("fx - transpile basic form", async () => {
 Deno.test("fx - transpile with default value", async () => {
   const source = '(fx add (x (y = 0)) (+ x y))';
   const result = await transpile(source);
-  // Expect a positional signature with default parameter for y.
+  
+  // The transpiled result should include a default parameter value
   assertEquals(result.includes("function add(x, y = 0)"), true);
   assertEquals(result.includes("return (x + y)"), true);
 });
@@ -90,16 +98,19 @@ Deno.test("fx - transpile with named parameters", async () => {
     (print (greet-user name: "John" title: "Mr."))
   `;
   const result = await transpile(source);
-  // Expect positional signature.
+  
+  // The function should be transpiled with proper handling of parameters
   assertEquals(result.includes("function greetUser(name, title)"), true);
-  // The call site should be flattened to a positional call.
+  
+  // The function call should be transformed into a positional call
   assertEquals(result.includes("greetUser(\"John\", \"Mr.\")"), true);
 });
 
 Deno.test("fx - transpile with explicit return", async () => {
   const source = '(fx add (x y) (return (+ x y)))';
   const result = await transpile(source);
-  // Expect a positional signature.
+  
+  // The function should include a proper return statement
   assertEquals(result.includes("function add(x, y)"), true);
   assertEquals(result.includes("return (x + y)"), true);
 });
@@ -114,9 +125,14 @@ Deno.test("fx - transpile with complex body", async () => {
       ))
   `;
   const result = await transpile(source);
-  // Expect a positional signature with default for options.
+  
+  // Check that the function has the right signature
   assertEquals(result.includes("function processData(data, options = {verbose: false})"), true);
+  
+  // Check that the body includes the let binding
   assertEquals(result.includes("const processed ="), true);
+  
+  // Check that the return statement is included
   assertEquals(result.includes("return processed"), true);
 });
 
@@ -128,10 +144,11 @@ Deno.test("fx - transpile with kebab case parameters", async () => {
     (print (calculate-total price: 19.99 qty: 3 tax-rate: 8.5))
   `;
   const result = await transpile(source);
-  // Expect that parameters are converted to camelCase.
-  // For example, tax-rate becomes taxRate.
+  
+  // Check that kebab-case parameters are properly converted to camelCase
   assertEquals(result.includes("function calculateTotal(price, qty, taxRate)"), true);
-  // Expect a positional call (flattened).
+  
+  // Check that the function call is properly transformed
   assertEquals(result.includes("calculateTotal(19.99, 3, 8.5)"), true);
 });
 
@@ -149,11 +166,12 @@ Deno.test("fx - compatibility with traditional defn", async () => {
     (print (add-extended x: 2 y: 3))
   `;
   const result = await transpile(source);
-  // Traditional defn should output a positional signature.
+  
+  // Check that both function forms get compiled similarly
   assertEquals(result.includes("function addTraditional(x, y)"), true);
-  // The fx form should also produce a positional signature.
   assertEquals(result.includes("function addExtended(x, y)"), true);
-  // Call sites should use positional arguments.
+  
+  // Check that both function calls work
   assertEquals(result.includes("addTraditional(2, 3)"), true);
   assertEquals(result.includes("addExtended(2, 3)"), true);
 });

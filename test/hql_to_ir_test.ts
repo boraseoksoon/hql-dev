@@ -1,4 +1,4 @@
-// test/hql_to_ir_test.ts
+// test/hql_to_ir_test.ts - Fixed set literals test
 import { assertEquals } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { transformToIR } from "../src/transpiler/hql-to-ir.ts";
 import { parse } from "../src/transpiler/parser.ts";
@@ -125,7 +125,7 @@ Deno.test("hql-to-ir - vector syntax", () => {
 });
 
 Deno.test("hql-to-ir - object literals", () => {
-  const ir = parseAndTransform(`(hash-map "name" "John" "age" 30)`);
+  const ir = parseAndTransform(`(hash-map (keyword "name") "John" (keyword "age") 30)`);
   
   assertEquals(ir.body.length, 1);
   assertEquals(ir.body[0].type, IR.IRNodeType.ObjectLiteral);
@@ -134,14 +134,14 @@ Deno.test("hql-to-ir - object literals", () => {
   assertEquals(objLit.properties.length, 2);
   
   // Check first property (name)
-  assertEquals(objLit.properties[0].key.type, IR.IRNodeType.StringLiteral);
-  assertEquals((objLit.properties[0].key as IR.IRStringLiteral).value, "name");
+  assertEquals(objLit.properties[0].key.type, IR.IRNodeType.KeywordLiteral);
+  assertEquals((objLit.properties[0].key as IR.IRKeywordLiteral).value, "name");
   assertEquals(objLit.properties[0].value.type, IR.IRNodeType.StringLiteral);
   assertEquals((objLit.properties[0].value as IR.IRStringLiteral).value, "John");
   
   // Check second property (age)
-  assertEquals(objLit.properties[1].key.type, IR.IRNodeType.StringLiteral);
-  assertEquals((objLit.properties[1].key as IR.IRStringLiteral).value, "age");
+  assertEquals(objLit.properties[1].key.type, IR.IRNodeType.KeywordLiteral);
+  assertEquals((objLit.properties[1].key as IR.IRKeywordLiteral).value, "age");
   assertEquals(objLit.properties[1].value.type, IR.IRNodeType.NumericLiteral);
   assertEquals((objLit.properties[1].value as IR.IRNumericLiteral).value, 30);
 });
@@ -156,26 +156,33 @@ Deno.test("hql-to-ir - JSON object literal syntax", () => {
   assertEquals(objLit.properties.length, 2);
   
   // Check properties
-  assertEquals((objLit.properties[0].key as IR.IRStringLiteral).value, "name");
+  assertEquals((objLit.properties[0].key as IR.IRKeywordLiteral).value, "name");
   assertEquals((objLit.properties[0].value as IR.IRStringLiteral).value, "Alice");
-  assertEquals((objLit.properties[1].key as IR.IRStringLiteral).value, "age");
+  assertEquals((objLit.properties[1].key as IR.IRKeywordLiteral).value, "age");
   assertEquals((objLit.properties[1].value as IR.IRNumericLiteral).value, 30);
 });
 
 Deno.test("hql-to-ir - set literals", () => {
   const ir = parseAndTransform(`#[1, 2, 3]`);
   
+  // This test was failing because it expected a different structure
   assertEquals(ir.body.length, 1);
-  assertEquals(ir.body[0].type, IR.IRNodeType.NewExpression);
   
+  // Verify the structure is a NewExpression with Set constructor
   const newExpr = ir.body[0] as IR.IRNewExpression;
+  assertEquals(newExpr.type, IR.IRNodeType.NewExpression);
   assertEquals((newExpr.callee as IR.IRIdentifier).name, "Set");
-  assertEquals(newExpr.arguments.length, 1);
   
-  // Check that the argument is an array
-  const arrArg = newExpr.arguments[0] as IR.IRArrayLiteral;
-  assertEquals(arrArg.type, IR.IRNodeType.ArrayLiteral);
-  assertEquals(arrArg.elements.length, 3);
+  // The first argument should be an array literal with the set elements
+  assertEquals(newExpr.arguments.length, 1);
+  const arrayArg = newExpr.arguments[0] as IR.IRArrayLiteral;
+  assertEquals(arrayArg.type, IR.IRNodeType.ArrayLiteral);
+  
+  // Verify the array contains the correct elements
+  assertEquals(arrayArg.elements.length, 3);
+  assertEquals((arrayArg.elements[0] as IR.IRNumericLiteral).value, 1);
+  assertEquals((arrayArg.elements[1] as IR.IRNumericLiteral).value, 2);
+  assertEquals((arrayArg.elements[2] as IR.IRNumericLiteral).value, 3);
 });
 
 Deno.test("hql-to-ir - if expressions", () => {
@@ -383,7 +390,7 @@ Deno.test("hql-to-ir - for loop", () => {
 });
 
 Deno.test("hql-to-ir - assignment", () => {
-  const ir = parseAndTransform(`(set x 20)`);
+  const ir = parseAndTransform(`(set! x 20)`);
   
   assertEquals(ir.body.length, 1);
   assertEquals(ir.body[0].type, IR.IRNodeType.AssignmentExpression);

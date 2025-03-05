@@ -6,7 +6,9 @@ export async function loadFile(filePath: string): Promise<string> {
 }
 
 export async function loadStandardLibrary(): Promise<string> {
+  const helpers = await loadFile("./lib/helpers.hql");
+  const macros = await loadFile("./lib/macros.hql");
   const stdlib = await loadFile("./lib/stdlib.hql");
   const stdio  = await loadFile("./lib/stdio.hql");
-  return `${stdlib}\n${stdio}\n`;
+  return `${helpers}\n${macros}\n${stdlib}\n${stdio}\n`;
 }

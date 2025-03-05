@@ -1,4 +1,6 @@
-import { HQLNode } from "./hql_ast.ts";
+// Add this import at the top of src/transpiler/transformer.ts
+import { HQLNode, SymbolNode } from "./hql_ast.ts";
+// Make sure the import for expandMacros is also present
 import { expandMacros } from "../macro.ts";
 import { transformToIR } from "./hql-to-ir.ts";
 import { convertIRToTSAST } from "./ir-to-ts-ast.ts";
@@ -100,7 +102,18 @@ export async function transformAST(
   }
 
   try {
-    // Step 1: Perform macro expansion on the AST
+    // Step 1: Process defmacro nodes first to register macros
+    for (const node of nodes) {
+      if (node.type === "list" &&
+          node.elements.length > 0 &&
+          node.elements[0].type === "symbol" &&
+          (node.elements[0] as SymbolNode).name === "defmacro") {
+        // Just expand this node to register the macro, but don't include it in output
+        expandMacros(node);
+      }
+    }
+    
+    // Step 2: Perform macro expansion on all nodes
     const expandedNodes = nodes.map(node => {
       try {
         return expandMacros(node);
@@ -114,7 +127,7 @@ export async function transformAST(
       logVerbose(`Expanded macros in HQL AST with ${expandedNodes.length} nodes`);
     }
     
-    // Step 2: Transform expanded HQL to IR.
+    // Step 3: Transform expanded HQL to IR.
     let irProgram;
     try {
       irProgram = transformToIR(expandedNodes, currentDir);
@@ -127,7 +140,7 @@ export async function transformAST(
       logVerbose(`Transformed expanded HQL AST to IR with ${irProgram.body.length} nodes`);
     }
     
-    // Step 3: Convert IR to TS AST.
+    // Step 4: Convert IR to TS AST.
     let tsAST;
     try {
       tsAST = convertIRToTSAST(irProgram);
@@ -140,7 +153,7 @@ export async function transformAST(
       logVerbose(`Converted IR to TS AST with ${tsAST.statements.length} statements`);
     }
     
-    // Step 4: Process imports efficiently in a single pass
+    // Step 5: Process imports efficiently in a single pass
     if (!opts.preserveImports) {
       try {
         await processImportsInAST(tsAST, currentDir, visited, opts);
@@ -154,7 +167,7 @@ export async function transformAST(
       }
     }
     
-    // Step 5: Generate code with optimized options.
+    // Step 6: Generate code with optimized options.
     const codeOptions: CodeGenerationOptions = {
       formatting: opts.formatting,
       indentSize: opts.indentSize,
@@ -183,6 +196,7 @@ export async function transformAST(
     throw new Error(`Failed to transform HQL AST: ${errorMessage}`);
   }
 }
+
 
 /**
  * Process an import based on its type.
@@ -551,14 +565,28 @@ export async function transpile(
     // Parse the source code to AST
     const ast = parse(source);
     
+    // Debug: Log the initial AST
+    if (options.verbose) {
+      console.log("\n--- Initial AST ---");
+      console.log(JSON.stringify(ast.slice(0, 2), null, 2)); // Log the first two nodes only
+    }
+    
     // Get directory context for relative paths
     const currentDir = dirname(filePath);
     
     // Track visited files to prevent circular imports
     const visited = new Set<string>([normalizePath(filePath)]);
     
-    // Apply the full transformation pipeline with macro expansion
-    return await transformAST(ast, currentDir, visited, options);
+    // Apply the full transformation pipeline
+    const result = await transformAST(ast, currentDir, visited, options);
+    
+    // Debug: Log output for troubleshooting
+    if (options.verbose) {
+      console.log("\n--- Transpilation Result (first 500 chars) ---");
+      console.log(result.substring(0, 500));
+    }
+    
+    return result;
   } catch (error: any) {
     // Log the error for debugging purposes
     console.error(`Transpile error:`, error);

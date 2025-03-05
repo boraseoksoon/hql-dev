@@ -1,4 +1,4 @@
-// Complete fix for src/transpiler/hql-to-ir.ts
+// Complete src/transpiler/hql-to-ir.ts
 
 import {
   HQLNode,
@@ -61,7 +61,24 @@ export function transformNode(node: HQLNode, currentDir: string): IR.IRNode | nu
               elements: listNode.elements.slice(1)
                 .map(e => transformNode(e, currentDir))
                 .filter(Boolean) as IR.IRNode[]
-            } as IR.IRArrayLiteral;  // Properly cast to IRArrayLiteral
+            } as IR.IRArrayLiteral;
+            break;
+          }
+          case "js-set": {
+            // First create the array literal node
+            const arrayLiteral: IR.IRArrayLiteral = {
+              type: IR.IRNodeType.ArrayLiteral,
+              elements: listNode.elements.slice(1)
+                .map(e => transformNode(e, currentDir))
+                .filter(Boolean) as IR.IRNode[]
+            };
+            
+            // Then use it as an argument in the NewExpression
+            result = {
+              type: IR.IRNodeType.NewExpression,
+              callee: { type: IR.IRNodeType.Identifier, name: "Set" },
+              arguments: [arrayLiteral]
+            } as IR.IRNewExpression;
             break;
           }
           default:
@@ -167,6 +184,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       case "defn": return transformDefn(list, currentDir);
       case "defun": return transformDefun(list, currentDir); // For macro expansion
       case "fn": return transformFn(list, currentDir);
+      case "defmacro": return transformDefmacro(list, currentDir);
       case "import": return transformImport(list, currentDir);
       case "vector": return transformVector(list, currentDir);
       case "list": return transformArrayLiteral(list, currentDir);
@@ -220,7 +238,7 @@ function isListForm(list: ListNode): boolean {
   if (head.type !== "symbol") return false;
   
   const specialForms = [
-    "def", "defn", "defun", "fn", "import", "vector", "list", "hash-map", 
+    "def", "defn", "defun", "fn", "defmacro", "import", "vector", "list", "hash-map", 
     "keyword", "defenum", "export", "print", "new", "str", "let", 
     "cond", "if", "for", "set", "->",
     "+", "-", "*", "/", "<", ">", "<=", ">=", "=", "!=",
@@ -372,6 +390,12 @@ function transformDefun(list: ListNode, currentDir: string): IR.IRFunctionDeclar
     isNamedParams: namedParamIds.length > 0,
     namedParamIds
   } as IR.IRFunctionDeclaration;
+}
+
+/** (defmacro name (params) body...) */
+function transformDefmacro(list: ListNode, currentDir: string): IR.IRNode | null {
+  // Defmacro forms don't produce runtime code - they're evaluated during macro expansion
+  return null;
 }
 
 function transformFn(list: ListNode, currentDir: string): IR.IRFunctionDeclaration {
@@ -946,7 +970,7 @@ function transformArithmetic(list: ListNode, currentDir: string): IR.IRNode {
         operator: op,
         left: expr,
         right: rightNode
-      } as IR.IRBinaryExpression;  // Properly cast to IRBinaryExpression
+      } as IR.IRBinaryExpression;
     }
   }
   
