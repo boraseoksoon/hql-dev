@@ -64,12 +64,12 @@
 )
 
 ;; Function with type annotations and return type
-(defn calculateArea (width: Number height: Number) (-> Number)
+(fx calculateArea (width: Number height: Number) (-> Number)
   (* width height)
 )
 
 ;; Function with named parameters
-(defn formatUser (first: String last: String title: String)
+(fx formatUser (first: String last: String title: String)
   (str title " " first " " last)
 )
 

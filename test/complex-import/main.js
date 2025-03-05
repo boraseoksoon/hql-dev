@@ -40,13 +40,13 @@ const LogLevel = {
   error: "error",
   critical: "critical"
 };
-function greet(name) { return `Hello, ${name}!`; }
-function calculateArea(params) {
-  const { width, height } = params;
+function greet(name) {
+  return `Hello, ${name}!`;
+}
+function calculateArea(width, height) {
   return (width * height);
 }
-function formatUser(params) {
-  const { first, last, title } = params;
+function formatUser(first, last, title) {
   return `${title} ${first} ${last}`;
 }
 function processPath(filePath) {
@@ -67,8 +67,14 @@ function processPath(filePath) {
 function classifyNumber(num) {
   return (num < 0) ? "negative" : (num === 0) ? "zero" : (num > 0) ? "positive" : true ? "unknown" : null;
 }
-const multiply = function(a, b) { return (a * b); };
-function makeAdder(n) { return function(x) { return (x + n); }; }
+const multiply = function(a, b) {
+  return (a * b);
+};
+function makeAdder(n) {
+  return function(x) {
+  return (x + n);
+};
+}
 const addFive = makeAdder(5);
 function generateReport(data, format) {
   {
@@ -105,7 +111,9 @@ function processCollection(items) {
 };
 }
 }
-function formatTimeAgo(dateString) { return momentMod.fromNow(dateString); }
+function formatTimeAgo(dateString) {
+  return momentMod.fromNow(dateString);
+}
 function mathDemo(a, b) {
   return {
   add: (a + b),
@@ -148,8 +156,8 @@ function runDemo() {
   console.log("Classify -5:", classifyNumber(-5))
   console.log("Classify 0:", classifyNumber(0))
   console.log("Classify 5:", classifyNumber(5))
-  console.log("Area of 10x20 rectangle:", calculateArea({width: 10, height: 20}))
-  console.log("Formatted user:", formatUser({first: "John", last: "Doe", title: "Dr."}))
+  console.log("Area of 10x20 rectangle:", calculateArea(10, 20))
+  console.log("Formatted user:", formatUser("John", "Doe", "Dr."))
   return console.log(coloredLog("Demo completed", LogLevel.info));
 }
 }
