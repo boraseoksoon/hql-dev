@@ -65,9 +65,15 @@
 (print "User 2 tags:" user2-tags)
 
 ;; Define a function that uses named parameters
-(defn greet-user (name: String title: String)
+(fx greet-user (name: String title: String)
   (str "Hello, " title " " name "!")
 )
+
+(defn hello (arr set)
+  (str "array : " arr " and set" set "!")
+)
+
+(print (hello [1,2,3,4,5] #[1,2,3]))
 
 ;; Call the function with named parameters
 (print (greet-user name: "Smith" title: "Dr."))
@@ -80,7 +86,7 @@
 (print "Value of 'name' from user-map:" get-from-map)
 
 ;; Test function with named parameters working with data structures
-(defn process-user (user-id: Number options: Object)
+(fx process-user (user-id: Number options: Object)
   (let [
     users (get database "users")
     user-index (- user-id 1)

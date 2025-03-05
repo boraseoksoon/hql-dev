@@ -946,7 +946,8 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
   const head = list.elements[0];
   const callee = transformNode(head, currentDir)!;
   const args = list.elements.slice(1);
-  
+
+  // Determine if arguments are written in a named style:
   let isNamed = false;
   if (args.length >= 2 && args.length % 2 === 0) {
     isNamed = args.every((n, i) =>
@@ -955,37 +956,22 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
   }
   
   if (isNamed) {
-    const props: IR.IRProperty[] = [];
+    // Instead of building an object literal, extract the values in order.
+    const positionalArgs: IR.IRNode[] = [];
     for (let i = 0; i < args.length; i += 2) {
-      const keySym = args[i] as SymbolNode;
-      const keyName = hyphenToCamel(keySym.name.slice(0, -1));
-      const valNode = transformNode(args[i+1], currentDir);
-      if (valNode) {
-        const keyLiteral: IR.IRStringLiteral = { 
-          type: IR.IRNodeType.StringLiteral, 
-          value: keyName 
-        };
-        props.push({
-          type: IR.IRNodeType.Property,
-          key: keyLiteral,
-          value: valNode,
-          computed: false
-        });
+      const valueNode = transformNode(args[i+1], currentDir);
+      if (valueNode) {
+        positionalArgs.push(valueNode);
       }
     }
-    
-    const objLiteral: IR.IRObjectLiteral = {
-      type: IR.IRNodeType.ObjectLiteral,
-      properties: props
-    };
-    
     return {
       type: IR.IRNodeType.CallExpression,
       callee,
-      arguments: [objLiteral],
-      isNamedArgs: true
-    };
+      arguments: positionalArgs,
+      isNamedArgs: false  // now treat as positional
+    } as IR.IRCallExpression;
   } else {
+    // Regular call
     const transformedArgs = args
       .map(x => transformNode(x, currentDir))
       .filter(Boolean) as IR.IRNode[];
@@ -994,9 +980,10 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
       callee,
       arguments: transformedArgs,
       isNamedArgs: false
-    };
+    } as IR.IRCallExpression;
   }
 }
+
 
 export function transformParams(list: ListNode, currentDir: string): { params: IR.IRParameter[], namedParamIds: string[] } {
   const params: IR.IRParameter[] = [];

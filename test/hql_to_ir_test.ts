@@ -254,25 +254,31 @@ Deno.test("hql-to-ir - function calls", () => {
 Deno.test("hql-to-ir - named arguments", () => {
   const ir = parseAndTransform(`(greet name: "John" greeting: "Hello")`);
   
+  // Under the new flattening semantics, the call is transformed to a positional call.
+  // For example, it should now produce:
+  //   (greet "John" "Hello")
+  // with isNamedArgs set to false.
+  
   assertEquals(ir.body.length, 1);
   assertEquals(ir.body[0].type, IR.IRNodeType.CallExpression);
   
   const callExpr = ir.body[0] as IR.IRCallExpression;
   assertEquals(callExpr.callee.type, IR.IRNodeType.Identifier);
   assertEquals((callExpr.callee as IR.IRIdentifier).name, "greet");
-  assertEquals(callExpr.isNamedArgs, true);
-  assertEquals(callExpr.arguments.length, 1);
   
-  // The arguments should be transformed into an object
-  const argsObj = callExpr.arguments[0] as IR.IRObjectLiteral;
-  assertEquals(argsObj.type, IR.IRNodeType.ObjectLiteral);
-  assertEquals(argsObj.properties.length, 2);
+  // Expect positional call semantics now:
+  assertEquals(callExpr.isNamedArgs, false);
+  assertEquals(callExpr.arguments.length, 2);
   
-  // Check the properties
-  assertEquals((argsObj.properties[0].key as IR.IRStringLiteral).value, "name");
-  assertEquals((argsObj.properties[0].value as IR.IRStringLiteral).value, "John");
-  assertEquals((argsObj.properties[1].key as IR.IRStringLiteral).value, "greeting");
-  assertEquals((argsObj.properties[1].value as IR.IRStringLiteral).value, "Hello");
+  // Check the individual arguments:
+  // The first argument should be the numeric/string literal "John"
+  // and the second "Hello".
+  const arg0 = callExpr.arguments[0] as IR.IRStringLiteral;
+  const arg1 = callExpr.arguments[1] as IR.IRStringLiteral;
+  assertEquals(arg0.type, IR.IRNodeType.StringLiteral);
+  assertEquals(arg0.value, "John");
+  assertEquals(arg1.type, IR.IRNodeType.StringLiteral);
+  assertEquals(arg1.value, "Hello");
 });
 
 Deno.test("hql-to-ir - let bindings", () => {
