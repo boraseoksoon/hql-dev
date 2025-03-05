@@ -22,6 +22,16 @@ import * as momentMod_module from "https://esm.sh/moment";
 const momentMod = momentMod_module.default !== undefined ? momentMod_module.default : momentMod_module;
 import * as chalkMod_module from "https://deno.land/x/chalk_deno@v4.1.1-deno/source/index.js";
 const chalkMod = chalkMod_module.default !== undefined ? chalkMod_module.default : chalkMod_module;
+function reduce(coll, f, init) {
+  return Array.prototype.reduce.call(coll, f, init);
+}
+function map(f, coll) {
+  return Array.prototype.map.call(coll, f);
+}
+function filter(pred, coll) {
+  return Array.prototype.filter.call(coll, pred);
+}
+const log = console.log;
 const supportedFormats = ["json", "xml", "yaml", "csv", "text"];
 const numericValues = [10, 20, 30, 40, 50];
 const defaultSettings = {

@@ -541,6 +541,11 @@ function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
   let parameters = isNamedParams 
     ? "params" 
     : fn.params.map(p => {
+        // Handle rest parameter
+        if (p.isRest) {
+          return `...${p.id.name}`;
+        }
+        
         // Handle default parameter values
         if (p.defaultValue) {
           const defaultValue = convertNode(p.defaultValue);

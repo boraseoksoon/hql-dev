@@ -1,3 +1,13 @@
+function reduce(coll, f, init) {
+  return Array.prototype.reduce.call(coll, f, init);
+}
+function map(f, coll) {
+  return Array.prototype.map.call(coll, f);
+}
+function filter(pred, coll) {
+  return Array.prototype.filter.call(coll, pred);
+}
+const log = console.log;
 function calculateArea(width, height) {
   return (width * height);
 }

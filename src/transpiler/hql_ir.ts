@@ -137,7 +137,8 @@ export interface IRVariableDeclaration extends IRNode {
 export interface IRParameter extends IRNode {
   type: IRNodeType.Parameter;
   id: IRIdentifier;
-  defaultValue?: IRNode;  // NEW: default value support
+  defaultValue?: IRNode;
+  isRest?: boolean;
 }
 
 export interface IRBlock extends IRNode {

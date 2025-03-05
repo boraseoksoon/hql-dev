@@ -984,7 +984,6 @@ function transformCall(list: ListNode, currentDir: string): IR.IRCallExpression 
   }
 }
 
-
 export function transformParams(list: ListNode, currentDir: string): { params: IR.IRParameter[], namedParamIds: string[] } {
   const params: IR.IRParameter[] = [];
   const namedParamIds: string[] = [];
@@ -1015,6 +1014,28 @@ export function transformParams(list: ListNode, currentDir: string): { params: I
     if (el.type === "symbol" && (el as SymbolNode).name === "&optional") {
       inOptional = true;
       continue;
+    }
+    
+    // Handle & as a rest parameter marker
+    if (el.type === "symbol" && (el as SymbolNode).name === "&") {
+      // If the next element exists, mark it as a rest parameter
+      if (i + 1 < list.elements.length) {
+        const nextEl = list.elements[i + 1];
+        if (nextEl.type === "symbol") {
+          params.push({
+            type: IR.IRNodeType.Parameter,
+            id: {
+              type: IR.IRNodeType.Identifier,
+              name: hyphenToCamel((nextEl as SymbolNode).name)
+            },
+            isRest: true  // Mark as rest parameter
+          });
+          i++; // Skip the next element since we've processed it
+          continue;
+        }
+      }
+      // If there's no valid next element, skip this & token
+      continue;  
     }
     
     if (el.type === "symbol") {

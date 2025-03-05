@@ -1,4 +1,3 @@
-(fx add ((x:Int y: Int) -> Int)
-    (+ x y))
+;; test/test.hql
 
-(print (add 1 2))
+(log 1 2 3 4 5)

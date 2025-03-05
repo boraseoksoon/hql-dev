@@ -1,3 +1,13 @@
+function reduce(coll, f, init) {
+  return Array.prototype.reduce.call(coll, f, init);
+}
+function map(f, coll) {
+  return Array.prototype.map.call(coll, f);
+}
+function filter(pred, coll) {
+  return Array.prototype.filter.call(coll, pred);
+}
+const log = console.log;
 const emptyVector = [];
 const numbers = [1, 2, 3, 4, 5];
 const mixedVector = [1, "two", true, null];
