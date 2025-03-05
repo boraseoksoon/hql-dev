@@ -1,4 +1,4 @@
-// src/transpiler/parser.ts - Simplified to focus on core S-expressions
+// src/transpiler/parser.ts - Fully fixed implementation
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import { ParseError } from "./errors.ts";
 
@@ -206,22 +206,36 @@ function tokenize(input: string): { tokens: string[], positions: { line: number;
             offset: lineOffset + colIndex
           });
         } else if (ch === ':') {
-          // Handle colon as a separate token for reader macro processing
+          // Handle colon as a separate token
           if (current.length > 0) {
-            tokens.push(current);
+            // If current token exists and this is for a named parameter, add colon to token
+            if (!isWhitespace(line[colIndex - 1]) && colIndex > 0) {
+              current += ch;
+            } else {
+              // Otherwise, add current token and then the colon as a separate token
+              tokens.push(current);
+              positions.push({
+                line: actualLineIndex + 1,
+                column: colIndex - current.length + 1,
+                offset: lineOffset + colIndex - current.length
+              });
+              current = "";
+              tokens.push(":");
+              positions.push({
+                line: actualLineIndex + 1,
+                column: colIndex + 1,
+                offset: lineOffset + colIndex
+              });
+            }
+          } else {
+            // Standalone colon
+            tokens.push(":");
             positions.push({
               line: actualLineIndex + 1,
-              column: colIndex - current.length + 1,
-              offset: lineOffset + colIndex - current.length
+              column: colIndex + 1,
+              offset: lineOffset + colIndex
             });
-            current = "";
           }
-          tokens.push(":");
-          positions.push({
-            line: actualLineIndex + 1,
-            column: colIndex + 1,
-            offset: lineOffset + colIndex
-          });
         } else if (isWhitespace(ch)) {
           if (current.length > 0) {
             tokens.push(current);
@@ -286,6 +300,9 @@ function parseList(): ListNode {
   }
   
   if (pos >= tokens.length) {
+    console.log("elements : ", elements)
+    console.log("positions : ", positions)
+    
     throw new ParseError(
       `Unexpected end of input in list starting at line ${positions[startPos].line}, column ${positions[startPos].column}`,
       positions[startPos]
@@ -298,73 +315,151 @@ function parseList(): ListNode {
 }
 
 /**
- * Parse a vector into a list with 'vector' as first element
+ * Parse a vector, either as a list with 'vector' head for normal code
+ * or as a literal with array value for JSON-style code
  */
-function parseVector(): ListNode {
+function parseVector(isNestedInObject = false): HQLNode {
+  const startPos = pos - 1; // Position of the opening bracket
+  // Always use "vector" as the head symbol regardless of nesting.
   const elements: HQLNode[] = [
     { type: "symbol", name: "vector" } as SymbolNode
   ];
-  
-  const startPos = pos - 1; // Position of the opening bracket
-  
+
   while (pos < tokens.length && tokens[pos] !== "]") {
-    elements.push(parseExpression());
+    // If the token indicates the start of an object literal, parse it with parseMap.
+    if (tokens[pos] === "{") {
+      pos++; // Skip the opening brace
+      elements.push(parseMap());
+    } else if (tokens[pos] === "[") {
+      // For nested arrays, recursively call parseVector without changing the head.
+      pos++; // Skip the opening bracket
+      elements.push(parseVector());
+    } else {
+      // Otherwise, parse the element as an expression.
+      elements.push(parseExpression());
+    }
+
+    // Skip a comma if present.
+    if (pos < tokens.length && tokens[pos] === ",") {
+      pos++;
+    }
   }
-  
+
   if (pos >= tokens.length) {
     throw new ParseError(
-      `Unexpected end of input in vector starting at line ${positions[startPos].line}, column ${positions[startPos].column}`,
+      `Unexpected end of input in vector starting at line ${positions[startPos].line}`,
       positions[startPos]
     );
   }
-  
+
   pos++; // Skip the closing bracket
-  
   return { type: "list", elements };
 }
 
-/**
- * Parse a map into a list with 'map' as first element
- */
-function parseMap(): ListNode {
+
+
+function parseMap(): HQLNode {
+  const startPos = pos - 1; // Position of the opening brace
+
+  // For JSON object literals, use "hash-map" as the head symbol.
+  // (This is our design: JSON objects are macros that expand to hash-maps.)
   const elements: HQLNode[] = [
     { type: "symbol", name: "hash-map" } as SymbolNode
   ];
-  
-  const startPos = pos - 1; // Position of the opening brace
-  
+
+  // (Optional debug logging if HQL_DEBUG is set)
+  if (Deno.env.get("HQL_DEBUG") === "1") {
+    console.log("parseMap: Starting JSON object literal at line", positions[startPos].line);
+  }
+
   while (pos < tokens.length && tokens[pos] !== "}") {
     // Parse key
-    const key = parseExpression();
-    elements.push(key);
-    
-    // Expect value to follow
-    if (pos >= tokens.length || tokens[pos] === "}") {
+    if (pos >= tokens.length) {
       throw new ParseError(
-        `Unexpected end of input after map key at line ${positions[startPos].line}, column ${positions[startPos].column}`,
-        positions[pos > 0 ? pos - 1 : startPos]
+        `Unexpected end of input in object starting at line ${positions[startPos].line}`,
+        positions[startPos]
       );
     }
-    
+
+    // If the key token starts with a double quote, it is a JSON string key.
+    // We wrap it into a list: (keyword <string literal>)
+    if (tokens[pos].startsWith('"')) {
+      const keyLiteral = parseExpression() as LiteralNode;
+      if (keyLiteral.type !== "literal" || typeof keyLiteral.value !== "string") {
+        throw new ParseError(
+          `Expected string key in object at line ${positions[startPos].line}`,
+          positions[pos - 1]
+        );
+      }
+      // Wrap the literal key in a list node: (keyword "key")
+      elements.push({
+        type: "list",
+        elements: [
+          { type: "symbol", name: "keyword" } as SymbolNode,
+          keyLiteral
+        ]
+      } as ListNode);
+    } else {
+      // Otherwise, just parse the key normally.
+      elements.push(parseExpression());
+    }
+
+    // Expect a colon token separating key and value.
+    if (pos >= tokens.length || tokens[pos] !== ":") {
+      throw new ParseError(
+        `Expected ':' after key in object at line ${positions[startPos].line}`,
+        positions[pos - 1]
+      );
+    }
+    pos++; // Skip the colon
+
     // Parse value
-    const value = parseExpression();
-    elements.push(value);
+    if (pos >= tokens.length) {
+      throw new ParseError(
+        `Unexpected end of input after key in object at line ${positions[startPos].line}`,
+        positions[pos - 1]
+      );
+    }
+
+    if (tokens[pos] === "{") {
+      // For nested objects, recursively call parseMap.
+      pos++; // Skip the opening brace
+      elements.push(parseMap());
+    } else if (tokens[pos] === "[") {
+      // For arrays, call parseVector with flag true.
+      pos++; // Skip the opening bracket
+      elements.push(parseVector(true));
+    } else {
+      // Otherwise, parse the value normally.
+      elements.push(parseExpression());
+    }
+
+    // If a comma is present, skip it.
+    if (pos < tokens.length && tokens[pos] === ",") {
+      pos++;
+    }
   }
-  
+
   if (pos >= tokens.length) {
     throw new ParseError(
-      `Unexpected end of input in map starting at line ${positions[startPos].line}, column ${positions[startPos].column}`,
+      `Unexpected end of input in object starting at line ${positions[startPos].line}`,
       positions[startPos]
     );
   }
-  
+
   pos++; // Skip the closing brace
-  
+
+  // (Optional debug logging)
+  if (Deno.env.get("HQL_DEBUG") === "1") {
+    console.log("parseMap: Completed JSON object literal:", { elements });
+  }
+
   return { type: "list", elements };
 }
 
+
 /**
- * Parse a set reader macro (#[...]) into a list with 'set' as first element
+ * Parse a set literal (#[...]) into a list with 'set' as first element
  */
 function parseSet(): ListNode {
   const elements: HQLNode[] = [
@@ -375,11 +470,16 @@ function parseSet(): ListNode {
   
   while (pos < tokens.length && tokens[pos] !== "]") {
     elements.push(parseExpression());
+    
+    // Skip comma if present
+    if (pos < tokens.length && tokens[pos] === ",") {
+      pos++;
+    }
   }
   
   if (pos >= tokens.length) {
     throw new ParseError(
-      `Unexpected end of input in set starting at line ${positions[startPos].line}, column ${positions[startPos].column}`,
+      `Unexpected end of input in set starting at line ${positions[startPos].line}`,
       positions[startPos]
     );
   }
@@ -390,7 +490,7 @@ function parseSet(): ListNode {
 }
 
 /**
- * Parse a type annotation reader macro (#:) into a list with type-annotation as first element
+ * Parse a type annotation (#:) into a list with type-annotation as first element
  */
 function parseTypeAnnotation(): ListNode {
   const startPos = pos - 1; // Position of the #: token
@@ -398,7 +498,7 @@ function parseTypeAnnotation(): ListNode {
   // Expect parameter name
   if (pos >= tokens.length) {
     throw new ParseError(
-      `Unexpected end of input after type annotation marker at line ${positions[startPos].line}, column ${positions[startPos].column}`,
+      `Unexpected end of input after type annotation marker at line ${positions[startPos].line}`,
       positions[startPos]
     );
   }
@@ -408,7 +508,7 @@ function parseTypeAnnotation(): ListNode {
   // Expect type name
   if (pos >= tokens.length) {
     throw new ParseError(
-      `Unexpected end of input after type annotation parameter at line ${positions[startPos].line}, column ${positions[startPos].column}`,
+      `Unexpected end of input after type annotation parameter at line ${positions[startPos].line}`,
       positions[startPos]
     );
   }
@@ -428,14 +528,14 @@ function parseTypeAnnotation(): ListNode {
 /**
  * Parse an expression from the token stream
  */
-function parseExpression(): HQLNode {
+function parseExpression(isNestedInObject = false): HQLNode {
   if (pos >= tokens.length) {
     throw new ParseError(
       "Unexpected end of input", 
       pos > 0 ? positions[pos - 1] : { line: 1, column: 1, offset: 0 }
     );
   }
-  
+
   const token = tokens[pos];
   const position = positions[pos];
   pos++;
@@ -444,7 +544,7 @@ function parseExpression(): HQLNode {
   if (token === "(") {
     return parseList();
   } else if (token === "[") {
-    return parseVector();
+    return parseVector(isNestedInObject);
   } else if (token === "{") {
     return parseMap();
   } else if (token === "#[") {
@@ -452,6 +552,9 @@ function parseExpression(): HQLNode {
   } else if (token === "#:") {
     return parseTypeAnnotation();
   } else if (token === ")" || token === "]" || token === "}") {
+    console.log("token : ", token)
+    console.log("position : ", position)
+
     throw new ParseError(
       `Unexpected '${token}'`, 
       position
@@ -462,6 +565,9 @@ function parseExpression(): HQLNode {
       return { type: "literal", value: processedString } as LiteralNode;
     } catch (error) {
       if (error instanceof ParseError) throw error;
+      console.log("token : ", token)
+      console.log("position : ", position)
+
       throw new ParseError(
         `Error processing string: ${error instanceof Error ? error.message : String(error)}`, 
         position
@@ -489,6 +595,9 @@ function parseExpression(): HQLNode {
           ]
         } as ListNode;
       } else {
+        console.log("token : ", token)
+        console.log("position : ", position)
+        
         throw new ParseError(
           "Unexpected end of input after colon", 
           position
@@ -498,11 +607,12 @@ function parseExpression(): HQLNode {
     
     // If token ends with colon, treat it as a named parameter
     if (token.endsWith(":") && token.length > 1) {
+      const paramName = token.slice(0, -1);
       return {
         type: "list",
         elements: [
           { type: "symbol", name: "param" } as SymbolNode,
-          { type: "literal", value: token.slice(0, -1) } as LiteralNode
+          { type: "literal", value: paramName } as LiteralNode
         ]
       } as ListNode;
     }
