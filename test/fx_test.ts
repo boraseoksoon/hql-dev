@@ -226,3 +226,116 @@ Deno.test("fx - compatibility with traditional defn", async () => {
     console.log("Traditional defn compatibility test error:", error);
   }
 });
+
+
+
+
+
+Deno.test("fx - diverse fx forms without using str", async () => {
+  const source = `
+    ;; fx add: Positional parameters; returns the sum.
+    (fx add (x: Int y: Int) (-> Int)
+      (+ x y))
+
+    (fx add2 (x: Int y: Int)
+      (+ x y))
+
+    (fx add3 (x: Int y: Int)
+      (return (+ x y)))
+      
+    (fx add4 (x: Int y: Int z: Int) (-> Int)
+      (return (+ x y z)))
+
+    (export "add" add)
+    (export "add2" add2)
+    (export "add3" add3)
+    (export "add4" add4)
+  `;
+  
+  // Transpile the HQL source to JavaScript.
+  const jsOutput = await transpile(source, "./test/diverse_fx.hql");
+  
+  // Create a temporary file for the transpiled module.
+  const tempModulePath = await Deno.makeTempFile({ prefix: "temp_diverse_fx_", suffix: ".js" });
+  await Deno.writeTextFile(tempModulePath, jsOutput);
+  
+  // Convert the temporary file path into a file URL.
+  const moduleUrl = new URL(`file://${tempModulePath}`).href;
+  const mod = await import(moduleUrl);
+
+  assertEquals(mod.add({ x: 3, y: 4 }), 7);
+  assertEquals(mod.add2({ x: 3, y: 4 }), 7);
+  assertEquals(mod.add3({ x: 3, y: 4 }), 7);
+  assertEquals(mod.add4({ x: 3, y: 4, z: 10}), 17);
+
+  // Clean up the temporary file.
+  await Deno.remove(tempModulePath);
+});
+
+Deno.test("fx - advanced diverse fx forms ", async () => {
+  const source = `
+    ;; fx add: Positional parameters; returns the sum.
+    (fx add (x y)
+      (return (+ x y)))
+
+    ;; fx addDefault: y has a default value (5) if not provided.
+    (fx addDefault (x y = 5)
+      (return (+ x y)))
+
+    ;; fx multiply: Inferred parameters; returns the product.
+    (fx multiply (a b)
+      (return (* a b)))
+
+    ;; fx greet: Returns the name (simple echo).
+    (fx greet (name: String) -> String
+      (return name))
+
+    ;; fx calcTax: Uses a kebab-case parameter, which should be converted to camelCase.
+    (fx calcTax (amount tax-rate)
+      (return (+ amount (/ tax-rate 100))))
+
+    (fx add (x: Int y: Int) (-> Int)
+      (+ x y))
+  
+    ;; without space between: and 10 raise an error
+    (print "Sum of 3 and 4 (defn): " (add x:10 y:20))
+
+    (export "add" add)
+    (export "addDefault" addDefault)
+    (export "multiply" multiply)
+    (export "greet" greet)
+    (export "calcTax" calcTax)
+  `;
+  
+  // Transpile the HQL source to JavaScript.
+  const jsOutput = await transpile(source, "./test/diverse_fx.hql");
+  
+  // Create a temporary file for the transpiled module.
+  const tempModulePath = await Deno.makeTempFile({ prefix: "temp_diverse_fx_", suffix: ".js" });
+  await Deno.writeTextFile(tempModulePath, jsOutput);
+  
+  // Convert the temporary file path into a file URL.
+  const moduleUrl = new URL(`file://${tempModulePath}`).href;
+  const mod = await import(moduleUrl);
+
+  // Test the "add" function: 3 + 4 should be 7.
+  assertEquals(mod.add({ x: 3, y: 4 }), 7);
+
+  // Test "addDefault": with only x provided, y defaults to 5.
+  assertEquals(mod.addDefault({ x: 10 }), 15);
+  assertEquals(mod.addDefault({ x: 10, y: 20 }), 30);
+
+  // Test "multiply": 6 * 7 should be 42.
+  assertEquals(mod.multiply({ a: 6, b: 7 }), 42);
+
+  // Test "greet": should simply return the passed name.
+  assertEquals(mod.greet({ name: "Alice" }), "Alice");
+
+  // Test "calcTax":
+  // Although defined as (tax-rate), it should be converted to camelCase ("taxRate").
+  // For amount = 100 and tax-rate = 8, the function returns 100 + (8/100) = 100.08.
+  assertEquals(mod.calcTax({ amount: 100, taxRate: 8 }), 100.08);
+
+  // Clean up the temporary file.
+  await Deno.remove(tempModulePath);
+});

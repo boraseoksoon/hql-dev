@@ -428,36 +428,42 @@ function convertBinaryExpression(bin: IR.IRBinaryExpression): TSNode {
  * FIX: Proper handling of method calls on objects
  */
 function convertCallExpression(call: IR.IRCallExpression): TSNode {
-  // Skip import calls - handled separately
+  // Skip import calls – handled separately.
   if (isImportCall(call)) return { type: TSNodeType.Raw, code: "" };
-  
-  // Handle string concatenation special case
-  if (isStringConcatenation(call)) return handleStringConcatenation(call);
-  
-  // FIX: Special handling for prototype method calls 
-  // This checks for property access patterns that would need proper this binding
-  const isMethodCall = isPrototypeMethodCall(call);
-  if (isMethodCall) {
-    return handlePrototypeMethodCall(call);
+
+  // If this call uses named arguments, group them into an object literal.
+  if (call.isNamedArgs) {
+    const pairs: string[] = [];
+    for (let i = 0; i < call.arguments.length; i += 2) {
+      const keyNode = convertNode(call.arguments[i]);
+      const valNode = convertNode(call.arguments[i + 1]);
+      // nodeToString converts TS nodes into code strings.
+      const keyStr = nodeToString(keyNode);
+      const valStr = nodeToString(valNode);
+      pairs.push(`${keyStr}: ${valStr}`);
+    }
+    const objLiteral = `{ ${pairs.join(", ")} }`;
+    return {
+      type: TSNodeType.Raw,
+      code: `${nodeToString(convertNode(call.callee))}(${objLiteral})`
+    };
   }
-  
-  // Regular function call
+
+  // Otherwise, process the call normally.
   const callee = convertNode(call.callee);
   const args = call.arguments.map(arg => nodeToString(convertNode(arg)));
-  
-  // For very long argument lists, format with line breaks
   if (args.length > 3) {
     return { 
       type: TSNodeType.Raw, 
       code: `${nodeToString(callee)}(\n  ${args.join(",\n  ")}\n)` 
     };
   }
-  
   return { 
     type: TSNodeType.Raw, 
     code: `${nodeToString(callee)}(${args.join(", ")})` 
   };
 }
+
 
 /**
  * Check if a call is to a prototype method like Array.prototype.map.call

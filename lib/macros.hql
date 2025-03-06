@@ -84,28 +84,8 @@
     (str name)))
 
 ;; Extended function definition macro - simplified with parameter handling
-(defmacro fx (fnName params & body)
-  ;; Extract return type if present
-  (let [has-return-type (and (> (count body) 1) (= (nth body 0) '->))
-        return-type (if has-return-type (nth body 1) nil)
-        actual-body (if has-return-type (rest (rest body)) body)]
-    
-    ;; Process parameters to convert complex forms to simple forms
-    ;; We need to ensure params is a proper list
-    (let [param-symbols (if (and (list? params) (> (count params) 0))
-                          ;; Extract symbols from parameter list
-                          (map (fn (p)
-                              (if (list? p)
-                                ;; For lists, extract just the parameter name as a symbol
-                                (if (> (count p) 0) (first p) (symbol "param"))
-                                ;; For symbols, keep as is
-                                p))
-                            params)
-                          ;; Fallback for empty or invalid params
-                          [])]
-      
-      ;; Return a defn with processed parameters in correct format
-      (list 'defn fnName param-symbols (concat actual-body)))))
+;; Completely rewritten fx macro 
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 3) Control Flow Macros

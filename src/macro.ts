@@ -606,128 +606,85 @@ defineMacro("fx", (node: ListNode): HQLNode => {
   
   const name = node.elements[1] as SymbolNode;
   const paramList = node.elements[2] as ListNode;
-  
-  // Check for return type annotation
-  let hasReturnType = false;
-  let returnTypePos = 3;
-  
-  if (node.elements.length > 4 && 
-      node.elements[3].type === "symbol" && 
-      (node.elements[3] as SymbolNode).name === "->") {
-    hasReturnType = true;
-    returnTypePos = 4;
+
+  // Extract parameter names from the paramList
+  const paramNames: string[] = [];
+  for (let i = 0; i < paramList.elements.length; i++) {
+    const param = paramList.elements[i];
+    if (param.type === "list") {
+      const paramNode = param as ListNode;
+      if (
+        paramNode.elements.length >= 2 &&
+        paramNode.elements[0].type === "symbol" &&
+        (paramNode.elements[0] as SymbolNode).name === "param" &&
+        paramNode.elements[1].type === "literal"
+      ) {
+        const paramName = (paramNode.elements[1] as LiteralNode).value as string;
+        paramNames.push(paramName);
+        i++; // Skip the type token
+      }
+    }
+  }
+
+  // Determine where the function body starts (skip the optional return type)
+  let bodyStart = 3;
+  if (
+    node.elements.length > 3 &&
+    (
+      (node.elements[3].type === "list" &&
+        (node.elements[3] as ListNode).elements.length > 0 &&
+        ((node.elements[3] as ListNode).elements[0] as SymbolNode).name === "->") ||
+      (node.elements[3].type === "symbol" &&
+        (node.elements[3] as SymbolNode).name === "->")
+    )
+  ) {
+    bodyStart = 4;
   }
   
-  // Extract body
-  const body = node.elements.slice(hasReturnType ? returnTypePos + 1 : 3);
+  const body = node.elements.slice(bodyStart);
+
+  // Create proper name-value pairs for each parameter in let-bindings
+  const letBindings: HQLNode[] = [];
+  paramNames.forEach(name => {
+    letBindings.push({ type: "symbol", name } as SymbolNode);
+    letBindings.push({
+      type: "list",
+      elements: [
+        { type: "symbol", name: "get" } as SymbolNode,
+        { type: "symbol", name: "_params0" } as SymbolNode,
+        { type: "literal", value: name } as LiteralNode
+      ]
+    } as ListNode);
+  });
   
-  try {
-    // Process parameters with improved error handling
-    const processedParams = processParameters(paramList);
-    
-    // Check if we have named parameters
-    const hasNamed = processedParams.some(p => p.isNamed);
-    
-    if (!hasNamed) {
-      // Regular function with positional parameters
-      
-      // Create parameter list
-      const paramElements: HQLNode[] = [];
-      
-      // Add regular parameters
-      const regular = processedParams.filter(p => !p.defaultValue);
-      for (const param of regular) {
-        paramElements.push({ type: "symbol", name: param.name } as SymbolNode);
-      }
-      
-      // Add optional parameters
-      const optional = processedParams.filter(p => p.defaultValue);
-      if (optional.length > 0) {
-        paramElements.push({ type: "symbol", name: "&optional" } as SymbolNode);
-        
-        for (const param of optional) {
-          paramElements.push({
-            type: "list",
-            elements: [
-              { type: "symbol", name: param.name } as SymbolNode,
-              param.defaultValue!
-            ]
-          } as ListNode);
-        }
-      }
-      
-      // Return the expanded form
-      return {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "defun" } as SymbolNode,
-          { type: "symbol", name: name.name } as SymbolNode,
-          { type: "list", elements: paramElements } as ListNode,
-          ...body
-        ]
-      } as ListNode;
-    } else {
-      // Function with named parameters
-      
-      // Generate camelCased parameter names
-      const namedParams = processedParams.map(p => ({
-        original: p.name,
-        camel: hyphenToCamel(p.name),
-        defaultValue: p.defaultValue
-      }));
-      
-      // Create destructuring let binding
-      const letBindings: HQLNode[] = [];
-      
-      // Create destructuring pattern
-      letBindings.push({
-        type: "list",
-        elements: [
-          { type: "symbol", name: "{" } as SymbolNode,
-          ...namedParams.map(p => ({ type: "symbol", name: p.camel } as SymbolNode)),
-          { type: "symbol", name: "}" } as SymbolNode
-        ]
-      } as ListNode);
-      
-      // Add params object to destructure
-      letBindings.push({ type: "symbol", name: "params" } as SymbolNode);
-      
-      // Create the let expression
-      const letExpr: ListNode = {
+  // Use a unique parameter name instead of "params"
+  const newParamList: ListNode = {
+    type: "list",
+    elements: [{ type: "symbol", name: "_params0" }]
+  };
+  // Attach the extracted parameter names as metadata so the transformer knows what keys to destructure
+  (newParamList as any).namedParamIds = paramNames;
+  
+  const result: ListNode = {
+    type: "list",
+    elements: [
+      { type: "symbol", name: "defun" } as SymbolNode,
+      { type: "symbol", name: name.name } as SymbolNode,
+      newParamList,
+      {
         type: "list",
         elements: [
           { type: "symbol", name: "let" } as SymbolNode,
           { type: "list", elements: letBindings } as ListNode,
           ...body
         ]
-      };
-      
-      // Return the expanded form with params parameter
-      return {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "defun" } as SymbolNode,
-          { type: "symbol", name: name.name } as SymbolNode,
-          { type: "list", elements: [{ type: "symbol", name: "params" } as SymbolNode] } as ListNode,
-          letExpr
-        ]
-      } as ListNode;
-    }
-  } catch (error) {
-    console.error("Error processing parameters in fx macro:", error);
-    
-    // Fallback to a simpler expansion if parameter processing fails
-    return {
-      type: "list",
-      elements: [
-        { type: "symbol", name: "defun" } as SymbolNode,
-        { type: "symbol", name: name.name } as SymbolNode,
-        { type: "list", elements: [{ type: "symbol", name: "x" }, { type: "symbol", name: "y" }] } as ListNode,
-        ...body
-      ]
-    } as ListNode;
-  }
+      } as ListNode
+    ]
+  } as ListNode;
+  
+  return result;
 });
+
 
 // Hash-map macro - Convert keyword-value pairs to object literals
 defineMacro("hash-map", (node: ListNode): HQLNode => {

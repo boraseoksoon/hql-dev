@@ -1,13 +1,3 @@
-function reduce(coll, f, init) {
-  return Array.prototype.reduce.call(coll, f, init);
-}
-function map(f, coll) {
-  return Array.prototype.map.call(coll, f);
-}
-function filter(pred, coll) {
-  return Array.prototype.filter.call(coll, pred);
-}
-const log = console.log;
 const emptyVector = [];
 const numbers = [1, 2, 3, 4, 5];
 const mixedVector = [1, "two", true, null];
@@ -32,19 +22,38 @@ console.log("String set:", stringSet)
 console.log("Database:", database)
 console.log("User 1 tags:", user1Tags)
 console.log("User 2 tags:", user2Tags)
-function greetUser(name, title) {
-  return `Hello, ${title} ${name}!`;
+function greetUser(_params0) {
+  {
+  const name = _params0.name;
+  const title = _params0.title;
+  return str(
+  "Hello, ",
+  title,
+  " ",
+  name,
+  "!"
+);
+}
 }
 function hello(arr, set) {
-  return `array : ${arr} and set${set}!`;
+  return str(
+  "array : ",
+  arr,
+  " and set",
+  set,
+  "!"
+);
 }
 console.log(hello([1, 2, 3, 4, 5], new Set([1, 2, 3])))
-console.log(greetUser("Smith", "Dr."))
+console.log(greetUser({ "name": "Smith", "title": "Dr." }))
 const getFromVector = numbers[2];
 console.log("Element at index 2 of numbers:", getFromVector)
 const getFromMap = userMap.name;
 console.log("Value of 'name' from user-map:", getFromMap)
-function processUser(userId, options) {
+function processUser(_params0) {
+  {
+  const userId = _params0["user-id"];
+  const options = _params0.options;
   {
   const users = database.users;
   const userIndex = (userId - 1);
@@ -52,5 +61,6 @@ function processUser(userId, options) {
   return (user === null) ? {error: "User not found"} : {user: {name: user.name, roles: user.roles, options: options}};
 }
 }
-console.log("User data:", processUser(1, {detailed: true, includeInactive: false}))
+}
+console.log("User data:", processUser({ "userId": 1, "options": {detailed: true, includeInactive: false} }))
 console.log("Test complete")
