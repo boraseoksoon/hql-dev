@@ -13,10 +13,10 @@ function rest(coll) {
 function count(coll) {
   return or((coll === null), (coll === undefined)) ? 0 : Array.prototype.length.call(coll);
 }
-function empty?(coll) {
+function empty_p(coll) {
   return (count(coll) === 0);
 }
-function contains?(coll, item) {
+function contains_p(coll, item) {
   return (Array.prototype.indexOf.call("coll", item) >= 0);
 }
 function map(f, coll) {
@@ -31,14 +31,14 @@ function forEach(f, coll) {
 function reduce(coll, f, init) {
   return Array.prototype.reduce.call(coll, f, init);
 }
-function concat(&, colls) {
+function concat(_rest, colls) {
   return Array.prototype.concat.apply([], colls);
 }
-function append(coll, &, items) {
+function append(coll, _rest, items) {
   return concat("coll", items);
 }
-function slice(coll, start, &, end) {
-  return empty?(end) ? Array.prototype.slice.call("coll", start) : Array.prototype.slice.call(coll, start, first(end));
+function slice(coll, start, _rest, end) {
+  return empty_p(end) ? Array.prototype.slice.call("coll", start) : Array.prototype.slice.call(coll, start, first(end));
 }
 function nth(coll, idx) {
   return (idx >= count(coll)) ? null : Array.prototype.at.call("coll", idx);
@@ -54,40 +54,40 @@ function mapcat(f, coll) {
 function range(n) {
   {
   const result = [];
-  map(function(var) {
-  return result = append("result", i);
+  map(function(_var) {
+  return result = concat("result", [i]);
 }, coll)
   return result;
 }
 }
-function any?(pred, coll) {
+function any_p(pred, coll) {
   return Array.prototype.some.call("coll", pred);
 }
-function all?(pred, coll) {
+function all_p(pred, coll) {
   return Array.prototype.every.call("coll", pred);
 }
-function nil?(x) {
+function nil_p(x) {
   return or((x === null), (x === undefined));
 }
-function symbol?(x) {
-  return and(not(nil?(x)), Object.prototype.hasOwnProperty.call("x", "type"), (Object.prototype.get.call("x", "type") === "symbol"));
+function symbol_p(x) {
+  return and(not(nil_p(x)), Object.prototype.hasOwnProperty.call("x", "type"), (Object.prototype.get.call("x", "type") === "symbol"));
 }
-function list?(x) {
-  return and(not(nil?(x)), Object.prototype.hasOwnProperty.call("x", "type"), (Object.prototype.get.call("x", "type") === "list"));
+function list_p(x) {
+  return and(not(nil_p(x)), Object.prototype.hasOwnProperty.call("x", "type"), (Object.prototype.get.call("x", "type") === "list"));
 }
-function string?(x) {
+function string_p(x) {
   return (typeof(x) === "string");
 }
-function number?(x) {
+function number_p(x) {
   return (typeof(x) === "number");
 }
-function boolean?(x) {
+function boolean_p(x) {
   return (typeof(x) === "boolean");
 }
-function function?(x) {
+function function_p(x) {
   return (typeof(x) === "function");
 }
-function str(&, args) {
+function str(_rest, args) {
   return reduce(args, function(acc, x) {
   return (acc + String(x));
 }, "");
@@ -95,10 +95,10 @@ function str(&, args) {
 function substring(s, start, end) {
   return String.prototype.substring.call(s, start, end);
 }
-function endsWith?(s, suffix) {
+function endsWith_p(s, suffix) {
   return String.prototype.endsWith.call("s", suffix);
 }
-function startsWith?(s, prefix) {
+function startsWith_p(s, prefix) {
   return String.prototype.startsWith.call("s", prefix);
 }
 function toString(x) {
@@ -113,10 +113,10 @@ function join(arr, separator) {
 function getProp(obj, prop) {
   return Object.prototype.get.call("obj", prop);
 }
-function setProp!(obj, prop, val) {
+function setProp_(obj, prop, val) {
   return Object.prototype.get.call("obj", prop) = val;
 }
-function hasProp?(obj, prop) {
+function hasProp_p(obj, prop) {
   return Object.prototype.hasOwnProperty.call("obj", prop);
 }
 function keys(obj) {
@@ -125,10 +125,10 @@ function keys(obj) {
 function abs(x) {
   return Math.abs(x);
 }
-function max(&, args) {
+function max(_rest, args) {
   return Math.max.apply("Math", args);
 }
-function min(&, args) {
+function min(_rest, args) {
   return Math.min.apply("Math", args);
 }
 function round(x) {
@@ -143,22 +143,22 @@ function constantly(x) {
 };
 }
 function comp(f, g) {
-  return function(&, args) {
+  return function(_rest, args) {
   return f(apply("g", args));
 };
 }
-function partial(f, &, args1) {
-  return function(&, args2) {
+function partial(f, _rest, args1) {
+  return function(_rest, args2) {
   return apply("f", concat("args1", args2));
 };
 }
 function not(x) {
   return x ? false : true;
 }
-function alwaysTrue(&, _) {
+function alwaysTrue(_rest, _) {
   return true;
 }
-function alwaysFalse(&, _) {
+function alwaysFalse(_rest, _) {
   return false;
 }
 function symbol(name) {
@@ -170,35 +170,35 @@ function keyword(name) {
 function literal(value) {
   return {type: "literal", value: value};
 }
-function makeList(&, elements) {
+function makeList(_rest, elements) {
   return {type: "list", elements: elements};
 }
-function hasTypeAnnotation?(param) {
-  return and(list?(param), (count(param) > 2), (nth("param", 1) === '));
+function hasTypeAnnotation_p(param) {
+  return and(list_p(param), (count(param) > 2), (nth("param", 1) === '));
 }
 function paramName(param) {
-  return list?(param) ? nth("param", 0) : param;
+  return list_p(param) ? nth("param", 0) : param;
 }
 function paramType(param) {
-  return and(list?(param), hasTypeAnnotation?(param)) ? nth("param", 2) : null;
+  return and(list_p(param), hasTypeAnnotation_p(param)) ? nth("param", 2) : null;
 }
-function hasDefaultValue?(param) {
-  return and(list?(param), (count(param) > 2), {
+function hasDefaultValue_p(param) {
+  return and(list_p(param), (count(param) > 2), {
   const eqPos = position("'=", param);
   return not((eqPos === -1));
 });
 }
 function paramDefaultValue(param) {
-  if (and(list?(param), hasDefaultValue?(param))) {
+  if (and(list_p(param), hasDefaultValue_p(param))) {
   const eqPos = position("'=", param);
   return nth("param", (eqPos + 1));
 } else null
 }
-function isNamedParam?(param) {
-  return symbol?(param) ? endsWith?(`${param}`, ":") : and(list?(param), symbol?(first(param)), endsWith?(first(param), ":"));
+function isNamedParam_p(param) {
+  return symbol_p(param) ? endsWith_p(`${param}`, ":") : and(list_p(param), symbol_p(first(param)), endsWith_p(first(param), ":"));
 }
 function normalizeParamName(name) {
-  return endsWith?(`${name}`, ":") ? substring(`${name}`, 0, (count(`${name}`) - 1)) : `${name}`;
+  return endsWith_p(`${name}`, ":") ? substring(`${name}`, 0, (count(`${name}`) - 1)) : `${name}`;
 }
 function reduce(coll, f, init) {
   return Array.prototype.reduce.call(coll, f, init);

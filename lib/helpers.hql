@@ -91,7 +91,7 @@
 (defn range (n)
   (let [result []]
     (for ((i 0) (< i n) (+ i 1))
-      (set! result (append result i)))
+      (set! result (concat result [i])))
     result))
 
 ;; Check if any item satisfies predicate
