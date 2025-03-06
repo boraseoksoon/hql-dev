@@ -1,13 +1,6 @@
 ;; test/test.hql
 
-(defn average (nums)
-  (let [
-    sum (reduce nums (fn (acc val) (+ acc val)) 0)
-    count nums.length
-  ]
-    (/ sum count)
-  )
-)
+(fx add (x: Int y: Int) (-> Int)
+  (+ x y))
 
-(log [1, 2, 3, 4, 5])
-(log (average [1,2,3,4,5]))
+(add x: 10 y: 20)

@@ -15,6 +15,7 @@
     "all-interop-test": "deno task interop-test && deno task interop-test2 && deno task interop-test3 && deno task interop-test4",
     "quick-test-hql": "deno run -A ./cli/run.ts ./test/test.hql",
     "quick-test-js": "deno run -A ./test/test_js.js",
+    "quick-transpile-test": "deno run -A ./cli/transpile.ts ./test/test.hql",
     "bundle-tests": "deno task bundle-simple; deno task bundle-complex; deno task bundle-interop; deno task bundle-interop2; deno task bundle-data-structures; deno task bundle-run; deno task bundle-cleanup",
     "bundle-simple": "deno run -A ./cli/transpile.ts ./test/simple.hql ./test/simple.bundle.js --bundle && deno run -A ./test/simple.bundle.js",
     "bundle-complex": "deno run -A ./cli/transpile.ts ./test/complex-import/main.hql ./test/complex-import/main.bundle.js --bundle && deno run -A ./test/complex-import/main.bundle.js",

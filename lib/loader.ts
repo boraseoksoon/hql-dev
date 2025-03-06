@@ -35,9 +35,11 @@ export async function loadAndInitializeMacros(): Promise<void> {
 }
 
 export async function loadStandardLibrary(): Promise<string> {
-  const helpers = await loadFile("./lib/helpers.hql");
-  const macros = await loadFile("./lib/macros.hql");
-  const stdlib = await loadFile("./lib/stdlib.hql");
-  const stdio  = await loadFile("./lib/stdio.hql");
-  return `${helpers}\n${macros}\n${stdlib}\n${stdio}\n`;
+  const [helpers, stdlib, stdio] = await Promise.all([
+    loadFile("./lib/helpers.hql"),
+    loadFile("./lib/stdlib.hql"),
+    loadFile("./lib/stdio.hql")
+  ]);
+  return `${helpers}\n${stdlib}\n${stdio}\n`;
 }
+
