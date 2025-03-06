@@ -1,4 +1,4 @@
-// lib/loader.ts - Updated to properly load macros from HQL
+// lib/loader.ts - Updated to properly load and initialize macros
 import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { parse } from "../src/transpiler/parser.ts";
 import { expandMacros } from "../src/macro.ts";
@@ -27,6 +27,15 @@ export async function loadAndInitializeMacros(): Promise<void> {
       expandMacros(node);
     }
     
+    // Register builtin macros for JavaScript syntax
+    const jsArrayMacroAst = parse('(defmacro js-array (& elements) (cons \'vector elements))');
+    const jsMapMacroAst = parse('(defmacro js-map (& pairs) (cons \'hash-map pairs))');
+    const jsSetMacroAst = parse('(defmacro js-set (& elements) (list \'new \'Set (cons \'vector elements)))');
+    
+    for (const node of [...jsArrayMacroAst, ...jsMapMacroAst, ...jsSetMacroAst]) {
+      expandMacros(node);
+    }
+    
     console.log("Macros loaded and initialized successfully");
   } catch (error) {
     console.error(`Failed to load macros: ${error.message}`);
@@ -42,4 +51,3 @@ export async function loadStandardLibrary(): Promise<string> {
   ]);
   return `${helpers}\n${stdlib}\n${stdio}\n`;
 }
-

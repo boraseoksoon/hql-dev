@@ -1,21 +1,10 @@
-// src/macro.ts - Fixed with recursion protection
+// src/macro.ts - Revised to rely entirely on HQL-defined macros
 import {
   HQLNode,
   SymbolNode,
   ListNode,
   LiteralNode
 } from "./transpiler/hql_ast.ts";
-import { hyphenToCamel } from "./utils.ts";
-
-/** 
- * A macro function takes a list node and returns a transformed HQLNode.
- */
-export type MacroFunction = (node: ListNode) => HQLNode;
-
-/** 
- * Global registry for system (and user-defined) macros.
- */
-const macroRegistry: Map<string, MacroFunction> = new Map();
 
 /**
  * Registry for HQL-defined macros via defmacro
@@ -26,17 +15,10 @@ const hqlMacroRegistry: Map<string, { params: ListNode, body: HQLNode[] }> = new
 const processingNodes = new Set<string>();
 
 /**
- * Define a macro by registering its name and function.
- */
-export function defineMacro(name: string, macroFn: MacroFunction): void {
-  macroRegistry.set(name, macroFn);
-}
-
-/**
  * Check whether a symbol name has an associated macro.
  */
 export function isMacro(symbolName: string): boolean {
-  return macroRegistry.has(symbolName) || hqlMacroRegistry.has(symbolName);
+  return hqlMacroRegistry.has(symbolName);
 }
 
 /**
@@ -48,15 +30,11 @@ export function applyMacro(node: ListNode): HQLNode {
   if (first.type !== "symbol") return node;
   const symbolName = (first as SymbolNode).name;
   
-  // Check HQL macros first
   if (hqlMacroRegistry.has(symbolName)) {
     return expandHQLMacro(symbolName, node);
   }
   
-  // Fall back to regular macro registry
-  const macroFn = macroRegistry.get(symbolName);
-  if (!macroFn) return node;
-  return macroFn(node);
+  return node;
 }
 
 /**
@@ -138,10 +116,14 @@ function registerHQLMacro(node: ListNode): void {
   // Store the macro definition
   hqlMacroRegistry.set(name, { params: paramList, body });
   
-  // Also register a function to evaluate this macro
-  defineMacro(name, (callNode: ListNode): HQLNode => {
-    return expandHQLMacro(name, callNode);
-  });
+  // Register special builtin macros for JavaScript syntax
+  if (name === "js-array") {
+    hqlMacroRegistry.set("[", { params: paramList, body });
+  } else if (name === "js-map") {
+    hqlMacroRegistry.set("{", { params: paramList, body });
+  } else if (name === "js-set") {
+    hqlMacroRegistry.set("#[", { params: paramList, body });
+  }
 }
 
 /**
@@ -471,321 +453,3 @@ function stringifyHQLNode(node: HQLNode): string {
   
   return JSON.stringify(node);
 }
-
-// Process parameters into a structure with names, types, and default values
-function processParameters(params: ListNode): Array<{
-  name: string;
-  type?: string;
-  defaultValue?: HQLNode;
-  isNamed: boolean;
-}> {
-  const result: Array<{
-    name: string;
-    type?: string;
-    defaultValue?: HQLNode;
-    isNamed: boolean;
-  }> = [];
-  
-  // Handle case where list.elements might be undefined or not an array
-  if (!params || !params.elements || !Array.isArray(params.elements)) {
-    // Silent handling instead of warning
-    return result;
-  }
-  
-  // Special case for params destructuring for named parameters
-  if (params.elements.length === 1 && 
-      params.elements[0] && 
-      params.elements[0].type === "symbol" && 
-      (params.elements[0] as SymbolNode).name === "params") {
-    result.push({
-      name: "params",
-      isNamed: true
-    });
-    return result;
-  }
-  
-  for (let i = 0; i < params.elements.length; i++) {
-    const el = params.elements[i];
-    
-    if (!el) continue; // Skip undefined elements
-    
-    if (el.type === "symbol" && (el as SymbolNode).name === "&optional") {
-      continue;
-    }
-    
-    // Handle & as a rest parameter marker
-    if (el.type === "symbol" && (el as SymbolNode).name === "&") {
-      // If the next element exists, mark it as a rest parameter
-      if (i + 1 < params.elements.length) {
-        const nextEl = params.elements[i + 1];
-        if (nextEl && nextEl.type === "symbol") {
-          result.push({
-            name: (nextEl as SymbolNode).name,
-            isNamed: false
-          });
-          i++; // Skip the next element since we've processed it
-          continue;
-        }
-      }
-      // If there's no valid next element, skip this & token
-      continue;  
-    }
-    
-    if (el.type === "symbol") {
-      let name = (el as SymbolNode).name;
-      let isNamed = false;
-      
-      if (name.endsWith(":")) {
-        name = name.slice(0, -1);
-        isNamed = true;
-      }
-      
-      result.push({
-        name: name,
-        isNamed: isNamed
-      });
-      
-      continue;
-    }
-    
-    if (el.type === "list") {
-      const paramStruct = el as ListNode;
-      
-      // Parameter with default value: (y = 0)
-      if (paramStruct.elements && paramStruct.elements.length >= 2 &&
-          paramStruct.elements[0] && paramStruct.elements[0].type === "symbol") {
-          
-        const paramName = (paramStruct.elements[0] as SymbolNode).name;
-        
-        // Handle (name default) without explicit = (common in Lisp)
-        if (paramStruct.elements.length === 2) {
-          result.push({
-            name: paramName,
-            defaultValue: paramStruct.elements[1],
-            isNamed: false
-          });
-          continue;
-        }
-        
-        // Handle (name = default)
-        if (paramStruct.elements.length >= 3 &&
-            paramStruct.elements[1] && paramStruct.elements[1].type === "symbol" &&
-            (paramStruct.elements[1] as SymbolNode).name === "=") {
-          result.push({
-            name: paramName,
-            defaultValue: paramStruct.elements[2],
-            isNamed: false
-          });
-          continue;
-        }
-      }
-      
-      // Named parameter written as (param "name") from our new structure
-      if (paramStruct.elements && paramStruct.elements.length >= 2 && 
-          paramStruct.elements[0] && paramStruct.elements[0].type === "symbol" &&
-          (paramStruct.elements[0] as SymbolNode).name === "param" &&
-          paramStruct.elements[1] && paramStruct.elements[1].type === "literal") {
-        
-        const paramName = (paramStruct.elements[1] as LiteralNode).value as string;
-        
-        result.push({
-          name: paramName,
-          isNamed: true
-        });
-        continue;
-      }
-    }
-  }
-  return result;
-}
-
-defineMacro("fx", (node: ListNode): HQLNode => {
-  if (node.elements.length < 4) {
-    throw new Error("fx requires a name, parameter list, and body");
-  }
-  
-  const name = node.elements[1] as SymbolNode;
-  const paramList = node.elements[2] as ListNode;
-
-  // Extract parameter names from the paramList
-  const paramNames: string[] = [];
-  for (let i = 0; i < paramList.elements.length; i++) {
-    const param = paramList.elements[i];
-    if (param.type === "list") {
-      const paramNode = param as ListNode;
-      if (
-        paramNode.elements.length >= 2 &&
-        paramNode.elements[0].type === "symbol" &&
-        (paramNode.elements[0] as SymbolNode).name === "param" &&
-        paramNode.elements[1].type === "literal"
-      ) {
-        const paramName = (paramNode.elements[1] as LiteralNode).value as string;
-        paramNames.push(paramName);
-        i++; // Skip the type token
-      }
-    }
-  }
-
-  // Determine where the function body starts (skip the optional return type)
-  let bodyStart = 3;
-  if (
-    node.elements.length > 3 &&
-    (
-      (node.elements[3].type === "list" &&
-        (node.elements[3] as ListNode).elements.length > 0 &&
-        ((node.elements[3] as ListNode).elements[0] as SymbolNode).name === "->") ||
-      (node.elements[3].type === "symbol" &&
-        (node.elements[3] as SymbolNode).name === "->")
-    )
-  ) {
-    bodyStart = 4;
-  }
-  
-  const body = node.elements.slice(bodyStart);
-
-  // Create proper name-value pairs for each parameter in let-bindings
-  const letBindings: HQLNode[] = [];
-  paramNames.forEach(name => {
-    letBindings.push({ type: "symbol", name } as SymbolNode);
-    letBindings.push({
-      type: "list",
-      elements: [
-        { type: "symbol", name: "get" } as SymbolNode,
-        { type: "symbol", name: "_params0" } as SymbolNode,
-        { type: "literal", value: name } as LiteralNode
-      ]
-    } as ListNode);
-  });
-  
-  // Use a unique parameter name instead of "params"
-  const newParamList: ListNode = {
-    type: "list",
-    elements: [{ type: "symbol", name: "_params0" }]
-  };
-  // Attach the extracted parameter names as metadata so the transformer knows what keys to destructure
-  (newParamList as any).namedParamIds = paramNames;
-  
-  const result: ListNode = {
-    type: "list",
-    elements: [
-      { type: "symbol", name: "defun" } as SymbolNode,
-      { type: "symbol", name: name.name } as SymbolNode,
-      newParamList,
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "let" } as SymbolNode,
-          { type: "list", elements: letBindings } as ListNode,
-          ...body
-        ]
-      } as ListNode
-    ]
-  } as ListNode;
-  
-  return result;
-});
-
-
-// Hash-map macro - Convert keyword-value pairs to object literals
-defineMacro("hash-map", (node: ListNode): HQLNode => {
-  // The transformer converts this directly to object literals,
-  // so just return as is for proper handling
-  return node;
-});
-
-// Vector macro - Convert vector form to array literals
-defineMacro("vector", (node: ListNode): HQLNode => {
-  // Just return as is since our IR transformer handles vectors directly
-  return node;
-});
-
-// Set macro - Convert set form to new Set() constructor
-defineMacro("set", (node: ListNode): HQLNode => {
-  return {
-    type: "list",
-    elements: [
-      { type: "symbol", name: "new" } as SymbolNode,
-      { type: "symbol", name: "Set" } as SymbolNode,
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "vector" } as SymbolNode,
-          ...node.elements.slice(1)
-        ]
-      } as ListNode
-    ]
-  } as ListNode;
-});
-
-// Type annotation macro - Process #: reader macro for type annotations
-defineMacro("type-annotation", (node: ListNode): HQLNode => {
-  // This is handled during parameter processing
-  return node;
-});
-
-// Param macro - Process named parameters in function calls
-defineMacro("param", (node: ListNode): HQLNode => {
-  // Just return the parameter name for handling during function call processing
-  if (node.elements.length >= 2 && node.elements[1].type === "literal") {
-    return { type: "symbol", name: (node.elements[1] as LiteralNode).value as string } as SymbolNode;
-  }
-  return node;
-});
-
-// When macro - syntactic sugar for if with only the true branch
-defineMacro("when", (node: ListNode): HQLNode => {
-  if (node.elements.length < 3) {
-    throw new Error("when requires a condition and a body");
-  }
-  
-  const condition = node.elements[1];
-  const body = node.elements.slice(2);
-  
-  return {
-    type: "list",
-    elements: [
-      { type: "symbol", name: "if" } as SymbolNode,
-      condition,
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "do" } as SymbolNode,
-          ...body
-        ]
-      } as ListNode,
-      { type: "literal", value: null } as LiteralNode
-    ]
-  } as ListNode;
-});
-
-// Unless macro - syntactic sugar for (if (not condition) ...)
-defineMacro("unless", (node: ListNode): HQLNode => {
-  if (node.elements.length < 3) {
-    throw new Error("unless requires a condition and a body");
-  }
-  
-  const condition = node.elements[1];
-  const body = node.elements.slice(2);
-  
-  return {
-    type: "list",
-    elements: [
-      { type: "symbol", name: "if" } as SymbolNode,
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "not" } as SymbolNode,
-          condition
-        ]
-      } as ListNode,
-      {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "do" } as SymbolNode,
-          ...body
-        ]
-      } as ListNode,
-      { type: "literal", value: null } as LiteralNode
-    ]
-  } as ListNode;
-});

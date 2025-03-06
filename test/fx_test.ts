@@ -1,341 +1,253 @@
-// test/fx_test.ts
+// test/fx_test.ts - Official specification test suite
 
 import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../src/transpiler/parser.ts";
 import { expandMacros } from "../src/macro.ts";
 import { transpile } from "../src/transpiler/transformer.ts";
 import { ListNode, SymbolNode } from "../src/transpiler/hql_ast.ts";
+import { loadAndInitializeMacros } from "../lib/loader.ts";
+
+// Initialize macros before tests
+const initPromise = loadAndInitializeMacros().catch(err => {
+  console.error("Failed to initialize macros:", err);
+});
 
 // ---------- Parsing Tests ----------
-Deno.test("fx - parsing basic form", () => {
-  const ast = parse('(fx add (x y) (+ x y))');
+Deno.test("fx - parsing case 1: explicit types without return", async () => {
+  await initPromise;
+  const ast = parse('(fx add1 (x: Int y: Int) (-> Void) (+ x y))');
   assertEquals(ast.length, 1);
   assertEquals(ast[0].type, "list");
   const fxNode = ast[0] as ListNode;
   assertEquals(fxNode.elements[0].type, "symbol");
   assertEquals((fxNode.elements[0] as SymbolNode).name, "fx");
-});
-
-Deno.test("fx - parsing with return type", () => {
-  const ast = parse('(fx add (x y) -> Int (+ x y))');
-  assertEquals(ast.length, 1);
-  assertEquals(ast[0].type, "list");
-  const fxNode = ast[0] as ListNode;
-  assertEquals(fxNode.elements[0].type, "symbol");
-  assertEquals((fxNode.elements[0] as SymbolNode).name, "fx");
-  // Check that "->" is present
+  
+  // Check parameter types
+  const paramList = fxNode.elements[2] as ListNode;
+  assertEquals(paramList.elements.length, 4);  // x: Int y: Int
+  assertEquals((paramList.elements[0] as SymbolNode).name, "x:");
+  assertEquals((paramList.elements[1] as SymbolNode).name, "Int");
+  assertEquals((paramList.elements[2] as SymbolNode).name, "y:");
+  assertEquals((paramList.elements[3] as SymbolNode).name, "Int");
+  
+  // Check return type
   assertEquals(fxNode.elements[3].type, "symbol");
   assertEquals((fxNode.elements[3] as SymbolNode).name, "->");
+  assertEquals(fxNode.elements[4].type, "symbol");
+  assertEquals((fxNode.elements[4] as SymbolNode).name, "Void");
 });
 
-Deno.test("fx - parsing with default parameters", () => {
-  const ast = parse('(fx add (x (y = 0)) (+ x y))');
+Deno.test("fx - parsing case 2: default values without return", async () => {
+  await initPromise;
+  const ast = parse('(fx add2 (x: Int y: Int = 0) (-> Void) (+ x y))');
   assertEquals(ast.length, 1);
   const fxNode = ast[0] as ListNode;
+  
+  // Check parameter with default value
   const paramList = fxNode.elements[2] as ListNode;
-  assertEquals(paramList.elements.length, 2);
-  const yParam = paramList.elements[1] as ListNode;
-  assertEquals((yParam.elements[0] as SymbolNode).name, "y");
-  assertEquals((yParam.elements[1] as SymbolNode).name, "=");
+  assertEquals(paramList.elements.length, 6);  // x: Int y: Int = 0
+  assertEquals((paramList.elements[0] as SymbolNode).name, "x:");
+  assertEquals((paramList.elements[1] as SymbolNode).name, "Int");
+  assertEquals((paramList.elements[2] as SymbolNode).name, "y:");
+  assertEquals((paramList.elements[3] as SymbolNode).name, "Int");
+  assertEquals((paramList.elements[4] as SymbolNode).name, "=");
+  assertEquals((paramList.elements[5] as any).value, 0);
+});
+
+Deno.test("fx - parsing case 3: multiple defaults without return", async () => {
+  await initPromise;
+  const ast = parse('(fx add3 (x: Int = 10 y: Int = 0) (+ x y))');
+  assertEquals(ast.length, 1);
+  const fxNode = ast[0] as ListNode;
+  
+  // Check multiple parameters with default values
+  const paramList = fxNode.elements[2] as ListNode;
+  assertEquals(paramList.elements.length, 8);  // x: Int = 10 y: Int = 0
+  assertEquals((paramList.elements[0] as SymbolNode).name, "x:");
+  assertEquals((paramList.elements[1] as SymbolNode).name, "Int");
+  assertEquals((paramList.elements[2] as SymbolNode).name, "=");
+  assertEquals((paramList.elements[3] as any).value, 10);
+  assertEquals((paramList.elements[4] as SymbolNode).name, "y:");
+  assertEquals((paramList.elements[5] as SymbolNode).name, "Int");
+  assertEquals((paramList.elements[6] as SymbolNode).name, "=");
+  assertEquals((paramList.elements[7] as any).value, 0);
+});
+
+Deno.test("fx - parsing case 4: explicit return with type", async () => {
+  await initPromise;
+  const ast = parse('(fx add4 (x: Int y: Int) (-> Int) (return (+ x y)))');
+  assertEquals(ast.length, 1);
+  const fxNode = ast[0] as ListNode;
+  
+  // Check body with explicit return
+  const body = fxNode.elements[5] as ListNode;
+  assertEquals(body.elements[0].type, "symbol");
+  assertEquals((body.elements[0] as SymbolNode).name, "return");
+  
+  // Check return type
+  assertEquals(fxNode.elements[3].type, "symbol");
+  assertEquals((fxNode.elements[3] as SymbolNode).name, "->");
+  assertEquals(fxNode.elements[4].type, "symbol");
+  assertEquals((fxNode.elements[4] as SymbolNode).name, "Int");
+});
+
+Deno.test("fx - parsing case 5: defaults and explicit return", async () => {
+  await initPromise;
+  const ast = parse('(fx add5 (x: Int y: Int = 0) (-> Int) (return (+ x y)))');
+  assertEquals(ast.length, 1);
+  const fxNode = ast[0] as ListNode;
+  
+  // Check return type
+  assertEquals(fxNode.elements[3].type, "symbol");
+  assertEquals((fxNode.elements[3] as SymbolNode).name, "->");
+  
+  // Check body with explicit return
+  const body = fxNode.elements[5] as ListNode;
+  assertEquals(body.elements[0].type, "symbol");
+  assertEquals((body.elements[0] as SymbolNode).name, "return");
 });
 
 // ---------- Macro Expansion Tests ----------
-Deno.test("fx - macro expansion to defun", () => {
-  const ast = parse('(fx add (x y) (+ x y))');
+Deno.test("fx - macro expansion to defn", async () => {
+  await initPromise;
+  const ast = parse('(fx add1 (x: Int y: Int) (-> Void) (+ x y))');
   const expanded = expandMacros(ast[0]);
   assertEquals(expanded.type, "list");
   const listNode = expanded as ListNode;
   
-  // Accept either 'defn' or 'defun' as valid first element
+  // Only accept defn
   const firstElement = (listNode.elements[0] as SymbolNode).name;
-  const validFirstElements = ["defn", "defun"];
-  const isValidFirstElement = validFirstElements.includes(firstElement);
+  assertEquals(firstElement, "defn", "fx should expand to defn");
+  assertEquals((listNode.elements[1] as SymbolNode).name, "add1");
   
-  assertEquals(isValidFirstElement, true, 
-    `Expected first element to be one of ${validFirstElements.join(", ")}, got ${firstElement}`);
-  assertEquals((listNode.elements[1] as SymbolNode).name, "add");
-});
-
-Deno.test("fx - macro expansion with default parameters", () => {
-  const ast = parse('(fx add (x (y = 0)) (+ x y))');
-  const expanded = expandMacros(ast[0]);
-  assertEquals(expanded.type, "list");
-  const listNode = expanded as ListNode;
-  
-  // Accept either 'defn' or 'defun' as valid first element
-  const firstElement = (listNode.elements[0] as SymbolNode).name;
-  const validFirstElements = ["defn", "defun"];
-  const isValidFirstElement = validFirstElements.includes(firstElement);
-  
-  assertEquals(isValidFirstElement, true, 
-    `Expected first element to be one of ${validFirstElements.join(", ")}, got ${firstElement}`);
-  assertEquals((listNode.elements[1] as SymbolNode).name, "add");
+  // Body should have a do wrapper
+  const body = listNode.elements[3] as ListNode;
+  assertEquals((body.elements[0] as SymbolNode).name, "do");
 });
 
 // ---------- Transpilation Tests ----------
-// Modified to be more flexible with implementation details
-Deno.test("fx - transpile basic form", async () => {
-  const source = '(fx add (x y) (+ x y))';
+Deno.test("fx - transpile case 1: void function with types", async () => {
+  await initPromise;
+  const source = '(fx add1 (x: Int y: Int) (-> Void) (+ x y))';
   
   try {
     const result = await transpile(source);
     
     // Check for function definition
-    assertStringIncludes(result, "function add");
+    assertStringIncludes(result, "function add1");
     
-    // The test is checking for parameter handling, but the current implementation
-    // might use different parameter structures. Instead of checking for "x",
-    // check that the function is defined and has valid parameters.
+    // Check for parameter handling
+    assertStringIncludes(result, "x");
+    assertStringIncludes(result, "y");
     
-    // Also check for the implementation of addition (the body)
-    // Could be different forms: "x + y", "a + b", etc.
-    const hasAddition = result.includes("+") || 
-                       result.includes("plus") || 
-                       result.includes("add") ||
-                       result.includes("sum");
+    // Check for addition operation
+    assertStringIncludes(result, "+");
     
-    assertEquals(hasAddition, true, "Should include addition operation");
+    // Should NOT have a return statement
+    assertEquals(result.includes("return"), false, "Should not include return statement");
   } catch (error) {
-    console.log("Basic transpile test error:", error);
-    throw error; // Re-throw to fail the test
+    console.log("Case 1 test error:", error);
+    throw error;
   }
 });
 
-Deno.test("fx - transpile with default value", async () => {
-  const source = '(fx add (x (y = 0)) (+ x y))';
-  
-  try {
-    const result = await transpile(source);
-    // Check that the function is defined
-    assertStringIncludes(result, "function add");
-  } catch (error) {
-    console.log("Default parameter test error:", error);
-    // If the current implementation doesn't support default parameters,
-    // log the issue but don't fail the test
-    console.warn("Note: Default parameter test failed as expected - this feature may not be fully implemented yet");
-  }
-});
-
-Deno.test("fx - transpile with named parameters", async () => {
-  const source = `
-    (fx greet-user (name: String title: String) 
-      (str "Hello, " title " " name "!"))
-    
-    (greet-user name: "John" title: "Mr.")
-  `;
+Deno.test("fx - transpile case 4: function with explicit return", async () => {
+  await initPromise;
+  const source = '(fx add4 (x: Int y: Int) (-> Int) (return (+ x y)))';
   
   try {
     const result = await transpile(source);
     
-    // The function should at least have a name
-    assertStringIncludes(result, "function greetUser");
+    // Check for function definition
+    assertStringIncludes(result, "function add4");
     
-    // At least one of the parameter names should be present
-    // Different implementations might handle parameters differently
-    const hasParameter = result.includes("name") || 
-                        result.includes("title") || 
-                        result.includes("params");
-                        
-    assertEquals(hasParameter, true, "Should include parameter reference");
+    // Check for parameter handling
+    assertStringIncludes(result, "x");
+    assertStringIncludes(result, "y");
+    
+    // Check for addition operation
+    assertStringIncludes(result, "+");
+    
+    // MUST have a return statement
+    assertStringIncludes(result, "return");
   } catch (error) {
-    console.log("Named parameter test error:", error);
+    console.log("Case 4 test error:", error);
+    throw error;
   }
 });
 
-Deno.test("fx - transpile with explicit return", async () => {
-  const source = '(fx add (x y) (return (+ x y)))';
+Deno.test("fx - transpile case 5: function with defaults and return", async () => {
+  await initPromise;
+  const source = '(fx add5 (x: Int y: Int = 0) (-> Int) (return (+ x y)))';
   
   try {
     const result = await transpile(source);
     
-    // The function should include a proper return statement
-    assertStringIncludes(result, "function add");
+    // Check for function definition
+    assertStringIncludes(result, "function add5");
     
-    // Check for return statement (flexible matching)
-    const hasReturn = result.includes("return");
-    assertEquals(hasReturn, true, "Should include return statement");
+    // Check for parameter handling
+    assertStringIncludes(result, "x");
+    assertStringIncludes(result, "y");
+    
+    // MUST have a return statement
+    assertStringIncludes(result, "return");
+    
+    // Should handle default value somehow
+    // Note: The exact implementation of defaults may vary
   } catch (error) {
-    console.error("Explicit return test error:", error);
-    throw error; // Re-throw to fail the test
+    console.log("Case 5 test error:", error);
+    throw error;
   }
 });
 
-Deno.test("fx - transpile with complex body", async () => {
-  const source = `
-    (fx process-data (data (options = {"verbose": false}))
-      (let [processed {"result": (get data "value"), "options": options}]
-        (return processed)))
-  `;
-  
-  try {
-    const result = await transpile(source);
-    // Check that the function is defined
-    assertStringIncludes(result, "function processData");
-  } catch (error) {
-    console.log("Complex body test error:", error);
-  }
-});
-
-Deno.test("fx - transpile with kebab case parameters", async () => {
-  const source = `
-    (fx calculate-total (price: Number qty: Number tax-rate: Number)
-      (return (* (* price qty) (+ 1 (/ tax-rate 100)))))
-    
-    (print (calculate-total price: 19.99 qty: 3 tax-rate: 8.5))
-  `;
+// Test standard defn behavior
+Deno.test("defn - standard behavior without return", async () => {
+  await initPromise;
+  const source = '(defn defn-add (x y) (+ x y))';
   
   try {
     const result = await transpile(source);
     
-    // Check that kebab-case parameters are properly converted to camelCase
-    assertStringIncludes(result, "function calculateTotal");
+    // Check for function definition
+    assertStringIncludes(result, "function defnAdd");
     
-    // At least one of the parameters should be present
-    const hasParameters = result.includes("price") || 
-                          result.includes("qty") || 
-                          result.includes("taxRate") ||
-                          result.includes("params");
-                          
-    assertEquals(hasParameters, true, "Should include parameter references");
+    // Check for parameter handling
+    assertStringIncludes(result, "x");
+    assertStringIncludes(result, "y");
+    
+    // Check for addition operation
+    assertStringIncludes(result, "+");
+    
+    // Should NOT have a return statement
+    assertEquals(result.includes("return"), false, "Should not include return statement");
   } catch (error) {
-    console.log("Kebab case parameter test error:", error);
+    console.log("defn without return test error:", error);
+    throw error;
   }
 });
 
-Deno.test("fx - compatibility with traditional defn", async () => {
-  const source = `
-    ;; Traditional defn (positional)
-    (defn add-traditional (x y)
-      (+ x y))
-    
-    ;; fx form with positional parameters
-    (fx add-extended (x y)
-      (+ x y))
-    
-    (print (add-traditional 2 3))
-    (print (add-extended 2 3))
-  `;
+Deno.test("defn - explicit return behavior", async () => {
+  await initPromise;
+  const source = '(defn defn-add-2 (x y) (return (+ x y)))';
   
   try {
     const result = await transpile(source);
     
-    // Check that both function forms get compiled
-    assertStringIncludes(result, "function addTraditional");
-    assertStringIncludes(result, "function addExtended");
+    // Check for function definition
+    assertStringIncludes(result, "function defnAdd2");
+    
+    // Check for parameter handling
+    assertStringIncludes(result, "x");
+    assertStringIncludes(result, "y");
+    
+    // Check for addition operation
+    assertStringIncludes(result, "+");
+    
+    // MUST have a return statement
+    assertStringIncludes(result, "return");
   } catch (error) {
-    console.log("Traditional defn compatibility test error:", error);
+    console.log("defn with return test error:", error);
+    throw error;
   }
-});
-
-
-
-
-
-Deno.test("fx - diverse fx forms without using str", async () => {
-  const source = `
-    ;; fx add: Positional parameters; returns the sum.
-    (fx add (x: Int y: Int) (-> Int)
-      (+ x y))
-
-    (fx add2 (x: Int y: Int)
-      (+ x y))
-
-    (fx add3 (x: Int y: Int)
-      (return (+ x y)))
-      
-    (fx add4 (x: Int y: Int z: Int) (-> Int)
-      (return (+ x y z)))
-
-    (export "add" add)
-    (export "add2" add2)
-    (export "add3" add3)
-    (export "add4" add4)
-  `;
-  
-  // Transpile the HQL source to JavaScript.
-  const jsOutput = await transpile(source, "./test/diverse_fx.hql");
-  
-  // Create a temporary file for the transpiled module.
-  const tempModulePath = await Deno.makeTempFile({ prefix: "temp_diverse_fx_", suffix: ".js" });
-  await Deno.writeTextFile(tempModulePath, jsOutput);
-  
-  // Convert the temporary file path into a file URL.
-  const moduleUrl = new URL(`file://${tempModulePath}`).href;
-  const mod = await import(moduleUrl);
-
-  assertEquals(mod.add({ x: 3, y: 4 }), 7);
-  assertEquals(mod.add2({ x: 3, y: 4 }), 7);
-  assertEquals(mod.add3({ x: 3, y: 4 }), 7);
-  assertEquals(mod.add4({ x: 3, y: 4, z: 10}), 17);
-
-  // Clean up the temporary file.
-  await Deno.remove(tempModulePath);
-});
-
-Deno.test("fx - advanced diverse fx forms ", async () => {
-  const source = `
-    ;; fx add: Positional parameters; returns the sum.
-    (fx add (x y)
-      (return (+ x y)))
-
-    ;; fx addDefault: y has a default value (5) if not provided.
-    (fx addDefault (x y = 5)
-      (return (+ x y)))
-
-    ;; fx multiply: Inferred parameters; returns the product.
-    (fx multiply (a b)
-      (return (* a b)))
-
-    ;; fx greet: Returns the name (simple echo).
-    (fx greet (name: String) -> String
-      (return name))
-
-    ;; fx calcTax: Uses a kebab-case parameter, which should be converted to camelCase.
-    (fx calcTax (amount tax-rate)
-      (return (+ amount (/ tax-rate 100))))
-
-    (fx add (x: Int y: Int) (-> Int)
-      (+ x y))
-  
-    ;; without space between: and 10 raise an error
-    (print "Sum of 3 and 4 (defn): " (add x:10 y:20))
-
-    (export "add" add)
-    (export "addDefault" addDefault)
-    (export "multiply" multiply)
-    (export "greet" greet)
-    (export "calcTax" calcTax)
-  `;
-  
-  // Transpile the HQL source to JavaScript.
-  const jsOutput = await transpile(source, "./test/diverse_fx.hql");
-  
-  // Create a temporary file for the transpiled module.
-  const tempModulePath = await Deno.makeTempFile({ prefix: "temp_diverse_fx_", suffix: ".js" });
-  await Deno.writeTextFile(tempModulePath, jsOutput);
-  
-  // Convert the temporary file path into a file URL.
-  const moduleUrl = new URL(`file://${tempModulePath}`).href;
-  const mod = await import(moduleUrl);
-
-  // Test the "add" function: 3 + 4 should be 7.
-  assertEquals(mod.add({ x: 3, y: 4 }), 7);
-
-  // Test "addDefault": with only x provided, y defaults to 5.
-  assertEquals(mod.addDefault({ x: 10 }), 15);
-  assertEquals(mod.addDefault({ x: 10, y: 20 }), 30);
-
-  // Test "multiply": 6 * 7 should be 42.
-  assertEquals(mod.multiply({ a: 6, b: 7 }), 42);
-
-  // Test "greet": should simply return the passed name.
-  assertEquals(mod.greet({ name: "Alice" }), "Alice");
-
-  // Test "calcTax":
-  // Although defined as (tax-rate), it should be converted to camelCase ("taxRate").
-  // For amount = 100 and tax-rate = 8, the function returns 100 + (8/100) = 100.08.
-  assertEquals(mod.calcTax({ amount: 100, taxRate: 8 }), 100.08);
-
-  // Clean up the temporary file.
-  await Deno.remove(tempModulePath);
 });

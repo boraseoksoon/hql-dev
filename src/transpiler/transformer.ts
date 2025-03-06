@@ -105,6 +105,12 @@ async function ensureMacrosInitialized(): Promise<void> {
  * Transform HQL AST to JavaScript code with better error handling.
  * Main entry point for the transformation pipeline.
  */
+// src/transpiler/transformer.ts - Fix to ensure macros are expanded
+
+/**
+ * Transform HQL AST to JavaScript code with better error handling.
+ * Main entry point for the transformation pipeline.
+ */
 export async function transformAST(
   nodes: HQLNode[],
   currentDir: string,
@@ -125,7 +131,7 @@ export async function transformAST(
     // Ensure macros are initialized
     await ensureMacrosInitialized();
     
-    // Step 1: Expand macros on all nodes
+    // Step 1: Expand macros on all nodes - This is the important step
     const expandedNodes = nodes.map(node => {
       try {
         return expandMacros(node);
@@ -208,7 +214,6 @@ export async function transformAST(
     throw new Error(`Failed to transform HQL AST: ${errorMessage}`);
   }
 }
-
 
 /**
  * Process an import based on its type.

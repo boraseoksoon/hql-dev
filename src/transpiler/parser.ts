@@ -356,8 +356,6 @@ function parseVector(isNestedInObject = false): HQLNode {
   return { type: "list", elements };
 }
 
-
-
 function parseMap(): HQLNode {
   const startPos = pos - 1; // Position of the opening brace
 

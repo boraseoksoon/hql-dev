@@ -846,6 +846,48 @@ export function transformLet(list: ListNode, currentDir: string): IR.IRBlock {
     const nameNode = bindings[i];
     const valNode = bindings[i + 1];
     
+    // Special handling for 'destructured-params' from fx macro
+    if (nameNode.type === "symbol" && 
+        (nameNode as SymbolNode).name === "destructured-params" &&
+        valNode.type === "list") {
+      
+      const paramList = valNode as ListNode;
+      
+      // Extract parameter names from the list
+      for (const paramNode of paramList.elements) {
+        if (paramNode.type === "symbol") {
+          const paramName = (paramNode as SymbolNode).name;
+          
+          // Create destructuring for each parameter from the 'params' object
+          const paramAccess: IR.IRPropertyAccess = {
+            type: IR.IRNodeType.PropertyAccess,
+            object: { 
+              type: IR.IRNodeType.Identifier, 
+              name: "params" 
+            } as IR.IRIdentifier,
+            property: { 
+              type: IR.IRNodeType.StringLiteral, 
+              value: paramName 
+            } as IR.IRStringLiteral,
+            computed: false
+          };
+          
+          // Add the destructured variable declaration
+          declarations.push({
+            type: IR.IRNodeType.VariableDeclaration,
+            kind: "const",
+            id: { 
+              type: IR.IRNodeType.Identifier, 
+              name: paramName 
+            } as IR.IRIdentifier,
+            init: paramAccess
+          });
+        }
+      }
+      
+      continue; // Skip standard processing for this binding
+    }
+    
     // Handle destructuring case like ({ name age } obj)
     if (nameNode.type === "list") {
       const patternElements = (nameNode as ListNode).elements;

@@ -63,15 +63,15 @@
   (* x y)))
 
 ;; 3. Extended function (fx) with type annotations
-(fx calculate-area (width: Number height: Number) -> Number
+(fx calculate-area (width: Number height: Number) (-> Number)
   (* width height))
 
 ;; 4. Extended function with default parameter value
-(fx greet (name: String greeting: String = "Hello") -> String
+(fx greet (name: String greeting: String = "Hello") (-> String)
   (str greeting ", " name "!"))
 
 ;; 5. Extended function with explicit return
-(fx format-user (user: Object) -> String
+(fx format-user (user: Object) (-> String)
   (let [
     name (get user "name")
     age (get user "age")
