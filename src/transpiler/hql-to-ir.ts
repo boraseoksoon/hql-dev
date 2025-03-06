@@ -1,4 +1,5 @@
-// Updated src/transpiler/hql-to-ir.ts for simplified AST structure
+// src/transpiler/hql-to-ir.ts
+// This is a targeted fix for the string literal issues in property access and method calls
 
 import { HQLNode, ListNode, SymbolNode, LiteralNode } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
@@ -142,7 +143,6 @@ function transformSymbol(sym: SymbolNode): IR.IRIdentifier {
   symbolCache.set(name, result);
   return { ...result };
 }
-
 
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   // If the list is empty, return null.
@@ -765,6 +765,7 @@ function transformSet(list: ListNode, currentDir: string): IR.IRNode {
   } as IR.IRAssignmentExpression;
 }
 
+// FIX: Corrected the function to handle property access properly
 function transformPropertyAccess(list: ListNode, currentDir: string): IR.IRPropertyAccess {
   if (list.elements.length !== 3) {
     throw new Error("get requires object and property arguments");

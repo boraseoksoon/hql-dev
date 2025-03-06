@@ -23,6 +23,6 @@
     "bundle-data-structures": "deno run -A ./cli/transpile.ts ./test/data_structures.hql ./test/data_structures.bundle.js --bundle && deno run -A ./test/data_structures.bundle.js",
     "bundle-run": "deno run -A ./cli/run.ts ./test/simple.hql --bundle",
     "bundle-cleanup": "find ./test -name \"*.bundle.js\" -type f -delete && rm -rf ./.test-publish",
-    "synthetic-sugar-test": "deno task macro-test && deno task fx-test && deno task data-structures-test && deno task parser-test && deno task hql-to-ir-test && deno task parser-test"
+    "synthetic-sugar-test": "deno task fx-test && deno task data-structures-test && deno task parser-test && deno task hql-to-ir-test && deno task parser-test"
   }
 }

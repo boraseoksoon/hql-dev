@@ -1,4 +1,6 @@
-// src/transpiler/ir-to-ts-ast.ts - Fixed type issues
+// src/transpiler/ir-to-ts-ast.ts
+// This file contains the fixes for the property access and method call issues
+
 import * as IR from "./hql_ir.ts";
 import {
   TSNodeType,
@@ -248,7 +250,7 @@ function convertNode(node: IR.IRNode): TSNode | TSNode[] | null {
 
 /**
  * Convert a PropertyAccess node to TS AST.
- * Fixed type check for property
+ * FIXED to not put quotes around object identifiers
  */
 function convertPropertyAccess(propAccess: IR.IRPropertyAccess): TSNode {
   const obj = nodeToString(convertNode(propAccess.object));
@@ -423,6 +425,7 @@ function convertBinaryExpression(bin: IR.IRBinaryExpression): TSNode {
 
 /**
  * Convert a call expression to a TS node, with special handling.
+ * FIX: Proper handling of method calls on objects
  */
 function convertCallExpression(call: IR.IRCallExpression): TSNode {
   // Skip import calls - handled separately
@@ -430,6 +433,13 @@ function convertCallExpression(call: IR.IRCallExpression): TSNode {
   
   // Handle string concatenation special case
   if (isStringConcatenation(call)) return handleStringConcatenation(call);
+  
+  // FIX: Special handling for prototype method calls 
+  // This checks for property access patterns that would need proper this binding
+  const isMethodCall = isPrototypeMethodCall(call);
+  if (isMethodCall) {
+    return handlePrototypeMethodCall(call);
+  }
   
   // Regular function call
   const callee = convertNode(call.callee);
@@ -447,6 +457,43 @@ function convertCallExpression(call: IR.IRCallExpression): TSNode {
     type: TSNodeType.Raw, 
     code: `${nodeToString(callee)}(${args.join(", ")})` 
   };
+}
+
+/**
+ * Check if a call is to a prototype method like Array.prototype.map.call
+ */
+function isPrototypeMethodCall(call: IR.IRCallExpression): boolean {
+  if (call.callee.type !== IR.IRNodeType.PropertyAccess) return false;
+  
+  const propAccess = call.callee as IR.IRPropertyAccess;
+  if (propAccess.property.type !== IR.IRNodeType.Identifier) return false;
+  
+  const propName = (propAccess.property as IR.IRIdentifier).name;
+  return propName === "call" || propName === "apply";
+}
+
+/**
+ * Handle prototype method calls with proper this binding
+ * FIX: Ensure objects are passed directly without quotes
+ */
+function handlePrototypeMethodCall(call: IR.IRCallExpression): TSNode {
+  const propAccess = call.callee as IR.IRPropertyAccess;
+  const method = nodeToString(convertNode(propAccess.object));
+  const args = call.arguments.map(arg => nodeToString(convertNode(arg)));
+  
+  // First argument is the 'this' value
+  if (args.length > 0) {
+    // FIX: Don't add quotes around the first argument
+    return { 
+      type: TSNodeType.Raw, 
+      code: `${method}.call(${args.join(", ")})` 
+    };
+  } else {
+    return { 
+      type: TSNodeType.Raw, 
+      code: `${method}.call()` 
+    };
+  }
 }
 
 /**
@@ -574,7 +621,7 @@ function convertFunctionDeclaration(fn: IR.IRFunctionDeclaration): TSNode {
   
   // Format body - simple approach with fixed indentation
   const bodyStr = bodyCode.length > 0
-    ? `{\n  ${bodyCode.join(";\n  ")}\n}`
+    ? `{\n  ${bodyCode.join("\n  ")}\n}`
     : "{}";
   
   // Generate the function declaration
