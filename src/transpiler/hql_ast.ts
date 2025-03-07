@@ -1,12 +1,9 @@
-// src/transpiler/hql_ast.ts - Simplified to focus on core forms
-export type HQLNode = 
-  LiteralNode | 
-  SymbolNode | 
-  ListNode;
+// src/transpiler/hql_ast.ts
+export type HQLNode = LiteralNode | SymbolNode | ListNode;
 
 export interface LiteralNode {
   type: "literal";
-  value: string | number | boolean | null;
+  value: string | number;
 }
 
 export interface SymbolNode {

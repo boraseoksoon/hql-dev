@@ -1,6 +1,5 @@
 // cli/run.ts
 import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { loadStandardLibrary } from "../lib/loader.ts";
 import { transpile } from "../src/transpiler/transformer.ts";
 
 async function main() {
@@ -19,9 +18,8 @@ async function main() {
     console.log(`Transpiling HQL file: "${targetPath}"`);
   }
 
-  const preludeSource = await loadStandardLibrary();
   const userSource = await Deno.readTextFile(targetPath);
-  const combinedSource = preludeSource + "\n" + userSource;
+  const combinedSource = userSource;
   
   // Pass the verbose flag to your transpile function.
   const transpiled = await transpile(combinedSource, targetPath, {

@@ -1,6 +1,5 @@
 // cli/transpile.ts
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { loadStandardLibrary } from "../lib/loader.ts";
 import { transformAST, transpileFile } from "../src/transpiler/transformer.ts";
 import { parse } from "../src/transpiler/parser.ts";
 
@@ -31,12 +30,8 @@ async function transpileCLI(
     const outPath = outputPath ?? resolvedInputPath.replace(/\.hql$/, '.js');
     log(`Output path: ${outPath}`);
     
-    // Read user source.
     const userSource = await Deno.readTextFile(resolvedInputPath);
-    // Load the prelude.
-    const preludeSource = await loadStandardLibrary();
-    // Combine prelude and user source.
-    const combinedSource = preludeSource + "\n" + userSource;
+    const combinedSource = userSource;
     
     // Parse and transform the combined source.
     const ast = parse(combinedSource);
