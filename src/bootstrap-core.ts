@@ -1,5 +1,4 @@
-// src/bootstrap-core.ts - Adding minimal list operations for macros
-
+// src/bootstrap-core.ts - Aligned with the "macro everywhere" philosophy
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./transpiler/hql_ast.ts";
 import { jsImport, jsExport, jsGet, jsCall } from "./interop.ts";
 import { gensym } from "./gensym.ts";
@@ -36,6 +35,16 @@ export const PRIMITIVE_OPS = new Set([
   "js-import", "js-export", "js-get", "js-call",
   ...LIST_PRIMITIVES
 ]);
+
+// Export primitive implementations for code generation
+export const PRIMITIVE_IMPLEMENTATIONS = {
+  // List primitives
+  list: "function list(...args) { return args; }",
+  first: "function first(list) { if (!Array.isArray(list)) throw new Error('first requires a list'); return list[0]; }",
+  rest: "function rest(list) { if (!Array.isArray(list)) throw new Error('rest requires a list'); return list.slice(1); }",
+  cons: "function cons(item, list) { if (!Array.isArray(list)) throw new Error('cons requires a list'); return [item, ...list]; }",
+  length: "function length(list) { if (!Array.isArray(list)) throw new Error('length requires a list'); return list.length; }"
+};
 
 export class Env {
   bindings = new Map<string, any>();
@@ -173,6 +182,7 @@ export async function initializeGlobalEnv(): Promise<Env> {
  * evaluateForMacro: A minimal evaluator for bootstrapping macro expansion.
  * It handles literals, symbols, and lists with special forms:
  *  - quote: returns its argument without evaluation (KERNEL PRIMITIVE).
+ *  - if: performs conditional evaluation (KERNEL PRIMITIVE)
  *  - defmacro: registers a macro in the environment (DERIVED FORM).
  *  - Otherwise, treats the list as a function application.
  */
@@ -188,12 +198,30 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
       const first = list.elements[0];
       if (first.type === "symbol") {
         const op = (first as SymbolNode).name;
+        
+        // Handle kernel primitives
         if (op === "quote") {
           if (list.elements.length !== 2) {
             throw new Error("quote requires exactly one argument");
           }
           return list.elements[1];
         }
+        
+        // Handle if special form for macro expansion
+        if (op === "if") {
+          if (list.elements.length < 3 || list.elements.length > 4) {
+            throw new Error("if requires 2 or 3 arguments");
+          }
+          const test = evaluateForMacro(list.elements[1], env);
+          if (test) {
+            return evaluateForMacro(list.elements[2], env);
+          } else if (list.elements.length > 3) {
+            return evaluateForMacro(list.elements[3], env);
+          } else {
+            return null;
+          }
+        }
+        
         if (op === "defmacro") {
           if (list.elements.length < 4) {
             throw new Error("defmacro requires a name, parameters, and body");
@@ -225,6 +253,7 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
           env.defineMacro(macroName, macroFn);
           return makeLiteral(null);
         }
+        
         // Fallback: treat as function application.
         const func = evaluateForMacro(first, env);
         const args = list.elements.slice(1).map(e => evaluateForMacro(e, env));

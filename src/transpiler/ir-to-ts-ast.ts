@@ -293,10 +293,19 @@ function convertExportNamedDeclaration(node: IR.IRExportNamedDeclaration): TS.TS
 }
 
 function convertExportVariableDeclaration(node: IR.IRExportVariableDeclaration): TS.TSNamedExport {
+  // Original export name (may contain hyphens)
+  const originalExportName = node.exportName;
+  
+  // First, create the variable declaration
+  const varDecl = convertVariableDeclaration(node.declaration) as TS.TSVariableDeclaration;
+  
+  // Create a named export that uses computed property syntax to preserve hyphens
   return {
     type: TS.TSNodeType.NamedExport,
-    variableDeclaration: convertVariableDeclaration(node.declaration) as TS.TSVariableDeclaration,
-    exportName: node.exportName
+    variableDeclaration: varDecl,
+    exportName: originalExportName,
+    // Indicate this requires computed property syntax for hyphens
+    useComputedProperty: originalExportName.includes('-')
   };
 }
 

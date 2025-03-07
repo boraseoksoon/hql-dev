@@ -1,4 +1,4 @@
-;; lib/core.hql - Core macros for HQL
+;; lib/core.hql - All verified macros combined
 
 ;; Define defn: For now, support a single-expression body.
 (defmacro defn (name params body)
@@ -12,12 +12,7 @@
 (defmacro export (name value)
   (list (quote js-export) name value))
 
-;; when: Just an alias for if
-;; This simply expands to the core if form
-(defmacro when (test then-expr else-expr)
-  (list (quote if) test then-expr else-expr))
-
-  ;; or: Return first truthy expression or last expression
+;; or: Return first truthy expression or last expression
 (defmacro or (a b)
   (list (quote if) a a b))
 
@@ -29,19 +24,15 @@
 (defmacro not (expr)
   (list (quote if) expr (quote 0) (quote 1)))
 
-;; Flow control macros
-
-;; cond: Multi-branch conditional, like a series of if/else-if/else
-;; Usage: (cond (test1 result1) (test2 result2) (else default))
-(defmacro cond (first-pair second-pair)
-  (list (quote if) 
-        (first first-pair)
-        (second first-pair)
-        (if (= (first second-pair) (quote else))
-            (second second-pair)
-            (list (quote cond) second-pair (quote (else 0))))))
-
 ;; do: Execute multiple expressions and return the last one
-;; Usage: (do expr1 expr2 expr3)
+;; Expands to an immediately-invoked function expression
 (defmacro do (first-expr second-expr)
-  (list (quote (fn [] first-expr second-expr))))
+  (list (list (quote fn) (list) first-expr second-expr)))
+
+;; cond: Simple conditional with two branches
+;; Usage: (cond (test1 result1) (test2 result2))
+(defmacro cond (test-result1 test-result2)
+  (list (quote if) 
+        (first test-result1) 
+        (second test-result1)
+        (second test-result2)))

@@ -1,4 +1,4 @@
-// src/transpiler/ts-ast-to-code.ts
+// src/transpiler/ts-ast-to-code.ts - No options, simple and direct
 import * as TS from "./ts-ast-types.ts";
 
 export function generateTypeScript(ast: TS.TSSourceFile): string {
@@ -7,7 +7,7 @@ export function generateTypeScript(ast: TS.TSSourceFile): string {
 }
 
 class CodeGenContext {
-  // Hard-coded settings for now.
+  // Hard-coded settings - no options needed
   private indentLevel = 0;
   private indentSize = 2;
   private useSpaces = true;

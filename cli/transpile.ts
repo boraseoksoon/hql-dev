@@ -1,4 +1,5 @@
-// cli/transpile.ts - Transpiles HQL to JavaScript
+// cli/transpile.ts - ESM-only version
+
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { parse } from "../src/transpiler/parser.ts";
 import { transformAST } from "../src/transpiler/transformer.ts";
@@ -16,7 +17,6 @@ export async function transpileCLI(
   options: { 
     bundle?: boolean; 
     verbose?: boolean;
-    module?: "esm" | "commonjs";
   } = {}
 ): Promise<void> {
   try {
@@ -38,7 +38,6 @@ export async function transpileCLI(
     // Transform with macro expansion enabled
     const dir = dirname(resolvedInputPath);
     const transformed = await transformAST(ast, dir, {
-      module: options.module || 'esm',
       bundle: options.bundle,
       verbose: options.verbose
     });
@@ -73,7 +72,6 @@ async function watchFile(
   options: { 
     bundle?: boolean; 
     verbose?: boolean;
-    module?: "esm" | "commonjs";
   } = {}
 ): Promise<void> {
   log(`Watching ${inputPath} for changes...`);
@@ -103,7 +101,7 @@ async function watchFile(
 if (import.meta.main) {
   const args = Deno.args;
   if (args.length < 1) {
-    console.error("Usage: deno run -A cli/transpile.ts <input.hql> [output.js] [--watch] [--bundle] [--format=esm|commonjs] [--verbose]");
+    console.error("Usage: deno run -A cli/transpile.ts <input.hql> [output.js] [--watch] [--bundle] [--verbose]");
     Deno.exit(1);
   }
   
@@ -112,7 +110,6 @@ if (import.meta.main) {
   let watch = false;
   let bundle = false;
   let verbose = false;
-  let format: "esm" | "commonjs" = "esm";
   
   if (args.length > 1 && !args[1].startsWith('--')) {
     outputPath = args[1];
@@ -122,7 +119,6 @@ if (import.meta.main) {
     if (arg === '--watch') watch = true;
     if (arg === '--bundle') bundle = true;
     if (arg === '--verbose') verbose = true;
-    if (arg === '--format=commonjs') format = "commonjs";
   }
   
   // Set the environment flag for verbose logging
@@ -136,8 +132,8 @@ if (import.meta.main) {
   }
   
   if (watch) {
-    watchFile(inputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
+    watchFile(inputPath, { bundle, verbose }).catch(() => Deno.exit(1));
   } else {
-    transpileCLI(inputPath, outputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
+    transpileCLI(inputPath, outputPath, { bundle, verbose }).catch(() => Deno.exit(1));
   }
 }

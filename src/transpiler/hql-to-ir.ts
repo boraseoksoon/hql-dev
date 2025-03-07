@@ -1,8 +1,9 @@
 // src/transpiler/hql-to-ir.ts
 
-import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import { KERNEL_PRIMITIVES, PRIMITIVE_OPS } from "../bootstrap-core.ts";
+import { sanitizeIdentifier } from "../utils.ts";
 
 /**
  * Transform an array of HQL AST nodes into an IR program.
@@ -244,7 +245,16 @@ function transformJsExport(list: ListNode, currentDir: string): IR.IRNode {
   }
   
   // Extract the export name as a string literal.
-  const exportName = extractStringLiteral(list.elements[1]);
+  let exportName: string;
+  try {
+    exportName = extractStringLiteral(list.elements[1]);
+  } catch (error) {
+    throw new Error(`js-export name must be a string literal: ${error.message}`);
+  }
+  
+  // Create a sanitized variable name for the export
+  const safeExportName = sanitizeIdentifier(exportName);
+  
   // Transform the exported value.
   const value = transformNode(list.elements[2], currentDir)!;
   
@@ -255,13 +265,20 @@ function transformJsExport(list: ListNode, currentDir: string): IR.IRNode {
       specifiers: [{
         type: IR.IRNodeType.ExportSpecifier,
         local: value as IR.IRIdentifier,
-        exported: { type: IR.IRNodeType.Identifier, name: exportName } as IR.IRIdentifier
+        exported: { 
+          type: IR.IRNodeType.Identifier, 
+          name: safeExportName 
+        } as IR.IRIdentifier
       }]
     } as IR.IRExportNamedDeclaration;
   }
   
   // Otherwise, create a temporary variable and export it.
-  const tempId: IR.IRIdentifier = { type: IR.IRNodeType.Identifier, name: `export_${exportName}` };
+  const tempId: IR.IRIdentifier = { 
+    type: IR.IRNodeType.Identifier, 
+    name: `export_${safeExportName}` 
+  };
+  
   return {
     type: IR.IRNodeType.ExportVariableDeclaration,
     declaration: {
@@ -273,10 +290,9 @@ function transformJsExport(list: ListNode, currentDir: string): IR.IRNode {
         init: value
       }]
     },
-    exportName
+    exportName: safeExportName
   } as IR.IRExportVariableDeclaration;
 }
-
 
 function transformJsNew(list: ListNode, currentDir: string): IR.IRNode {
   if (list.elements.length < 2) {
@@ -365,6 +381,8 @@ function transformJsGetInvoke(list: ListNode, currentDir: string): IR.IRNode {
   }
 }
 
+// Extract from hql-to-ir.ts - Fixed comparison operators handling
+
 function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
   const op = (list.elements[0] as SymbolNode).name;
   const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
@@ -418,16 +436,46 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
         right: args[1],
       } as IR.IRBinaryExpression;
     }
-    case "<":
-    case ">":
-    case "<=":
+    case "<": {
+      if (args.length !== 2) {
+        throw new Error(`${op} requires exactly 2 arguments`);
+      }
+      return {
+        type: IR.IRNodeType.BinaryExpression,
+        operator: "<",
+        left: args[0],
+        right: args[1],
+      } as IR.IRBinaryExpression;
+    }
+    case ">": {
+      if (args.length !== 2) {
+        throw new Error(`${op} requires exactly 2 arguments`);
+      }
+      return {
+        type: IR.IRNodeType.BinaryExpression,
+        operator: ">",
+        left: args[0],
+        right: args[1],
+      } as IR.IRBinaryExpression;
+    }
+    case "<=": {
+      if (args.length !== 2) {
+        throw new Error(`${op} requires exactly 2 arguments`);
+      }
+      return {
+        type: IR.IRNodeType.BinaryExpression,
+        operator: "<=",
+        left: args[0],
+        right: args[1],
+      } as IR.IRBinaryExpression;
+    }
     case ">=": {
       if (args.length !== 2) {
         throw new Error(`${op} requires exactly 2 arguments`);
       }
       return {
         type: IR.IRNodeType.BinaryExpression,
-        operator: op,
+        operator: ">=",
         left: args[0],
         right: args[1],
       } as IR.IRBinaryExpression;

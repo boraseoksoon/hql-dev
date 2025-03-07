@@ -1,16 +1,23 @@
-// src/transpiler/transformer.ts - Simplified transformer with macro expansion
+// src/transpiler/transformer.ts - Clean version without utility functions
 
 import { parse } from "./parser.ts";
 import { transformToIR } from "./hql-to-ir.ts";
 import { convertIRToTSAST } from "./ir-to-ts-ast.ts";
-import { generateTypeScript, CodeGenerationOptions } from "./ts-ast-to-code.ts";
+import { generateTypeScript } from "./ts-ast-to-code.ts";
 import { dirname, resolve } from "../platform/platform.ts";
 import { expandMacros } from "../macro-expander.ts";
 import { HQLNode } from "./hql_ast.ts";
 
+// Minimal runtime functions - only what's absolutely necessary
+const RUNTIME_FUNCTIONS = `
+// HQL Runtime Functions
+function list(...args) {
+  return args;
+}
+`;
+
 export interface TransformOptions {
   verbose?: boolean;
-  module?: "esm" | "commonjs";
   bundle?: boolean;
 }
 
@@ -37,15 +44,10 @@ export async function transformAST(
     const tsAST = convertIRToTSAST(ir);
     
     // Step 4: Generate TypeScript code
-    const codeOptions: CodeGenerationOptions = {
-      indentSize: 2,
-      useSpaces: true,
-      formatting: "standard",
-      module: options.module || "esm"
-    };
+    const tsCode = generateTypeScript(tsAST);
     
-    const tsCode = generateTypeScript(tsAST, codeOptions);
-    return tsCode;
+    // Step 5: Prepend the runtime functions
+    return RUNTIME_FUNCTIONS + tsCode;
   } catch (error) {
     console.error("Transformation error:", error);
     throw error;
@@ -62,7 +64,6 @@ export async function transpile(
 ): Promise<string> {
   try {
     // Parse the HQL source into an AST
-    
     const astNodes = parse(source);
 
     if (options.verbose) {
