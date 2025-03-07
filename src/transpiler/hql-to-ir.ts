@@ -2,7 +2,7 @@
 
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
-import { CORE_FORMS, PRIMITIVE_OPS } from "../bootstrap-core.ts";
+import { KERNEL_PRIMITIVES, PRIMITIVE_OPS } from "../bootstrap-core.ts";
 
 /**
  * Transform an array of HQL AST nodes into an IR program.
@@ -66,16 +66,22 @@ export function transformList(list: ListNode, currentDir: string): IR.IRNode | n
   
   const op = (first as SymbolNode).name;
   
-  // Handle core forms
+  // Handle kernel primitives first
+  if (KERNEL_PRIMITIVES.has(op)) {
+    switch (op) {
+      case "quote":
+        return transformQuote(list, currentDir);
+      case "if":
+        return transformIf(list, currentDir);
+      case "fn":
+        return transformFn(list, currentDir);
+      case "def":
+        return transformDef(list, currentDir);
+    }
+  }
+  
+  // Handle JS interop primitives
   switch (op) {
-    case "quote":
-      return transformQuote(list, currentDir);
-    case "if":
-      return transformIf(list, currentDir);
-    case "fn":
-      return transformFn(list, currentDir);
-    case "def":
-      return transformDef(list, currentDir);
     case "js-import":
       return transformJsImport(list, currentDir);
     case "js-export":
@@ -216,7 +222,7 @@ function transformDef(list: ListNode, currentDir: string): IR.IRNode {
   } as IR.IRVariableDeclaration;
 }
 
-// NEW: Transform a js-import expression into an IRJsImportReference.
+// Transform a js-import expression into an IRJsImportReference.
 function transformJsImport(list: ListNode, currentDir: string): IR.IRNode {
   if (list.elements.length !== 2) {
     throw new Error("js-import requires exactly 1 argument");
@@ -231,8 +237,6 @@ function transformJsImport(list: ListNode, currentDir: string): IR.IRNode {
     throw new Error(`js-import source must be a string literal or quoted string: ${error.message}`);
   }
 }
-
-// In src/transpiler/hql-to-ir.ts
 
 function transformJsExport(list: ListNode, currentDir: string): IR.IRNode {
   if (list.elements.length !== 3) {
@@ -364,11 +368,12 @@ function transformJsGetInvoke(list: ListNode, currentDir: string): IR.IRNode {
 function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
   const op = (list.elements[0] as SymbolNode).name;
   const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
+
   switch (op) {
     case "+":
     case "-":
     case "*":
-    case "/":
+    case "/": {
       if (args.length === 0) {
         throw new Error(`${op} requires at least one argument`);
       }
@@ -376,7 +381,7 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
         return {
           type: IR.IRNodeType.UnaryExpression,
           operator: op,
-          argument: args[0]
+          argument: args[0],
         } as IR.IRUnaryExpression;
       }
       let result = args[0];
@@ -385,12 +390,13 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
           type: IR.IRNodeType.BinaryExpression,
           operator: op,
           left: result,
-          right: args[i]
+          right: args[i],
         } as IR.IRBinaryExpression;
       }
       return result;
+    }
     case "=":
-    case "eq?":
+    case "eq?": {
       if (args.length !== 2) {
         throw new Error(`${op} requires exactly 2 arguments`);
       }
@@ -398,9 +404,10 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
         type: IR.IRNodeType.BinaryExpression,
         operator: "===",
         left: args[0],
-        right: args[1]
+        right: args[1],
       } as IR.IRBinaryExpression;
-    case "!=":
+    }
+    case "!=": {
       if (args.length !== 2) {
         throw new Error(`${op} requires exactly 2 arguments`);
       }
@@ -408,12 +415,13 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
         type: IR.IRNodeType.BinaryExpression,
         operator: "!==",
         left: args[0],
-        right: args[1]
+        right: args[1],
       } as IR.IRBinaryExpression;
+    }
     case "<":
     case ">":
     case "<=":
-    case ">=":
+    case ">=": {
       if (args.length !== 2) {
         throw new Error(`${op} requires exactly 2 arguments`);
       }
@@ -421,14 +429,16 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
         type: IR.IRNodeType.BinaryExpression,
         operator: op,
         left: args[0],
-        right: args[1]
+        right: args[1],
       } as IR.IRBinaryExpression;
-    default:
+    }
+    default: {
       return {
         type: IR.IRNodeType.CallExpression,
         callee: { type: IR.IRNodeType.Identifier, name: op } as IR.IRIdentifier,
-        arguments: args
+        arguments: args,
       } as IR.IRCallExpression;
+    }
   }
 }
 

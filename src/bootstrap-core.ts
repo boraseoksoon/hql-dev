@@ -4,7 +4,27 @@ import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./transpiler/hql_ast
 import { jsImport, jsExport, jsGet, jsCall } from "./interop.ts";
 import { gensym } from "./gensym.ts";
 
-export const CORE_FORMS = new Set(["quote", "if", "fn", "def", "defmacro"]);
+/**
+ * KERNEL_PRIMITIVES are irreducible forms that cannot be defined in terms of each other.
+ * These represent the absolute minimal core of the language.
+ */
+export const KERNEL_PRIMITIVES = new Set(["quote", "if", "fn", "def"]);
+
+/**
+ * DERIVED_FORMS are forms that could theoretically be implemented as macros,
+ * but are currently handled directly by the evaluator for bootstrap purposes.
+ */
+export const DERIVED_FORMS = new Set(["defmacro"]);
+
+/**
+ * CORE_FORMS includes both kernel primitives and bootstrap derived forms.
+ */
+export const CORE_FORMS = new Set([...KERNEL_PRIMITIVES, ...DERIVED_FORMS]);
+
+/**
+ * PRIMITIVE_OPS are primitive operations that are provided directly
+ * in the environment for efficiency and implementation simplicity.
+ */
 export const PRIMITIVE_OPS = new Set([
   "+", "-", "*", "/", "=",
   "js-import", "js-export", "js-get", "js-call"
@@ -109,8 +129,8 @@ export async function initializeGlobalEnv(): Promise<Env> {
 /**
  * evaluateForMacro: A minimal evaluator for bootstrapping macro expansion.
  * It handles literals, symbols, and lists with special forms:
- *  - quote: returns its argument without evaluation.
- *  - defmacro: registers a macro in the environment.
+ *  - quote: returns its argument without evaluation (KERNEL PRIMITIVE).
+ *  - defmacro: registers a macro in the environment (DERIVED FORM).
  *  - Otherwise, treats the list as a function application.
  */
 export function evaluateForMacro(expr: HQLNode, env: Env): any {

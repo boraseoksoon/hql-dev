@@ -11,3 +11,8 @@
 ;; Define export: expands (export "name" value) into (js-export "name" value)
 (defmacro export (name value)
   (list (quote js-export) name value))
+
+;; when: Just an alias for if
+;; This simply expands to the core if form
+(defmacro when (test then-expr else-expr)
+  (list (quote if) test then-expr else-expr))
