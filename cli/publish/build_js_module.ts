@@ -1,6 +1,6 @@
 // cli/publish/build_js_module.ts - Improved with better logging and error handling
 
-import transpileCLI from "../transpile.ts";
+import { transpileCLI } from "../transpile.ts";
 import { join, resolve, dirname, basename } from "../../src/platform/platform.ts";
 import { exists, emptyDir, copy, ensureDir } from "jsr:@std/fs@1.0.13";
 

@@ -1,16 +1,16 @@
-// cli/transpile.ts
+// cli/transpile.ts - Transpiles HQL to JavaScript
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { transformAST, transpileFile } from "../src/transpiler/transformer.ts";
 import { parse } from "../src/transpiler/parser.ts";
+import { transformAST } from "../src/transpiler/transformer.ts";
 
-// A conditional log function that only prints when verbose logging is enabled.
+// A conditional log function that only prints when verbose logging is enabled
 function log(message: string) {
   if (Deno.env.get("HQL_DEBUG") === "1") {
     console.log(message);
   }
 }
 
-async function transpileCLI(
+export async function transpileCLI(
   inputPath: string, 
   outputPath?: string, 
   options: { 
@@ -22,21 +22,22 @@ async function transpileCLI(
   try {
     log(`Transpiling ${inputPath}...`);
     
-    // Resolve the input path.
+    // Resolve the input path
     const resolvedInputPath = resolve(inputPath);
     log(`Resolved input path: ${resolvedInputPath}`);
     
-    // Determine output path.
+    // Determine output path
     const outPath = outputPath ?? resolvedInputPath.replace(/\.hql$/, '.js');
     log(`Output path: ${outPath}`);
     
     const userSource = await Deno.readTextFile(resolvedInputPath);
-    const combinedSource = userSource;
     
-    // Parse and transform the combined source.
-    const ast = parse(combinedSource);
+    // Parse the HQL source
+    const ast = parse(userSource);
+    
+    // Transform with macro expansion enabled
     const dir = dirname(resolvedInputPath);
-    const transformed = await transformAST(ast, dir, new Set(), {
+    const transformed = await transformAST(ast, dir, {
       module: options.module || 'esm',
       bundle: options.bundle,
       verbose: options.verbose
@@ -46,6 +47,7 @@ async function transpileCLI(
     log(`Successfully transpiled ${inputPath} -> ${outPath}`);
   } catch (error: any) {
     console.error(`Transpilation failed: ${error.message}`);
+    throw error;
   }
 }
 
@@ -77,22 +79,16 @@ async function watchFile(
   log(`Watching ${inputPath} for changes...`);
   
   try {
-    if (options.bundle) {
-      await transpileFile(inputPath, undefined, options);
-    } else {
-      await transpileCLI(inputPath, undefined, options);
-    }
+    // Initial transpilation
+    await transpileCLI(inputPath, undefined, options);
     
+    // Watch for changes
     const watcher = Deno.watchFs(inputPath);
     for await (const event of watcher) {
       if (event.kind === 'modify') {
         try {
           log(`File changed, retranspiling...`);
-          if (options.bundle) {
-            await transpileFile(inputPath, undefined, options);
-          } else {
-            await transpileCLI(inputPath, undefined, options);
-          }
+          await transpileCLI(inputPath, undefined, options);
         } catch (error: any) {
           console.error(`Transpilation failed: ${error.message}`);
         }
@@ -129,7 +125,7 @@ if (import.meta.main) {
     if (arg === '--format=commonjs') format = "commonjs";
   }
   
-  // Set the environment flag for verbose logging.
+  // Set the environment flag for verbose logging
   if (verbose) {
     Deno.env.set("HQL_DEBUG", "1");
     console.log("Verbose logging enabled");
@@ -142,10 +138,6 @@ if (import.meta.main) {
   if (watch) {
     watchFile(inputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
   } else {
-    if (bundle) {
-      transpileFile(inputPath, outputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
-    } else {
-      transpileCLI(inputPath, outputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
-    }
+    transpileCLI(inputPath, outputPath, { bundle, verbose, module: format }).catch(() => Deno.exit(1));
   }
 }

@@ -1,96 +1,92 @@
-import {
-  join as stdJoin,
-  dirname as stdDirname,
-  basename as stdBasename,
-  extname as stdExtname,
-  isAbsolute as stdIsAbsolute,
-  resolve as stdResolve,
-  relative as stdRelative,
-} from "jsr:@std/path@1.0.8";
+// src/platform/platform.ts
 
-export { exists } from "jsr:@std/fs@1.0.13";
+// src/platform/platform.ts
 
-export function cwd(): string {
-  return Deno.cwd();
+import * as stdPath from "jsr:@std/path@1.0.8";
+import { exists } from "jsr:@std/fs@1.0.13";
+
+/**
+ * Platform interface defines all necessary platform-specific operations.
+ */
+export interface Platform {
+  cwd(): string;
+  stat(path: string): Promise<Deno.FileInfo>;
+  readTextFile(path: string): Promise<string>;
+  writeTextFile(path: string, data: string): Promise<void>;
+  mkdir(path: string, opts?: { recursive?: boolean }): Promise<void>;
+  join(...segments: string[]): string;
+  dirname(path: string): string;
+  basename(path: string, ext?: string): string;
+  extname(path: string): string;
+  isAbsolute(path: string): boolean;
+  resolve(...segments: string[]): string;
+  relative(from: string, to: string): string;
+  realPathSync(path: string): string;
+  execPath(): string;
+  runCmd(options: Deno.RunOptions): Deno.Process;
+  readDir(path: string): AsyncIterable<Deno.DirEntry>;
+  makeTempDir(): Promise<string>;
+  exit(code: number): never;
+  getEnv(key: string): string | undefined;
+  setEnv(key: string, value: string): void;
+  exists(path: string): Promise<boolean>;
 }
 
-export async function stat(path: string): Promise<Deno.FileInfo> {
-  return await Deno.stat(path);
-}
+/**
+ * DenoPlatform implements the Platform interface using Deno's APIs.
+ */
+export const DenoPlatform: Platform = {
+  cwd: () => Deno.cwd(),
+  stat: async (path: string): Promise<Deno.FileInfo> => await Deno.stat(path),
+  readTextFile: async (path: string): Promise<string> => await Deno.readTextFile(path),
+  writeTextFile: async (path: string, data: string): Promise<void> => await Deno.writeTextFile(path, data),
+  mkdir: async (path: string, opts?: { recursive?: boolean }): Promise<void> => await Deno.mkdir(path, opts),
+  join: (...segments: string[]): string => stdPath.join(...segments),
+  dirname: (path: string): string => stdPath.dirname(path),
+  basename: (path: string, ext?: string): string => stdPath.basename(path, ext),
+  extname: (path: string): string => stdPath.extname(path),
+  isAbsolute: (path: string): boolean => stdPath.isAbsolute(path),
+  resolve: (...segments: string[]): string => stdPath.resolve(...segments),
+  relative: (from: string, to: string): string => stdPath.relative(from, to),
+  realPathSync: (path: string): string => Deno.realPathSync(path),
+  execPath: (): string => Deno.execPath(),
+  runCmd: (options: Deno.RunOptions): Deno.Process => Deno.run(options),
+  readDir: (path: string): AsyncIterable<Deno.DirEntry> => Deno.readDir(path),
+  makeTempDir: async (): Promise<string> => await Deno.makeTempDir(),
+  exit: (code: number): never => Deno.exit(code),
+  getEnv: (key: string): string | undefined => Deno.env.get(key),
+  setEnv: (key: string, value: string): void => Deno.env.set(key, value),
+  exists: async (path: string): Promise<boolean> => await exists(path),
+};
 
-export async function readTextFile(path: string): Promise<string> {
-  return await Deno.readTextFile(path);
-}
+/**
+ * Export the current platform implementation.
+ * In our case, it's DenoPlatform.
+ */
+export const CurrentPlatform: Platform = DenoPlatform;
 
-export async function writeTextFile(path: string, data: string): Promise<void> {
-  return await Deno.writeTextFile(path, data);
-}
-
-export async function mkdir(path: string, opts?: { recursive?: boolean }): Promise<void> {
-  return await Deno.mkdir(path, opts);
-}
-
-export function join(...segments: string[]): string {
-  return stdJoin(...segments);
-}
-
-export function dirname(path: string): string {
-  return stdDirname(path);
-}
-
-export function basename(path: string, ext?: string): string {
-  return stdBasename(path, ext);
-}
-
-export function extname(path: string): string {
-  return stdExtname(path);
-}
-
-export function isAbsolute(path: string): boolean {
-  return stdIsAbsolute(path);
-}
-
-export function resolve(...segments: string[]): string {
-  return stdResolve(...segments);
-}
-
-export function relative(from: string, to: string): string {
-  return stdRelative(from, to);
-}
-
-export function realPathSync(path: string): string {
-  return Deno.realPathSync(path);
-}
-
-export function execPath(): string {
-  return Deno.execPath();
-}
-
-export function runCmd(options: Deno.RunOptions): Deno.Process {
-  return Deno.run(options);
-}
-
-/** Wrapper for reading a directory. */
-export function readDir(path: string): AsyncIterable<Deno.DirEntry> {
-  return Deno.readDir(path);
-}
-
-/** Wrapper for creating a temporary directory. */
-export async function makeTempDir(): Promise<string> {
-  return await Deno.makeTempDir();
-}
-
-/** Wrapper for exiting the process. */
-export function exit(code: number): never {
-  Deno.exit(code);
-}
-
-/** Get an environment variable. */
-export function getEnv(key: string): string | undefined {
-  return Deno.env.get(key);
-}
-
-/** Set an environment variable. */
-export function setEnv(key: string, value: string): void {
-  Deno.env.set(key, value);
-}
+/**
+ * Re-export functions for backward compatibility.
+ */
+export const cwd = CurrentPlatform.cwd;
+export const stat = CurrentPlatform.stat;
+export const readTextFile = CurrentPlatform.readTextFile;
+export const writeTextFile = CurrentPlatform.writeTextFile;
+export const mkdir = CurrentPlatform.mkdir;
+export const join = CurrentPlatform.join;
+export const dirname = CurrentPlatform.dirname;
+export const basename = CurrentPlatform.basename;
+export const extname = CurrentPlatform.extname;
+export const isAbsolute = CurrentPlatform.isAbsolute;
+export const resolve = CurrentPlatform.resolve;
+export const relative = CurrentPlatform.relative;
+export const realPathSync = CurrentPlatform.realPathSync;
+export const execPath = CurrentPlatform.execPath;
+export const runCmd = CurrentPlatform.runCmd;
+export const readDir = CurrentPlatform.readDir;
+export const makeTempDir = CurrentPlatform.makeTempDir;
+export const exit = CurrentPlatform.exit;
+export const getEnv = CurrentPlatform.getEnv;
+export const setEnv = CurrentPlatform.setEnv;
+export const existsFn = CurrentPlatform.exists; // Exporting exists as existsFn
+export { exists }

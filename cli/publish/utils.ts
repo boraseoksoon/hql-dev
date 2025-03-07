@@ -1,5 +1,5 @@
 // cli/publish/utils.ts
-import { readTextFile, writeTextFile, exists, exit, getEnv } from "../../src/platform/platform.ts";
+import { readTextFile, writeTextFile, exists } from "../../src/platform/platform.ts";
 
 /** Prompt the user with a question; return the entered value or the default if empty. */
 export async function prompt(question: string, defaultValue = ""): Promise<string> {
