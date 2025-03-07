@@ -1,3 +1,8 @@
+HQL: Higher Query Language
+
+HQL aspires to be the last programming language by embracing the following core principles:
+"macro everywhere, minimal-core, expression-oriented, single-bundled-output, platform agnostic"
+
 1. Minimal Core (Kernel)
 Philosophy:
 Your kernel should be the absolute minimal set of primitives that cannot be defined in terms of other constructs. Everything else is “sugar” built on top via macros. The kernel’s simplicity ensures that every expression returns a value (expression‑oriented) and is easy to reason about and port.

@@ -304,8 +304,6 @@ function convertExportVariableDeclaration(node: IR.IRExportVariableDeclaration):
     type: TS.TSNodeType.NamedExport,
     variableDeclaration: varDecl,
     exportName: originalExportName,
-    // Indicate this requires computed property syntax for hyphens
-    useComputedProperty: originalExportName.includes('-')
   };
 }
 

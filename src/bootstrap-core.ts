@@ -31,8 +31,16 @@ export const LIST_PRIMITIVES = new Set(["first", "rest", "cons", "=", "length"])
  * in the environment for efficiency and implementation simplicity.
  */
 export const PRIMITIVE_OPS = new Set([
-  "+", "-", "*", "/", "=",
+  // Arithmetic operators
+  "+", "-", "*", "/", 
+  
+  // Comparison operators
+  "=", "!=", "<", ">", "<=", ">=", "eq?",
+  
+  // JS interop
   "js-import", "js-export", "js-get", "js-call",
+  
+  // List operations
   ...LIST_PRIMITIVES
 ]);
 

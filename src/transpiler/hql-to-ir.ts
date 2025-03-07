@@ -1,4 +1,4 @@
-// src/transpiler/hql-to-ir.ts
+// src/transpiler/hql-to-ir.ts - Updated transformPrimitiveOp function
 
 import * as IR from "./hql_ir.ts";
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
@@ -51,7 +51,15 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
     name = name.slice(3);
     isJS = true;
   }
-  name = name.replace(/-/g, '_');
+  
+  // Use sanitizeIdentifier instead of just replacing hyphens
+  if (!isJS) {
+    name = sanitizeIdentifier(name);
+  } else {
+    // For JS interop, we only replace hyphens
+    name = name.replace(/-/g, '_');
+  }
+  
   return { type: IR.IRNodeType.Identifier, name, isJS } as IR.IRIdentifier;
 }
 
@@ -180,15 +188,34 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
   }
   
   const bodyNodes: IR.IRNode[] = [];
-  for (let i = 2; i < list.elements.length; i++) {
+  for (let i = 2; i < list.elements.length - 1; i++) {
     const expr = transformNode(list.elements[i], currentDir);
     if (expr) bodyNodes.push(expr);
   }
   
-  if (bodyNodes.length > 0) {
-    const lastIndex = bodyNodes.length - 1;
-    const lastExpr = bodyNodes[lastIndex];
-    bodyNodes[lastIndex] = { type: IR.IRNodeType.ReturnStatement, argument: lastExpr } as IR.IRReturnStatement;
+  // Process the last expression separately
+  if (list.elements.length > 2) {
+    const lastExpr = transformNode(list.elements[list.elements.length - 1], currentDir);
+    
+    // Special handling for variable declarations in return position
+    if (lastExpr && lastExpr.type === IR.IRNodeType.VariableDeclaration) {
+      // Add the variable declaration as a statement
+      bodyNodes.push(lastExpr);
+      
+      // Then add a return statement that refers to the variable
+      const varDecl = lastExpr as IR.IRVariableDeclaration;
+      const varId = varDecl.declarations[0].id;
+      bodyNodes.push({
+        type: IR.IRNodeType.ReturnStatement,
+        argument: { ...varId } // Clone the identifier
+      } as IR.IRReturnStatement);
+    } else if (lastExpr) {
+      // Normal case - just return the expression
+      bodyNodes.push({
+        type: IR.IRNodeType.ReturnStatement,
+        argument: lastExpr
+      } as IR.IRReturnStatement);
+    }
   }
   
   return {
@@ -381,113 +408,125 @@ function transformJsGetInvoke(list: ListNode, currentDir: string): IR.IRNode {
   }
 }
 
-// Extract from hql-to-ir.ts - Fixed comparison operators handling
-
+// Updated transformPrimitiveOp function with correct handling for comparison operators
 function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
   const op = (list.elements[0] as SymbolNode).name;
   const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
 
-  switch (op) {
-    case "+":
-    case "-":
-    case "*":
-    case "/": {
-      if (args.length === 0) {
-        throw new Error(`${op} requires at least one argument`);
-      }
-      if (args.length === 1 && (op === "+" || op === "-")) {
-        return {
-          type: IR.IRNodeType.UnaryExpression,
-          operator: op,
-          argument: args[0],
-        } as IR.IRUnaryExpression;
-      }
-      let result = args[0];
-      for (let i = 1; i < args.length; i++) {
-        result = {
-          type: IR.IRNodeType.BinaryExpression,
-          operator: op,
-          left: result,
-          right: args[i],
-        } as IR.IRBinaryExpression;
-      }
-      return result;
+  // Essential arithmetic operators
+  if (op === "+" || op === "-" || op === "*" || op === "/") {
+    if (args.length === 0) {
+      throw new Error(`${op} requires at least one argument`);
     }
-    case "=":
-    case "eq?": {
-      if (args.length !== 2) {
-        throw new Error(`${op} requires exactly 2 arguments`);
-      }
+    
+    // Handle unary +/- (e.g., (+ 5) or (- 3))
+    if (args.length === 1 && (op === "+" || op === "-")) {
       return {
+        type: IR.IRNodeType.UnaryExpression,
+        operator: op,
+        argument: args[0],
+      } as IR.IRUnaryExpression;
+    }
+    
+    // Handle binary operations
+    let result = args[0];
+    for (let i = 1; i < args.length; i++) {
+      result = {
         type: IR.IRNodeType.BinaryExpression,
-        operator: "===",
-        left: args[0],
-        right: args[1],
+        operator: op,
+        left: result,
+        right: args[i],
       } as IR.IRBinaryExpression;
     }
-    case "!=": {
-      if (args.length !== 2) {
-        throw new Error(`${op} requires exactly 2 arguments`);
-      }
-      return {
-        type: IR.IRNodeType.BinaryExpression,
-        operator: "!==",
-        left: args[0],
-        right: args[1],
-      } as IR.IRBinaryExpression;
-    }
-    case "<": {
-      if (args.length !== 2) {
-        throw new Error(`${op} requires exactly 2 arguments`);
-      }
-      return {
-        type: IR.IRNodeType.BinaryExpression,
-        operator: "<",
-        left: args[0],
-        right: args[1],
-      } as IR.IRBinaryExpression;
-    }
-    case ">": {
-      if (args.length !== 2) {
-        throw new Error(`${op} requires exactly 2 arguments`);
-      }
-      return {
-        type: IR.IRNodeType.BinaryExpression,
-        operator: ">",
-        left: args[0],
-        right: args[1],
-      } as IR.IRBinaryExpression;
-    }
-    case "<=": {
-      if (args.length !== 2) {
-        throw new Error(`${op} requires exactly 2 arguments`);
-      }
-      return {
-        type: IR.IRNodeType.BinaryExpression,
-        operator: "<=",
-        left: args[0],
-        right: args[1],
-      } as IR.IRBinaryExpression;
-    }
-    case ">=": {
-      if (args.length !== 2) {
-        throw new Error(`${op} requires exactly 2 arguments`);
-      }
-      return {
-        type: IR.IRNodeType.BinaryExpression,
-        operator: ">=",
-        left: args[0],
-        right: args[1],
-      } as IR.IRBinaryExpression;
-    }
-    default: {
-      return {
-        type: IR.IRNodeType.CallExpression,
-        callee: { type: IR.IRNodeType.Identifier, name: op } as IR.IRIdentifier,
-        arguments: args,
-      } as IR.IRCallExpression;
-    }
+    return result;
   }
+  
+  // Comparison operators - all of these need special handling
+  
+  // Equal operator (= -> ===)
+  if (op === "=" || op === "eq?") {
+    if (args.length !== 2) {
+      throw new Error(`${op} requires exactly 2 arguments`);
+    }
+    return {
+      type: IR.IRNodeType.BinaryExpression,
+      operator: "===",
+      left: args[0],
+      right: args[1],
+    } as IR.IRBinaryExpression;
+  }
+  
+  // Not equal operator (!= -> !==)
+  if (op === "!=") {
+    if (args.length !== 2) {
+      throw new Error(`${op} requires exactly 2 arguments`);
+    }
+    return {
+      type: IR.IRNodeType.BinaryExpression,
+      operator: "!==",
+      left: args[0],
+      right: args[1],
+    } as IR.IRBinaryExpression;
+  }
+  
+  // Greater than (>)
+  if (op === ">") {
+    if (args.length !== 2) {
+      throw new Error(`${op} requires exactly 2 arguments`);
+    }
+    return {
+      type: IR.IRNodeType.BinaryExpression,
+      operator: ">",
+      left: args[0],
+      right: args[1],
+    } as IR.IRBinaryExpression;
+  }
+  
+  // Less than (<)
+  if (op === "<") {
+    if (args.length !== 2) {
+      throw new Error(`${op} requires exactly 2 arguments`);
+    }
+    return {
+      type: IR.IRNodeType.BinaryExpression,
+      operator: "<",
+      left: args[0],
+      right: args[1],
+    } as IR.IRBinaryExpression;
+  }
+  
+  // Greater than or equal (>=)
+  if (op === ">=") {
+    if (args.length !== 2) {
+      throw new Error(`${op} requires exactly 2 arguments`);
+    }
+    return {
+      type: IR.IRNodeType.BinaryExpression,
+      operator: ">=",
+      left: args[0],
+      right: args[1],
+    } as IR.IRBinaryExpression;
+  }
+  
+  // Less than or equal (<=)
+  if (op === "<=") {
+    if (args.length !== 2) {
+      throw new Error(`${op} requires exactly 2 arguments`);
+    }
+    return {
+      type: IR.IRNodeType.BinaryExpression,
+      operator: "<=",
+      left: args[0],
+      right: args[1],
+    } as IR.IRBinaryExpression;
+  }
+  
+  // For all other primitive operations, create a function call expression
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: { type: IR.IRNodeType.Identifier, name: op } as IR.IRIdentifier,
+    arguments: args,
+  } as IR.IRCallExpression;
 }
 
 function transformCall(list: ListNode, currentDir: string): IR.IRNode {
