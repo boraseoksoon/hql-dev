@@ -204,6 +204,7 @@ export interface TSImportDeclaration extends TSDeclaration {
   type: TSNodeType.ImportDeclaration;
   source: string;
   moduleName: string;
+  defaultVarName?: string; // Variable name to use for default export
 }
 
 export interface TSExportNamedDeclaration extends TSDeclaration {

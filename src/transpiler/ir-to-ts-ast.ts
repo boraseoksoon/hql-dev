@@ -287,11 +287,13 @@ function convertBlockStatement(node: IR.IRBlockStatement): TS.TSBlockStatement {
 function convertImportDeclaration(node: IR.IRImportDeclaration): TS.TSImportDeclaration {
   // Generate a variable name based on the import source
   const moduleName = createModuleVariableName(node.source);
+  const defaultVarName = moduleName.replace(/Module$/, "");
   
   return {
     type: TS.TSNodeType.ImportDeclaration,
     source: node.source,
-    moduleName
+    moduleName,
+    defaultVarName
   };
 }
 

@@ -1,23 +1,16 @@
-// src/bootstrap-core.ts - Minimal bootstrap core for HQL
+// src/bootstrap-core.ts - Truly minimal bootstrap core for HQL
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./transpiler/hql_ast.ts";
-import { dirname, join, readTextFile } from "./platform/platform.ts";
 
-// Core forms that can't be implemented as macros
+// Core forms that can't be implemented as macros - absolute minimum
 export const CORE_FORMS = new Set(["quote", "if", "fn", "def"]);
 
-// Primitive operations available in the core
+// Essential primitive operations
 export const PRIMITIVE_OPS = new Set([
-  // Arithmetic
-  "+", "-", "*", "/", "%",
-  
-  // Comparison
-  "=", "!=", "<", ">", "<=", ">=", "eq?",
-  
-  // List operations
-  "cons", "first", "rest", "list", "empty?", "count",
-  
-  // JS interop primitives
-  "js-get", "js-call", "js-import", "js-export", "js-new"
+  // Absolute minimum set
+  "+", "-", "*", "/",
+  "=",
+  // JS interop primitives - the bare necessities
+  "js-import", "js-export", "js-get", "js-call"
 ]);
 
 // Environment for evaluation during macro expansion
@@ -90,45 +83,22 @@ export function makeList(...elements: HQLNode[]): ListNode {
   return { type: "list", elements };
 }
 
-// Helper to create AST nodes for quoting
-export function createQuote(expr: HQLNode): ListNode {
-  return makeList(makeSymbol("quote"), expr);
-}
-
 // Bootstrap primitive operators
 function setupPrimitives(env: Env): void {
-  // Arithmetic
+  // Arithmetic - just the basics
   env.define("+", (...args: number[]) => args.reduce((a, b) => a + b, 0));
-  env.define("-", (a: number, ...args: number[]) => 
-    args.length === 0 ? -a : args.reduce((acc, val) => acc - val, a));
+  env.define("-", (a: number, b: number) => a - b);
   env.define("*", (...args: number[]) => args.reduce((a, b) => a * b, 1));
-  env.define("/", (a: number, ...args: number[]) => 
-    args.length === 0 ? 1/a : args.reduce((acc, val) => acc / val, a));
-  env.define("%", (a: number, b: number) => a % b);
+  env.define("/", (a: number, b: number) => a / b);
   
-  // Comparison
+  // Comparison - just equals
   env.define("=", (a: any, b: any) => a === b);
-  env.define("!=", (a: any, b: any) => a !== b);
-  env.define("<", (a: any, b: any) => a < b);
-  env.define(">", (a: any, b: any) => a > b);
-  env.define("<=", (a: any, b: any) => a <= b);
-  env.define(">=", (a: any, b: any) => a >= b);
-  env.define("eq?", (a: any, b: any) => a === b);
   
-  // List operations
-  env.define("cons", (item: any, list: any[]) => [item, ...list]);
-  env.define("first", (list: any[]) => list[0]);
-  env.define("rest", (list: any[]) => list.slice(1));
-  env.define("list", (...args: any[]) => args);
-  env.define("empty?", (list: any[]) => list.length === 0);
-  env.define("count", (list: any[]) => list.length);
-  
-  // JS interop primitives
+  // JS interop primitives - bare minimum
+  env.define("js-import", (source: string) => `IMPORT:${source}`);
+  env.define("js-export", (name: string, value: any) => `EXPORT:${name}`);
   env.define("js-get", (obj: any, prop: string) => obj[prop]);
   env.define("js-call", (obj: any, method: string, ...args: any[]) => obj[method](...args));
-  env.define("js-import", (source: string) => `IMPORT:${source}`); // Placeholder for macro expansion
-  env.define("js-export", (name: string, value: any) => `EXPORT:${name}`); // Placeholder
-  env.define("js-new", (constructor: any, ...args: any[]) => `NEW:${constructor.name}`); // Placeholder
   
   // Add print for debugging
   env.define("print", console.log);
@@ -142,13 +112,6 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
       
     case "symbol": {
       const name = (expr as SymbolNode).name;
-      
-      // Handle special syntactic forms for symbols
-      if (name.startsWith("'")) {
-        // Quote shorthand: 'x is equivalent to (quote x)
-        return name.substring(1);
-      }
-      
       return env.lookup(name);
     }
     
@@ -259,37 +222,15 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
         const macroFn: MacroFunction = (args: HQLNode[], callEnv: Env) => {
           const macroEnv = new Env(env);
           
-          // Process parameters (including rest parameter with &)
-          let restParam: string | null = null;
-          let paramIndex = 0;
-          
+          // Process parameters
           for (let i = 0; i < params.length; i++) {
             if (params[i].type !== "symbol") {
               throw new Error("Macro parameters must be symbols");
             }
             
             const paramName = (params[i] as SymbolNode).name;
-            
-            if (paramName === "&") {
-              if (i + 1 >= params.length) {
-                throw new Error("& must be followed by a rest parameter name");
-              }
-              
-              const restParamNode = params[i + 1];
-              if (restParamNode.type !== "symbol") {
-                throw new Error("Rest parameter must be a symbol");
-              }
-              
-              restParam = (restParamNode as SymbolNode).name;
-              const restArgs = args.slice(paramIndex);
-              macroEnv.define(restParam, makeList(...restArgs));
-              break;
-            } else {
-              // Regular parameter
-              const arg = paramIndex < args.length ? args[paramIndex] : makeLiteral(null);
-              macroEnv.define(paramName, arg);
-              paramIndex++;
-            }
+            const arg = i < args.length ? args[i] : makeLiteral(null);
+            macroEnv.define(paramName, arg);
           }
           
           // Evaluate the macro body
@@ -304,7 +245,6 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
         // Register the macro
         env.defineMacro(name, macroFn);
         
-        // Return a placeholder node (will be ignored in expansion)
         return makeList(
           makeSymbol("comment"),
           makeLiteral(`Defined macro: ${name}`)

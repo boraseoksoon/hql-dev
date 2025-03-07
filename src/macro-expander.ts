@@ -1,16 +1,15 @@
-// src/macro-expander.ts - Macro expansion system
+// src/macro-expander.ts - Further improved for compatibility with IR transformer
 import { HQLNode, ListNode, SymbolNode } from "./transpiler/hql_ast.ts";
 import { 
   Env, 
   evaluateForMacro, 
   initializeGlobalEnv, 
-  CORE_FORMS, 
-  isCoreForm,
+  CORE_FORMS,
   makeList,
   makeSymbol,
   makeLiteral
 } from "./bootstrap-core.ts";
-import { dirname, readTextFile } from "./platform/platform.ts";
+import { readTextFile } from "./platform/platform.ts";
 
 // Cache the bootstrapped environment
 let globalEnv: Env | null = null;
@@ -19,35 +18,107 @@ let globalEnv: Env | null = null;
 export async function initMacroEnvironment(): Promise<Env> {
   if (!globalEnv) {
     globalEnv = await initializeGlobalEnv();
-  }
-  
-  // Load core.hql if not already loaded
-  if (!globalEnv.hasMacro("defn")) {
-    await loadCoreLibrary(globalEnv);
+    
+    // Register basic helper macros directly in JavaScript
+    registerBasicMacros(globalEnv);
   }
   
   return globalEnv;
 }
 
-// Load the core library of macros defined in HQL
-async function loadCoreLibrary(env: Env): Promise<void> {
-  try {
-    const corePath = Deno.realPathSync("./lib/core.hql");
-    const source = await readTextFile(corePath);
-    const { parse } = await import("./transpiler/parser.ts");
-    
-    const ast = parse(source);
-    
-    // Process each form in the core library
-    for (const node of ast) {
-      await expandNode(node, env, true);
+// Register essential macros directly in JavaScript
+function registerBasicMacros(env: Env): void {
+  // defn macro implementation
+  const defnMacro: any = (args: HQLNode[], callEnv: Env) => {
+    if (args.length < 2) {
+      throw new Error("defn requires at least a name and parameters");
     }
     
-    console.log("Core library loaded successfully");
-  } catch (error) {
-    console.error("Failed to load core library:", error);
-    throw error;
-  }
+    const nameNode = args[0];
+    let paramsNode = args[1];
+    let body: HQLNode[];
+    
+    // When params are given as a symbol like [name] rather than a proper list
+    if (paramsNode.type === "symbol" && 
+        (paramsNode as SymbolNode).name.startsWith("[") && 
+        (paramsNode as SymbolNode).name.endsWith("]")) {
+      // Extract parameter names from the string
+      const paramStr = (paramsNode as SymbolNode).name.slice(1, -1);
+      const paramNames = paramStr.split(/\s*,\s*/).filter(s => s);
+      const paramSymbols = paramNames.map(name => makeSymbol(name.trim()));
+      
+      // Create a proper list for parameters
+      paramsNode = makeList(...paramSymbols);
+      body = args.slice(2);
+    } else {
+      body = args.slice(2);
+    }
+    
+    // Create a fn expression
+    const fnExpr = makeList(
+      makeSymbol("fn"),
+      paramsNode,
+      ...body
+    );
+    
+    // Create a def expression
+    return makeList(
+      makeSymbol("def"),
+      nameNode,
+      fnExpr
+    );
+  };
+  
+  // import macro implementation - direct string literal for compatibility
+  const importMacro: any = (args: HQLNode[], callEnv: Env) => {
+    if (args.length !== 1) {
+      throw new Error("import requires exactly 1 argument (the path)");
+    }
+    
+    // For direct string compatibility with IR transformer
+    return makeList(
+      makeSymbol("js-import"),
+      args[0] // Pass the string literal directly, not quoted
+    );
+  };
+  
+  // export macro implementation - direct string literal for compatibility
+  const exportMacro: any = (args: HQLNode[], callEnv: Env) => {
+    if (args.length !== 2) {
+      throw new Error("export requires exactly 2 arguments (name and value)");
+    }
+    
+    // For direct string compatibility with IR transformer
+    return makeList(
+      makeSymbol("js-export"),
+      args[0], // Pass the name directly, not quoted
+      args[1]
+    );
+  };
+  
+  // new macro implementation
+  const newMacro: any = (args: HQLNode[], callEnv: Env) => {
+    if (args.length < 1) {
+      throw new Error("new requires at least a constructor");
+    }
+    
+    const constructorArgs = args.slice(1);
+    
+    // Create a proper arguments list
+    return makeList(
+      makeSymbol("js-new"),
+      args[0],
+      makeList(...constructorArgs)
+    );
+  };
+  
+  // Register the macros
+  env.defineMacro("defn", defnMacro);
+  env.defineMacro("import", importMacro);
+  env.defineMacro("export", exportMacro);
+  env.defineMacro("new", newMacro);
+  
+  console.log("Basic macros registered in JavaScript");
 }
 
 // Check if a node represents a macro call
@@ -67,19 +138,6 @@ function isMacroCall(node: HQLNode, env: Env): boolean {
   
   // Check if it's a macro in the environment
   return env.hasMacro(name);
-}
-
-// Check if a node is a defmacro form
-function isDefMacro(node: HQLNode): boolean {
-  if (node.type !== "list") return false;
-  
-  const list = node as ListNode;
-  if (list.elements.length < 4) return false;
-  
-  const first = list.elements[0];
-  if (first.type !== "symbol" || (first as SymbolNode).name !== "defmacro") return false;
-  
-  return true;
 }
 
 // Check if a node is a composite JS interop form (object.member)
@@ -112,16 +170,15 @@ function transformCompositeInterop(node: ListNode): HQLNode {
     return makeList(
       makeSymbol("js-call"),
       makeSymbol(objectName),
-      makeLiteral(memberName),
+      makeLiteral(memberName), // Direct string literal for compatibility
       ...node.elements.slice(1)
     );
   } else {
-    // Property access or no-parameter method call that should auto-invoke
-    // We use a special form that will generate an IIFE to check if callable
+    // Property access
     return makeList(
-      makeSymbol("js-get-invoke"),
+      makeSymbol("js-get"),
       makeSymbol(objectName),
-      makeLiteral(memberName)
+      makeLiteral(memberName) // Direct string literal for compatibility
     );
   }
 }
@@ -132,31 +189,17 @@ export async function expandMacros(nodes: HQLNode[]): Promise<HQLNode[]> {
   const expanded: HQLNode[] = [];
   
   for (const node of nodes) {
-    expanded.push(await expandNode(node, env));
+    expanded.push(expandNode(node, env));
   }
   
   return expanded;
 }
 
 // Recursively expand macros in a node
-export async function expandNode(
+export function expandNode(
   node: HQLNode, 
-  env: Env, 
-  isTopLevel: boolean = false
-): Promise<HQLNode> {
-  // Special handling for defmacro at top level
-  if (isTopLevel && isDefMacro(node)) {
-    // Process and register the macro
-    evaluateForMacro(node, env);
-    
-    // Return a placeholder comment node
-    const macroName = ((node as ListNode).elements[1] as SymbolNode).name;
-    return makeList(
-      makeSymbol("comment"),
-      makeLiteral(`Defined macro: ${macroName}`)
-    );
-  }
-  
+  env: Env
+): HQLNode {
   // Handle composite JS interop (obj.member) syntax
   if (isCompositeInterop(node)) {
     const transformed = transformCompositeInterop(node as ListNode);
@@ -169,12 +212,17 @@ export async function expandNode(
     const macroName = (list.elements[0] as SymbolNode).name;
     const macroFn = env.getMacro(macroName)!;
     
-    // Call the macro with unevaluated arguments
-    const args = list.elements.slice(1);
-    const expanded = macroFn(args, env);
-    
-    // Recursively expand in case the expansion contains more macros
-    return expandNode(expanded, env);
+    try {
+      // Call the macro with unevaluated arguments
+      const args = list.elements.slice(1);
+      const expanded = macroFn(args, env);
+      
+      // Recursively expand in case the expansion contains more macros
+      return expandNode(expanded, env);
+    } catch (error) {
+      console.error(`Error expanding macro '${macroName}':`, error);
+      throw new Error(`Error in macro '${macroName}': ${error.message}`);
+    }
   }
   
   // Recursively process lists
@@ -204,7 +252,7 @@ export async function expandNode(
     // For regular lists, expand all elements
     return {
       type: "list",
-      elements: await Promise.all(list.elements.map(elem => expandNode(elem, env)))
+      elements: list.elements.map(elem => expandNode(elem, env))
     };
   }
   

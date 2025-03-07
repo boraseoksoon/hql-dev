@@ -25,13 +25,19 @@ export function generateTypeScript(ast: TS.TSSourceFile, options: CodeGeneration
   return context.generateNode(ast);
 }
 
+// Information about an imported module
+interface ImportInfo {
+  moduleName: string;
+  defaultVarName: string;
+}
+
 /**
  * Context for code generation
  */
 class CodeGenContext {
   private options: CodeGenerationOptions;
   private indentLevel: number = 0;
-  private imports: Map<string, string> = new Map();
+  private imports: Map<string, ImportInfo> = new Map();
   
   constructor(options: CodeGenerationOptions) {
     this.options = options;
@@ -172,20 +178,32 @@ class CodeGenContext {
     this.imports.clear();
     
     // Generate code for each statement
-    const statements = node.statements.map(stmt => this.generateNode(stmt));
+    const statements = node.statements.map(stmt => this.generateNode(stmt)).filter(s => s.trim().length > 0);
     
     // Add imports at the beginning
     let importsCode = "";
     if (this.imports.size > 0) {
       const importLines: string[] = [];
-      this.imports.forEach((moduleName, source) => {
+      
+      this.imports.forEach((importInfo, source) => {
+        const { moduleName, defaultVarName } = importInfo;
+        
         if (this.options.module === "esm") {
+          // First import the module
           importLines.push(`import * as ${moduleName} from "${source}";`);
+          
+          // Then define a variable for it with proper default export handling
+          importLines.push(`const ${defaultVarName} = ${moduleName}.default !== undefined ? ${moduleName}.default : ${moduleName};`);
         } else {
+          // CommonJS handling
           importLines.push(`const ${moduleName} = require("${source}");`);
+          importLines.push(`const ${defaultVarName} = ${moduleName}.default !== undefined ? ${moduleName}.default : ${moduleName};`);
         }
       });
-      importsCode = importLines.join("\n") + "\n\n";
+      
+      if (importLines.length > 0) {
+        importsCode = importLines.join("\n") + "\n\n";
+      }
     }
     
     return importsCode + statements.join("\n");
@@ -344,8 +362,11 @@ class CodeGenContext {
   
   // Modules
   private generateImportDeclaration(node: TS.TSImportDeclaration): string {
-    // Register the import
-    this.imports.set(node.source, node.moduleName);
+    // Register the import - store additional info to properly handle default exports
+    this.imports.set(node.source, {
+      moduleName: node.moduleName,
+      defaultVarName: node.defaultVarName || node.moduleName.replace(/Module$/, "")
+    });
     
     // Return blank since we'll add all imports at the beginning
     return "";
