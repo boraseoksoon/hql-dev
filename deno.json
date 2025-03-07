@@ -10,7 +10,7 @@
     "test-cond": "deno test --allow-all test/macro/cond_test.ts",
     "test-import-export": "deno test --allow-all test/macro/import_export_test.ts",
     "test-operators": "deno test --allow-all test/macro/comparison_operators_test.ts",
-    
+    "test-hql-spec": "deno task run ./doc/hql_spec.hql",
     "build": "deno run -A cli/transpile.ts",
     "run": "deno run -A cli/run.ts"
   }

@@ -64,9 +64,36 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
 }
 
 export function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
-  if (list.elements.length === 0) return null;
+  if (list.elements.length === 0) {
+    // Transform empty lists to empty array expressions rather than null
+    return {
+      type: IR.IRNodeType.ArrayExpression,
+      elements: []
+    } as IR.IRArrayExpression;
+  }
   
   const first = list.elements[0];
+
+  if (first.type === "list") {
+    const fnExpr = transformNode(first, currentDir);
+    const args = list.elements.slice(1).map(arg => {
+      if (arg.type === "list" && (arg as ListNode).elements.length === 0) {
+        // Transform empty list arguments to empty arrays
+        return {
+          type: IR.IRNodeType.ArrayExpression,
+          elements: []
+        } as IR.IRArrayExpression;
+      }
+      return transformNode(arg, currentDir);
+    }).filter(Boolean) as IR.IRNode[];
+    
+    return {
+      type: IR.IRNodeType.CallExpression,
+      callee: fnExpr!,
+      arguments: args
+    } as IR.IRCallExpression;
+  }
+
   if (first.type !== "symbol") {
     const callee = transformNode(first, currentDir);
     const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
@@ -188,32 +215,73 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
   }
   
   const bodyNodes: IR.IRNode[] = [];
+  
+  // Process all but the last expression as statements
   for (let i = 2; i < list.elements.length - 1; i++) {
     const expr = transformNode(list.elements[i], currentDir);
     if (expr) bodyNodes.push(expr);
   }
   
-  // Process the last expression separately
+  // Process the last expression as the return value
   if (list.elements.length > 2) {
     const lastExpr = transformNode(list.elements[list.elements.length - 1], currentDir);
     
-    // Special handling for variable declarations in return position
-    if (lastExpr && lastExpr.type === IR.IRNodeType.VariableDeclaration) {
-      // Add the variable declaration as a statement
-      bodyNodes.push(lastExpr);
-      
-      // Then add a return statement that refers to the variable
-      const varDecl = lastExpr as IR.IRVariableDeclaration;
-      const varId = varDecl.declarations[0].id;
+    if (lastExpr) {
+      // Special handling for variable declarations in return position
+      if (lastExpr.type === IR.IRNodeType.VariableDeclaration) {
+        // Add the variable declaration as a statement
+        bodyNodes.push(lastExpr);
+        
+        // Then add a return statement that refers to the variable
+        const varDecl = lastExpr as IR.IRVariableDeclaration;
+        if (varDecl.declarations.length > 0 && varDecl.declarations[0].id) {
+          bodyNodes.push({
+            type: IR.IRNodeType.ReturnStatement,
+            argument: {
+              type: IR.IRNodeType.Identifier,
+              name: varDecl.declarations[0].id.name
+            } as IR.IRIdentifier
+          } as IR.IRReturnStatement);
+        } else {
+          // Fallback if we couldn't get the variable name
+          bodyNodes.push({
+            type: IR.IRNodeType.ReturnStatement,
+            argument: { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral
+          } as IR.IRReturnStatement);
+        }
+      } 
+      // Special handling for call expressions with empty arguments (like IIFE from do macro)
+      else if (lastExpr.type === IR.IRNodeType.CallExpression) {
+        const callExpr = lastExpr as IR.IRCallExpression;
+        if (callExpr.arguments.length === 0) {
+          // First add the function call as a statement
+          bodyNodes.push(callExpr);
+          
+          // Then add a return null statement as a fallback
+          bodyNodes.push({
+            type: IR.IRNodeType.ReturnStatement,
+            argument: { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral
+          } as IR.IRReturnStatement);
+        } else {
+          // Normal call expression - return its value
+          bodyNodes.push({
+            type: IR.IRNodeType.ReturnStatement,
+            argument: callExpr
+          } as IR.IRReturnStatement);
+        }
+      }
+      else {
+        // Normal expression - just return it
+        bodyNodes.push({
+          type: IR.IRNodeType.ReturnStatement,
+          argument: lastExpr
+        } as IR.IRReturnStatement);
+      }
+    } else {
+      // If lastExpr is null, add a fallback return null
       bodyNodes.push({
         type: IR.IRNodeType.ReturnStatement,
-        argument: { ...varId } // Clone the identifier
-      } as IR.IRReturnStatement);
-    } else if (lastExpr) {
-      // Normal case - just return the expression
-      bodyNodes.push({
-        type: IR.IRNodeType.ReturnStatement,
-        argument: lastExpr
+        argument: { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral
       } as IR.IRReturnStatement);
     }
   }

@@ -197,6 +197,7 @@ export interface TSNamedExport extends TSDeclaration {
   type: TSNodeType.NamedExport;
   variableDeclaration: TSVariableDeclaration;
   exportName: string;
+  useComputedProperty?: boolean;  // Add this property
 }
 
 export interface TSInteropIIFE extends TSExpression {
@@ -213,4 +214,8 @@ export interface TSCommentBlock extends TSNode {
 export interface TSRaw extends TSNode {
   type: TSNodeType.Raw;
   code: string;
+}
+export interface TSArrayExpression extends TSExpression {
+  type: TSNodeType.ArrayExpression;
+  elements: TSExpression[];
 }

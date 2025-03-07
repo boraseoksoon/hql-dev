@@ -195,6 +195,10 @@ export async function initializeGlobalEnv(): Promise<Env> {
  *  - Otherwise, treats the list as a function application.
  */
 export function evaluateForMacro(expr: HQLNode, env: Env): any {
+  if (!expr || typeof expr !== 'object' || !('type' in expr)) {
+    throw new Error(`Invalid expression: ${JSON.stringify(expr)}`);
+  }
+  
   switch (expr.type) {
     case "literal":
       return (expr as LiteralNode).value;
@@ -273,6 +277,6 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
       throw new Error("List does not start with a symbol");
     }
     default:
-      throw new Error(`Unknown node type: ${expr.type}`);
+      throw new Error(`Unknown node type: ${(expr as any).type || JSON.stringify(expr)}`);
   }
 }

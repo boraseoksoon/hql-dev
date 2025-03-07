@@ -122,7 +122,16 @@ class CodeGenContext {
         const namedExp = node as TS.TSNamedExport;
         const varStr = this.generateNode(namedExp.variableDeclaration);
         const exportName = namedExp.variableDeclaration.declarations[0].id.name;
-        return `${varStr}\n${this.getIndent()}export { ${exportName} as ${namedExp.exportName} };`;
+        
+        let exportStatement: string;
+        if (namedExp.useComputedProperty) {
+          // Use computed property syntax for exports with hyphens
+          exportStatement = `${this.getIndent()}export { ${exportName} as "${namedExp.exportName}" };`;
+        } else {
+          exportStatement = `${this.getIndent()}export { ${exportName} as ${namedExp.exportName} };`;
+        }
+        
+        return `${varStr}\n${exportStatement}`;
       }
       case TS.TSNodeType.ReturnStatement: {
         const ret = node as TS.TSReturnStatement;
@@ -150,6 +159,11 @@ ${this.getIndent()}})()`;
       }
       case TS.TSNodeType.Raw: {
         return (node as TS.TSRaw).code;
+      }
+      case TS.TSNodeType.ArrayExpression: {
+        const arrExpr = node as TS.TSArrayExpression;
+        const elements = arrExpr.elements.map(elem => this.generateNode(elem)).join(", ");
+        return `[${elements}]`;
       }
       default: {
         console.warn("Unknown TS node type", (node as any).type);

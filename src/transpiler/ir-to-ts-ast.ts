@@ -52,7 +52,13 @@ export function convertIRToTSAST(program: IR.IRProgram): TS.TSSourceFile {
 /**
  * Recursively converts an IR node into a TS node.
  */
-function convertNode(node: IR.IRNode): TS.TSNode | TS.TSNode[] | null {
+function convertNode(node: IR.IRNode | null): TS.TSNode | TS.TSNode[] | null {
+  // Handle null nodes
+  if (node === null || node === undefined) {
+    console.warn("Null or undefined node passed to convertNode");
+    return null;
+  }
+  
   switch (node.type) {
     case IR.IRNodeType.StringLiteral:
       return convertStringLiteral(node as IR.IRStringLiteral);
@@ -107,8 +113,8 @@ function convertNode(node: IR.IRNode): TS.TSNode | TS.TSNode[] | null {
     case IR.IRNodeType.Raw:
       return convertRaw(node as IR.IRRaw);
     default:
-      console.warn(`Unknown IR node type: ${(node as any).type}`);
-      return null;
+      console.warn(`Unknown IR node type: ${node.type}`);
+      return { type: TS.TSNodeType.NullLiteral } as TS.TSNullLiteral; // Return a safe default instead of null
   }
 }
 
@@ -133,18 +139,60 @@ function convertIdentifier(node: IR.IRIdentifier): TS.TSIdentifier {
 }
 
 function convertCallExpression(node: IR.IRCallExpression): TS.TSCallExpression {
+  const callee = convertNode(node.callee);
+  
+  // Check if this is a function call with an empty array as the only argument
+  if (node.arguments.length === 1 && 
+      node.arguments[0].type === IR.IRNodeType.ArrayExpression &&
+      (node.arguments[0] as IR.IRArrayExpression).elements.length === 0) {
+    // Special case: convert empty array argument to no arguments
+    return {
+      type: TS.TSNodeType.CallExpression,
+      callee: callee as TS.TSExpression,
+      arguments: [] // Empty arguments list for cleaner output
+    };
+  }
+  
+  // Normal case: process all arguments
+  const args = node.arguments.map(arg => convertNode(arg) as TS.TSExpression);
+  
   return {
     type: TS.TSNodeType.CallExpression,
-    callee: convertNode(node.callee) as TS.TSExpression,
-    arguments: node.arguments.map(arg => convertNode(arg) as TS.TSExpression)
+    callee: callee as TS.TSExpression,
+    arguments: args
   };
 }
 
 function convertMemberExpression(node: IR.IRMemberExpression): TS.TSMemberExpression {
+  const object = convertNode(node.object);
+  const property = convertNode(node.property);
+  
+  if (!object) {
+    console.warn(`Failed to convert object in member expression: ${JSON.stringify(node.object)}`);
+    // Provide a fallback
+    return {
+      type: TS.TSNodeType.MemberExpression,
+      object: { type: TS.TSNodeType.Identifier, name: "undefined" } as TS.TSIdentifier,
+      property: { type: TS.TSNodeType.Identifier, name: "undefined" } as TS.TSIdentifier,
+      computed: false
+    };
+  }
+
+  if (!property) {
+    console.warn(`Failed to convert property in member expression: ${JSON.stringify(node.property)}`);
+    // Provide a fallback
+    return {
+      type: TS.TSNodeType.MemberExpression,
+      object: object as TS.TSExpression,
+      property: { type: TS.TSNodeType.Identifier, name: "undefined" } as TS.TSIdentifier,
+      computed: false
+    };
+  }
+  
   return {
     type: TS.TSNodeType.MemberExpression,
-    object: convertNode(node.object) as TS.TSExpression,
-    property: convertNode(node.property) as TS.TSExpression,
+    object: object as TS.TSExpression,
+    property: property as TS.TSExpression,
     computed: node.computed
   };
 }
@@ -189,18 +237,28 @@ function convertUnaryExpression(node: IR.IRUnaryExpression): TS.TSUnaryExpressio
 }
 
 function convertConditionalExpression(node: IR.IRConditionalExpression): TS.TSConditionalExpression {
+  const test = convertNode(node.test);
+  const consequent = convertNode(node.consequent);
+  const alternate = convertNode(node.alternate);
+  
+  // Provide fallbacks for any null conversions
   return {
     type: TS.TSNodeType.ConditionalExpression,
-    test: convertNode(node.test) as TS.TSExpression,
-    consequent: convertNode(node.consequent) as TS.TSExpression,
-    alternate: convertNode(node.alternate) as TS.TSExpression
+    test: test ? test as TS.TSExpression : { type: TS.TSNodeType.BooleanLiteral, value: false } as TS.TSBooleanLiteral,
+    consequent: consequent ? consequent as TS.TSExpression : { type: TS.TSNodeType.NullLiteral } as TS.TSNullLiteral,
+    alternate: alternate ? alternate as TS.TSExpression : { type: TS.TSNodeType.NullLiteral } as TS.TSNullLiteral
   };
 }
 
 function convertArrayExpression(node: IR.IRArrayExpression): TS.TSArrayExpression {
   return {
     type: TS.TSNodeType.ArrayExpression,
-    elements: node.elements.map(elem => convertNode(elem) as TS.TSExpression)
+    elements: node.elements
+      .filter(elem => elem !== null && elem !== undefined)
+      .map(elem => {
+        const converted = convertNode(elem);
+        return converted as TS.TSExpression;
+      })
   };
 }
 
@@ -243,9 +301,19 @@ function convertFunctionDeclaration(node: IR.IRFunctionDeclaration): TS.TSFuncti
 }
 
 function convertReturnStatement(node: IR.IRReturnStatement): TS.TSReturnStatement {
+  // Handle potentially null arguments
+  let argument: TS.TSExpression | null = null;
+  
+  if (node.argument) {
+    const converted = convertNode(node.argument);
+    if (converted) {
+      argument = converted as TS.TSExpression;
+    }
+  }
+  
   return {
     type: TS.TSNodeType.ReturnStatement,
-    argument: convertNode(node.argument) as TS.TSExpression
+    argument: argument
   };
 }
 
@@ -304,6 +372,7 @@ function convertExportVariableDeclaration(node: IR.IRExportVariableDeclaration):
     type: TS.TSNodeType.NamedExport,
     variableDeclaration: varDecl,
     exportName: originalExportName,
+    useComputedProperty: originalExportName.includes('-')
   };
 }
 
