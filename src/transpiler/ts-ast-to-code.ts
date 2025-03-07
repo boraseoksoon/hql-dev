@@ -1,420 +1,165 @@
-// src/transpiler/ts-ast-to-code.ts - Generate TypeScript code from AST
-
+// src/transpiler/ts-ast-to-code.ts
 import * as TS from "./ts-ast-types.ts";
 
-export interface CodeGenerationOptions {
-  indentSize: number;
-  useSpaces: boolean;
-  formatting: "minimal" | "standard" | "pretty";
-  module: "esm" | "commonjs";
-}
-
-// Default options
-const defaultOptions: CodeGenerationOptions = {
-  indentSize: 2,
-  useSpaces: true,
-  formatting: "standard",
-  module: "esm"
-};
-
-/**
- * Generate TypeScript code from an AST
- */
-export function generateTypeScript(ast: TS.TSSourceFile, options: CodeGenerationOptions = defaultOptions): string {
-  const context = new CodeGenContext(options);
+export function generateTypeScript(ast: TS.TSSourceFile): string {
+  const context = new CodeGenContext();
   return context.generateNode(ast);
 }
 
-// Information about an imported module
-interface ImportInfo {
-  moduleName: string;
-  defaultVarName: string;
-}
-
-/**
- * Context for code generation
- */
 class CodeGenContext {
-  private options: CodeGenerationOptions;
-  private indentLevel: number = 0;
-  private imports: Map<string, ImportInfo> = new Map();
-  
-  constructor(options: CodeGenerationOptions) {
-    this.options = options;
-  }
-  
-  /**
-   * Get the current indentation string
-   */
+  // Hard-coded settings for now.
+  private indentLevel = 0;
+  private indentSize = 2;
+  private useSpaces = true;
+
   private getIndent(): string {
-    const indentChar = this.options.useSpaces ? " " : "\t";
-    const indentSize = this.options.useSpaces ? this.options.indentSize : 1;
-    return indentChar.repeat(indentSize * this.indentLevel);
+    const char = this.useSpaces ? " " : "\t";
+    return char.repeat(this.indentSize * this.indentLevel);
   }
-  
-  /**
-   * Increase indentation level
-   */
+
   private indent(): void {
     this.indentLevel++;
   }
-  
-  /**
-   * Decrease indentation level
-   */
+
   private dedent(): void {
     if (this.indentLevel > 0) {
       this.indentLevel--;
     }
   }
-  
-  /**
-   * Generate code for a node
-   */
+
   public generateNode(node: TS.TSNode): string {
     switch (node.type) {
-      // Program
-      case TS.TSNodeType.SourceFile:
+      case TS.TSNodeType.SourceFile: {
         return this.generateSourceFile(node as TS.TSSourceFile);
-        
-      // Literals
-      case TS.TSNodeType.StringLiteral:
-        return this.generateStringLiteral(node as TS.TSStringLiteral);
-        
-      case TS.TSNodeType.NumericLiteral:
-        return this.generateNumericLiteral(node as TS.TSNumericLiteral);
-        
-      case TS.TSNodeType.BooleanLiteral:
-        return this.generateBooleanLiteral(node as TS.TSBooleanLiteral);
-        
-      case TS.TSNodeType.NullLiteral:
-        return this.generateNullLiteral(node as TS.TSNullLiteral);
-        
-      // Identifiers
-      case TS.TSNodeType.Identifier:
-        return this.generateIdentifier(node as TS.TSIdentifier);
-        
-      // Expressions
-      case TS.TSNodeType.BinaryExpression:
-        return this.generateBinaryExpression(node as TS.TSBinaryExpression);
-        
-      case TS.TSNodeType.UnaryExpression:
-        return this.generateUnaryExpression(node as TS.TSUnaryExpression);
-        
-      case TS.TSNodeType.CallExpression:
-        return this.generateCallExpression(node as TS.TSCallExpression);
-        
-      case TS.TSNodeType.MemberExpression:
-        return this.generateMemberExpression(node as TS.TSMemberExpression);
-        
-      case TS.TSNodeType.NewExpression:
-        return this.generateNewExpression(node as TS.TSNewExpression);
-        
-      case TS.TSNodeType.ConditionalExpression:
-        return this.generateConditionalExpression(node as TS.TSConditionalExpression);
-        
-      case TS.TSNodeType.ArrayExpression:
-        return this.generateArrayExpression(node as TS.TSArrayExpression);
-        
-      case TS.TSNodeType.ArrayConsExpression:
-        return this.generateArrayConsExpression(node as TS.TSArrayConsExpression);
-        
-      case TS.TSNodeType.FunctionExpression:
-        return this.generateFunctionExpression(node as TS.TSFunctionExpression);
-        
-      case TS.TSNodeType.ArrowFunctionExpression:
-        return this.generateArrowFunctionExpression(node as TS.TSArrowFunctionExpression);
-        
-      // Statements
-      case TS.TSNodeType.ExpressionStatement:
-        return this.generateExpressionStatement(node as TS.TSExpressionStatement);
-        
-      case TS.TSNodeType.BlockStatement:
-        return this.generateBlockStatement(node as TS.TSBlockStatement);
-        
-      case TS.TSNodeType.ReturnStatement:
-        return this.generateReturnStatement(node as TS.TSReturnStatement);
-        
-      case TS.TSNodeType.IfStatement:
-        return this.generateIfStatement(node as TS.TSIfStatement);
-        
-      // Declarations
-      case TS.TSNodeType.VariableDeclaration:
-        return this.generateVariableDeclaration(node as TS.TSVariableDeclaration);
-        
-      case TS.TSNodeType.FunctionDeclaration:
-        return this.generateFunctionDeclaration(node as TS.TSFunctionDeclaration);
-        
-      // Modules
-      case TS.TSNodeType.ImportDeclaration:
-        return this.generateImportDeclaration(node as TS.TSImportDeclaration);
-        
-      case TS.TSNodeType.ExportNamedDeclaration:
-        return this.generateExportNamedDeclaration(node as TS.TSExportNamedDeclaration);
-        
-      case TS.TSNodeType.NamedExport:
-        return this.generateNamedExport(node as TS.TSNamedExport);
-        
-      // JS Interop
-      case TS.TSNodeType.InteropIIFE:
-        return this.generateInteropIIFE(node as TS.TSInteropIIFE);
-        
-      // Other
-      case TS.TSNodeType.CommentBlock:
-        return this.generateCommentBlock(node as TS.TSCommentBlock);
-        
-      case TS.TSNodeType.Raw:
-        return this.generateRaw(node as TS.TSRaw);
-        
-      default:
-        console.warn(`Unknown node type: ${(node as any).type}`);
-        return "";
-    }
-  }
-  
-  // Program
-  private generateSourceFile(node: TS.TSSourceFile): string {
-    // Clear imports map
-    this.imports.clear();
-    
-    // Generate code for each statement
-    const statements = node.statements.map(stmt => this.generateNode(stmt)).filter(s => s.trim().length > 0);
-    
-    // Add imports at the beginning
-    let importsCode = "";
-    if (this.imports.size > 0) {
-      const importLines: string[] = [];
-      
-      this.imports.forEach((importInfo, source) => {
-        const { moduleName, defaultVarName } = importInfo;
-        
-        if (this.options.module === "esm") {
-          // First import the module
-          importLines.push(`import * as ${moduleName} from "${source}";`);
-          
-          // Then define a variable for it with proper default export handling
-          importLines.push(`const ${defaultVarName} = ${moduleName}.default !== undefined ? ${moduleName}.default : ${moduleName};`);
-        } else {
-          // CommonJS handling
-          importLines.push(`const ${moduleName} = require("${source}");`);
-          importLines.push(`const ${defaultVarName} = ${moduleName}.default !== undefined ? ${moduleName}.default : ${moduleName};`);
-        }
-      });
-      
-      if (importLines.length > 0) {
-        importsCode = importLines.join("\n") + "\n\n";
       }
-    }
-    
-    return importsCode + statements.join("\n");
-  }
-  
-  // Literals
-  private generateStringLiteral(node: TS.TSStringLiteral): string {
-    return JSON.stringify(node.value);
-  }
-  
-  private generateNumericLiteral(node: TS.TSNumericLiteral): string {
-    return String(node.value);
-  }
-  
-  private generateBooleanLiteral(node: TS.TSBooleanLiteral): string {
-    return String(node.value);
-  }
-  
-  private generateNullLiteral(node: TS.TSNullLiteral): string {
-    return "null";
-  }
-  
-  // Identifiers
-  private generateIdentifier(node: TS.TSIdentifier): string {
-    return node.name;
-  }
-  
-  // Expressions
-  private generateBinaryExpression(node: TS.TSBinaryExpression): string {
-    return `(${this.generateNode(node.left)} ${node.operator} ${this.generateNode(node.right)})`;
-  }
-  
-  private generateUnaryExpression(node: TS.TSUnaryExpression): string {
-    return `${node.operator}(${this.generateNode(node.argument)})`;
-  }
-  
-  private generateCallExpression(node: TS.TSCallExpression): string {
-    const callee = this.generateNode(node.callee);
-    const args = node.arguments.map(arg => this.generateNode(arg)).join(", ");
-    return `${callee}(${args})`;
-  }
-  
-  private generateMemberExpression(node: TS.TSMemberExpression): string {
-    const object = this.generateNode(node.object);
-    const property = this.generateNode(node.property);
-    
-    if (node.computed) {
-      return `${object}[${property}]`;
-    } else {
-      return `${object}.${property}`;
-    }
-  }
-  
-  private generateNewExpression(node: TS.TSNewExpression): string {
-    const callee = this.generateNode(node.callee);
-    const args = node.arguments.map(arg => this.generateNode(arg)).join(", ");
-    return `new ${callee}(${args})`;
-  }
-  
-  private generateConditionalExpression(node: TS.TSConditionalExpression): string {
-    const test = this.generateNode(node.test);
-    const consequent = this.generateNode(node.consequent);
-    const alternate = this.generateNode(node.alternate);
-    return `(${test} ? ${consequent} : ${alternate})`;
-  }
-  
-  private generateArrayExpression(node: TS.TSArrayExpression): string {
-    const elements = node.elements.map(elem => this.generateNode(elem)).join(", ");
-    return `[${elements}]`;
-  }
-  
-  private generateArrayConsExpression(node: TS.TSArrayConsExpression): string {
-    const item = this.generateNode(node.item);
-    const array = this.generateNode(node.array);
-    return `[${item}, ...${array}]`;
-  }
-  
-  private generateFunctionExpression(node: TS.TSFunctionExpression): string {
-    const id = node.id ? this.generateNode(node.id) : "";
-    const params = node.params.map(param => this.generateNode(param)).join(", ");
-    const body = this.generateNode(node.body);
-    return `function${id ? " " + id : ""}(${params}) ${body}`;
-  }
-  
-  private generateArrowFunctionExpression(node: TS.TSArrowFunctionExpression): string {
-    const params = node.params.map(param => this.generateNode(param)).join(", ");
-    
-    if (node.expression) {
-      // Expression body
-      const body = this.generateNode(node.body as TS.TSExpression);
-      return `(${params}) => ${body}`;
-    } else {
-      // Block body
-      const body = this.generateNode(node.body as TS.TSBlockStatement);
-      return `(${params}) => ${body}`;
-    }
-  }
-  
-  // Statements
-  private generateExpressionStatement(node: TS.TSExpressionStatement): string {
-    return `${this.getIndent()}${this.generateNode(node.expression)};`;
-  }
-  
-  private generateBlockStatement(node: TS.TSBlockStatement): string {
-    if (node.body.length === 0) {
-      return "{}";
-    }
-    
-    this.indent();
-    const body = node.body.map(stmt => this.generateNode(stmt)).join("\n");
-    this.dedent();
-    
-    return `{\n${body}\n${this.getIndent()}}`;
-  }
-  
-  private generateReturnStatement(node: TS.TSReturnStatement): string {
-    if (node.argument) {
-      return `${this.getIndent()}return ${this.generateNode(node.argument)};`;
-    } else {
-      return `${this.getIndent()}return;`;
-    }
-  }
-  
-  private generateIfStatement(node: TS.TSIfStatement): string {
-    const test = this.generateNode(node.test);
-    const consequent = this.generateNode(node.consequent);
-    
-    let result = `${this.getIndent()}if (${test}) ${consequent}`;
-    
-    if (node.alternate) {
-      const alternate = this.generateNode(node.alternate);
-      result += ` else ${alternate}`;
-    }
-    
-    return result;
-  }
-  
-  // Declarations
-  private generateVariableDeclaration(node: TS.TSVariableDeclaration): string {
-    const declarations = node.declarations.map(decl => {
-      const id = this.generateNode(decl.id);
-      const init = decl.init ? ` = ${this.generateNode(decl.init)}` : "";
-      return `${id}${init}`;
-    }).join(", ");
-    
-    return `${this.getIndent()}${node.kind} ${declarations};`;
-  }
-  
-  private generateFunctionDeclaration(node: TS.TSFunctionDeclaration): string {
-    const id = this.generateNode(node.id);
-    const params = node.params.map(param => this.generateNode(param)).join(", ");
-    const body = this.generateNode(node.body);
-    
-    return `${this.getIndent()}function ${id}(${params}) ${body}`;
-  }
-  
-  // Modules
-  private generateImportDeclaration(node: TS.TSImportDeclaration): string {
-    // Register the import - store additional info to properly handle default exports
-    this.imports.set(node.source, {
-      moduleName: node.moduleName,
-      defaultVarName: node.defaultVarName || node.moduleName.replace(/Module$/, "")
-    });
-    
-    // Return blank since we'll add all imports at the beginning
-    return "";
-  }
-  
-  private generateExportNamedDeclaration(node: TS.TSExportNamedDeclaration): string {
-    if (node.specifiers.length === 0) {
-      return "";
-    }
-    
-    const specifiers = node.specifiers.map(spec => {
-      const local = this.generateNode(spec.local);
-      const exported = this.generateNode(spec.exported);
-      return local === exported ? local : `${local} as ${exported}`;
-    }).join(", ");
-    
-    return `${this.getIndent()}export { ${specifiers} };`;
-  }
-  
-  private generateNamedExport(node: TS.TSNamedExport): string {
-    // Generate the variable declaration first
-    const declaration = this.generateVariableDeclaration(node.variableDeclaration);
-    
-    // Then add the export statement
-    const exportStatement = `${this.getIndent()}export { ${node.variableDeclaration.declarations[0].id.name} as ${node.exportName} };`;
-    
-    return `${declaration}\n${exportStatement}`;
-  }
-  
-  // JS Interop
-  private generateInteropIIFE(node: TS.TSInteropIIFE): string {
-    const object = this.generateNode(node.object);
-    const property = this.generateNode(node.property);
-    
-    // Generate an IIFE that checks if the property is callable
-    return `(function() {
-${this.getIndent()}  const _obj = ${object};
-${this.getIndent()}  const _member = _obj[${property}];
+      case TS.TSNodeType.StringLiteral: {
+        return JSON.stringify((node as TS.TSStringLiteral).value);
+      }
+      case TS.TSNodeType.NumericLiteral: {
+        return String((node as TS.TSNumericLiteral).value);
+      }
+      case TS.TSNodeType.BooleanLiteral: {
+        return String((node as TS.TSBooleanLiteral).value);
+      }
+      case TS.TSNodeType.NullLiteral: {
+        return "null";
+      }
+      case TS.TSNodeType.Identifier: {
+        return (node as TS.TSIdentifier).name;
+      }
+      case TS.TSNodeType.BinaryExpression: {
+        const bin = node as TS.TSBinaryExpression;
+        return `(${this.generateNode(bin.left)} ${bin.operator} ${this.generateNode(bin.right)})`;
+      }
+      case TS.TSNodeType.UnaryExpression: {
+        const un = node as TS.TSUnaryExpression;
+        return `${un.operator}(${this.generateNode(un.argument)})`;
+      }
+      case TS.TSNodeType.CallExpression: {
+        const call = node as TS.TSCallExpression;
+        const callee = this.generateNode(call.callee);
+        const args = call.arguments.map(arg => this.generateNode(arg)).join(", ");
+        return `${callee}(${args})`;
+      }
+      case TS.TSNodeType.MemberExpression: {
+        const mem = node as TS.TSMemberExpression;
+        const obj = this.generateNode(mem.object);
+        const prop = this.generateNode(mem.property);
+        if (mem.computed) {
+          return `${obj}[${prop}]`;
+        }
+        return `${obj}.${prop}`;
+      }
+      case TS.TSNodeType.NewExpression: {
+        const newExpr = node as TS.TSNewExpression;
+        const callee = this.generateNode(newExpr.callee);
+        const args = newExpr.arguments.map(arg => this.generateNode(arg)).join(", ");
+        return `new ${callee}(${args})`;
+      }
+      case TS.TSNodeType.FunctionExpression: {
+        const funcExpr = node as TS.TSFunctionExpression;
+        const params = funcExpr.params.map(p => this.generateNode(p)).join(", ");
+        const body = this.generateNode(funcExpr.body);
+        return `function(${params}) ${body}`;
+      }
+      case TS.TSNodeType.BlockStatement: {
+        const block = node as TS.TSBlockStatement;
+        this.indent();
+        const body = block.body.map(stmt => this.generateNode(stmt)).join("\n");
+        this.dedent();
+        return `{\n${body}\n${this.getIndent()}}`;
+      }
+      case TS.TSNodeType.VariableDeclaration: {
+        const varDecl = node as TS.TSVariableDeclaration;
+        const decls = varDecl.declarations.map(decl => {
+          const init = decl.init ? ` = ${this.generateNode(decl.init)}` : "";
+          return `${this.generateNode(decl.id)}${init}`;
+        }).join(", ");
+        return `${this.getIndent()}${varDecl.kind} ${decls};`;
+      }
+      case TS.TSNodeType.FunctionDeclaration: {
+        const funcDecl = node as TS.TSFunctionDeclaration;
+        const name = this.generateNode(funcDecl.id);
+        const params = funcDecl.params.map(p => this.generateNode(p)).join(", ");
+        const body = this.generateNode(funcDecl.body);
+        return `${this.getIndent()}function ${name}(${params}) ${body}`;
+      }
+      case TS.TSNodeType.ImportDeclaration: {
+        const imp = node as TS.TSImportDeclaration;
+        return `import * as ${imp.moduleName} from "${imp.source}";\n` +
+               `const ${imp.defaultVarName} = ${imp.moduleName}.default !== undefined ? ${imp.moduleName}.default : ${imp.moduleName};`;
+      }
+      case TS.TSNodeType.ExportNamedDeclaration: {
+        const expDecl = node as TS.TSExportNamedDeclaration;
+        const specs = expDecl.specifiers.map(s => {
+          const local = this.generateNode(s.local);
+          const exported = this.generateNode(s.exported);
+          return local === exported ? local : `${local} as ${exported}`;
+        }).join(", ");
+        return `${this.getIndent()}export { ${specs} };`;
+      }
+      case TS.TSNodeType.NamedExport: {
+        const namedExp = node as TS.TSNamedExport;
+        const varStr = this.generateNode(namedExp.variableDeclaration);
+        const exportName = namedExp.variableDeclaration.declarations[0].id.name;
+        return `${varStr}\n${this.getIndent()}export { ${exportName} as ${namedExp.exportName} };`;
+      }
+      case TS.TSNodeType.ReturnStatement: {
+        const ret = node as TS.TSReturnStatement;
+        if (ret.argument) {
+          return `${this.getIndent()}return ${this.generateNode(ret.argument)};`;
+        }
+        return `${this.getIndent()}return;`;
+      }
+      case TS.TSNodeType.ConditionalExpression: {
+        const cond = node as TS.TSConditionalExpression;
+        return `(${this.generateNode(cond.test)} ? ${this.generateNode(cond.consequent)} : ${this.generateNode(cond.alternate)})`;
+      }
+      case TS.TSNodeType.InteropIIFE: {
+        const iife = node as TS.TSInteropIIFE;
+        const obj = this.generateNode(iife.object);
+        const prop = this.generateNode(iife.property);
+        return `(function() {
+${this.getIndent()}  const _obj = ${obj};
+${this.getIndent()}  const _member = _obj[${prop}];
 ${this.getIndent()}  return typeof _member === "function" ? _member.call(_obj) : _member;
 ${this.getIndent()}})()`;
+      }
+      case TS.TSNodeType.CommentBlock: {
+        return `${this.getIndent()}/* ${(node as TS.TSCommentBlock).value} */`;
+      }
+      case TS.TSNodeType.Raw: {
+        return (node as TS.TSRaw).code;
+      }
+      default: {
+        console.warn("Unknown TS node type", (node as any).type);
+        return "";
+      }
+    }
   }
-  
-  // Other
-  private generateCommentBlock(node: TS.TSCommentBlock): string {
-    return `${this.getIndent()}/* ${node.value} */`;
-  }
-  
-  private generateRaw(node: TS.TSRaw): string {
-    return node.code;
+
+  private generateSourceFile(node: TS.TSSourceFile): string {
+    const lines = node.statements.map(stmt => this.generateNode(stmt));
+    return lines.join("\n");
   }
 }

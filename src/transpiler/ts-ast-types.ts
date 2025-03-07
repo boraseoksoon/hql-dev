@@ -1,19 +1,12 @@
-// src/transpiler/ts-ast-types.ts - TypeScript AST Types
+// src/transpiler/ts-ast-types.ts
 
 export enum TSNodeType {
-  // Program
   SourceFile = "SourceFile",
-  
-  // Literals
   StringLiteral = "StringLiteral",
   NumericLiteral = "NumericLiteral",
   BooleanLiteral = "BooleanLiteral",
   NullLiteral = "NullLiteral",
-  
-  // Identifiers
   Identifier = "Identifier",
-  
-  // Expressions
   BinaryExpression = "BinaryExpression",
   UnaryExpression = "UnaryExpression",
   CallExpression = "CallExpression",
@@ -24,33 +17,22 @@ export enum TSNodeType {
   ArrayConsExpression = "ArrayConsExpression",
   FunctionExpression = "FunctionExpression",
   ArrowFunctionExpression = "ArrowFunctionExpression",
-  
-  // Statements
   ExpressionStatement = "ExpressionStatement",
   BlockStatement = "BlockStatement",
   ReturnStatement = "ReturnStatement",
   IfStatement = "IfStatement",
-  
-  // Declarations
   VariableDeclaration = "VariableDeclaration",
   VariableDeclarator = "VariableDeclarator",
   FunctionDeclaration = "FunctionDeclaration",
-  
-  // Modules
   ImportDeclaration = "ImportDeclaration",
   ExportNamedDeclaration = "ExportNamedDeclaration",
   ExportSpecifier = "ExportSpecifier",
   NamedExport = "NamedExport",
-  
-  // JS Interop
   InteropIIFE = "InteropIIFE",
-  
-  // Other
   CommentBlock = "CommentBlock",
   Raw = "Raw"
 }
 
-// Base types
 export interface TSNode {
   type: TSNodeType;
 }
@@ -59,13 +41,11 @@ export interface TSExpression extends TSNode {}
 export interface TSStatement extends TSNode {}
 export interface TSDeclaration extends TSStatement {}
 
-// Program
 export interface TSSourceFile extends TSNode {
   type: TSNodeType.SourceFile;
   statements: TSNode[];
 }
 
-// Literals
 export interface TSStringLiteral extends TSExpression {
   type: TSNodeType.StringLiteral;
   value: string;
@@ -85,13 +65,11 @@ export interface TSNullLiteral extends TSExpression {
   type: TSNodeType.NullLiteral;
 }
 
-// Identifiers
 export interface TSIdentifier extends TSExpression {
   type: TSNodeType.Identifier;
   name: string;
 }
 
-// Expressions
 export interface TSBinaryExpression extends TSExpression {
   type: TSNodeType.BinaryExpression;
   operator: string;
@@ -156,7 +134,6 @@ export interface TSArrowFunctionExpression extends TSExpression {
   expression: boolean;
 }
 
-// Statements
 export interface TSExpressionStatement extends TSStatement {
   type: TSNodeType.ExpressionStatement;
   expression: TSExpression;
@@ -179,7 +156,6 @@ export interface TSIfStatement extends TSStatement {
   alternate: TSStatement | null;
 }
 
-// Declarations
 export interface TSVariableDeclaration extends TSDeclaration {
   type: TSNodeType.VariableDeclaration;
   kind: "const" | "let" | "var";
@@ -199,12 +175,11 @@ export interface TSFunctionDeclaration extends TSDeclaration {
   body: TSBlockStatement;
 }
 
-// Modules
 export interface TSImportDeclaration extends TSDeclaration {
   type: TSNodeType.ImportDeclaration;
   source: string;
   moduleName: string;
-  defaultVarName?: string; // Variable name to use for default export
+  defaultVarName?: string;
 }
 
 export interface TSExportNamedDeclaration extends TSDeclaration {
@@ -224,14 +199,12 @@ export interface TSNamedExport extends TSDeclaration {
   exportName: string;
 }
 
-// JS Interop
 export interface TSInteropIIFE extends TSExpression {
   type: TSNodeType.InteropIIFE;
   object: TSExpression;
   property: TSStringLiteral;
 }
 
-// Other
 export interface TSCommentBlock extends TSNode {
   type: TSNodeType.CommentBlock;
   value: string;

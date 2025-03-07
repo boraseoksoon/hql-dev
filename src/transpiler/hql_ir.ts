@@ -43,7 +43,10 @@ export enum IRNodeType {
   
   // Other
   CommentBlock,
-  Raw
+  Raw,
+  
+  // NEW: For representing a JS import reference from (js-import "module")
+  JsImportReference
 }
 
 export interface IRNode {
@@ -205,6 +208,12 @@ export interface IRInteropIIFE extends IRNode {
   type: IRNodeType.InteropIIFE;
   object: IRNode;
   property: IRStringLiteral;
+}
+
+// NEW: IR node for JS import references
+export interface IRJsImportReference extends IRNode {
+  type: IRNodeType.JsImportReference;
+  source: string;
 }
 
 // Other

@@ -1,15 +1,13 @@
-;; core.hql - Absolute minimum core library
-;; Only includes the essential macros needed to get started
+;; lib/core.hql - Core macros for HQL
 
-;; Define a function - the most essential macro
-;; Expands (defn name params body) to (def name (fn params body))
-(defmacro defn [name params body]
-  (list 'def name (list 'fn params body)))
+;; Define defn: For now, support a single-expression body.
+(defmacro defn (name params body)
+  (list (quote def) name (list (quote fn) params body)))
 
-;; Import as a macro that expands to js-import primitive
-(defmacro import [path]
-  (list 'js-import (list 'quote path)))
+;; Define import: expands (import "module") into (js-import "module")
+(defmacro import (path)
+  (list (quote js-import) path))
 
-;; Export as a macro that expands to js-export primitive
-(defmacro export [name value]
-  (list 'js-export (list 'quote name) value))
+;; Define export: expands (export "name" value) into (js-export "name" value)
+(defmacro export (name value)
+  (list (quote js-export) name value))
