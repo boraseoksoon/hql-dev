@@ -1,4 +1,4 @@
-// src/bootstrap-core.ts
+// src/bootstrap-core.ts - Adding minimal list operations for macros
 
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./transpiler/hql_ast.ts";
 import { jsImport, jsExport, jsGet, jsCall } from "./interop.ts";
@@ -22,12 +22,19 @@ export const DERIVED_FORMS = new Set(["defmacro"]);
 export const CORE_FORMS = new Set([...KERNEL_PRIMITIVES, ...DERIVED_FORMS]);
 
 /**
+ * LIST_PRIMITIVES are the minimal set of list operations needed for macros to work.
+ * These are inspired by Scheme's car/cdr/cons but with more intuitive names.
+ */
+export const LIST_PRIMITIVES = new Set(["first", "rest", "cons", "=", "length"]);
+
+/**
  * PRIMITIVE_OPS are primitive operations that are provided directly
  * in the environment for efficiency and implementation simplicity.
  */
 export const PRIMITIVE_OPS = new Set([
   "+", "-", "*", "/", "=",
-  "js-import", "js-export", "js-get", "js-call"
+  "js-import", "js-export", "js-get", "js-call",
+  ...LIST_PRIMITIVES
 ]);
 
 export class Env {
@@ -116,6 +123,42 @@ function setupPrimitives(env: Env): void {
   // Helper "list" primitive for constructing list nodes.
   env.define("list", (...args: any[]) => {
     return { type: "list", elements: args };
+  });
+  
+  // Minimal list operations for macros
+  env.define("first", (list: any) => {
+    if (list.type === "list" && list.elements.length > 0) {
+      return list.elements[0];
+    }
+    throw new Error("first requires a non-empty list");
+  });
+  
+  env.define("second", (list: any) => {
+    if (list.type === "list" && list.elements.length > 1) {
+      return list.elements[1];
+    }
+    throw new Error("second requires a list with at least 2 elements");
+  });
+  
+  env.define("rest", (list: any) => {
+    if (list.type === "list") {
+      return { type: "list", elements: list.elements.slice(1) };
+    }
+    throw new Error("rest requires a list");
+  });
+  
+  env.define("cons", (item: any, list: any) => {
+    if (list.type === "list") {
+      return { type: "list", elements: [item, ...list.elements] };
+    }
+    throw new Error("cons requires a list as second argument");
+  });
+  
+  env.define("length", (list: any) => {
+    if (list.type === "list") {
+      return list.elements.length;
+    }
+    throw new Error("length requires a list");
   });
 }
 
