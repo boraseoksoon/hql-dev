@@ -1,6 +1,8 @@
 // src/bootstrap-core.ts
 
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./transpiler/hql_ast.ts";
+import { jsImport, jsExport, jsGet, jsCall } from "./interop.ts";
+import { gensym } from "./gensym.ts";
 
 export const CORE_FORMS = new Set(["quote", "if", "fn", "def", "defmacro"]);
 export const PRIMITIVE_OPS = new Set([
@@ -82,16 +84,14 @@ function setupPrimitives(env: Env): void {
   env.define("/", (a: number, b: number) => a / b);
   env.define("=", (a: any, b: any) => a === b);
 
-  // JS interop primitives (placeholders for now)
-  env.define("js-import", (source: string) => `IMPORT:${source}`);
-  env.define("js-export", (name: string, value: any) => `EXPORT:${name}`);
-  env.define("js-get", (obj: any, prop: string) => obj[prop]);
-  env.define("js-call", (obj: any, method: string, ...args: any[]) => {
-    if (typeof obj[method] !== "function") {
-      throw new Error(`${method} is not a function`);
-    }
-    return obj[method](...args);
-  });
+  // JS interop primitives now delegate to our interop module.
+  env.define("js-import", jsImport);
+  env.define("js-export", jsExport);
+  env.define("js-get", jsGet);
+  env.define("js-call", jsCall);
+
+  // Register gensym for macro hygiene.
+  env.define("gensym", gensym);
 
   // Helper "list" primitive for constructing list nodes.
   env.define("list", (...args: any[]) => {
