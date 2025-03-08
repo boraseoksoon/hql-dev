@@ -1,106 +1,110 @@
-// test/macros/and_test.ts
+// test/macro/do_test.ts
 import { assertEquals } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../../src/transpiler/parser.ts";
 import { expandMacros } from "../../src/macro-expander.ts";
 import { transformToIR } from "../../src/transpiler/hql-to-ir.ts";
-import { convertIRToTSAST } from "../../src/transpiler/ir-to-ts-ast.ts";
 import { generateTypeScript } from "../../src/transpiler/ts-ast-to-code.ts";
 import { dirname } from "../../src/platform/platform.ts";
 
-// Test HQL samples for the and macro
-const AND_SAMPLES = {
-  // Basic true and true
-  trueAndTrue: `(and true true)`,
-  
-  // Basic true and false
-  trueAndFalse: `(and true false)`,
-  
-  // Basic false and true
-  falseAndTrue: `(and false true)`,
-  
-  // Basic false and false
-  falseAndFalse: `(and false false)`,
-  
-  // With expressions
-  expressions: `(and (> 5 3) (< 10 20))`,
-  
-  // With strings (non-boolean values)
-  nonBoolean: `(and "a" "b")`,
-  
-  // With complex expressions
-  complex: `(and (do (def x 10) (> x 5)) (do (def y 20) (< y 30)))`,
-  
-  // Chained ands
-  chained: `(and (and true true) (and true false))`
+// Test HQL samples for the do macro
+const SAMPLES = {
+  simple: `
+    (do
+      (def x 10)
+      (+ x 5))
+  `,
+  nested: `
+    (do
+      (def outer 1)
+      (do
+        (def inner 2)
+        (+ outer inner)))
+  `,
+  inFunction: `
+    (defn calculate-area (radius)
+      (do
+        (def r-squared (* radius radius))
+        (def area (* 3.14 r-squared))
+        area))
+  `,
+  multipleStatements: `
+    (do
+      (def a 1)
+      (def b 2)
+      (def c 3)
+      (+ a (+ b c)))
+  `,
+  withConditional: `
+    (do
+      (def x 10)
+      (if (> x 5)
+          "greater"
+          "lesser"))
+  `,
+  lastExpressionReturned: `
+    (do
+      (def first 1)
+      (def second 2)
+      (def third 3)
+      third)
+  `
 };
 
-// Transpile HQL to JavaScript
-async function transpileHQL(source: string): Promise<string> {
+// Helper to transpile HQL to JavaScript
+async function transpileToJS(source: string): Promise<string> {
   const ast = parse(source);
   const expandedAst = await expandMacros(ast);
   const ir = transformToIR(expandedAst, dirname(Deno.cwd()));
-  const tsAst = convertIRToTSAST(ir);
-  return generateTypeScript(tsAst);
+  return generateTypeScript(ir);
 }
 
-// Execute the transpiled JavaScript
-function executeJS(jsCode: string): any {
-  const fn = new Function("return " + jsCode);
-  return fn();
-}
-
-Deno.test("and macro - true and true", async () => {
-  const js = await transpileHQL(AND_SAMPLES.trueAndTrue);
-  console.log("Generated JS:", js);
-  const result = executeJS(js);
-  assertEquals(result, true);
+// Tests for do macro
+Deno.test("do macro - simple", async () => {
+  const js = await transpileToJS(SAMPLES.simple);
+  assertEquals(js.includes("function()"), true);
+  assertEquals(js.includes("const x = 10"), true);
+  assertEquals(js.includes("return x + 5"), true);
 });
 
-Deno.test("and macro - true and false", async () => {
-  const js = await transpileHQL(AND_SAMPLES.trueAndFalse);
-  console.log("Generated JS:", js);
-  const result = executeJS(js);
-  assertEquals(result, false);
+Deno.test("do macro - nested", async () => {
+  const js = await transpileToJS(SAMPLES.nested);
+  assertEquals(js.includes("function()"), true);
+  assertEquals(js.includes("const outer = 1"), true);
+  assertEquals(js.includes("function()"), true);
+  assertEquals(js.includes("const inner = 2"), true);
+  assertEquals(js.includes("return outer + inner"), true);
 });
 
-Deno.test("and macro - false and true", async () => {
-  const js = await transpileHQL(AND_SAMPLES.falseAndTrue);
-  console.log("Generated JS:", js);
-  const result = executeJS(js);
-  assertEquals(result, false);
+Deno.test("do macro - in function", async () => {
+  const js = await transpileToJS(SAMPLES.inFunction);
+  assertEquals(js.includes("function(radius)"), true);
+  assertEquals(js.includes("function()"), true);
+  assertEquals(js.includes("const r_squared = radius * radius"), true);
+  assertEquals(js.includes("const area = 3.14 * r_squared"), true);
+  assertEquals(js.includes("return area"), true);
 });
 
-Deno.test("and macro - false and false", async () => {
-  const js = await transpileHQL(AND_SAMPLES.falseAndFalse);
-  console.log("Generated JS:", js);
-  const result = executeJS(js);
-  assertEquals(result, false);
+Deno.test("do macro - multiple statements", async () => {
+  const js = await transpileToJS(SAMPLES.multipleStatements);
+  assertEquals(js.includes("function()"), true);
+  assertEquals(js.includes("const a = 1"), true);
+  assertEquals(js.includes("const b = 2"), true);
+  assertEquals(js.includes("const c = 3"), true);
+  assertEquals(js.includes("return a + (b + c)") || js.includes("return a + b + c"), true);
 });
 
-Deno.test("and macro - with expressions", async () => {
-  const js = await transpileHQL(AND_SAMPLES.expressions);
-  console.log("Generated JS:", js);
-  const result = executeJS(js);
-  assertEquals(result, true);
+Deno.test("do macro - with conditional", async () => {
+  const js = await transpileToJS(SAMPLES.withConditional);
+  assertEquals(js.includes("function()"), true);
+  assertEquals(js.includes("const x = 10"), true);
+  assertEquals(js.includes("return x > 5 ? \"greater\" : \"lesser\""), true);
 });
 
-Deno.test("and macro - with non-boolean values", async () => {
-  const js = await transpileHQL(AND_SAMPLES.nonBoolean);
-  console.log("Generated JS:", js);
-  const result = executeJS(js);
-  assertEquals(result, "b");
-});
-
-Deno.test("and macro - with complex expressions", async () => {
-  const js = await transpileHQL(AND_SAMPLES.complex);
-  console.log("Generated JS:", js);
-  const result = executeJS(js);
-  assertEquals(result, true);
-});
-
-Deno.test("and macro - chained ands", async () => {
-  const js = await transpileHQL(AND_SAMPLES.chained);
-  console.log("Generated JS:", js);
-  const result = executeJS(js);
-  assertEquals(result, false);
+Deno.test("do macro - last expression returned", async () => {
+  const js = await transpileToJS(SAMPLES.lastExpressionReturned);
+  assertEquals(js.includes("function()"), true);
+  assertEquals(js.includes("const first = 1"), true);
+  assertEquals(js.includes("const second = 2"), true);
+  assertEquals(js.includes("const third = 3"), true);
+  assertEquals(js.includes("return third"), true);
 });

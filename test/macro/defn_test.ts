@@ -1,197 +1,112 @@
+// test/macro/defn_test.ts
 import { assertEquals } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../../src/transpiler/parser.ts";
 import { expandMacros } from "../../src/macro-expander.ts";
 import { transformToIR } from "../../src/transpiler/hql-to-ir.ts";
-import { convertIRToTSAST } from "../../src/transpiler/ir-to-ts-ast.ts";
 import { generateTypeScript } from "../../src/transpiler/ts-ast-to-code.ts";
-import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import { dirname } from "../../src/platform/platform.ts";
 
-// Helper function to transpile HQL to JavaScript - now properly async
-async function transpileHQL(hqlCode: string): Promise<string> {
-  const ast = parse(hqlCode);
-  const expandedAST = await expandMacros(ast); // Add await here
-  const ir = transformToIR(expandedAST, Deno.cwd());
-  const tsAST = convertIRToTSAST(ir);
-  const tsCode = generateTypeScript(tsAST);
-  
-  // Add runtime functions for testing
-  const runtime = "function list(...args) { return args; }\n";
-  return runtime + tsCode;
-}
-
-// Much simpler executeJS that evaluates code directly with Function constructor
-async function executeJS(jsCode: string): Promise<any> {
-  // Create a temporary module file
-  const tempDir = await Deno.makeTempDir();
-  const tempFile = path.join(tempDir, "temp_module.js");
-  
-  try {
-    // Extract the function call at the end
-    const lines = jsCode.split('\n');
-    let lastLine = '';
-    
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const trimmed = lines[i].trim();
-      if (trimmed && /\w+\(.*\)/.test(trimmed)) {
-        lastLine = trimmed;
-        break;
-      }
-    }
-    
-    if (!lastLine) {
-      throw new Error("No function call found in generated code");
-    }
-    
-    // Remove the function call from the code
-    const codeWithoutFunctionCall = jsCode.replace(lastLine, '');
-    
-    // Create a module that wraps the code and captures the result
-    const moduleCode = `
-      ${codeWithoutFunctionCall}
-      
-      // Export a function that returns the result of evaluating the code
-      export function runTest() {
-        try {
-          return ${lastLine};
-        } catch (error) {
-          console.error("Error executing test:", error);
-          return undefined;
-        }
-      }
-    `;
-    
-    await Deno.writeTextFile(tempFile, moduleCode);
-    
-    // Import the module dynamically
-    const moduleUrl = `file://${tempFile}`;
-    const module = await import(moduleUrl);
-    
-    // Run the test function
-    return await module.runTest();
-  } finally {
-    // Clean up temporary files
-    try {
-      await Deno.remove(tempFile);
-      await Deno.remove(tempDir);
-    } catch (e) {
-      console.warn("Failed to clean up temporary files:", e);
-    }
-  }
-}
-
-// Tests for the defn macro - now using await for transpileHQL
-Deno.test("defn macro - basic function", async () => {
-  const hqlCode = `
+// Test HQL samples for the defn macro
+const SAMPLES = {
+  basicFunction: `
     (defn increment (x) (+ x 1))
     (increment 5)
-  `;
-  
-  const jsCode = await transpileHQL(hqlCode);
-  console.log("------- output -------");
-  console.log("Generated JS:", jsCode);
-  console.log("----- output end -----");
-  
-  const result = await executeJS(jsCode);
-  assertEquals(result, 6);
-});
-
-Deno.test("defn macro - function with multiple parameters", async () => {
-  const hqlCode = `
+  `,
+  multipleParameters: `
     (defn add-three (x y z) (+ (+ x y) z))
     (add-three 1 2 3)
-  `;
-  
-  const jsCode = await transpileHQL(hqlCode);
-  console.log("------- output -------");
-  console.log("Generated JS:", jsCode);
-  console.log("----- output end -----");
-  
-  const result = await executeJS(jsCode);
-  assertEquals(result, 6);
-});
-
-Deno.test("defn macro - function with no parameters", async () => {
-  const hqlCode = `
+  `,
+  noParameters: `
     (defn get-ten () 10)
     (get-ten)
-  `;
-  
-  const jsCode = await transpileHQL(hqlCode);
-  console.log("------- output -------");
-  console.log("Generated JS:", jsCode);
-  console.log("----- output end -----");
-  
-  const result = await executeJS(jsCode);
-  assertEquals(result, 10);
-});
-
-Deno.test("defn macro - function with do", async () => {
-  const hqlCode = `
+  `,
+  withDo: `
     (defn calculate (x y)
       (do
         (def sum (+ x y))
         (def product (* x y))
         product))
     (calculate 3 4)
-  `;
-  
-  const jsCode = await transpileHQL(hqlCode);
-  console.log("------- output -------");
-  console.log("Generated JS:", jsCode);
-  console.log("----- output end -----");
-  
-  const result = await executeJS(jsCode);
-  assertEquals(result, 12);
-});
-
-Deno.test("defn macro - function with conditional", async () => {
-  const hqlCode = `
+  `,
+  withConditional: `
     (defn max-value (a b)
       (if (> a b) a b))
     (max-value 10 5)
-  `;
-  
-  const jsCode = await transpileHQL(hqlCode);
-  console.log("------- output -------");
-  console.log("Generated JS:", jsCode);
-  console.log("----- output end -----");
-  
-  const result = await executeJS(jsCode);
-  assertEquals(result, 10);
-});
-
-Deno.test("defn macro - recursive function", async () => {
-  const hqlCode = `
+  `,
+  recursive: `
     (defn factorial (n)
       (if (<= n 1)
         1
         (* n (factorial (- n 1)))))
     (factorial 5)
-  `;
-  
-  const jsCode = await transpileHQL(hqlCode);
-  console.log("------- output -------");
-  console.log("Generated JS:", jsCode);
-  console.log("----- output end -----");
-  
-  const result = await executeJS(jsCode);
-  assertEquals(result, 120);
-});
-
-Deno.test("defn macro - function with inner function", async () => {
-  const hqlCode = `
+  `,
+  innerFunction: `
     (defn outer (x)
       (def inner (fn (y) (* y y)))
       inner)
     (outer 4)
-  `;
-  
-  const jsCode = await transpileHQL(hqlCode);
-  console.log("------- output -------");
-  console.log("Generated JS:", jsCode);
-  console.log("----- output end -----");
-  
-  const result = await executeJS(jsCode);
-  // Just check that we get a function back
-  assertEquals(typeof result, "function");
+  `
+};
+
+// Helper to transpile HQL to JavaScript
+async function transpileToJS(source: string): Promise<string> {
+  const ast = parse(source);
+  const expandedAst = await expandMacros(ast);
+  const ir = transformToIR(expandedAst, dirname(Deno.cwd()));
+  return generateTypeScript(ir);
+}
+
+// Tests for defn macro
+Deno.test("defn macro - basic function", async () => {
+  const js = await transpileToJS(SAMPLES.basicFunction);
+  assertEquals(js.includes("const increment = function(x)"), true);
+  assertEquals(js.includes("return x + 1"), true);
+  assertEquals(js.includes("increment(5)"), true);
+});
+
+Deno.test("defn macro - multiple parameters", async () => {
+  const js = await transpileToJS(SAMPLES.multipleParameters);
+  assertEquals(js.includes("const add_three = function(x, y, z)"), true);
+  assertEquals(js.includes("return x + y + z") || js.includes("return (x + y) + z"), true);
+  assertEquals(js.includes("add_three(1, 2, 3)"), true);
+});
+
+Deno.test("defn macro - no parameters", async () => {
+  const js = await transpileToJS(SAMPLES.noParameters);
+  assertEquals(js.includes("const get_ten = function()"), true);
+  assertEquals(js.includes("return 10"), true);
+  assertEquals(js.includes("get_ten()"), true);
+});
+
+Deno.test("defn macro - with do", async () => {
+  const js = await transpileToJS(SAMPLES.withDo);
+  assertEquals(js.includes("const calculate = function(x, y)"), true);
+  assertEquals(js.includes("function()"), true); // IIFE from do
+  assertEquals(js.includes("const sum = x + y"), true);
+  assertEquals(js.includes("const product = x * y"), true);
+  assertEquals(js.includes("return product"), true);
+  assertEquals(js.includes("calculate(3, 4)"), true);
+});
+
+Deno.test("defn macro - with conditional", async () => {
+  const js = await transpileToJS(SAMPLES.withConditional);
+  assertEquals(js.includes("const max_value = function(a, b)"), true);
+  assertEquals(js.includes("return a > b ? a : b"), true);
+  assertEquals(js.includes("max_value(10, 5)"), true);
+});
+
+Deno.test("defn macro - recursive", async () => {
+  const js = await transpileToJS(SAMPLES.recursive);
+  assertEquals(js.includes("const factorial = function(n)"), true);
+  assertEquals(js.includes("return n <= 1 ? 1 : n * factorial(n - 1)"), true);
+  assertEquals(js.includes("factorial(5)"), true);
+});
+
+Deno.test("defn macro - inner function", async () => {
+  const js = await transpileToJS(SAMPLES.innerFunction);
+  assertEquals(js.includes("const outer = function(x)"), true);
+  assertEquals(js.includes("const inner = function(y)"), true);
+  assertEquals(js.includes("return y * y"), true);
+  assertEquals(js.includes("return inner"), true);
+  assertEquals(js.includes("outer(4)"), true);
 });

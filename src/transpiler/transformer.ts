@@ -1,8 +1,6 @@
-// src/transpiler/transformer.ts - Clean version without utility functions
-
+// src/transpiler/transformer.ts
 import { parse } from "./parser.ts";
 import { transformToIR } from "./hql-to-ir.ts";
-import { convertIRToTSAST } from "./ir-to-ts-ast.ts";
 import { generateTypeScript } from "./ts-ast-to-code.ts";
 import { dirname, resolve } from "../platform/platform.ts";
 import { expandMacros } from "../macro-expander.ts";
@@ -22,7 +20,7 @@ export interface TransformOptions {
 }
 
 /**
- * Transform a parsed AST with macro expansion
+ * Transform a parsed AST with macro expansion using the streamlined pipeline
  */
 export async function transformAST(
   astNodes: HQLNode[], 
@@ -40,13 +38,11 @@ export async function transformAST(
     // Step 2: Transform to IR
     const ir = transformToIR(expandedNodes, currentDir);
     
-    // Step 3: Convert to TypeScript AST
-    const tsAST = convertIRToTSAST(ir);
+    // Step 3: Generate TypeScript code directly from IR
+    // (skipping the proprietary TS AST step)
+    const tsCode = generateTypeScript(ir);
     
-    // Step 4: Generate TypeScript code
-    const tsCode = generateTypeScript(tsAST);
-    
-    // Step 5: Prepend the runtime functions
+    // Step 4: Prepend the runtime functions
     return RUNTIME_FUNCTIONS + tsCode;
   } catch (error) {
     console.error("Transformation error:", error);
