@@ -1,6 +1,6 @@
 // src/transpiler/parser.ts
 
-import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode, DotAccessNode } from "./hql_ast.ts";
 import { ParseError } from "./errors.ts";
 
 function tokenize(input: string): string[] {
@@ -65,6 +65,15 @@ function parseExpression(): HQLNode {
   } else if (!isNaN(Number(token))) {
     return { type: "literal", value: Number(token) } as LiteralNode;
   } else {
+    // Check if the token contains a dot - if so, create a dot-access node
+    if (token.includes('.') && !token.startsWith('.') && !token.endsWith('.')) {
+      const parts = token.split('.');
+      const object = parts[0];
+      const property = parts.slice(1).join('.');
+      return { type: "dot-access", object, property } as DotAccessNode;
+    }
+    
+    // Regular symbol
     return { type: "symbol", name: token } as SymbolNode;
   }
 }

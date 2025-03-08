@@ -1,7 +1,7 @@
-// src/transpiler/hql-to-ir.ts - Updated transformPrimitiveOp function
+// src/transpiler/hql-to-ir.ts - Updated for dot notation support
 
 import * as IR from "./hql_ir.ts";
-import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode, DotAccessNode } from "./hql_ast.ts";
 import { KERNEL_PRIMITIVES, PRIMITIVE_OPS } from "../bootstrap-core.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 
@@ -25,6 +25,8 @@ export function transformNode(node: HQLNode, currentDir: string): IR.IRNode | nu
       return transformSymbol(node as SymbolNode);
     case "list":
       return transformList(node as ListNode, currentDir);
+    case "dot-access":
+      return transformDotAccess(node as DotAccessNode);
     default:
       return null;
   }
@@ -63,9 +65,25 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
   return { type: IR.IRNodeType.Identifier, name, isJS } as IR.IRIdentifier;
 }
 
+// Transform a dot-access node (object.property)
+function transformDotAccess(node: DotAccessNode): IR.IRNode {
+  // For dot access, we'll create an InteropIIFE that does a runtime type check
+  return {
+    type: IR.IRNodeType.InteropIIFE,
+    object: { 
+      type: IR.IRNodeType.Identifier, 
+      name: sanitizeIdentifier(node.object) 
+    } as IR.IRIdentifier,
+    property: { 
+      type: IR.IRNodeType.StringLiteral, 
+      value: node.property 
+    } as IR.IRStringLiteral
+  } as IR.IRInteropIIFE;
+}
+
 export function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (list.elements.length === 0) {
-    // Transform empty lists to empty array expressions rather than null
+    // Transform empty lists to empty array expressions
     return {
       type: IR.IRNodeType.ArrayExpression,
       elements: []
@@ -73,6 +91,26 @@ export function transformList(list: ListNode, currentDir: string): IR.IRNode | n
   }
   
   const first = list.elements[0];
+
+  // Handle dot-access expressions with arguments
+  if (first.type === "dot-access") {
+    const dotNode = first as DotAccessNode;
+    const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)).filter(Boolean) as IR.IRNode[];
+    
+    // Create a CallMemberExpression for method calls
+    return {
+      type: IR.IRNodeType.CallMemberExpression,
+      object: { 
+        type: IR.IRNodeType.Identifier, 
+        name: sanitizeIdentifier(dotNode.object) 
+      } as IR.IRIdentifier,
+      property: { 
+        type: IR.IRNodeType.StringLiteral, 
+        value: dotNode.property 
+      } as IR.IRStringLiteral,
+      arguments: args
+    } as IR.IRCallMemberExpression;
+  }
 
   if (first.type === "list") {
     const fnExpr = transformNode(first, currentDir);
@@ -501,7 +539,6 @@ function transformJsGetInvoke(list: ListNode, currentDir: string): IR.IRNode {
   }
 }
 
-// Updated transformPrimitiveOp function with correct handling for comparison operators
 function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
   const op = (list.elements[0] as SymbolNode).name;
   const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);

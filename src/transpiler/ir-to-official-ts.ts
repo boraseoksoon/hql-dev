@@ -1,4 +1,4 @@
-// Complete implementation for ir-to-official-ts.ts
+// src/transpiler/ir-to-official-ts.ts - Updated for dot notation support
 
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
@@ -145,43 +145,39 @@ function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
   }
 }
 
+// Convert Call Member Expression for method calls with args (obj.method arg1 arg2)
 function convertCallMemberExpression(node: IR.IRCallMemberExpression): ts.CallExpression {
-  // Create member expression first
+  // Create property access or element access based on property type
   let memberExpr: ts.Expression;
   
   if (node.property.type === IR.IRNodeType.StringLiteral) {
-    // For string literal properties, create a property access with an identifier
-    const propName = (node.property as IR.IRStringLiteral).value;
-    memberExpr = ts.factory.createPropertyAccessExpression(
-      convertIRExpr(node.object),
-      ts.factory.createIdentifier(propName)
-    );
-  } else {
-    // For other types of properties, convert and use element access if needed
-    const property = convertIRExpr(node.property);
-    if (ts.isStringLiteral(property)) {
+    // Use property access for valid identifiers, element access otherwise
+    const propValue = (node.property as IR.IRStringLiteral).value;
+    
+    // Check if property is a valid JS identifier
+    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propValue)) {
       memberExpr = ts.factory.createPropertyAccessExpression(
         convertIRExpr(node.object),
-        ts.factory.createIdentifier(property.text)
-      );
-    } else if (ts.isIdentifier(property)) {
-      memberExpr = ts.factory.createPropertyAccessExpression(
-        convertIRExpr(node.object),
-        property
+        ts.factory.createIdentifier(propValue)
       );
     } else {
-      // Fallback to element access
       memberExpr = ts.factory.createElementAccessExpression(
         convertIRExpr(node.object),
-        property
+        convertStringLiteral(node.property as IR.IRStringLiteral)
       );
     }
+  } else {
+    // For dynamic properties, use element access
+    memberExpr = ts.factory.createElementAccessExpression(
+      convertIRExpr(node.object),
+      convertIRExpr(node.property)
+    );
   }
   
-  // Then create the call
+  // Create the call with the member and arguments
   return ts.factory.createCallExpression(
     memberExpr,
-    undefined,
+    undefined, // Type arguments
     node.arguments.map(arg => convertIRExpr(arg))
   );
 }
@@ -367,7 +363,8 @@ function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclar
         ts.factory.createIdentifier(moduleName)
       )
     ),
-    ts.factory.createStringLiteral(node.source)
+    ts.factory.createStringLiteral(node.source),
+    undefined
   );
 }
 
@@ -386,7 +383,8 @@ function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] 
         ts.factory.createIdentifier(moduleName)
       )
     ),
-    ts.factory.createStringLiteral(node.source)
+    ts.factory.createStringLiteral(node.source),
+    undefined
   );
   
   // Create the default assignment
@@ -465,6 +463,7 @@ function convertExportVariableDeclaration(node: IR.IRExportVariableDeclaration):
   return [varDecl, exportDecl];
 }
 
+// Convert InteropIIFE for property access or no-arg method calls (obj.property)
 function convertInteropIIFE(node: IR.IRInteropIIFE): ts.CallExpression {
   // Create temporary variables for the object and member
   const objVar = ts.factory.createIdentifier("_obj");
@@ -496,14 +495,14 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.CallExpression {
           undefined,
           ts.factory.createElementAccessExpression(
             objVar,
-            convertStringLiteral(node.property)
+            convertIRExpr(node.property)
           )
         )],
         ts.NodeFlags.Const
       )
     ),
     
-    // return typeof _member === "function" ? _member.call(_obj) : _member;
+    // return typeof _member === "function" ? _member() : _member;
     ts.factory.createReturnStatement(
       ts.factory.createConditionalExpression(
         ts.factory.createBinaryExpression(
@@ -513,9 +512,9 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.CallExpression {
         ),
         ts.factory.createToken(ts.SyntaxKind.QuestionToken),
         ts.factory.createCallExpression(
-          ts.factory.createPropertyAccessExpression(memberVar, "call"),
+          memberVar,
           undefined,
-          [objVar]
+          []
         ),
         ts.factory.createToken(ts.SyntaxKind.ColonToken),
         memberVar
@@ -559,6 +558,16 @@ function convertRaw(node: IR.IRRaw): ts.ExpressionStatement {
   );
 }
 
+function createModuleVariableName(source: string): string {
+  const parts = source.split('/');
+  let baseName = parts[parts.length - 1] || "mod";
+  baseName = baseName.replace(/\.(js|ts|mjs|cjs)$/, '');
+  baseName = baseName.replace(/[^a-zA-Z0-9]+(.)/g, (_, c) => c.toUpperCase());
+  baseName = baseName.replace(/^[^a-zA-Z_$]/, '_');
+  return `${baseName}Module`;
+}
+
+// Helper function to convert IR nodes to TypeScript expressions
 function convertIRExpr(node: IR.IRNode): ts.Expression {
   switch (node.type) {
     case IR.IRNodeType.StringLiteral:
@@ -595,13 +604,4 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
       console.warn(`Cannot convert node of type ${node.type} to expression`);
       return ts.factory.createIdentifier("undefined");
   }
-}
-
-function createModuleVariableName(source: string): string {
-  const parts = source.split('/');
-  let baseName = parts[parts.length - 1] || "mod";
-  baseName = baseName.replace(/\.(js|ts|mjs|cjs)$/, '');
-  baseName = baseName.replace(/[^a-zA-Z0-9]+(.)/g, (_, c) => c.toUpperCase());
-  baseName = baseName.replace(/^[^a-zA-Z_$]/, '_');
-  return `${baseName}Module`;
 }

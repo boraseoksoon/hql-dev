@@ -1,4 +1,4 @@
-// src/transpiler/hql_ir.ts - Updated IR types
+// src/transpiler/hql_ir.ts - Updated with types for dot notation support
 
 export enum IRNodeType {
   // Basic program structure
@@ -16,7 +16,7 @@ export enum IRNodeType {
   // Expressions
   CallExpression,
   MemberExpression,
-  CallMemberExpression,
+  CallMemberExpression,  // For method calls with arguments
   NewExpression,
   BinaryExpression,
   UnaryExpression,
@@ -39,13 +39,13 @@ export enum IRNodeType {
   ExportVariableDeclaration,
   
   // JS Interop
-  InteropIIFE,
+  InteropIIFE,  // For property access and no-arg method calls
   
   // Other
   CommentBlock,
   Raw,
   
-  // NEW: For representing a JS import reference from (js-import "module")
+  // For representing a JS import reference from (js-import "module")
   JsImportReference
 }
 
@@ -99,6 +99,7 @@ export interface IRMemberExpression extends IRNode {
   computed: boolean;
 }
 
+// For method calls with arguments: (obj.method arg1 arg2)
 export interface IRCallMemberExpression extends IRNode {
   type: IRNodeType.CallMemberExpression;
   object: IRNode;
@@ -204,13 +205,14 @@ export interface IRExportVariableDeclaration extends IRNode {
 }
 
 // JS Interop
+// For property access or no-arg method calls: (obj.property)
 export interface IRInteropIIFE extends IRNode {
   type: IRNodeType.InteropIIFE;
   object: IRNode;
   property: IRStringLiteral;
 }
 
-// NEW: IR node for JS import references
+// JS import reference
 export interface IRJsImportReference extends IRNode {
   type: IRNodeType.JsImportReference;
   source: string;

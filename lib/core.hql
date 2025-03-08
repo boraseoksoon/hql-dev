@@ -38,3 +38,11 @@
         (first test-result1) 
         (second test-result1)
         (second test-result2)))
+
+;; Define a macro for dot notation JS interop
+(defmacro dot-access (expr)
+  (let* ((symbol-str (symbol->string expr))
+         (dot-index (string-index-of symbol-str "."))
+         (obj (string-slice symbol-str 0 dot-index))
+         (prop (string-slice symbol-str (+ dot-index 1))))
+    (list (quote js-get-invoke) obj prop)))
