@@ -4,12 +4,16 @@
 ;; Basic property access
 (def pi-value Math.PI)
 
+(console.log pi-value)
+(console.log (pi-value))
+
 ;; No-parameter method call with runtime type checking
 (def random-number (Math.random))
 
 ;; Method call with arguments
 (def text "hello world")
 (def upper-text (text.toUpperCase))
+(console.log upper-text)
 
 ;; Create an array and manipulate it
 (def numbers (new Array))

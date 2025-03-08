@@ -465,12 +465,13 @@ function convertExportVariableDeclaration(node: IR.IRExportVariableDeclaration):
   return [varDecl, exportDecl];
 }
 
-function convertInteropIIFE(node: IR.IRInteropIIFE): ts.CallExpression {
+// Change this function in src/transpiler/ir-to-official-ts.ts
+function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
   // Create temporary variables for the object and member
   const objVar = ts.factory.createIdentifier("_obj");
   const memberVar = ts.factory.createIdentifier("_member");
   
-  // Create the IIFE body
+  // Create the function body (same as before)
   const statements: ts.Statement[] = [
     // const _obj = object;
     ts.factory.createVariableStatement(
@@ -523,21 +524,15 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.CallExpression {
     )
   ];
   
-  // Create the IIFE
-  return ts.factory.createCallExpression(
-    ts.factory.createParenthesizedExpression(
-      ts.factory.createFunctionExpression(
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        [],
-        undefined,
-        ts.factory.createBlock(statements, true)
-      )
-    ),
+  // Just return the function expression without calling it
+  return ts.factory.createFunctionExpression(
     undefined,
-    []
+    undefined,
+    undefined,
+    undefined,
+    [],
+    undefined,
+    ts.factory.createBlock(statements, true)
   );
 }
 
