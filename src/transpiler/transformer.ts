@@ -1,4 +1,5 @@
-// src/transpiler/transformer.ts
+// Updated src/transpiler/transformer.ts to ensure expression-oriented approach is preserved
+
 import { parse } from "./parser.ts";
 import { transformToIR } from "./hql-to-ir.ts";
 import { generateTypeScript } from "./ts-ast-to-code.ts";
@@ -17,10 +18,12 @@ function list(...args) {
 export interface TransformOptions {
   verbose?: boolean;
   bundle?: boolean;
+  module?: "esm" | "commonjs";
 }
 
 /**
  * Transform a parsed AST with macro expansion using the streamlined pipeline
+ * This approach preserves the expression-oriented nature of HQL
  */
 export async function transformAST(
   astNodes: HQLNode[], 
@@ -35,11 +38,15 @@ export async function transformAST(
       console.log("Expanded AST:", JSON.stringify(expandedNodes, null, 2));
     }
     
-    // Step 2: Transform to IR
+    // Step 2: Transform to IR - this preserves expression semantics
     const ir = transformToIR(expandedNodes, currentDir);
     
+    if (options.verbose) {
+      console.log("IR:", JSON.stringify(ir, null, 2));
+    }
+    
     // Step 3: Generate TypeScript code directly from IR
-    // (skipping the proprietary TS AST step)
+    // This step now uses the TypeScript Compiler API for better output
     const tsCode = generateTypeScript(ir);
     
     // Step 4: Prepend the runtime functions

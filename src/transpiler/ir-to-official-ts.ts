@@ -1,4 +1,5 @@
-// src/transpiler/ir-to-official-ts.ts
+// Complete implementation for ir-to-official-ts.ts
+
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
 
@@ -93,8 +94,17 @@ function convertStringLiteral(node: IR.IRStringLiteral): ts.StringLiteral {
   return ts.factory.createStringLiteral(node.value);
 }
 
-function convertNumericLiteral(node: IR.IRNumericLiteral): ts.NumericLiteral {
-  return ts.factory.createNumericLiteral(node.value);
+function convertNumericLiteral(node: IR.IRNumericLiteral): ts.Expression {
+  // For negative numbers, create a prefix unary expression with minus sign
+  if (node.value < 0) {
+    return ts.factory.createPrefixUnaryExpression(
+      ts.SyntaxKind.MinusToken,
+      ts.factory.createNumericLiteral(Math.abs(node.value).toString())
+    );
+  }
+  
+  // For zero or positive numbers, create a numeric literal directly
+  return ts.factory.createNumericLiteral(node.value.toString());
 }
 
 function convertBooleanLiteral(node: IR.IRBooleanLiteral): ts.BooleanLiteral {
@@ -124,9 +134,7 @@ function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
     return ts.factory.createElementAccessExpression(object, property);
   } else {
     if (ts.isIdentifier(property) || ts.isStringLiteral(property)) {
-      const propName = ts.isIdentifier(property) ? 
-        property.text : 
-        property.text;
+      const propName = ts.isIdentifier(property) ? property.text : property.text;
       return ts.factory.createPropertyAccessExpression(
         object, 
         ts.factory.createIdentifier(propName)
@@ -140,18 +148,34 @@ function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
 function convertCallMemberExpression(node: IR.IRCallMemberExpression): ts.CallExpression {
   // Create member expression first
   let memberExpr: ts.Expression;
-  if (ts.isStringLiteral(convertIRExpr(node.property))) {
-    // Handle computed property
+  
+  if (node.property.type === IR.IRNodeType.StringLiteral) {
+    // For string literal properties, create a property access with an identifier
+    const propName = (node.property as IR.IRStringLiteral).value;
     memberExpr = ts.factory.createPropertyAccessExpression(
       convertIRExpr(node.object),
-      ts.factory.createIdentifier((convertIRExpr(node.property) as ts.StringLiteral).text)
+      ts.factory.createIdentifier(propName)
     );
   } else {
-    // Regular property access
-    memberExpr = ts.factory.createPropertyAccessExpression(
-      convertIRExpr(node.object),
-      convertIRExpr(node.property) as ts.Identifier
-    );
+    // For other types of properties, convert and use element access if needed
+    const property = convertIRExpr(node.property);
+    if (ts.isStringLiteral(property)) {
+      memberExpr = ts.factory.createPropertyAccessExpression(
+        convertIRExpr(node.object),
+        ts.factory.createIdentifier(property.text)
+      );
+    } else if (ts.isIdentifier(property)) {
+      memberExpr = ts.factory.createPropertyAccessExpression(
+        convertIRExpr(node.object),
+        property
+      );
+    } else {
+      // Fallback to element access
+      memberExpr = ts.factory.createElementAccessExpression(
+        convertIRExpr(node.object),
+        property
+      );
+    }
   }
   
   // Then create the call
@@ -516,31 +540,42 @@ function convertRaw(node: IR.IRRaw): ts.ExpressionStatement {
 }
 
 function convertIRExpr(node: IR.IRNode): ts.Expression {
-    const result = convertIRNode(node);
-    
-    // Handle null case
-    if (!result) {
+  switch (node.type) {
+    case IR.IRNodeType.StringLiteral:
+      return convertStringLiteral(node as IR.IRStringLiteral);
+    case IR.IRNodeType.NumericLiteral:
+      return convertNumericLiteral(node as IR.IRNumericLiteral);
+    case IR.IRNodeType.BooleanLiteral:
+      return convertBooleanLiteral(node as IR.IRBooleanLiteral);
+    case IR.IRNodeType.NullLiteral:
+      return convertNullLiteral();
+    case IR.IRNodeType.Identifier:
+      return convertIdentifier(node as IR.IRIdentifier);
+    case IR.IRNodeType.CallExpression:
+      return convertCallExpression(node as IR.IRCallExpression);
+    case IR.IRNodeType.MemberExpression:
+      return convertMemberExpression(node as IR.IRMemberExpression);
+    case IR.IRNodeType.CallMemberExpression:
+      return convertCallMemberExpression(node as IR.IRCallMemberExpression);
+    case IR.IRNodeType.NewExpression:
+      return convertNewExpression(node as IR.IRNewExpression);
+    case IR.IRNodeType.BinaryExpression:
+      return convertBinaryExpression(node as IR.IRBinaryExpression);
+    case IR.IRNodeType.UnaryExpression:
+      return convertUnaryExpression(node as IR.IRUnaryExpression);
+    case IR.IRNodeType.ConditionalExpression:
+      return convertConditionalExpression(node as IR.IRConditionalExpression);
+    case IR.IRNodeType.ArrayExpression:
+      return convertArrayExpression(node as IR.IRArrayExpression);
+    case IR.IRNodeType.FunctionExpression:
+      return convertFunctionExpression(node as IR.IRFunctionExpression);
+    case IR.IRNodeType.InteropIIFE:
+      return convertInteropIIFE(node as IR.IRInteropIIFE);
+    default:
       console.warn(`Cannot convert node of type ${node.type} to expression`);
       return ts.factory.createIdentifier("undefined");
-    }
-    
-    if (Array.isArray(result)) {
-      console.warn("Cannot convert array of statements to expression");
-      return ts.factory.createIdentifier("undefined");
-    }
-    
-    // Now that we've confirmed result is not null, TypeScript's type guards can be used safely
-    if (ts.isExpressionStatement(result)) {
-      return result.expression;
-    }
-    
-    if (ts.isExpression(result)) {
-      return result;
-    }
-    
-    console.warn(`Cannot convert node type to expression: ${(node as any).type}`);
-    return ts.factory.createIdentifier("undefined");
   }
+}
 
 function createModuleVariableName(source: string): string {
   const parts = source.split('/');
