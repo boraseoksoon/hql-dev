@@ -179,5 +179,28 @@
           (log-message msg)
           (list n fact)))))
 
+
+;; Function with rest parameters
+(defn log-all (& items)
+  (js-call console "log" items))
+
+;; Function with regular and rest parameters
+(defn with-prefix (prefix & rest)
+  (js-call console "log" prefix rest))
+
+(def a 10)
+
+(log-all a (+ a a))
+
+;; do macro
+
+(def result6
+  (do
+    (def p 100)
+    (def q 200)
+    (def r 300)
+    (def s 400)
+    (+ p q r s)))
+
 ;; Export the showcase function
 (export "showcase" showcase)

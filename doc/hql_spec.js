@@ -31,7 +31,7 @@ const complex_calculation = function (x, y) {
         return function () {
             const product = x * y;
             const difference = x - y;
-            return difference;
+            return list(sum, product, difference);
         }([]);
     }([]);
 };
@@ -98,8 +98,24 @@ const showcase = function (n) {
         return result ? result : function () {
             const fact = factorial(n);
             const msg = "Factorial of " + (n + " is " + fact);
-            return msg;
+            log_message(msg);
+            return list(n, fact);
         }([]);
     }([]);
 };
+const log_all = function (...items) {
+    return console.log(items);
+};
+const with_prefix = function (prefix, ...rest) {
+    return console.log(prefix, rest);
+};
+const a = 10;
+log_all(a, a + a);
+const result6 = function () {
+    const p = 100;
+    const q = 200;
+    const r = 300;
+    const s = 400;
+    return p + q + r + s;
+}([]);
 export { showcase };

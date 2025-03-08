@@ -8,8 +8,8 @@ import { gensym } from "./gensym.ts";  // Imported gensym from its dedicated mod
 let globalEnv: Env | null = null;
 
 /**
- * Load core macros from lib/core.hql into the provided environment.
- */
+* Load core macros from lib/core.hql into the provided environment.
+*/
 async function loadCoreMacros(env: Env): Promise<void> {
   const coreSource = await Deno.readTextFile("./lib/core.hql");
   const coreAST = parse(coreSource);
@@ -23,8 +23,8 @@ async function loadCoreMacros(env: Env): Promise<void> {
 }
 
 /**
- * Initialize the macro environment by creating a minimal environment and loading core macros.
- */
+* Initialize the macro environment by creating a minimal environment and loading core macros.
+*/
 async function initMacroEnvironment(): Promise<Env> {
   if (!globalEnv) {
     globalEnv = await initializeGlobalEnv();
@@ -34,16 +34,16 @@ async function initMacroEnvironment(): Promise<Env> {
 }
 
 /**
- * Public function to expand macros in an array of HQL AST nodes.
- */
+* Public function to expand macros in an array of HQL AST nodes.
+*/
 export async function expandMacros(nodes: HQLNode[]): Promise<HQLNode[]> {
   const env = await initMacroEnvironment();
   return nodes.map(node => expandNode(node, env));
 }
 
 /**
- * Recursively expand macros in a given HQL AST node.
- */
+* Recursively expand macros in a given HQL AST node.
+*/
 function expandNode(node: HQLNode, env: Env): HQLNode {
   if (node.type === "list") {
     const list = node as ListNode;

@@ -254,22 +254,42 @@ function convertArrayExpression(node: IR.IRArrayExpression): ts.ArrayLiteralExpr
 }
 
 function convertFunctionExpression(node: IR.IRFunctionExpression): ts.FunctionExpression {
-  return ts.factory.createFunctionExpression(
-    undefined, // modifiers
-    undefined, // asteriskToken
-    undefined, // name
-    undefined, // typeParameters
-    node.params.map(param => 
-      ts.factory.createParameterDeclaration(
-        undefined,
-        undefined,
+    // Convert parameters, handling rest parameters (marked with ... prefix)
+    const parameters = node.params.map(param => {
+      // Check if this is a rest parameter (name starts with '...')
+      if (param.name && param.name.startsWith('...')) {
+        const paramName = param.name.slice(3); // Remove the '...' prefix
+        const dotDotDotToken = ts.factory.createToken(ts.SyntaxKind.DotDotDotToken);
+        const identifier = ts.factory.createIdentifier(paramName);
+        
+        // Create a parameter with dot-dot-dot token for rest parameters
+        // Using the minimal 3-argument form
+        return ts.factory.createParameterDeclaration(
+          undefined, // modifiers
+          dotDotDotToken,
+          identifier
+        );
+      }
+  
+      // Regular parameters - use the minimal form
+      return ts.factory.createParameterDeclaration(
+        undefined, // modifiers 
+        undefined, // dotDotDotToken
         convertIdentifier(param)
-      )
-    ),
-    undefined, // type
-    convertBlockStatement(node.body)
-  );
-}
+      );
+    });
+    
+    // Create the function expression with the converted parameters and body
+    return ts.factory.createFunctionExpression(
+      undefined, // modifiers
+      undefined, // asteriskToken
+      undefined, // name
+      undefined, // typeParameters
+      parameters,
+      undefined, // type
+      convertBlockStatement(node.body)
+    );
+  }
 
 // Statement conversions
 function convertVariableDeclaration(node: IR.IRVariableDeclaration): ts.VariableStatement {

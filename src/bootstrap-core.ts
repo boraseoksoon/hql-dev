@@ -4,32 +4,32 @@ import { jsImport, jsExport, jsGet, jsCall } from "./interop.ts";
 import { gensym } from "./gensym.ts";
 
 /**
- * KERNEL_PRIMITIVES are irreducible forms that cannot be defined in terms of each other.
- * These represent the absolute minimal core of the language.
- */
+* KERNEL_PRIMITIVES are irreducible forms that cannot be defined in terms of each other.
+* These represent the absolute minimal core of the language.
+*/
 export const KERNEL_PRIMITIVES = new Set(["quote", "if", "fn", "def"]);
 
 /**
- * DERIVED_FORMS are forms that could theoretically be implemented as macros,
- * but are currently handled directly by the evaluator for bootstrap purposes.
- */
+* DERIVED_FORMS are forms that could theoretically be implemented as macros,
+* but are currently handled directly by the evaluator for bootstrap purposes.
+*/
 export const DERIVED_FORMS = new Set(["defmacro"]);
 
 /**
- * CORE_FORMS includes both kernel primitives and bootstrap derived forms.
- */
+* CORE_FORMS includes both kernel primitives and bootstrap derived forms.
+*/
 export const CORE_FORMS = new Set([...KERNEL_PRIMITIVES, ...DERIVED_FORMS]);
 
 /**
- * LIST_PRIMITIVES are the minimal set of list operations needed for macros to work.
- * These are inspired by Scheme's car/cdr/cons but with more intuitive names.
- */
+* LIST_PRIMITIVES are the minimal set of list operations needed for macros to work.
+* These are inspired by Scheme's car/cdr/cons but with more intuitive names.
+*/
 export const LIST_PRIMITIVES = new Set(["first", "rest", "cons", "=", "length"]);
 
 /**
- * PRIMITIVE_OPS are primitive operations that are provided directly
- * in the environment for efficiency and implementation simplicity.
- */
+* PRIMITIVE_OPS are primitive operations that are provided directly
+* in the environment for efficiency and implementation simplicity.
+*/
 export const PRIMITIVE_OPS = new Set([
   // Arithmetic operators
   "+", "-", "*", "/", 
@@ -58,11 +58,11 @@ export class Env {
   bindings = new Map<string, any>();
   macros = new Map<string, MacroFunction>();
   parent: Env | null = null;
-
+  
   constructor(parent: Env | null = null) {
     this.parent = parent;
   }
-
+  
   lookup(symbol: string): any {
     if (this.bindings.has(symbol)) {
       return this.bindings.get(symbol);
@@ -72,19 +72,19 @@ export class Env {
     }
     throw new Error(`Symbol not found: ${symbol}`);
   }
-
+  
   define(symbol: string, value: any): void {
     this.bindings.set(symbol, value);
   }
-
+  
   defineMacro(name: string, fn: MacroFunction): void {
     this.macros.set(name, fn);
   }
-
+  
   hasMacro(name: string): boolean {
     return this.macros.has(name) || (this.parent?.hasMacro(name) || false);
   }
-
+  
   getMacro(name: string): MacroFunction | null {
     if (this.macros.has(name)) {
       return this.macros.get(name)!;
@@ -94,7 +94,7 @@ export class Env {
     }
     return null;
   }
-
+  
   extend(params: string[], args: any[]): Env {
     const env = new Env(this);
     for (let i = 0; i < params.length; i++) {
@@ -127,16 +127,16 @@ function setupPrimitives(env: Env): void {
   env.define("*", (...args: number[]) => args.reduce((a, b) => a * b, 1));
   env.define("/", (a: number, b: number) => a / b);
   env.define("=", (a: any, b: any) => a === b);
-
+  
   // JS interop primitives now delegate to our interop module.
   env.define("js-import", jsImport);
   env.define("js-export", jsExport);
   env.define("js-get", jsGet);
   env.define("js-call", jsCall);
-
+  
   // Register gensym for macro hygiene.
   env.define("gensym", gensym);
-
+  
   // Helper "list" primitive for constructing list nodes.
   env.define("list", (...args: any[]) => {
     return { type: "list", elements: args };
@@ -187,13 +187,13 @@ export async function initializeGlobalEnv(): Promise<Env> {
 }
 
 /**
- * evaluateForMacro: A minimal evaluator for bootstrapping macro expansion.
- * It handles literals, symbols, and lists with special forms:
- *  - quote: returns its argument without evaluation (KERNEL PRIMITIVE).
- *  - if: performs conditional evaluation (KERNEL PRIMITIVE)
- *  - defmacro: registers a macro in the environment (DERIVED FORM).
- *  - Otherwise, treats the list as a function application.
- */
+* evaluateForMacro: A minimal evaluator for bootstrapping macro expansion.
+* It handles literals, symbols, and lists with special forms:
+*  - quote: returns its argument without evaluation (KERNEL PRIMITIVE).
+*  - if: performs conditional evaluation (KERNEL PRIMITIVE)
+*  - defmacro: registers a macro in the environment (DERIVED FORM).
+*  - Otherwise, treats the list as a function application.
+*/
 export function evaluateForMacro(expr: HQLNode, env: Env): any {
   if (!expr || typeof expr !== 'object' || !('type' in expr)) {
     throw new Error(`Invalid expression: ${JSON.stringify(expr)}`);
@@ -201,9 +201,9 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
   
   switch (expr.type) {
     case "literal":
-      return (expr as LiteralNode).value;
+    return (expr as LiteralNode).value;
     case "symbol":
-      return env.lookup((expr as SymbolNode).name);
+    return env.lookup((expr as SymbolNode).name);
     case "list": {
       const list = expr as ListNode;
       if (list.elements.length === 0) return [];
@@ -233,7 +233,7 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
             return null;
           }
         }
-        
+      
         if (op === "defmacro") {
           if (list.elements.length < 4) {
             throw new Error("defmacro requires a name, parameters, and body");
@@ -247,21 +247,62 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
           if (paramsNode.type !== "list") {
             throw new Error("defmacro parameters must be a list");
           }
-          const paramNames = (paramsNode as ListNode).elements.map(n => {
-            if (n.type !== "symbol") {
+          
+          // Process parameters, handling '&' for rest parameters
+          const paramElements = (paramsNode as ListNode).elements;
+          const paramNames: string[] = [];
+          let hasRestParam = false;
+          let restParamName = "";
+          
+          for (let i = 0; i < paramElements.length; i++) {
+            const param = paramElements[i];
+            if (param.type !== "symbol") {
               throw new Error("Macro parameters must be symbols");
             }
-            return (n as SymbolNode).name;
-          });
+            
+            // Handle rest parameter
+            if ((param as SymbolNode).name === "&") {
+              if (i + 1 < paramElements.length && paramElements[i + 1].type === "symbol") {
+                hasRestParam = true;
+                restParamName = (paramElements[i + 1] as SymbolNode).name;
+                // Skip the next param since we've processed it
+                i++;
+              } else {
+                throw new Error("& must be followed by a symbol in parameter list");
+              }
+            } else {
+              paramNames.push((param as SymbolNode).name);
+            }
+          }
+          
           const body = list.elements.slice(3);
-          const macroFn: MacroFunction = (args: HQLNode[], callEnv: Env): HQLNode => {
-            const macroEnv = callEnv.extend(paramNames, args);
+          const macroFn = (args: HQLNode[], callEnv: Env): HQLNode => {
+            // Create a new environment for the macro expansion
+            const macroEnv = callEnv.extend([], []);
+            
+            // Bind regular parameters
+            for (let i = 0; i < paramNames.length; i++) {
+              macroEnv.define(paramNames[i], i < args.length ? args[i] : makeLiteral(null));
+            }
+            
+            // Handle rest parameter if present
+            if (hasRestParam) {
+              // Collect all remaining arguments into a list for the rest parameter
+              const restArgs = args.slice(paramNames.length);
+              macroEnv.define(restParamName, {
+                type: "list",
+                elements: restArgs
+              });
+            }
+            
+            // Execute the macro body
             let result: HQLNode = makeLiteral(null);
             for (const e of body) {
               result = evaluateForMacro(e, macroEnv);
             }
             return result;
           };
+          
           env.defineMacro(macroName, macroFn);
           return makeLiteral(null);
         }
@@ -277,6 +318,6 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
       throw new Error("List does not start with a symbol");
     }
     default:
-      throw new Error(`Unknown node type: ${(expr as any).type || JSON.stringify(expr)}`);
+    throw new Error(`Unknown node type: ${(expr as any).type || JSON.stringify(expr)}`);
   }
 }

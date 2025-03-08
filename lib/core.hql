@@ -26,10 +26,10 @@
 
 ;; do: Execute multiple expressions and return the last one
 ;; Expands to an immediately-invoked function expression
-(defmacro do (first-expr second-expr)
-  (list (list (quote fn) (list) 
-        first-expr 
-        second-expr) (list)))
+(defmacro do (& forms)
+  (list (cons (quote fn)
+              (cons (list) forms))
+        (list)))
 
 ;; cond: Simple conditional with two branches
 ;; Usage: (cond (test1 result1) (test2 result2))

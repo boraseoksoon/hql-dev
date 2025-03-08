@@ -206,12 +206,37 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
     throw new Error("fn parameters must be a list");
   }
   
+  // Process parameters, handling '&' for rest parameters
+  const paramElements = (paramsNode as ListNode).elements;
   const params: IR.IRIdentifier[] = [];
-  for (const param of (paramsNode as ListNode).elements) {
+  
+  for (let i = 0; i < paramElements.length; i++) {
+    const param = paramElements[i];
     if (param.type !== "symbol") {
       throw new Error("fn parameters must be symbols");
     }
-    params.push(transformSymbol(param as SymbolNode) as IR.IRIdentifier);
+    
+    // Check for &
+    if ((param as SymbolNode).name === "&") {
+      // Next symbol should be the rest parameter
+      if (i + 1 < paramElements.length && paramElements[i + 1].type === "symbol") {
+        const restParam = paramElements[i + 1] as SymbolNode;
+        const restParamName = sanitizeIdentifier(restParam.name);
+        
+        // Create a rest parameter identifier with the ... prefix
+        params.push({
+          type: IR.IRNodeType.Identifier,
+          name: `...${restParamName}`
+        } as IR.IRIdentifier);
+        
+        // Skip the next parameter since we've handled it
+        i++;
+      } else {
+        throw new Error("& must be followed by a symbol in parameter list");
+      }
+    } else {
+      params.push(transformSymbol(param as SymbolNode) as IR.IRIdentifier);
+    }
   }
   
   const bodyNodes: IR.IRNode[] = [];
