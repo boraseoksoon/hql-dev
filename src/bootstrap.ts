@@ -44,16 +44,6 @@ export const PRIMITIVE_OPS = new Set([
   ...LIST_PRIMITIVES
 ]);
 
-// Export primitive implementations for code generation
-export const PRIMITIVE_IMPLEMENTATIONS = {
-  // List primitives
-  list: "function list(...args) { return args; }",
-  first: "function first(list) { if (!Array.isArray(list)) throw new Error('first requires a list'); return list[0]; }",
-  rest: "function rest(list) { if (!Array.isArray(list)) throw new Error('rest requires a list'); return list.slice(1); }",
-  cons: "function cons(item, list) { if (!Array.isArray(list)) throw new Error('cons requires a list'); return [item, ...list]; }",
-  length: "function length(list) { if (!Array.isArray(list)) throw new Error('length requires a list'); return list.length; }"
-};
-
 export class Env {
   bindings = new Map<string, any>();
   macros = new Map<string, MacroFunction>();

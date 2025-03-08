@@ -65,13 +65,13 @@ const log_message = function (msg) {
 const current_time = function () {
     return new Date(list);
 };
-const random_number = function () {
+const random_number2 = function () {
     return Math["random"];
 };
 import * as modModule from "https://deno.land/std@0.170.0/path/mod.ts";
 const mod = modModule.default !== undefined ? modModule.default : modModule;
 const join_paths = function (a, b) {
-    return modjoin(a, b);
+    return mod.join(a, b);
 };
 export { join_paths as joinPaths };
 export { pi as PI };
@@ -118,4 +118,27 @@ const result6 = function () {
     const s = 400;
     return p + q + r + s;
 }([]);
+const pi_value = function () {
+    const _obj = Math;
+    const _member = _obj["PI"];
+    return typeof _member === "function" ? _member.call(_obj) : _member;
+};
+console.log(pi_value);
+console.log(pi_value());
+const random_number = Math.random();
+const text = "hello world";
+const upper_text = text.toUpperCase();
+console.log(upper_text);
+const numbers = new(Array);
+numbers.push(1);
+numbers.push(2);
+numbers.push(3);
+console.log(numbers);
+const date = new(Date);
+const current_year = date.getFullYear();
+export { pi_value as pi };
+export { random_number as random };
+export { upper_text as upperText };
+export { numbers };
+export { current_year as year };
 export { showcase };

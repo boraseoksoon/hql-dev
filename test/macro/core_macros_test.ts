@@ -2,8 +2,8 @@
 import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../../src/transpiler/parser.ts";
 import { expandMacros } from "../../src/macro-expander.ts";
-import { transformToIR } from "../../src/transpiler/hql-to-ir.ts";
-import { generateTypeScript } from "../../src/transpiler/ts-ast-to-code.ts";
+import { transformToIR } from "../../src/transpiler/hql-code-to-hql-ir.ts";
+import { generateTypeScript } from "../../src/transpiler/ts-ast-to-ts-code.ts";
 import { dirname } from "../../src/platform/platform.ts";
 
 // Test the full suite of core macros in one sample

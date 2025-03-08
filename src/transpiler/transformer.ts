@@ -1,6 +1,6 @@
 import { parse } from "./parser.ts";
-import { transformToIR } from "./hql-to-ir.ts";
-import { generateTypeScript } from "./ts-ast-to-code.ts";
+import { transformToIR } from "./hql-code-to-hql-ir.ts";
+import { generateTypeScript } from "./ts-ast-to-ts-code.ts";
 import { dirname, resolve, readTextFile, writeTextFile } from "../platform/platform.ts";
 import { expandMacros } from "../macro-expander.ts";
 import { HQLNode } from "./hql_ast.ts";

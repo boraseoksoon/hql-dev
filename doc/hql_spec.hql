@@ -117,7 +117,7 @@
   (js-new Date (list)))
 
 ;; Access JavaScript Math properties
-(defn random-number ()
+(defn random-number2 ()
   (js-get Math "random"))
 
 ;; ========== Imports and Exports ==========

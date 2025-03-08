@@ -1,5 +1,4 @@
 // src/bundler/bundler.ts - Fixed variable initialization issue
-import { join, dirname, basename } from "../platform/platform.ts";
 
 // Simple cache for bundled content
 const bundleCache = new Map<string, { content: string, timestamp: number }>();

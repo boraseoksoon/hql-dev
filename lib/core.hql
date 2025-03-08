@@ -1,9 +1,10 @@
-;; lib/core.hql - Updated with quote reader macro (')
+;; lib/core.hql - Updated with quote reader macro
 
-;; Define defn: For now, support a single-expression body.
+;; Define defn using backtick+unquote syntax
 (defmacro defn (name params body)
   (list 'def name (list 'fn params body)))
 
+;; Rest use quote reader macro for now
 ;; Define import: expands (import "module") into (js-import "module")
 (defmacro import (path)
   (list 'js-import path))

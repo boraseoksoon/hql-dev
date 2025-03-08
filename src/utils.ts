@@ -1,15 +1,5 @@
 // src/utils.ts - Enhanced with identifier sanitization
 
-// src/utils.ts - Enhanced with better identifier sanitization
-
-/**
- * Convert hyphenated names to camelCase
- * e.g., "my-var-name" → "myVarName"
- */
-export function hyphenToCamel(name: string): string {
-  return name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-}
-
 /**
  * Sanitize a string to be a valid JavaScript identifier
  * - Converts hyphens to underscores

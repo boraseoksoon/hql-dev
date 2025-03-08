@@ -83,9 +83,9 @@ Converts HQL IR directly to the official TypeScript Compiler AST:
 
 ```typescript
 import * as ts from "npm:typescript";
-import { convertIRToOfficialTS } from "./ir-to-official-ts.ts";
+import { convertHqlIRToTypeScript } from "./ir-to-official-ts.ts";
 
-const tsAST = convertIRToOfficialTS(ir);
+const tsAST = convertHqlIRToTypeScript(ir);
 
 // TypeScript AST representing the same function
 // using the official TypeScript compiler API
@@ -270,7 +270,7 @@ const greet = function(name) {
 The key innovation is the direct conversion from HQL IR to the official TypeScript AST, implemented in `ir-to-official-ts.ts`:
 
 ```typescript
-export function convertIRToOfficialTS(program: IR.IRProgram): ts.SourceFile {
+export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
   const statements: ts.Statement[] = [];
   
   for (const node of program.body) {

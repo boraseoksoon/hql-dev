@@ -1,9 +1,8 @@
 // src/macro-expander.ts
 
 import { parse } from "./transpiler/parser.ts";
-import { Env, initializeGlobalEnv, evaluateForMacro, makeLiteral } from "./bootstrap-core.ts";
+import { Env, initializeGlobalEnv, evaluateForMacro } from "./bootstrap.ts";
 import { HQLNode, ListNode, SymbolNode } from "./transpiler/hql_ast.ts";
-import { gensym } from "./gensym.ts";  // Imported gensym from its dedicated module
 
 let globalEnv: Env | null = null;
 

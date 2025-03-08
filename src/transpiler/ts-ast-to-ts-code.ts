@@ -1,7 +1,7 @@
 // src/transpiler/ts-ast-to-code.ts
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
-import { convertIRToOfficialTS } from "./ir-to-official-ts.ts";
+import { convertHqlIRToTypeScript } from "./hql-ir-to-ts-ast.ts";
 
 /**
  * Generate TypeScript code from HQL IR using the TypeScript Compiler API.
@@ -10,7 +10,7 @@ import { convertIRToOfficialTS } from "./ir-to-official-ts.ts";
 export function generateTypeScript(ir: IR.IRProgram): string {
   try {
     // Convert HQL IR directly to official TS AST
-    const tsAST = convertIRToOfficialTS(ir);
+    const tsAST = convertHqlIRToTypeScript(ir);
     
     // Create a printer
     const printer = ts.createPrinter({

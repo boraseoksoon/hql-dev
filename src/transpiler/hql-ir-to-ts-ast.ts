@@ -7,7 +7,7 @@ import * as IR from "./hql_ir.ts";
  * Converts HQL IR directly to the official TypeScript AST.
  * This preserves expression semantics while eliminating the proprietary TS AST step.
  */
-export function convertIRToOfficialTS(program: IR.IRProgram): ts.SourceFile {
+export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
   const statements: ts.Statement[] = [];
   
   for (const node of program.body) {
