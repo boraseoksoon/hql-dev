@@ -7,8 +7,10 @@ function tokenize(input: string): string[] {
   const tokens: string[] = [];
   let token = "";
   let inString = false;
+  
   for (let i = 0; i < input.length; i++) {
     const ch = input[i];
+    
     if (inString) {
       token += ch;
       if (ch === '"' && input[i - 1] !== '\\') {
@@ -17,7 +19,11 @@ function tokenize(input: string): string[] {
         inString = false;
       }
     } else {
-      if (ch === '"') {
+      // Add special handling for quote (')
+      if (ch === "'") {
+        if (token !== "") { tokens.push(token); token = ""; }
+        tokens.push("'");
+      } else if (ch === '"') {
         if (token !== "") { tokens.push(token); token = ""; }
         token += ch;
         inString = true;
@@ -27,12 +33,15 @@ function tokenize(input: string): string[] {
       } else if (/\s/.test(ch)) {
         if (token !== "") { tokens.push(token); token = ""; }
       } else if (ch === ';') {
+        // Skip comments
+        if (token !== "") { tokens.push(token); token = ""; }
         while (i < input.length && input[i] !== '\n') i++;
       } else {
         token += ch;
       }
     }
   }
+  
   if (token !== "") tokens.push(token);
   return tokens;
 }
@@ -43,6 +52,7 @@ let currentPos = 0;
 function parseTokens(tokens: string[]): HQLNode[] {
   currentTokens = tokens;
   currentPos = 0;
+  
   const nodes: HQLNode[] = [];
   while (currentPos < currentTokens.length) {
     nodes.push(parseExpression());
@@ -56,6 +66,19 @@ function parseExpression(): HQLNode {
   }
   
   const token = currentTokens[currentPos++];
+  
+  // Handle quote shorthand (')
+  if (token === "'") {
+    // Parse the next expression and wrap it in a quote
+    const quoted = parseExpression();
+    return { 
+      type: "list", 
+      elements: [
+        { type: "symbol", name: "quote" },
+        quoted
+      ] 
+    } as ListNode;
+  }
   
   if (token === '(') {
     return parseList();
