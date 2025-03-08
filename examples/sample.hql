@@ -1,30 +1,25 @@
-;; examples/dot-access.hql
-;; Simplified example of dot notation that works with existing HQL features
+;; examples/diverse-dot-notation.hql
+;; Comprehensive examples of dot notation for property access and function calls
 
-;; Basic property access
-(def pi-value Math.PI)
+;; 1. Basic property access
+(def screen-width window.innerWidth)
+(def screen-height window.innerHeight)
 
-;; No-parameter method call with runtime type checking
-(def random-number (Math.random))
+;; 2. Nested property access
+(def json-stringify JSON.stringify)
+(def navigator-info navigator.userAgent)
+(def page-protocol document.location.protocol)
 
-;; Method call with arguments
-(def text "hello world")
-(def upper-text (text.toUpperCase))
+;; 3. No-parameter function calls
+(def current-url (window.location.toString))
+(def random-num (Math.random))
+(def timestamp (Date.now))
+(def current-time (new Date))
+(def time-string (current-time.toISOString))
 
-;; Create an array and manipulate it
-(def numbers (new Array))
-(numbers.push 1)
-(numbers.push 2)
-(numbers.push 3)
-(console.log numbers)
+;; 4. Property access vs. no-parameter functions
+(def array-length [1, 2, 3].length)  ;; property access
+(def array-values ([1, 2, 3].values)) ;; no-parameter function call
+(def array-keys ([1, 2, 3].keys))     ;; no-parameter function call
 
-;; Date methods
-(def date (new Date))
-(def current-year (date.getFullYear))
-
-;; Export the values so they can be accessed
-(export "pi" pi-value)
-(export "random" random-number)
-(export "upperText" upper-text)
-(export "numbers" numbers)
-(export "year" current-year)
+(def str-array ["apple", "banana", "cherry"])
