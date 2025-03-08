@@ -54,7 +54,9 @@ function parseExpression(): HQLNode {
   if (currentPos >= currentTokens.length) {
     throw new ParseError("Unexpected end of input", { line: 0, column: 0, offset: 0 });
   }
+  
   const token = currentTokens[currentPos++];
+  
   if (token === '(') {
     return parseList();
   } else if (token === ')') {
@@ -65,20 +67,84 @@ function parseExpression(): HQLNode {
   } else if (!isNaN(Number(token))) {
     return { type: "literal", value: Number(token) } as LiteralNode;
   } else {
+    // Check if the token contains a dot - for property access
+    if (token.includes('.') && !token.startsWith('.') && !token.endsWith('.')) {
+      const parts = token.split('.');
+      const object = parts[0];
+      const property = parts.slice(1).join('.');
+      
+      // Create a canonical list form for js-get-invoke
+      return { 
+        type: "list", 
+        elements: [
+          { type: "symbol", name: "js-get-invoke" },
+          { type: "symbol", name: object },
+          { type: "literal", value: property }
+        ] 
+      } as ListNode;
+    }
+    
+    // Regular symbol
     return { type: "symbol", name: token } as SymbolNode;
   }
 }
 
 function parseList(): ListNode {
   const elements: HQLNode[] = [];
+  
+  // Check if this might be a method call with arguments
+  // by examining the first token
+  if (currentPos < currentTokens.length && 
+      currentTokens[currentPos] !== ')' &&
+      currentTokens[currentPos].includes('.') &&
+      !currentTokens[currentPos].startsWith('.') &&
+      !currentTokens[currentPos].endsWith('.')) {
+        
+    // This is a potential method call (obj.method args...)
+    const methodToken = currentTokens[currentPos++];
+    const parts = methodToken.split('.');
+    const object = parts[0];
+    const method = parts.slice(1).join('.');
+    
+    // Start building the canonical form with proper type annotations
+    const jsCallElements: HQLNode[] = [
+      { type: "symbol", name: "js-call" } as SymbolNode,
+      { type: "symbol", name: object } as SymbolNode,
+      { type: "literal", value: method } as LiteralNode
+    ];
+    
+    // Parse the arguments
+    while (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
+      jsCallElements.push(parseExpression());
+    }
+    
+    // Skip closing paren
+    if (currentPos >= currentTokens.length) {
+      throw new ParseError("Unclosed list", { line: 0, column: 0, offset: 0 });
+    }
+    currentPos++; // skip ')'
+    
+    return { 
+      type: "list", 
+      elements: jsCallElements
+    } as ListNode;
+  }
+  
+  // Normal list parsing for regular lists
   while (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
     elements.push(parseExpression());
   }
+  
   if (currentPos >= currentTokens.length) {
     throw new ParseError("Unclosed list", { line: 0, column: 0, offset: 0 });
   }
-  currentPos++; // skip ')'
-  return { type: "list", elements } as ListNode;
+  
+  currentPos++; // Skip the closing parenthesis
+  
+  return { 
+    type: "list", 
+    elements 
+  } as ListNode;
 }
 
 function processStringLiteral(token: string): string {
