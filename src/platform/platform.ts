@@ -1,7 +1,3 @@
-// src/platform/platform.ts
-
-// src/platform/platform.ts
-
 import * as stdPath from "jsr:@std/path@1.0.8";
 import { exists } from "jsr:@std/fs@1.0.13";
 
@@ -89,4 +85,4 @@ export const exit = CurrentPlatform.exit;
 export const getEnv = CurrentPlatform.getEnv;
 export const setEnv = CurrentPlatform.setEnv;
 export const existsFn = CurrentPlatform.exists; // Exporting exists as existsFn
-export { exists }
+export { exists };

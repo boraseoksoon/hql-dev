@@ -1,9 +1,7 @@
-// Updated src/transpiler/transformer.ts to ensure expression-oriented approach is preserved
-
 import { parse } from "./parser.ts";
 import { transformToIR } from "./hql-to-ir.ts";
 import { generateTypeScript } from "./ts-ast-to-code.ts";
-import { dirname, resolve } from "../platform/platform.ts";
+import { dirname, resolve, readTextFile, writeTextFile } from "../platform/platform.ts";
 import { expandMacros } from "../macro-expander.ts";
 import { HQLNode } from "./hql_ast.ts";
 
@@ -22,8 +20,8 @@ export interface TransformOptions {
 }
 
 /**
- * Transform a parsed AST with macro expansion using the streamlined pipeline
- * This approach preserves the expression-oriented nature of HQL
+ * Transform a parsed AST with macro expansion using the streamlined pipeline.
+ * This approach preserves the expression-oriented nature of HQL.
  */
 export async function transformAST(
   astNodes: HQLNode[], 
@@ -58,7 +56,7 @@ export async function transformAST(
 }
 
 /**
- * Transform HQL source to TypeScript
+ * Transform HQL source to TypeScript.
  */
 export async function transpile(
   source: string, 
@@ -83,7 +81,7 @@ export async function transpile(
 }
 
 /**
- * Transpile an HQL file to TypeScript
+ * Transpile an HQL file to TypeScript.
  */
 export async function transpileFile(
   inputPath: string, 
@@ -92,10 +90,10 @@ export async function transpileFile(
 ): Promise<string> {
   const absPath = resolve(inputPath);
   try {
-    const source = await Deno.readTextFile(absPath);
+    const source = await readTextFile(absPath);
     const tsCode = await transpile(source, absPath, options);
     if (outputPath) {
-      await Deno.writeTextFile(outputPath, tsCode);
+      await writeTextFile(outputPath, tsCode);
     }
     return tsCode;
   } catch (error) {
@@ -104,4 +102,3 @@ export async function transpileFile(
 }
 
 export default transpile;
-
