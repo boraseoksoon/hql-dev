@@ -1,7 +1,6 @@
 // src/transpiler/ir-to-official-ts.ts
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
-import { sanitizeIdentifier } from "../utils.ts";
 
 /**
  * Converts HQL IR directly to the official TypeScript AST.
