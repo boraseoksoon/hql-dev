@@ -144,7 +144,7 @@ function parseExpression(): HQLNode {
       const object = parts[0];
       const property = parts.slice(1).join('.');
       
-      // Create a canonical list form for js-get-invoke
+      // Create a list representation for property access (using js-get-invoke)
       return { 
         type: "list", 
         elements: [

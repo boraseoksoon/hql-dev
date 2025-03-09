@@ -137,6 +137,10 @@
 (numbers.push 1)
 (numbers.push 2)
 (numbers.push 3)
+(numbers.push 4)
+(numbers.push 5)
+(numbers.push 6)
+(numbers.push 7)
 (console.log numbers)
 
 ;; Working with dates
@@ -154,20 +158,21 @@
 ;; (def element (document.getElementById "myElement"))
 ;; (element.addEventListener "click" (fn (event) (console.log "Clicked!")))
 
-;; ========== Imports and Exports ==========
+;; ========== Import ==========
 
-;; Import a module
-(import "https://deno.land/std@0.170.0/path/mod.ts")
+;; Path module (has both default and named exports)
+(import path "https://deno.land/std@0.170.0/path/mod.ts")
+(def joined-path (path.join "folder" "file.txt"))
 
-;; Define and export a function
-(defn join-paths (a b)
-  (mod.join a b))
+;; FS module (named exports)
+(import file "https://deno.land/std@0.170.0/fs/mod.ts")
+(def exists (file.existsSync "example-dir"))
 
-;; Export the function
-(export "joinPaths" join-paths)
-
-;; Export a value
-(export "PI" pi)
+;; Express (default export function + named exports)
+(import express "npm:express")
+(def app (express))                ;; Using default export
+(def router (express.Router))      ;; Using named export
+(app.use (express.json))          ;; Using named export
 
 ;; ========== Higher-Order Functions ==========
 

@@ -3,6 +3,12 @@
 function list(...args) {
   return args;
 }
+
+// Helper for property access
+function getProperty(obj, prop) {
+  const member = obj[prop];
+  return typeof member === "function" ? member.bind(obj) : member;
+}
 const pi = 3.14159;
 const greeting = "Hello, HQL World!";
 const is_awesome = true;
@@ -66,12 +72,12 @@ const pi_value = function () {
     const _obj = Math;
     const _member = _obj["PI"];
     return typeof _member === "function" ? _member.call(_obj) : _member;
-};
+}();
 const max_int_value = function () {
     const _obj = Number;
     const _member = _obj["MAX_SAFE_INTEGER"];
     return typeof _member === "function" ? _member.call(_obj) : _member;
-};
+}();
 const random_number = Math.random();
 const current_timestamp = Date.now();
 console.log("Hello from HQL!");
@@ -83,6 +89,10 @@ const numbers = new(Array);
 numbers.push(1);
 numbers.push(2);
 numbers.push(3);
+numbers.push(4);
+numbers.push(5);
+numbers.push(6);
+numbers.push(7);
 console.log(numbers);
 const date = new(Date);
 const current_year = date.getFullYear();
@@ -91,13 +101,38 @@ const formatted_date = date.toLocaleDateString();
 const abs_value = Math.abs(-42);
 const rounded = Math.round(3.7);
 const max_value = Math.max(1, 2, 3, 4, 5);
-import * as modModule from "https://deno.land/std@0.170.0/path/mod.ts";
-const mod = modModule.default !== undefined ? modModule.default : modModule;
-const join_paths = function (a, b) {
-    return mod.join(a, b);
-};
-export { join_paths as joinPaths };
-export { pi as PI };
+import * as pathModule from "https://deno.land/std@0.170.0/path/mod.ts";
+const path = (function () {
+    const wrapper = pathModule.default !== undefined ? pathModule.default : {};
+    for (const [key, value] of Object.entries(pathModule)) {
+        if (key !== "default")
+            wrapper[key] = value;
+    }
+    return wrapper;
+})();
+const joined_path = path.join("folder", "file.txt");
+import * as fileModule from "https://deno.land/std@0.170.0/fs/mod.ts";
+const file = (function () {
+    const wrapper = fileModule.default !== undefined ? fileModule.default : {};
+    for (const [key, value] of Object.entries(fileModule)) {
+        if (key !== "default")
+            wrapper[key] = value;
+    }
+    return wrapper;
+})();
+const exists = file.existsSync("example-dir");
+import * as expressModule from "npm:express";
+const express = (function () {
+    const wrapper = expressModule.default !== undefined ? expressModule.default : {};
+    for (const [key, value] of Object.entries(expressModule)) {
+        if (key !== "default")
+            wrapper[key] = value;
+    }
+    return wrapper;
+})();
+const app = express();
+const router = express.Router();
+app.use(express.json());
 const apply_twice = function (f, x) {
     return f(f(x));
 };

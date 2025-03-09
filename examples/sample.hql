@@ -1,34 +1,34 @@
-;; examples/dot-access.hql
-;; Simplified example of dot notation that works with existing HQL features
+(import path "https://deno.land/std@0.170.0/path/mod.ts")
 
-;; Basic property access
-(def pi-value Math.PI)
+;; Use the path module to join paths
+(def joined-path (path.join "folder" "file.txt"))
+(console.log joined-path)
 
-(console.log pi-value)
-(console.log (pi-value))
+;; Import the fs module
+(import file "https://deno.land/std@0.170.0/fs/mod.ts")
 
-;; No-parameter method call with runtime type checking
-(def random-number (Math.random))
+;; Use the fs module
+(def exists (file.existsSync "example-dir"))
+(console.log "Directory exists:" exists)
 
-;; Method call with arguments
-(def text "hello world")
-(def upper-text (text.toUpperCase))
-(console.log upper-text)
+;; Export the joined path
+(export "joinedPath" joined-path)
 
-;; Create an array and manipulate it
-(def numbers (new Array))
-(numbers.push 1)
-(numbers.push 2)
-(numbers.push 3)
-(console.log numbers)
+(import express "npm:express")
 
-;; Date methods
-(def date (new Date))
-(def current-year (date.getFullYear))
+(def app (express))
 
-;; Export the values so they can be accessed
-(export "pi" pi-value)
-(export "random" random-number)
-(export "upperText" upper-text)
-(export "numbers" numbers)
-(export "year" current-year)
+(app.get "/" (fn (req res)
+  (res.send "Hello World from HQL + Express!")))
+
+(def router (express.Router))
+
+(router.post "/users" (fn (req res)
+  (res.status 201)
+  (res.send "User created")))
+
+(app.use (express.json))
+
+(import chalk "jsr:@nothing628/chalk")
+(console.log (chalk.green "Success!"))
+(console.log (chalk.red "Error!"))

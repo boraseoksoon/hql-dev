@@ -2,6 +2,7 @@
 
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
+import { sanitizeIdentifier } from "../utils.ts";
 
 /**
  * Converts HQL IR directly to the official TypeScript AST.
@@ -371,50 +372,162 @@ function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclar
   );
 }
 
+// src/transpiler/hql-ir-to-ts-ast.ts - Simplified alternative
+
 function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] {
-  // Create a module variable name from the source
-  const moduleName = createModuleVariableName(node.source);
-  const defaultVarName = moduleName.replace(/Module$/, "");
+  // Generate a unique internal module name based on the user-provided name
+  const importName = sanitizeIdentifier(node.name);
+  const internalModuleName = `${importName}Module`;
   
-  // Create the import declaration
+  // Create import declaration
   const importDecl = ts.factory.createImportDeclaration(
     undefined,
     ts.factory.createImportClause(
       false,
       undefined,
       ts.factory.createNamespaceImport(
-        ts.factory.createIdentifier(moduleName)
+        ts.factory.createIdentifier(internalModuleName)
       )
     ),
     ts.factory.createStringLiteral(node.source)
   );
   
-  // Create the default assignment
+  // Create a simpler implementation using a function
+  // This is more readable and maintainable than the complex Object.assign approach
+  const functionBody = ts.factory.createBlock(
+    [
+      // Create a wrapper function that will preserve the 'this' binding
+      ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          [
+            ts.factory.createVariableDeclaration(
+              ts.factory.createIdentifier("wrapper"),
+              undefined,
+              undefined,
+              ts.factory.createConditionalExpression(
+                // Check if default export exists
+                ts.factory.createBinaryExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier(internalModuleName),
+                    ts.factory.createIdentifier("default")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                  ts.factory.createIdentifier("undefined")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+                // If default exists, use it
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createIdentifier(internalModuleName),
+                  ts.factory.createIdentifier("default")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.ColonToken),
+                // If no default, use empty object
+                ts.factory.createObjectLiteralExpression([], false)
+              )
+            )
+          ],
+          ts.NodeFlags.Const
+        )
+      ),
+      
+      // Copy all named exports to the wrapper
+      ts.factory.createForOfStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          [
+            ts.factory.createVariableDeclaration(
+              ts.factory.createArrayBindingPattern([
+                ts.factory.createBindingElement(
+                  undefined, 
+                  undefined, 
+                  ts.factory.createIdentifier("key"), 
+                  undefined
+                ),
+                ts.factory.createBindingElement(
+                  undefined, 
+                  undefined, 
+                  ts.factory.createIdentifier("value"), 
+                  undefined
+                )
+              ]),
+              undefined,
+              undefined,
+              undefined
+            )
+          ],
+          ts.NodeFlags.Const
+        ),
+        ts.factory.createCallExpression(
+          ts.factory.createPropertyAccessExpression(
+            ts.factory.createIdentifier("Object"),
+            ts.factory.createIdentifier("entries")
+          ),
+          undefined,
+          [ts.factory.createIdentifier(internalModuleName)]
+        ),
+        ts.factory.createBlock(
+          [
+            ts.factory.createIfStatement(
+              ts.factory.createBinaryExpression(
+                ts.factory.createIdentifier("key"),
+                ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                ts.factory.createStringLiteral("default")
+              ),
+              ts.factory.createExpressionStatement(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createIdentifier("wrapper"),
+                    ts.factory.createIdentifier("key")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+                  ts.factory.createIdentifier("value")
+                )
+              ),
+              undefined
+            )
+          ],
+          true
+        )
+      ),
+      
+      // Return the enhanced wrapper
+      ts.factory.createReturnStatement(
+        ts.factory.createIdentifier("wrapper")
+      )
+    ],
+    true
+  );
+  
+  // Create a self-executing function expression
+  const iife = ts.factory.createCallExpression(
+    ts.factory.createParenthesizedExpression(
+      ts.factory.createFunctionExpression(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [],
+        undefined,
+        functionBody
+      )
+    ),
+    undefined,
+    []
+  );
+  
+  // Create the assignment with the IIFE
   const defaultAssignment = ts.factory.createVariableStatement(
     undefined,
     ts.factory.createVariableDeclarationList(
-      [ts.factory.createVariableDeclaration(
-        ts.factory.createIdentifier(defaultVarName),
-        undefined,
-        undefined,
-        ts.factory.createConditionalExpression(
-          ts.factory.createBinaryExpression(
-            ts.factory.createPropertyAccessExpression(
-              ts.factory.createIdentifier(moduleName),
-              ts.factory.createIdentifier("default")
-            ),
-            ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
-            ts.factory.createIdentifier("undefined")
-          ),
-          ts.factory.createToken(ts.SyntaxKind.QuestionToken),
-          ts.factory.createPropertyAccessExpression(
-            ts.factory.createIdentifier(moduleName),
-            ts.factory.createIdentifier("default")
-          ),
-          ts.factory.createToken(ts.SyntaxKind.ColonToken),
-          ts.factory.createIdentifier(moduleName)
+      [
+        ts.factory.createVariableDeclaration(
+          ts.factory.createIdentifier(importName),
+          undefined,
+          undefined,
+          iife
         )
-      )],
+      ],
       ts.NodeFlags.Const
     )
   );
@@ -465,13 +578,12 @@ function convertExportVariableDeclaration(node: IR.IRExportVariableDeclaration):
   return [varDecl, exportDecl];
 }
 
-// Change this function in src/transpiler/ir-to-official-ts.ts
 function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
   // Create temporary variables for the object and member
   const objVar = ts.factory.createIdentifier("_obj");
   const memberVar = ts.factory.createIdentifier("_member");
   
-  // Create the function body (same as before)
+  // Create the function body with correct variable references
   const statements: ts.Statement[] = [
     // const _obj = object;
     ts.factory.createVariableStatement(
@@ -524,15 +636,19 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
     )
   ];
   
-  // Just return the function expression without calling it
-  return ts.factory.createFunctionExpression(
+  // Return the IIFE
+  return ts.factory.createCallExpression(
+    ts.factory.createFunctionExpression(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      undefined,
+      ts.factory.createBlock(statements, true)
+    ),
     undefined,
-    undefined,
-    undefined,
-    undefined,
-    [],
-    undefined,
-    ts.factory.createBlock(statements, true)
+    []
   );
 }
 
@@ -593,10 +709,28 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
 }
 
 function createModuleVariableName(source: string): string {
-  const parts = source.split('/');
-  let baseName = parts[parts.length - 1] || "mod";
-  baseName = baseName.replace(/\.(js|ts|mjs|cjs)$/, '');
+  // Handle npm: and jsr: prefixes
+  let cleanSource = source;
+  if (cleanSource.startsWith("npm:")) {
+    cleanSource = cleanSource.substring(4);
+  } else if (cleanSource.startsWith("jsr:")) {
+    cleanSource = cleanSource.substring(4);
+  }
+  
+  // Handle scoped packages (e.g., @nothing628/chalk)
+  if (cleanSource.includes('@') && cleanSource.includes('/')) {
+    const parts = cleanSource.split('/');
+    // For scoped packages, use the last part (e.g., "chalk" from "@nothing628/chalk")
+    cleanSource = parts[parts.length - 1];
+  } else if (cleanSource.includes('/')) {
+    const parts = cleanSource.split('/');
+    cleanSource = parts[parts.length - 1];
+  }
+  
+  // Clean up the name
+  let baseName = cleanSource.replace(/\.(js|ts|mjs|cjs)$/, '');
   baseName = baseName.replace(/[^a-zA-Z0-9]+(.)/g, (_, c) => c.toUpperCase());
   baseName = baseName.replace(/^[^a-zA-Z_$]/, '_');
+  
   return `${baseName}Module`;
 }

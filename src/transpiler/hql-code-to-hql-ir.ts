@@ -343,19 +343,50 @@ function transformDef(list: ListNode, currentDir: string): IR.IRNode {
   } as IR.IRVariableDeclaration;
 }
 
-// Transform a js-import expression into an IRJsImportReference.
 function transformJsImport(list: ListNode, currentDir: string): IR.IRNode {
-  if (list.elements.length !== 2) {
-    throw new Error("js-import requires exactly 1 argument");
+  // Handle new syntax: (js-import name source)
+  if (list.elements.length === 3) {
+    try {
+      const nameNode = list.elements[1];
+      if (nameNode.type !== "symbol") {
+        throw new Error("js-import module name must be a symbol");
+      }
+      const name = (nameNode as SymbolNode).name;
+      const source = extractStringLiteral(list.elements[2]);
+      
+      return {
+        type: IR.IRNodeType.JsImportReference,
+        name,
+        source
+      } as IR.IRJsImportReference;
+    } catch (error) {
+      throw new Error(`js-import error: ${error.message}`);
+    }
   }
-  try {
-    const source = extractStringLiteral(list.elements[1]);
-    return {
-      type: IR.IRNodeType.JsImportReference,
-      source
-    } as IR.IRJsImportReference;
-  } catch (error) {
-    throw new Error(`js-import source must be a string literal or quoted string: ${error.message}`);
+  
+  // Handle old syntax: (js-import source)
+  else if (list.elements.length === 2) {
+    try {
+      const source = extractStringLiteral(list.elements[1]);
+      // Generate default module name from source
+      const moduleParts = source.split('/');
+      let defaultName = moduleParts[moduleParts.length - 1].replace(/\.(js|ts|mjs|cjs)$/, '');
+      // Clean up the name
+      defaultName = defaultName.replace(/[^a-zA-Z0-9_$]/g, '_');
+      
+      return {
+        type: IR.IRNodeType.JsImportReference,
+        name: defaultName,
+        source
+      } as IR.IRJsImportReference;
+    } catch (error) {
+      throw new Error(`js-import source must be a string literal: ${error.message}`);
+    }
+  }
+  
+  // Invalid syntax
+  else {
+    throw new Error("js-import requires either 1 argument (source) or 2 arguments (name, source)");
   }
 }
 

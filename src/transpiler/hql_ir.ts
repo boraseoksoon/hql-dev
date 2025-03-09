@@ -213,6 +213,7 @@ export interface IRInteropIIFE extends IRNode {
 // NEW: IR node for JS import references
 export interface IRJsImportReference extends IRNode {
   type: IRNodeType.JsImportReference;
+  name: string;
   source: string;
 }
 

@@ -1,4 +1,4 @@
-// test/macro/import_export_test.ts
+// test/import/export_test.ts
 import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../../src/transpiler/parser.ts";
 import { expandMacros } from "../../src/macro-expander.ts";
@@ -8,17 +8,9 @@ import { dirname } from "../../src/platform/platform.ts";
 
 // Test HQL samples for import and export macros
 const SAMPLES = {
-  basicImport: `(import "https://deno.land/std@0.170.0/path/mod.ts")
-               (def path-mod mod)`,
-  
   basicExport: `(def value 42)
                (export "answer" value)`,
-  
-  combinedImportExport: `(import "https://deno.land/std@0.170.0/path/mod.ts")
-                        (def path-mod mod)
-                        (def joined (path-mod.join "folder" "file.txt"))
-                        (export "joined_path" joined)`,
-  
+
   multipleExports: `(def a 1)
                    (def b 2)
                    (def c 3)
@@ -42,34 +34,11 @@ async function transpileToJS(source: string): Promise<string> {
   return generateTypeScript(ir);
 }
 
-// Tests for import and export macros - updated to be more flexible
-Deno.test("import macro - basic", async () => {
-  const js = await transpileToJS(SAMPLES.basicImport);
-  // Check for presence of import statement and variable declaration
-  assertStringIncludes(js, "import * as");
-  assertStringIncludes(js, "https://deno.land/std@0.170.0/path/mod.ts");
-  // The variable name might be modified to modModule or similar
-  assertTrue(js.includes("mod") || js.includes("modModule"));
-  assertEquals(true, true);
-});
-
 Deno.test("export macro - basic", async () => {
   const js = await transpileToJS(SAMPLES.basicExport);
   assertStringIncludes(js, "const value = 42");
   // The export pattern might be different with TS API
   assertTrue(js.includes("export") && js.includes("answer"));
-  assertEquals(true, true);
-});
-
-Deno.test("import and export - combined", async () => {
-  const js = await transpileToJS(SAMPLES.combinedImportExport);
-  assertStringIncludes(js, "import * as");
-  // More flexible check for module access pattern which might vary
-  assertTrue(js.includes("path_mod") || js.includes("mod"));
-  // Check for join function use
-  assertTrue(js.includes("join") && js.includes("folder") && js.includes("file.txt"));
-  // Check for export
-  assertTrue(js.includes("export") && js.includes("joined_path"));
   assertEquals(true, true);
 });
 

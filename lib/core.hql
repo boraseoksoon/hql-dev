@@ -4,10 +4,8 @@
 (defmacro defn (name params body)
   (list 'def name (list 'fn params body)))
 
-;; Rest use quote reader macro for now
-;; Define import: expands (import "module") into (js-import "module")
-(defmacro import (path)
-  (list 'js-import path))
+(defmacro import (name path)
+  (list 'js-import name path))
 
 ;; Define export: expands (export "name" value) into (js-export "name" value)
 (defmacro export (name value)

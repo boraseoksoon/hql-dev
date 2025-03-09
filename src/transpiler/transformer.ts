@@ -11,6 +11,12 @@ const RUNTIME_FUNCTIONS = `
 function list(...args) {
   return args;
 }
+
+// Helper for property access
+function getProperty(obj, prop) {
+  const member = obj[prop];
+  return typeof member === "function" ? member.bind(obj) : member;
+}
 `;
 
 export interface TransformOptions {
