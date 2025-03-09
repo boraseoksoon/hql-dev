@@ -1,4 +1,4 @@
-// src/transpiler/parser.ts
+// src/transpiler/parser.ts - More careful implementation for quasiquote
 
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import { ParseError } from "./errors.ts";
@@ -18,27 +18,36 @@ function tokenize(input: string): string[] {
         token = "";
         inString = false;
       }
-    } else {
-      // Add special handling for quote (')
-      if (ch === "'") {
-        if (token !== "") { tokens.push(token); token = ""; }
-        tokens.push("'");
-      } else if (ch === '"') {
-        if (token !== "") { tokens.push(token); token = ""; }
-        token += ch;
-        inString = true;
-      } else if (ch === '(' || ch === ')') {
-        if (token !== "") { tokens.push(token); token = ""; }
-        tokens.push(ch);
-      } else if (/\s/.test(ch)) {
-        if (token !== "") { tokens.push(token); token = ""; }
-      } else if (ch === ';') {
-        // Skip comments
-        if (token !== "") { tokens.push(token); token = ""; }
-        while (i < input.length && input[i] !== '\n') i++;
+    } else if (ch === '"') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      token += ch;
+      inString = true;
+    } else if (ch === '`') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      tokens.push("`");
+    } else if (ch === '~') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      // Check for ~@
+      if (i + 1 < input.length && input[i + 1] === '@') {
+        tokens.push("~@");
+        i++; // Skip the @
       } else {
-        token += ch;
+        tokens.push("~");
       }
+    } else if (ch === "'") {
+      if (token !== "") { tokens.push(token); token = ""; }
+      tokens.push("'");
+    } else if (ch === '(' || ch === ')') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      tokens.push(ch);
+    } else if (/\s/.test(ch)) {
+      if (token !== "") { tokens.push(token); token = ""; }
+    } else if (ch === ';') {
+      // Skip comments
+      if (token !== "") { tokens.push(token); token = ""; }
+      while (i < input.length && input[i] !== '\n') i++;
+    } else {
+      token += ch;
     }
   }
   
@@ -76,6 +85,45 @@ function parseExpression(): HQLNode {
       elements: [
         { type: "symbol", name: "quote" },
         quoted
+      ] 
+    } as ListNode;
+  }
+  
+  // Handle quasiquote (`)
+  if (token === "`") {
+    // Parse the next expression and wrap it in a quasiquote
+    const quasiquoted = parseExpression();
+    return { 
+      type: "list", 
+      elements: [
+        { type: "symbol", name: "quasiquote" },
+        quasiquoted
+      ] 
+    } as ListNode;
+  }
+  
+  // Handle unquote (~)
+  if (token === "~") {
+    // Parse the next expression and wrap it in an unquote
+    const unquoted = parseExpression();
+    return { 
+      type: "list", 
+      elements: [
+        { type: "symbol", name: "unquote" },
+        unquoted
+      ] 
+    } as ListNode;
+  }
+  
+  // Handle unquote-splicing (~@)
+  if (token === "~@") {
+    // Parse the next expression and wrap it in an unquote-splicing
+    const unquoteSpliced = parseExpression();
+    return { 
+      type: "list", 
+      elements: [
+        { type: "symbol", name: "unquote-splicing" },
+        unquoteSpliced
       ] 
     } as ListNode;
   }
@@ -127,13 +175,13 @@ function parseList(): ListNode {
     const methodToken = currentTokens[currentPos++];
     const parts = methodToken.split('.');
     const object = parts[0];
-    const method = parts.slice(1).join('.');
+    const property = parts.slice(1).join('.');
     
     // Start building the canonical form with proper type annotations
     const jsCallElements: HQLNode[] = [
       { type: "symbol", name: "js-call" } as SymbolNode,
       { type: "symbol", name: object } as SymbolNode,
-      { type: "literal", value: method } as LiteralNode
+      { type: "literal", value: property } as LiteralNode
     ];
     
     // Parse the arguments

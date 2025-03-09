@@ -1,4 +1,5 @@
-// src/bootstrap-core.ts - Aligned with the "macro everywhere" philosophy
+// src/bootstrap.ts - Updated with quasiquote handling
+
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./transpiler/hql_ast.ts";
 import { jsImport, jsExport, jsGet, jsCall } from "./interop.ts";
 import { gensym } from "./gensym.ts";
@@ -7,7 +8,7 @@ import { gensym } from "./gensym.ts";
 * KERNEL_PRIMITIVES are irreducible forms that cannot be defined in terms of each other.
 * These represent the absolute minimal core of the language.
 */
-export const KERNEL_PRIMITIVES = new Set(["quote", "if", "fn", "def"]);
+export const KERNEL_PRIMITIVES = new Set(["quote", "if", "fn", "def", "quasiquote", "unquote", "unquote-splicing"]);
 
 /**
 * DERIVED_FORMS are forms that could theoretically be implemented as macros,
@@ -177,11 +178,76 @@ export async function initializeGlobalEnv(): Promise<Env> {
 }
 
 /**
+ * Process a quasiquoted expression during macro evaluation.
+ * This handles the nested unquote and unquote-splicing forms.
+ */
+function evaluateQuasiquote(expr: HQLNode, env: Env): HQLNode {
+  if (expr.type !== "list") {
+    // For symbols and literals, just return as is
+    return expr;
+  }
+  
+  const list = expr as ListNode;
+  if (list.elements.length === 0) {
+    return list;
+  }
+  
+  // Check for unquote and unquote-splicing
+  const first = list.elements[0];
+  if (first.type === "symbol") {
+    const op = (first as SymbolNode).name;
+    
+    if (op === "unquote") {
+      if (list.elements.length !== 2) {
+        throw new Error("unquote requires exactly one argument");
+      }
+      // Evaluate the unquoted expression
+      return evaluateForMacro(list.elements[1], env);
+    }
+    
+    if (op === "unquote-splicing") {
+      throw new Error("unquote-splicing not allowed in this context");
+    }
+  }
+  
+  // Process each element, handling unquote-splicing
+  const result: HQLNode[] = [];
+  for (let i = 0; i < list.elements.length; i++) {
+    const elem = list.elements[i];
+    
+    if (elem.type === "list" && 
+        elem.elements.length > 0 && 
+        elem.elements[0].type === "symbol" && 
+        (elem.elements[0] as SymbolNode).name === "unquote-splicing") {
+      
+      if (elem.elements.length !== 2) {
+        throw new Error("unquote-splicing requires exactly one argument");
+      }
+      
+      // Evaluate the unquote-splicing expression
+      const splicedValue = evaluateForMacro(elem.elements[1], env);
+      if (splicedValue.type !== "list") {
+        throw new Error("unquote-splicing requires a list result");
+      }
+      
+      // Splice in the elements
+      result.push(...(splicedValue as ListNode).elements);
+    } else {
+      // Recursively process other elements
+      result.push(evaluateQuasiquote(elem, env));
+    }
+  }
+  
+  return { type: "list", elements: result };
+}
+
+/**
 * evaluateForMacro: A minimal evaluator for bootstrapping macro expansion.
 * It handles literals, symbols, and lists with special forms:
 *  - quote: returns its argument without evaluation (KERNEL PRIMITIVE).
 *  - if: performs conditional evaluation (KERNEL PRIMITIVE)
 *  - defmacro: registers a macro in the environment (DERIVED FORM).
+*  - quasiquote: handles template with unquote/unquote-splicing (KERNEL PRIMITIVE).
 *  - Otherwise, treats the list as a function application.
 */
 export function evaluateForMacro(expr: HQLNode, env: Env): any {
@@ -207,6 +273,14 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
             throw new Error("quote requires exactly one argument");
           }
           return list.elements[1];
+        }
+        
+        // Handle quasiquote
+        if (op === "quasiquote") {
+          if (list.elements.length !== 2) {
+            throw new Error("quasiquote requires exactly one argument");
+          }
+          return evaluateQuasiquote(list.elements[1], env);
         }
         
         // Handle if special form for macro expansion

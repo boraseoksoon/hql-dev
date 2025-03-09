@@ -1,6 +1,6 @@
-;; lib/core.hql - Updated with quote reader macro
+;; lib/core.hql - Using original implementation without quasiquote
 
-;; Define defn using backtick+unquote syntax
+;; Define defn using original list construction
 (defmacro defn (name params body)
   (list 'def name (list 'fn params body)))
 
