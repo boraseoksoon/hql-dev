@@ -35,9 +35,9 @@
       1
       (* n (factorial (- n 1)))))
 
-;; ========== Expression Sequencing with 'do' Macro ==========
+;; ========== Expression Sequencing with 'do' ==========
 
-;; The 'do' macro allows executing multiple expressions in sequence,
+;; The 'do' form allows executing multiple expressions in sequence,
 ;; returning the value of the last expression
 (defn calculate-area (radius)
   (do
@@ -57,7 +57,7 @@
 ;; ========== Conditionals and Logic ==========
 
 ;; Simple conditional using 'if'
-(defn max-value (a b)
+(defn isLargerThan? (a b)
   (if (> a b) a b))
 
 ;; Using 'cond' for multi-way conditionals
@@ -106,33 +106,67 @@
     (>= a b) ;; greater than or equal
   ))
 
+;; ========== Quote Syntax ==========
+
+;; Quote a symbol or expression to prevent evaluation
+(def symbol-x 'x)
+(def quoted-list '(1 2 3))
+(def quoted-expression '(+ 1 (* 2 3)))
+
 ;; ========== JavaScript Interoperability ==========
 
-;; Access JavaScript console
-(defn log-message (msg)
-  (js-call console "log" msg))
+;; Accessing JavaScript properties with dot notation
+(def pi-value Math.PI)
+(def max-int-value Number.MAX_SAFE_INTEGER)
 
-;; Create a JavaScript Date object
-(defn current-time ()
-  (js-new Date (list)))
+;; Calling JavaScript methods with dot notation
+(def random-number (Math.random))
+(def current-timestamp (Date.now))
 
-;; Access JavaScript Math properties
-(defn random-number2 ()
-  (js-get Math "random"))
+;; Using console methods
+(console.log "Hello from HQL!")
+(console.warn "This is a warning")
+
+;; String methods
+(def message "hello world")
+(def upper-text (message.toUpperCase))
+(console.log upper-text)
+
+;; Creating JavaScript objects
+(def numbers (new Array))
+(numbers.push 1)
+(numbers.push 2)
+(numbers.push 3)
+(console.log numbers)
+
+;; Working with dates
+(def date (new Date))
+(def current-year (date.getFullYear))
+(def month (date.getMonth))
+(def formatted-date (date.toLocaleDateString))
+
+;; Math methods
+(def abs-value (Math.abs -42))
+(def rounded (Math.round 3.7))
+(def max-value (Math.max 1 2 3 4 5))
+
+;; DOM manipulation (when in browser context)
+;; (def element (document.getElementById "myElement"))
+;; (element.addEventListener "click" (fn (event) (console.log "Clicked!")))
 
 ;; ========== Imports and Exports ==========
 
-;; Import a standard library module
+;; Import a module
 (import "https://deno.land/std@0.170.0/path/mod.ts")
 
 ;; Define and export a function
 (defn join-paths (a b)
   (mod.join a b))
 
-;; Export the function with a specific name
+;; Export the function
 (export "joinPaths" join-paths)
 
-;; Export a simple value
+;; Export a value
 (export "PI" pi)
 
 ;; ========== Higher-Order Functions ==========
@@ -142,24 +176,28 @@
   (f (f x)))
 
 ;; Function that returns a function
-(defn make-adder (n)
-  (fn (x) (+ x n)))
+(defn make-multiplier (n)
+  (fn (x) (* x n)))
 
 ;; Using a higher-order function
 (defn demonstration ()
   (do
-    (def add-five (make-adder 5))
-    (add-five 10)))  ;; Should return 15
+    (def double (make-multiplier 2))
+    (double 10)))  ;; Should return 20
 
-;; ========== Nested Expressions ==========
+;; ========== Rest Parameters ==========
 
-;; This demonstrates the expression-oriented nature of HQL
-;; where everything is an expression that yields a value
-(defn nested-expression-demo (x)
-  (+ (* 2 (square (+ x 1)))
-     (if (> x 0)
-         (factorial x)
-         0)))
+;; Function with rest parameters
+(defn log-all (& items)
+  (console.log items))
+
+;; Function with regular and rest parameters
+(defn with-prefix (prefix & rest)
+  (console.log prefix rest))
+
+;; Examples of calling functions with rest parameters
+(log-all 1 2 3 4 5)
+(with-prefix "Numbers:" 1 2 3)
 
 ;; ========== Putting It All Together ==========
 
@@ -176,65 +214,8 @@
         (do
           (def fact (factorial n))
           (def msg (+ "Factorial of " (+ n " is " fact)))
-          (log-message msg)
+          (console.log msg)
           (list n fact)))))
-
-
-;; Function with rest parameters
-(defn log-all (& items)
-  (js-call console "log" items))
-
-;; Function with regular and rest parameters
-(defn with-prefix (prefix & rest)
-  (js-call console "log" prefix rest))
-
-(def a 10)
-
-(log-all a (+ a a))
-
-;; do macro
-
-(def result6
-  (do
-    (def p 100)
-    (def q 200)
-    (def r 300)
-    (def s 400)
-    (+ p q r s)))
-
-;; JS interop - doc access
-
-;; Basic property access
-(def pi-value Math.PI)
-
-(console.log pi-value)
-(console.log (pi-value))
-
-;; No-parameter method call with runtime type checking
-(def random-number (Math.random))
-
-;; Method call with arguments
-(def text "hello world")
-(def upper-text (text.toUpperCase))
-(console.log upper-text)
-
-;; Create an array and manipulate it
-(def numbers (new Array))
-(numbers.push 1)
-(numbers.push 2)
-(numbers.push 3)
-(console.log numbers)
-
-;; Date methods
-(def date (new Date))
-(def current-year (date.getFullYear))
-
-;; Export the values so they can be accessed
-(export "pi" pi-value)
-(export "random" random-number)
-(export "upperText" upper-text)
-(export "numbers" numbers)
-(export "year" current-year)
 
 ;; Export the showcase function
 (export "showcase" showcase)

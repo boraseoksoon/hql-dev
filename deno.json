@@ -1,7 +1,13 @@
 {
   "tasks": {
-    "test": "deno task macro-test",
-    "macro-test": "deno task test-do && deno task test-and && deno task test-or && deno task test-not && deno task test-defn && deno task test-cond && deno task test-import-export",
+    "test": "deno task macro-test && deno task js-interop-test && operator-test && hql-syntax-test",
+    "macro-test": "deno task test-do && deno task test-and && deno task test-or && deno task test-not && deno task test-defn && deno task test-cond && deno task test-import-export && deno task quote-quasiquote-tests",
+    "quote-quasiquote-tests": "deno task test-quote && deno task test-quasiquote",
+    "operator-test": "deno task test-operators",
+    "js-interop-test": "deno test --allow-all test/macro/js_interop_test.ts && deno task test-import-export",
+    "hql-syntax-test": "deno task test-hql-spec",
+    "test-quote": "deno test --allow-all test/macro/quote_test.ts",
+    "test-quasiquote": "deno test --allow-all test/macro/quasiquote_test.ts", 
     "test-do": "deno test --allow-all test/macro/do_test.ts",
     "test-and": "deno test --allow-all test/macro/and_test.ts",
     "test-or": "deno test --allow-all test/macro/or_test.ts",

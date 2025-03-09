@@ -35,7 +35,7 @@ const complex_calculation = function (x, y) {
         }([]);
     }([]);
 };
-const max_value = function (a, b) {
+const isLargerThan_pred = function (a, b) {
     return a > b ? a : b;
 };
 const classify_number = function (n) {
@@ -59,15 +59,38 @@ const arithmetic_demo = function (a, b) {
 const comparison_demo = function (a, b) {
     return list(a === b, a !== b, a < b, a > b, a <= b, a >= b);
 };
-const log_message = function (msg) {
-    return console.log(msg);
+const symbol_x = "x";
+const quoted_list = [1, 2, 3];
+const quoted_expression = ["+", 1, ["*", 2, 3]];
+const pi_value = function () {
+    const _obj = Math;
+    const _member = _obj["PI"];
+    return typeof _member === "function" ? _member.call(_obj) : _member;
 };
-const current_time = function () {
-    return new Date(list);
+const max_int_value = function () {
+    const _obj = Number;
+    const _member = _obj["MAX_SAFE_INTEGER"];
+    return typeof _member === "function" ? _member.call(_obj) : _member;
 };
-const random_number2 = function () {
-    return Math["random"];
-};
+const random_number = Math.random();
+const current_timestamp = Date.now();
+console.log("Hello from HQL!");
+console.warn("This is a warning");
+const message = "hello world";
+const upper_text = message.toUpperCase();
+console.log(upper_text);
+const numbers = new(Array);
+numbers.push(1);
+numbers.push(2);
+numbers.push(3);
+console.log(numbers);
+const date = new(Date);
+const current_year = date.getFullYear();
+const month = date.getMonth();
+const formatted_date = date.toLocaleDateString();
+const abs_value = Math.abs(-42);
+const rounded = Math.round(3.7);
+const max_value = Math.max(1, 2, 3, 4, 5);
 import * as modModule from "https://deno.land/std@0.170.0/path/mod.ts";
 const mod = modModule.default !== undefined ? modModule.default : modModule;
 const join_paths = function (a, b) {
@@ -78,29 +101,15 @@ export { pi as PI };
 const apply_twice = function (f, x) {
     return f(f(x));
 };
-const make_adder = function (n) {
+const make_multiplier = function (n) {
     return function (x) {
-        return x + n;
+        return x * n;
     };
 };
 const demonstration = function () {
     return function () {
-        const add_five = make_adder(5);
-        return add_five(10);
-    }([]);
-};
-const nested_expression_demo = function (x) {
-    return 2 * square(x + 1) + (x > 0 ? factorial(x) : 0);
-};
-const showcase = function (n) {
-    return function () {
-        const result = n < 0 ? "Cannot compute for negative numbers" : "Identity element for factorial";
-        return result ? result : function () {
-            const fact = factorial(n);
-            const msg = "Factorial of " + (n + " is " + fact);
-            log_message(msg);
-            return list(n, fact);
-        }([]);
+        const double = make_multiplier(2);
+        return double(10);
     }([]);
 };
 const log_all = function (...items) {
@@ -109,36 +118,17 @@ const log_all = function (...items) {
 const with_prefix = function (prefix, ...rest) {
     return console.log(prefix, rest);
 };
-const a = 10;
-log_all(a, a + a);
-const result6 = function () {
-    const p = 100;
-    const q = 200;
-    const r = 300;
-    const s = 400;
-    return p + q + r + s;
-}([]);
-const pi_value = function () {
-    const _obj = Math;
-    const _member = _obj["PI"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
+log_all(1, 2, 3, 4, 5);
+with_prefix("Numbers:", 1, 2, 3);
+const showcase = function (n) {
+    return function () {
+        const result = n < 0 ? "Cannot compute for negative numbers" : "Identity element for factorial";
+        return result ? result : function () {
+            const fact = factorial(n);
+            const msg = "Factorial of " + (n + " is " + fact);
+            console.log(msg);
+            return list(n, fact);
+        }([]);
+    }([]);
 };
-console.log(pi_value);
-console.log(pi_value());
-const random_number = Math.random();
-const text = "hello world";
-const upper_text = text.toUpperCase();
-console.log(upper_text);
-const numbers = new(Array);
-numbers.push(1);
-numbers.push(2);
-numbers.push(3);
-console.log(numbers);
-const date = new(Date);
-const current_year = date.getFullYear();
-export { pi_value as pi };
-export { random_number as random };
-export { upper_text as upperText };
-export { numbers };
-export { current_year as year };
 export { showcase };
