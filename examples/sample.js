@@ -24,23 +24,27 @@ function get(obj, key, notFound = null) {
   // Handle objects (maps)
   return (key in obj) ? obj[key] : notFound;
 }
-const numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-console.log("Vector:", numbers);
-const doubled = numbers.map(function (n) {
-    return n * 2;
+[1, 2, 3, 4, 5];
+new Set([1, 2, 3, 4, 5]);
+({
+    key: "value"
 });
-console.log("Doubled:", doubled);
-const evens = numbers.filter(function (n) {
-    return n % 2 === 0;
-});
-console.log("Even numbers:", evens);
-const sum = numbers.reduce(function (acc, n) {
-    return acc + n;
-}, 0);
-console.log("Sum of numbers:", sum);
-const processed = numbers.filter(function (n) {
-    return n > 3;
-})(_map, function (n) {
-    return n * 3;
-})(_slice, 0, 3);
-console.log("Processed:", processed);
+[1, 2, 3, 4, 5];
+const json = {
+    items: [1, 2, 3, 4, 5]
+};
+(function () {
+    const _obj = json;
+    const _member = _obj["items"];
+    return typeof _member === "function" ? _member.call(_obj) : _member;
+})();
+const data = {
+    items: [5, 10, 15, 20, 25, 30, 35, 40],
+    factor: 2,
+    prefix: "Value: "
+};
+(function () {
+    const _obj = data;
+    const _member = _obj["items"];
+    return typeof _member === "function" ? _member.call(_obj) : _member;
+})();

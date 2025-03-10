@@ -1,20 +1,18 @@
-;; expanded-example.hql - Demonstrates data structures with dot access
+;; (numbers.filter (fn (n) (> n 5))).length
 
-;; ========== Vector with Array Methods ==========
-(def numbers [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-(console.log "Vector:" numbers)
+[1, 2, 3, 4, 5]     ;; vector
+#[1, 2, 3, 4, 5]    ;; set
+{ "key" : "value" } ;; map
+'(1 2, 3, 4, 5)     ;; list
 
-;; Using dot access for array methods
-(def doubled (numbers.map (fn (n) (* n 2))))
-(console.log "Doubled:" doubled)
+(def json { items : [1, 2, 3, 4, 5] })
 
-(def evens (numbers.filter (fn (n) (= (% n 2) 0))))
-(console.log "Even numbers:" evens)
+(json.items)
 
-(def sum (numbers.reduce (fn (acc n) (+ acc n)) 0))
-(console.log "Sum of numbers:" sum)
+(def data {
+  "items": [5, 10, 15, 20, 25, 30, 35, 40],
+  "factor": 2,
+  "prefix": "Value: "
+})
 
-;; Nesting the method calls
-(def processed (((numbers.filter (fn (n) (> n 3))).map (fn (n) (* n 3))).slice 0 3))
-                 
-(console.log "Processed:" processed)
+(data.items)

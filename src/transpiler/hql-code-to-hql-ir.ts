@@ -63,9 +63,73 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
   return { type: IR.IRNodeType.Identifier, name, isJS } as IR.IRIdentifier;
 }
 
-export function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
+function transformMethodChain(list: ListNode, currentDir: string): IR.IRNode {
+  // The first element is the inner function call that produces an object
+  const innerCall = list.elements[0] as ListNode;
+  
+  // Inner call might be a regular function call or dot notation
+  const innerCallIR = transformNode(innerCall, currentDir)!;
+  
+  // Get the method name from the second element
+  let methodName: string;
+  let args: IR.IRNode[] = [];
+  
+  if (list.elements.length > 1 && list.elements[1].type === "symbol") {
+    const fullName = (list.elements[1] as SymbolNode).name;
+    
+    // If it has a dot, it's a method on the result
+    if (fullName.includes('.')) {
+      // The method name is everything after the dot
+      methodName = fullName.split('.').slice(1).join('.');
+      
+      // Everything after the method symbol is args
+      args = list.elements.slice(2).map(arg => transformNode(arg, currentDir)!);
+    } else {
+      // It's a direct property access or method call
+      methodName = fullName;
+      args = list.elements.slice(2).map(arg => transformNode(arg, currentDir)!);
+    }
+  } else {
+    throw new Error("Invalid method chain syntax - expected method name after object expression");
+  }
+  
+  // Create the expression for a method call on the inner result
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.MemberExpression,
+      object: innerCallIR,
+      property: { 
+        type: IR.IRNodeType.Identifier, 
+        name: methodName 
+      } as IR.IRIdentifier,
+      computed: false
+    } as IR.IRMemberExpression,
+    arguments: args
+  } as IR.IRCallExpression;
+}
+
+// Helper function for transforming nested property access
+function transformNestedPropertyAccess(innerExpr: IR.IRNode, propertySymbol: SymbolNode): IR.IRNode {
+  const propertyName = propertySymbol.name;
+  
+  // Create a member expression for the property access
+  return {
+    type: IR.IRNodeType.MemberExpression,
+    object: innerExpr,
+    property: {
+      type: IR.IRNodeType.Identifier,
+      name: propertyName
+    } as IR.IRIdentifier,
+    computed: false
+  } as IR.IRMemberExpression;
+}
+
+// Complete updated transformList function for src/transpiler/hql-code-to-hql-ir.ts
+
+function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (list.elements.length === 0) {
-    // Transform empty lists to empty array expressions rather than null
+    // Transform empty lists to empty array expressions
     return {
       type: IR.IRNodeType.ArrayExpression,
       elements: []
@@ -74,143 +138,267 @@ export function transformList(list: ListNode, currentDir: string): IR.IRNode | n
   
   const first = list.elements[0];
 
+  // Case 1: First element is a list
   if (first.type === "list") {
-    const fnExpr = transformNode(first, currentDir);
-    const args = list.elements.slice(1).map(arg => {
-      if (arg.type === "list" && (arg as ListNode).elements.length === 0) {
-        // Transform empty list arguments to empty arrays
-        return {
-          type: IR.IRNodeType.ArrayExpression,
-          elements: []
-        } as IR.IRArrayExpression;
-      }
-      return transformNode(arg, currentDir);
-    }).filter(Boolean) as IR.IRNode[];
+    const innerExpr = transformNode(first, currentDir);
     
+    // If there are more elements after the inner list
+    if (list.elements.length > 1) {
+      const second = list.elements[1];
+      
+      // If the second element is a symbol with dot notation, it's a method call
+      if (second.type === "symbol" && (second as SymbolNode).name.includes('.')) {
+        const methodName = (second as SymbolNode).name.split('.').slice(1).join('.');
+        const args = list.elements.slice(2).map(arg => transformNode(arg, currentDir)!);
+        
+        return {
+          type: IR.IRNodeType.CallExpression,
+          callee: {
+            type: IR.IRNodeType.MemberExpression,
+            object: innerExpr!,
+            property: { 
+              type: IR.IRNodeType.Identifier, 
+              name: methodName 
+            } as IR.IRIdentifier,
+            computed: false
+          } as IR.IRMemberExpression,
+          arguments: args
+        } as IR.IRCallExpression;
+      }
+      
+      // If the second element is a regular symbol, use transformNestedPropertyAccess
+      else if (second.type === "symbol") {
+        return transformNestedPropertyAccess(innerExpr!, second as SymbolNode);
+      }
+      
+      // Otherwise, call with arguments
+      else {
+        const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
+        return {
+          type: IR.IRNodeType.CallExpression,
+          callee: innerExpr!,
+          arguments: args
+        } as IR.IRCallExpression;
+      }
+    }
+    
+    // If no additional elements, just return the inner expression itself
+    return innerExpr;
+  }
+
+  // Case 2: First element is a symbol
+  if (first.type === "symbol") {
+    const op = (first as SymbolNode).name;
+    
+    // Handle empty data structure literals
+    if (op === "empty-array") {
+      return {
+        type: IR.IRNodeType.ArrayExpression,
+        elements: []
+      } as IR.IRArrayExpression;
+    }
+    
+    if (op === "empty-map") {
+      return {
+        type: IR.IRNodeType.ObjectExpression,
+        properties: []
+      } as IR.IRObjectExpression;
+    }
+    
+    if (op === "empty-set") {
+      return {
+        type: IR.IRNodeType.NewExpression,
+        callee: {
+          type: IR.IRNodeType.Identifier,
+          name: "Set"
+        } as IR.IRIdentifier,
+        arguments: []
+      } as IR.IRNewExpression;
+    }
+    
+    // Handle dot notation
+    if (op.includes('.') && !op.startsWith('js/')) {
+      const parts = op.split('.');
+      const objectName = parts[0];
+      const property = parts.slice(1).join('.');
+      
+      const objectExpr = {
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(objectName)
+      } as IR.IRIdentifier;
+      
+      // Property access (no arguments)
+      if (list.elements.length === 1) {
+        return {
+          type: IR.IRNodeType.InteropIIFE,
+          object: objectExpr,
+          property: { type: IR.IRNodeType.StringLiteral, value: property } as IR.IRStringLiteral
+        } as IR.IRInteropIIFE;
+      }
+      
+      // Method call (with arguments)
+      const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
+      
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.MemberExpression,
+          object: objectExpr,
+          property: { 
+            type: IR.IRNodeType.Identifier, 
+            name: property 
+          } as IR.IRIdentifier,
+          computed: false
+        } as IR.IRMemberExpression,
+        arguments: args
+      } as IR.IRCallExpression;
+    }
+    
+    // IMPORTANT FIX: Handle function calls without arguments but in parentheses
+    // Check if this is a symbol inside parentheses (not a special empty structure)
+    if (list.elements.length === 1 && 
+        !["empty-array", "empty-map", "empty-set"].includes(op) &&
+        !KERNEL_PRIMITIVES.has(op) && 
+        !op.startsWith('js-') && 
+        !PRIMITIVE_OPS.has(op)) {
+      
+      // Create a function call with no arguments
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(op)
+        } as IR.IRIdentifier,
+        arguments: []
+      } as IR.IRCallExpression;
+    }
+    
+    // Handle kernel primitives
+    if (KERNEL_PRIMITIVES.has(op)) {
+      switch (op) {
+        case "quote":
+          return transformQuote(list, currentDir);
+        case "if":
+          return transformIf(list, currentDir);
+        case "fn":
+          return transformFn(list, currentDir);
+        case "def":
+          return transformDef(list, currentDir);
+      }
+    }
+    
+    // Handle JS interop primitives
+    switch (op) {
+      case "js-import":
+        return transformJsImport(list, currentDir);
+      case "js-export":
+        return transformJsExport(list, currentDir);
+      case "js-new":
+        return transformJsNew(list, currentDir);
+      case "js-get":
+        return transformJsGet(list, currentDir);
+      case "js-call":
+        return transformJsCall(list, currentDir);
+      case "js-get-invoke":
+        return transformJsGetInvoke(list, currentDir);
+    }
+    
+    // Data structure literals
+    if (op === "vector") {
+      const elements = list.elements.slice(1).map(elem => transformNode(elem, currentDir)!);
+      return {
+        type: IR.IRNodeType.ArrayExpression,
+        elements
+      } as IR.IRArrayExpression;
+    }
+    
+    if (op === "hash-map") {
+      const properties: IR.IRObjectProperty[] = [];
+      const args = list.elements.slice(1);
+      
+      for (let i = 0; i < args.length; i += 2) {
+        if (i + 1 >= args.length) break; // Skip incomplete pairs
+        
+        const keyNode = args[i];
+        const valueNode = args[i + 1];
+        
+        // Process the key
+        let keyExpr: IR.IRNode;
+        
+        if (keyNode.type === "literal") {
+          const value = (keyNode as LiteralNode).value;
+          keyExpr = {
+            type: IR.IRNodeType.StringLiteral,
+            value: String(value)
+          } as IR.IRStringLiteral;
+        } else if (keyNode.type === "symbol") {
+          keyExpr = {
+            type: IR.IRNodeType.StringLiteral,
+            value: (keyNode as SymbolNode).name
+          } as IR.IRStringLiteral;
+        } else {
+          keyExpr = transformNode(keyNode, currentDir)!;
+        }
+        
+        const valueExpr = transformNode(valueNode, currentDir)!;
+        
+        const objectProperty: IR.IRObjectProperty = {
+          type: IR.IRNodeType.ObjectProperty,
+          key: keyExpr,
+          value: valueExpr
+        };
+        
+        properties.push(objectProperty);
+      }
+      
+      return {
+        type: IR.IRNodeType.ObjectExpression,
+        properties
+      } as IR.IRObjectExpression;
+    }
+    
+    if (op === "hash-set") {
+      const elements = list.elements.slice(1).map(elem => transformNode(elem, currentDir)!);
+      
+      return {
+        type: IR.IRNodeType.NewExpression,
+        callee: {
+          type: IR.IRNodeType.Identifier,
+          name: "Set"
+        } as IR.IRIdentifier,
+        arguments: [
+          {
+            type: IR.IRNodeType.ArrayExpression,
+            elements
+          } as IR.IRArrayExpression
+        ]
+      } as IR.IRNewExpression;
+    }
+    
+    if (PRIMITIVE_OPS.has(op)) {
+      return transformPrimitiveOp(list, currentDir);
+    }
+    
+    // Standard function call
+    const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
     return {
       type: IR.IRNodeType.CallExpression,
-      callee: fnExpr!,
+      callee: {
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(op)
+      } as IR.IRIdentifier,
       arguments: args
     } as IR.IRCallExpression;
   }
-
-  if (first.type !== "symbol") {
-    const callee = transformNode(first, currentDir);
-    const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
-    return { type: IR.IRNodeType.CallExpression, callee, arguments: args } as IR.IRCallExpression;
-  }
   
-  const op = (first as SymbolNode).name;
-  
-  // Data structure literals - direct conversion to JS native structures
-  if (op === "vector") {
-    const elements = list.elements.slice(1).map(elem => transformNode(elem, currentDir)!);
-    return {
-      type: IR.IRNodeType.ArrayExpression,
-      elements
-    } as IR.IRArrayExpression;
-  }
-  
-  if (op === "hash-map") {
-    const properties: IR.IRObjectProperty[] = [];
-    const args = list.elements.slice(1);
-    
-    for (let i = 0; i < args.length; i += 2) {
-      if (i + 1 >= args.length) break; // Skip incomplete pairs
-      
-      const keyNode = args[i];
-      const valueNode = args[i + 1];
-      
-      // Process the key - handle string conversion
-      let keyExpr: IR.IRNode;
-      
-      if (keyNode.type === "literal") {
-        const value = (keyNode as LiteralNode).value;
-        // Convert to string literal for object keys
-        keyExpr = {
-          type: IR.IRNodeType.StringLiteral,
-          value: String(value)
-        } as IR.IRStringLiteral;
-      } else if (keyNode.type === "symbol") {
-        keyExpr = {
-          type: IR.IRNodeType.StringLiteral,
-          value: (keyNode as SymbolNode).name
-        } as IR.IRStringLiteral;
-      } else {
-        keyExpr = transformNode(keyNode, currentDir)!;
-      }
-      
-      const valueExpr = transformNode(valueNode, currentDir)!;
-      
-      const objectProperty: IR.IRObjectProperty = {
-        type: IR.IRNodeType.ObjectProperty,
-        key: keyExpr,
-        value: valueExpr
-      };
-      
-      properties.push(objectProperty);
-    }
-    
-    return {
-      type: IR.IRNodeType.ObjectExpression,
-      properties
-    } as IR.IRObjectExpression;
-  }
-  
-  if (op === "hash-set") {
-    const elements = list.elements.slice(1).map(elem => transformNode(elem, currentDir)!);
-    
-    // Create new Set([...]) expression
-    return {
-      type: IR.IRNodeType.NewExpression,
-      callee: {
-        type: IR.IRNodeType.Identifier,
-        name: "Set"
-      } as IR.IRIdentifier,
-      arguments: [
-        {
-          type: IR.IRNodeType.ArrayExpression,
-          elements
-        } as IR.IRArrayExpression
-      ]
-    } as IR.IRNewExpression;
-  }
-  
-  // Handle kernel primitives
-  if (KERNEL_PRIMITIVES.has(op)) {
-    switch (op) {
-      case "quote":
-        return transformQuote(list, currentDir);
-      case "if":
-        return transformIf(list, currentDir);
-      case "fn":
-        return transformFn(list, currentDir);
-      case "def":
-        return transformDef(list, currentDir);
-    }
-  }
-  
-  // Handle JS interop primitives
-  switch (op) {
-    case "js-import":
-      return transformJsImport(list, currentDir);
-    case "js-export":
-      return transformJsExport(list, currentDir);
-    case "js-new":
-      return transformJsNew(list, currentDir);
-    case "js-get":
-      return transformJsGet(list, currentDir);
-    case "js-call":
-      return transformJsCall(list, currentDir);
-    case "js-get-invoke":
-      return transformJsGetInvoke(list, currentDir);
-  }
-  
-  if (PRIMITIVE_OPS.has(op)) {
-    return transformPrimitiveOp(list, currentDir);
-  }
-  
-  return transformCall(list, currentDir);
+  // Default: transform to a function call
+  const callee = transformNode(first, currentDir);
+  const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
+  return { 
+    type: IR.IRNodeType.CallExpression, 
+    callee, 
+    arguments: args 
+  } as IR.IRCallExpression;
 }
 
 function extractStringLiteral(node: HQLNode): string {
@@ -243,6 +431,12 @@ function transformQuote(list: ListNode, currentDir: string): IR.IRNode {
   } else if (quoted.type === "symbol") {
     return { type: IR.IRNodeType.StringLiteral, value: (quoted as SymbolNode).name } as IR.IRStringLiteral;
   } else if (quoted.type === "list") {
+    // Special case for empty quoted lists - return empty array
+    if ((quoted as ListNode).elements.length === 0) {
+      return { type: IR.IRNodeType.ArrayExpression, elements: [] } as IR.IRArrayExpression;
+    }
+    
+    // Normal case for non-empty quoted lists
     const elements: IR.IRNode[] = (quoted as ListNode).elements.map(
       elem => transformQuote({ type: "list", elements: [{ type: "symbol", name: "quote" }, elem] }, currentDir)
     );

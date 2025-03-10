@@ -1,4 +1,4 @@
-// Additional tests for JavaScript interoperability features
+// Updated test/macro/js_interop_test.ts
 
 import { assertEquals, assertMatch, assertStringIncludes } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../../src/transpiler/parser.ts";
@@ -13,7 +13,7 @@ async function transpileHQL(source: string): Promise<string> {
 
 Deno.test("JS Interop - dot notation with property access", async () => {
   const result = await transpileHQL(`
-    (def pi-value Math.PI)
+    (def pi-value (Math.PI))
     (console.log pi-value)
   `);
   

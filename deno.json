@@ -1,11 +1,12 @@
 {
   "tasks": {
-    "test": "deno task macro-test && deno task js-interop-test && deno task operator-test && deno task import-test && deno task hql-spec-test",
+    "test": "deno task macro-test && deno task js-interop-test && deno task operator-test && deno task import-test && deno task data-structures-test && deno task hql-spec-test",
     "import-test": "deno task test-remote-import",
     "macro-test": "deno task test-do && deno task test-and && deno task test-or && deno task test-not && deno task test-defn && deno task test-cond && deno task test-export && deno task quote-quasiquote-tests",
     "quote-quasiquote-tests": "deno task test-quote && deno task test-quasiquote",
     "operator-test": "deno task test-operators",
-    "js-interop-test": "deno test --allow-all test/macro/js_interop_test.ts",
+    "js-interop-test": "deno test --allow-all test/macro/js_interop_test.ts && deno test --allow-all test/interop/dot_accessor_test.ts && deno test --allow-all test/interop/chained_calls_test.ts",
+    "data-structures-test": "deno task test-empty-literals && deno task test-normal-literals",
     "hql-spec-test": "deno task test-hql-spec",
     "test-export": "deno test --allow-all test/import/export_test.ts",
     "test-remote-import": "deno test --allow-all test/import/remote_import_test.ts",
@@ -18,6 +19,8 @@
     "test-defn": "deno test --allow-all test/macro/defn_test.ts",
     "test-cond": "deno test --allow-all test/macro/cond_test.ts",
     "test-operators": "deno test --allow-all test/macro/comparison_operators_test.ts",
+    "test-empty-literals": "deno test --allow-all test/data_structures/empty_literals_test.ts",
+    "test-normal-literals": "deno test --allow-all test/data_structures/normal_literals_test.ts",
     "test-hql-spec": "deno task run ./doc/hql_spec.hql",
     "test-hql-sample": "deno task run ./examples/sample.hql",
     "build": "deno run -A cli/transpile.ts",

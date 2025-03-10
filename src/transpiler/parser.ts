@@ -177,19 +177,9 @@ function parseExpression(): HQLNode {
   } else if (token === "nil") {
     return { type: "literal", value: null } as LiteralNode;
   } else if (token.includes('.') && !token.startsWith('.') && !token.endsWith('.')) {
-    const parts = token.split('.');
-    const object = parts[0];
-    const property = parts.slice(1).join('.');
-    
-    // Create a list representation for property access (using js-get-invoke)
-    return { 
-      type: "list", 
-      elements: [
-        { type: "symbol", name: "js-get-invoke" },
-        { type: "symbol", name: object },
-        { type: "literal", value: property }
-      ] 
-    } as ListNode;
+    // For bare dot-notation, throw an error instead of transforming it
+    throw new ParseError(`Dot notation "${token}" must be wrapped in parentheses`, 
+      { line: 0, column: 0, offset: 0 });
   } else {
     return { type: "symbol", name: token } as SymbolNode;
   }
@@ -198,47 +188,88 @@ function parseExpression(): HQLNode {
 function parseList(): ListNode {
   const elements: HQLNode[] = [];
   
-  // Check if this might be a method call with arguments
-  // by examining the first token
+  // Process the first token to see if it's a dot notation
   if (currentPos < currentTokens.length && 
       currentTokens[currentPos] !== ')' &&
       currentTokens[currentPos].includes('.') &&
       !currentTokens[currentPos].startsWith('.') &&
       !currentTokens[currentPos].endsWith('.')) {
+    
+    // This is a dot notation expression - handle it explicitly
+    const dotToken = currentTokens[currentPos++];
+    
+    // Split by dots to handle multi-part property paths
+    const parts = dotToken.split('.');
+    
+    if (parts.length > 2) {
+      // Multi-part property path like "obj.prop1.prop2"
+      const objectName = parts[0];
+      const propPath = parts.slice(1);
+      
+      // Create a nested chain of js-get-invoke expressions
+      let currentExpr: ListNode = {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "js-get-invoke" },
+          { type: "symbol", name: objectName },
+          { type: "literal", value: propPath[0] }
+        ]
+      };
+      
+      // Chain the remaining properties
+      for (let i = 1; i < propPath.length; i++) {
+        currentExpr = {
+          type: "list",
+          elements: [
+            { type: "symbol", name: "js-get-invoke" },
+            currentExpr,
+            { type: "literal", value: propPath[i] }
+          ]
+        };
+      }
+      
+      // If there are arguments, convert the last js-get-invoke to js-call
+      if (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
+        const args: HQLNode[] = [];
+        while (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
+          args.push(parseExpression());
+        }
         
-    // This is a potential method call (obj.method args...)
-    const methodToken = currentTokens[currentPos++];
-    const parts = methodToken.split('.');
-    const object = parts[0];
-    const property = parts.slice(1).join('.');
-    
-    // Start building the canonical form with proper type annotations
-    const jsCallElements: HQLNode[] = [
-      { type: "symbol", name: "js-call" } as SymbolNode,
-      { type: "symbol", name: object } as SymbolNode,
-      { type: "literal", value: property } as LiteralNode
-    ];
-    
-    // Parse the arguments
+        // Replace the outermost expression's js-get-invoke with js-call
+        currentExpr.elements[0] = { type: "symbol", name: "js-call" };
+        // Add the arguments
+        currentExpr.elements.push(...args);
+      }
+      
+      elements.push(currentExpr);
+    } else {
+      // Simple property path like "obj.prop"
+      const objectName = parts[0];
+      const property = parts[1];
+      
+      // If there are no additional arguments, treat it as a property access
+      if (currentPos < currentTokens.length && currentTokens[currentPos] === ')') {
+        // Create a property access node (using js-get-invoke)
+        elements.push({ type: "symbol", name: "js-get-invoke" });
+        elements.push({ type: "symbol", name: objectName });
+        elements.push({ type: "literal", value: property });
+      } else {
+        // Otherwise, it's a method call - create a method call node (using js-call)
+        elements.push({ type: "symbol", name: "js-call" });
+        elements.push({ type: "symbol", name: objectName });
+        elements.push({ type: "literal", value: property });
+        
+        // Parse arguments for the method call
+        while (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
+          elements.push(parseExpression());
+        }
+      }
+    }
+  } else {
+    // Standard list parsing
     while (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
-      jsCallElements.push(parseExpression());
+      elements.push(parseExpression());
     }
-    
-    // Skip closing paren
-    if (currentPos >= currentTokens.length) {
-      throw new ParseError("Unclosed list", { line: 0, column: 0, offset: 0 });
-    }
-    currentPos++; // skip ')'
-    
-    return { 
-      type: "list", 
-      elements: jsCallElements
-    } as ListNode;
-  }
-  
-  // Normal list parsing for regular lists
-  while (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
-    elements.push(parseExpression());
   }
   
   if (currentPos >= currentTokens.length) {
@@ -247,11 +278,10 @@ function parseList(): ListNode {
   
   currentPos++; // Skip the closing parenthesis
   
-  return { 
-    type: "list", 
-    elements 
-  } as ListNode;
+  return { type: "list", elements } as ListNode;
 }
+
+// Updated parser functions in src/transpiler/parser.ts
 
 function parseVector(): ListNode {
   const elements: HQLNode[] = [];
@@ -271,7 +301,17 @@ function parseVector(): ListNode {
   
   currentPos++; // Skip the closing bracket
   
-  // Transform to a call to the vector function
+  // For empty vector, return a special empty array literal
+  if (elements.length === 0) {
+    return { 
+      type: "list", 
+      elements: [
+        { type: "symbol", name: "empty-array" }
+      ] 
+    } as ListNode;
+  }
+  
+  // For non-empty vector, proceed with vector function
   return { 
     type: "list", 
     elements: [
@@ -313,7 +353,17 @@ function parseMap(): ListNode {
   
   currentPos++; // Skip the closing brace
   
-  // Transform to a call to the hash-map function
+  // For empty map, return a special empty map literal
+  if (entries.length === 0) {
+    return { 
+      type: "list", 
+      elements: [
+        { type: "symbol", name: "empty-map" }
+      ] 
+    } as ListNode;
+  }
+  
+  // For non-empty map, proceed with hash-map function
   return { 
     type: "list", 
     elements: [
@@ -341,7 +391,17 @@ function parseSet(): ListNode {
   
   currentPos++; // Skip the closing bracket
   
-  // Transform to a call to the hash-set function
+  // For empty set, return a special empty set literal
+  if (elements.length === 0) {
+    return { 
+      type: "list", 
+      elements: [
+        { type: "symbol", name: "empty-set" }
+      ] 
+    } as ListNode;
+  }
+  
+  // For non-empty set, proceed with hash-set function
   return { 
     type: "list", 
     elements: [
