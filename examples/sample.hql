@@ -1,34 +1,20 @@
-(import path "https://deno.land/std@0.170.0/path/mod.ts")
+;; expanded-example.hql - Demonstrates data structures with dot access
 
-;; Use the path module to join paths
-(def joined-path (path.join "folder" "file.txt"))
-(console.log joined-path)
+;; ========== Vector with Array Methods ==========
+(def numbers [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+(console.log "Vector:" numbers)
 
-;; Import the fs module
-(import file "https://deno.land/std@0.170.0/fs/mod.ts")
+;; Using dot access for array methods
+(def doubled (numbers.map (fn (n) (* n 2))))
+(console.log "Doubled:" doubled)
 
-;; Use the fs module
-(def exists (file.existsSync "example-dir"))
-(console.log "Directory exists:" exists)
+(def evens (numbers.filter (fn (n) (= (% n 2) 0))))
+(console.log "Even numbers:" evens)
 
-;; Export the joined path
-(export "joinedPath" joined-path)
+(def sum (numbers.reduce (fn (acc n) (+ acc n)) 0))
+(console.log "Sum of numbers:" sum)
 
-(import express "npm:express")
-
-(def app (express))
-
-(app.get "/" (fn (req res)
-  (res.send "Hello World from HQL + Express!")))
-
-(def router (express.Router))
-
-(router.post "/users" (fn (req res)
-  (res.status 201)
-  (res.send "User created")))
-
-(app.use (express.json))
-
-(import chalk "jsr:@nothing628/chalk")
-(console.log (chalk.green "Success!"))
-(console.log (chalk.red "Error!"))
+;; Nesting the method calls
+(def processed (((numbers.filter (fn (n) (> n 3))).map (fn (n) (* n 3))).slice 0 3))
+                 
+(console.log "Processed:" processed)

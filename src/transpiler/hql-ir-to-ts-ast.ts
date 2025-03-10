@@ -29,6 +29,10 @@ export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
 
 function convertIRNode(node: IR.IRNode): ts.Statement | ts.Statement[] | null {
   switch (node.type) {
+    case IR.IRNodeType.ObjectExpression:
+      return ts.factory.createExpressionStatement(
+        convertObjectExpression(node as IR.IRObjectExpression)
+      );
     case IR.IRNodeType.StringLiteral:
       return createExpressionStatement(convertStringLiteral(node as IR.IRStringLiteral));
     case IR.IRNodeType.NumericLiteral:
@@ -79,10 +83,73 @@ function convertIRNode(node: IR.IRNode): ts.Statement | ts.Statement[] | null {
       return convertCommentBlock(node as IR.IRCommentBlock);
     case IR.IRNodeType.Raw:
       return convertRaw(node as IR.IRRaw);
+    case IR.IRNodeType.ObjectExpression:
+      return createExpressionStatement(convertObjectExpression(node as IR.IRObjectExpression));
     default:
-      console.warn(`Unsupported IR node type: ${node.type}`);
+      console.warn(`Cannot convert node of type ${node.type} to expression`);
       return null;
   }
+}
+
+function convertObjectExpression(node: IR.IRObjectExpression): ts.ObjectLiteralExpression {
+  const properties: ts.PropertyAssignment[] = [];
+  
+  for (const prop of node.properties) {
+    const key = convertObjectPropertyKey(prop.key);
+    const value = convertIRExpr(prop.value);
+    
+    properties.push(ts.factory.createPropertyAssignment(key, value));
+  }
+  
+  return ts.factory.createObjectLiteralExpression(properties, true);
+}
+
+function convertObjectPropertyKey(node: IR.IRNode): ts.PropertyName {
+  switch (node.type) {
+    case IR.IRNodeType.StringLiteral: {
+      const literal = node as IR.IRStringLiteral;
+      const value = literal.value;
+      if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(value)) {
+        return ts.factory.createIdentifier(value);
+      } else {
+        return ts.factory.createStringLiteral(value);
+      }
+    }
+    case IR.IRNodeType.Identifier:
+      return ts.factory.createIdentifier((node as IR.IRIdentifier).name);
+      
+    default:{
+      // For computed properties (unlikely in this context)
+      const computed = convertIRExpr(node);
+      return ts.factory.createComputedPropertyName(computed);
+    }
+  }
+}
+
+function convertPropertyKey(node: IR.IRNode): ts.PropertyName {
+  if (node.type === IR.IRNodeType.StringLiteral) {
+    const value = (node as IR.IRStringLiteral).value;
+    
+    // If it's a valid JS identifier without quotes, use as identifier
+    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(value)) {
+      return ts.factory.createIdentifier(value);
+    }
+    
+    // Otherwise use as string literal
+    return ts.factory.createStringLiteral(value);
+  }
+  
+  if (node.type === IR.IRNodeType.Identifier) {
+    return ts.factory.createIdentifier((node as IR.IRIdentifier).name);
+  }
+  
+  if (node.type === IR.IRNodeType.NumericLiteral) {
+    return ts.factory.createNumericLiteral((node as IR.IRNumericLiteral).value.toString());
+  }
+  
+  // For computed properties
+  const expr = convertIRExpr(node);
+  return ts.factory.createComputedPropertyName(expr);
 }
 
 // Helper to create expression statements
@@ -672,6 +739,8 @@ function convertRaw(node: IR.IRRaw): ts.ExpressionStatement {
 
 function convertIRExpr(node: IR.IRNode): ts.Expression {
   switch (node.type) {
+    case IR.IRNodeType.ObjectExpression:
+      return convertObjectExpression(node as IR.IRObjectExpression);
     case IR.IRNodeType.StringLiteral:
       return convertStringLiteral(node as IR.IRStringLiteral);
     case IR.IRNodeType.NumericLiteral:

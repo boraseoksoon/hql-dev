@@ -102,7 +102,81 @@ export function transformList(list: ListNode, currentDir: string): IR.IRNode | n
   
   const op = (first as SymbolNode).name;
   
-  // Handle kernel primitives first
+  // Data structure literals - direct conversion to JS native structures
+  if (op === "vector") {
+    const elements = list.elements.slice(1).map(elem => transformNode(elem, currentDir)!);
+    return {
+      type: IR.IRNodeType.ArrayExpression,
+      elements
+    } as IR.IRArrayExpression;
+  }
+  
+  if (op === "hash-map") {
+    const properties: IR.IRObjectProperty[] = [];
+    const args = list.elements.slice(1);
+    
+    for (let i = 0; i < args.length; i += 2) {
+      if (i + 1 >= args.length) break; // Skip incomplete pairs
+      
+      const keyNode = args[i];
+      const valueNode = args[i + 1];
+      
+      // Process the key - handle string conversion
+      let keyExpr: IR.IRNode;
+      
+      if (keyNode.type === "literal") {
+        const value = (keyNode as LiteralNode).value;
+        // Convert to string literal for object keys
+        keyExpr = {
+          type: IR.IRNodeType.StringLiteral,
+          value: String(value)
+        } as IR.IRStringLiteral;
+      } else if (keyNode.type === "symbol") {
+        keyExpr = {
+          type: IR.IRNodeType.StringLiteral,
+          value: (keyNode as SymbolNode).name
+        } as IR.IRStringLiteral;
+      } else {
+        keyExpr = transformNode(keyNode, currentDir)!;
+      }
+      
+      const valueExpr = transformNode(valueNode, currentDir)!;
+      
+      const objectProperty: IR.IRObjectProperty = {
+        type: IR.IRNodeType.ObjectProperty,
+        key: keyExpr,
+        value: valueExpr
+      };
+      
+      properties.push(objectProperty);
+    }
+    
+    return {
+      type: IR.IRNodeType.ObjectExpression,
+      properties
+    } as IR.IRObjectExpression;
+  }
+  
+  if (op === "hash-set") {
+    const elements = list.elements.slice(1).map(elem => transformNode(elem, currentDir)!);
+    
+    // Create new Set([...]) expression
+    return {
+      type: IR.IRNodeType.NewExpression,
+      callee: {
+        type: IR.IRNodeType.Identifier,
+        name: "Set"
+      } as IR.IRIdentifier,
+      arguments: [
+        {
+          type: IR.IRNodeType.ArrayExpression,
+          elements
+        } as IR.IRArrayExpression
+      ]
+    } as IR.IRNewExpression;
+  }
+  
+  // Handle kernel primitives
   if (KERNEL_PRIMITIVES.has(op)) {
     switch (op) {
       case "quote":
@@ -532,13 +606,14 @@ function transformJsGetInvoke(list: ListNode, currentDir: string): IR.IRNode {
   }
 }
 
-// Updated transformPrimitiveOp function with correct handling for comparison operators
+// Complete transformPrimitiveOp function for src/transpiler/hql-code-to-hql-ir.ts
+
 function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
   const op = (list.elements[0] as SymbolNode).name;
   const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
 
   // Essential arithmetic operators
-  if (op === "+" || op === "-" || op === "*" || op === "/") {
+  if (op === "+" || op === "-" || op === "*" || op === "/" || op === "%") {
     if (args.length === 0) {
       throw new Error(`${op} requires at least one argument`);
     }

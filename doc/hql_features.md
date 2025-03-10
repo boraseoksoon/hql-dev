@@ -171,7 +171,9 @@ Platform Abstraction in Place:
 You have a platform abstraction layer that currently wraps Deno’s APIs, ensuring that the caller’s API remains unchanged.
 Where You Want to Go
 
-Everything Is an Expression:
+Everything is Lazy evaluation:
+
+Everything is an Expression:
 Every language construct, from control forms to bindings, returns a value. This uniformity is critical for enabling advanced macro expansion and for reasoning about code.
 Macro Everywhere:
 Redefine high‑level constructs (defn, import, export, printing, even JS interop if desired) as macros over the minimal kernel. Eventually, the entire surface language will be built by macros that expand into a tiny core consisting of only the essential primitives.

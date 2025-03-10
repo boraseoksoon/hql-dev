@@ -3,7 +3,7 @@ export type HQLNode = LiteralNode | SymbolNode | ListNode;
 
 export interface LiteralNode {
   type: "literal";
-  value: string | number;
+  value: string | number | boolean | null;
 }
 
 export interface SymbolNode {

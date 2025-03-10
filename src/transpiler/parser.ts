@@ -1,5 +1,4 @@
-// src/transpiler/parser.ts - More careful implementation for quasiquote
-
+// src/transpiler/parser.ts
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import { ParseError } from "./errors.ts";
 
@@ -40,6 +39,28 @@ function tokenize(input: string): string[] {
     } else if (ch === '(' || ch === ')') {
       if (token !== "") { tokens.push(token); token = ""; }
       tokens.push(ch);
+    } else if (ch === '[') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      tokens.push('[');
+    } else if (ch === ']') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      tokens.push(']');
+    } else if (ch === '{') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      tokens.push('{');
+    } else if (ch === '}') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      tokens.push('}');
+    } else if (ch === ':') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      tokens.push(':');
+    } else if (ch === ',') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      tokens.push(',');
+    } else if (ch === '#' && i + 1 < input.length && input[i + 1] === '[') {
+      if (token !== "") { tokens.push(token); token = ""; }
+      tokens.push('#[');
+      i++; // Skip the '[' character
     } else if (/\s/.test(ch)) {
       if (token !== "") { tokens.push(token); token = ""; }
     } else if (ch === ';') {
@@ -132,30 +153,44 @@ function parseExpression(): HQLNode {
     return parseList();
   } else if (token === ')') {
     throw new ParseError("Unexpected ')'", { line: 0, column: 0, offset: 0 });
+  } else if (token === '[') {
+    return parseVector();
+  } else if (token === ']') {
+    throw new ParseError("Unexpected ']'", { line: 0, column: 0, offset: 0 });
+  } else if (token === '{') {
+    return parseMap();
+  } else if (token === '}') {
+    throw new ParseError("Unexpected '}'", { line: 0, column: 0, offset: 0 });
+  } else if (token === '#[') {
+    return parseSet();
+  } else if (token === ':' || token === ',') {
+    throw new ParseError(`Unexpected '${token}'`, { line: 0, column: 0, offset: 0 });
   } else if (token.startsWith('"')) {
     const str = processStringLiteral(token);
     return { type: "literal", value: str } as LiteralNode;
   } else if (!isNaN(Number(token))) {
     return { type: "literal", value: Number(token) } as LiteralNode;
-  } else {
-    // Check if the token contains a dot - for property access
-    if (token.includes('.') && !token.startsWith('.') && !token.endsWith('.')) {
-      const parts = token.split('.');
-      const object = parts[0];
-      const property = parts.slice(1).join('.');
-      
-      // Create a list representation for property access (using js-get-invoke)
-      return { 
-        type: "list", 
-        elements: [
-          { type: "symbol", name: "js-get-invoke" },
-          { type: "symbol", name: object },
-          { type: "literal", value: property }
-        ] 
-      } as ListNode;
-    }
+  } else if (token === "true") {
+    return { type: "literal", value: true } as LiteralNode;
+  } else if (token === "false") {
+    return { type: "literal", value: false } as LiteralNode;
+  } else if (token === "nil") {
+    return { type: "literal", value: null } as LiteralNode;
+  } else if (token.includes('.') && !token.startsWith('.') && !token.endsWith('.')) {
+    const parts = token.split('.');
+    const object = parts[0];
+    const property = parts.slice(1).join('.');
     
-    // Regular symbol
+    // Create a list representation for property access (using js-get-invoke)
+    return { 
+      type: "list", 
+      elements: [
+        { type: "symbol", name: "js-get-invoke" },
+        { type: "symbol", name: object },
+        { type: "literal", value: property }
+      ] 
+    } as ListNode;
+  } else {
     return { type: "symbol", name: token } as SymbolNode;
   }
 }
@@ -215,6 +250,104 @@ function parseList(): ListNode {
   return { 
     type: "list", 
     elements 
+  } as ListNode;
+}
+
+function parseVector(): ListNode {
+  const elements: HQLNode[] = [];
+  
+  while (currentPos < currentTokens.length && currentTokens[currentPos] !== ']') {
+    elements.push(parseExpression());
+    
+    // Skip comma if present
+    if (currentPos < currentTokens.length && currentTokens[currentPos] === ',') {
+      currentPos++;
+    }
+  }
+  
+  if (currentPos >= currentTokens.length) {
+    throw new ParseError("Unclosed vector", { line: 0, column: 0, offset: 0 });
+  }
+  
+  currentPos++; // Skip the closing bracket
+  
+  // Transform to a call to the vector function
+  return { 
+    type: "list", 
+    elements: [
+      { type: "symbol", name: "vector" },
+      ...elements
+    ] 
+  } as ListNode;
+}
+
+function parseMap(): ListNode {
+  const entries: HQLNode[] = [];
+  
+  while (currentPos < currentTokens.length && currentTokens[currentPos] !== '}') {
+    // Parse key
+    const key = parseExpression();
+    
+    // Expect colon
+    if (currentPos >= currentTokens.length || currentTokens[currentPos] !== ':') {
+      throw new ParseError("Expected ':' in map literal", { line: 0, column: 0, offset: 0 });
+    }
+    currentPos++; // Skip colon
+    
+    // Parse value
+    const value = parseExpression();
+    
+    // Add key-value pair
+    entries.push(key);
+    entries.push(value);
+    
+    // Skip comma if present
+    if (currentPos < currentTokens.length && currentTokens[currentPos] === ',') {
+      currentPos++;
+    }
+  }
+  
+  if (currentPos >= currentTokens.length) {
+    throw new ParseError("Unclosed map", { line: 0, column: 0, offset: 0 });
+  }
+  
+  currentPos++; // Skip the closing brace
+  
+  // Transform to a call to the hash-map function
+  return { 
+    type: "list", 
+    elements: [
+      { type: "symbol", name: "hash-map" },
+      ...entries
+    ] 
+  } as ListNode;
+}
+
+function parseSet(): ListNode {
+  const elements: HQLNode[] = [];
+  
+  while (currentPos < currentTokens.length && currentTokens[currentPos] !== ']') {
+    elements.push(parseExpression());
+    
+    // Skip comma if present
+    if (currentPos < currentTokens.length && currentTokens[currentPos] === ',') {
+      currentPos++;
+    }
+  }
+  
+  if (currentPos >= currentTokens.length) {
+    throw new ParseError("Unclosed set", { line: 0, column: 0, offset: 0 });
+  }
+  
+  currentPos++; // Skip the closing bracket
+  
+  // Transform to a call to the hash-set function
+  return { 
+    type: "list", 
+    elements: [
+      { type: "symbol", name: "hash-set" },
+      ...elements
+    ] 
   } as ListNode;
 }
 

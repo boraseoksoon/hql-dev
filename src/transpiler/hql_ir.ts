@@ -1,4 +1,4 @@
-// src/transpiler/hql_ir.ts - Updated IR types
+// src/transpiler/hql_ir.ts - Updated with object expressions
 
 export enum IRNodeType {
   // Basic program structure
@@ -25,6 +25,10 @@ export enum IRNodeType {
   ArrayConsExpression,
   FunctionExpression,
   
+  // Object literal support (for maps)
+  ObjectExpression,
+  ObjectProperty,
+  
   // Statements/Declarations
   VariableDeclaration,
   VariableDeclarator,
@@ -45,7 +49,7 @@ export enum IRNodeType {
   CommentBlock,
   Raw,
   
-  // NEW: For representing a JS import reference from (js-import "module")
+  // For representing a JS import reference from (js-import "module")
   JsImportReference
 }
 
@@ -148,6 +152,19 @@ export interface IRFunctionExpression extends IRNode {
   id: IRIdentifier | null;
   params: IRIdentifier[];
   body: IRBlockStatement;
+}
+
+// NEW: Object literal support (for maps)
+export interface IRObjectProperty extends IRNode {
+  type: IRNodeType.ObjectProperty;
+  key: IRNode;
+  value: IRNode;
+  computed?: boolean;
+}
+
+export interface IRObjectExpression extends IRNode {
+  type: IRNodeType.ObjectExpression;
+  properties: IRObjectProperty[];
 }
 
 // Statements/Declarations

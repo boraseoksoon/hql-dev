@@ -33,7 +33,7 @@ export const LIST_PRIMITIVES = new Set(["first", "rest", "cons", "=", "length"])
 */
 export const PRIMITIVE_OPS = new Set([
   // Arithmetic operators
-  "+", "-", "*", "/", 
+  "+", "-", "*", "/", "%",   // Added modulo operator here
   
   // Comparison operators
   "=", "!=", "<", ">", "<=", ">=", "eq?",
