@@ -187,8 +187,53 @@ function convertIdentifier(node: IR.IRIdentifier): ts.Identifier {
   return ts.factory.createIdentifier(node.name);
 }
 
-// Expression conversions
+function convertCallExpressionWithMemberCallee(node: IR.IRCallExpression): ts.CallExpression {
+  // Check if the callee is a member expression
+  if (node.callee.type === IR.IRNodeType.MemberExpression) {
+    const memberExpr = node.callee as IR.IRMemberExpression;
+    
+    // Create the member expression
+    let tsPropertyAccessExpr: ts.Expression;
+    
+    // Handle the property access
+    if (memberExpr.property.type === IR.IRNodeType.Identifier) {
+      const propName = (memberExpr.property as IR.IRIdentifier).name;
+      
+      tsPropertyAccessExpr = ts.factory.createPropertyAccessExpression(
+        convertIRExpr(memberExpr.object),
+        ts.factory.createIdentifier(propName)
+      );
+    } else {
+      // Fallback for computed property access
+      tsPropertyAccessExpr = ts.factory.createElementAccessExpression(
+        convertIRExpr(memberExpr.object),
+        convertIRExpr(memberExpr.property)
+      );
+    }
+    
+    // Create the method call with the property access as callee
+    return ts.factory.createCallExpression(
+      tsPropertyAccessExpr,
+      undefined,
+      node.arguments.map(arg => convertIRExpr(arg))
+    );
+  }
+  
+  // Regular call expression handling
+  return ts.factory.createCallExpression(
+    convertIRExpr(node.callee),
+    undefined,
+    node.arguments.map(arg => convertIRExpr(arg))
+  );
+}
+
 function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
+  // If the callee is a member expression, use our specialized converter
+  if (node.callee.type === IR.IRNodeType.MemberExpression) {
+    return convertCallExpressionWithMemberCallee(node);
+  }
+  
+  // Standard call expression handling
   const callee = convertIRExpr(node.callee);
   const args = node.arguments.map(arg => convertIRExpr(arg));
   return ts.factory.createCallExpression(callee, undefined, args);
@@ -198,6 +243,107 @@ function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
   const object = convertIRExpr(node.object);
   const property = convertIRExpr(node.property);
   
+  // Special case: If the object is an InteropIIFE, we need to handle this differently
+  if (node.object.type === IR.IRNodeType.InteropIIFE) {
+    const iife = node.object as IR.IRInteropIIFE;
+    
+    // Create an IIFE to handle the nested property access
+    const statements: ts.Statement[] = [
+      // const _obj = original object;
+      ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          [ts.factory.createVariableDeclaration(
+            ts.factory.createIdentifier("_obj"),
+            undefined,
+            undefined,
+            convertIRExpr(iife.object)
+          )],
+          ts.NodeFlags.Const
+        )
+      ),
+      
+      // const _member = _obj["originalProp"];
+      ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          [ts.factory.createVariableDeclaration(
+            ts.factory.createIdentifier("_member"),
+            undefined,
+            undefined,
+            ts.factory.createElementAccessExpression(
+              ts.factory.createIdentifier("_obj"),
+              convertIRExpr(iife.property)
+            )
+          )],
+          ts.NodeFlags.Const
+        )
+      ),
+      
+      // const _result = typeof _member === "function" ? _member.call(_obj) : _member;
+      ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          [ts.factory.createVariableDeclaration(
+            ts.factory.createIdentifier("_result"),
+            undefined,
+            undefined,
+            ts.factory.createConditionalExpression(
+              ts.factory.createBinaryExpression(
+                ts.factory.createTypeOfExpression(ts.factory.createIdentifier("_member")),
+                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                ts.factory.createStringLiteral("function")
+              ),
+              ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+              ts.factory.createCallExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createIdentifier("_member"),
+                  ts.factory.createIdentifier("call")
+                ),
+                undefined,
+                [ts.factory.createIdentifier("_obj")]
+              ),
+              ts.factory.createToken(ts.SyntaxKind.ColonToken),
+              ts.factory.createIdentifier("_member")
+            )
+          )],
+          ts.NodeFlags.Const
+        )
+      ),
+      
+      // return _result.propName; - using the property from the outer part
+      ts.factory.createReturnStatement(
+        node.computed ?
+          ts.factory.createElementAccessExpression(
+            ts.factory.createIdentifier("_result"),
+            property
+          ) :
+          ts.factory.createPropertyAccessExpression(
+            ts.factory.createIdentifier("_result"),
+            property as ts.Identifier
+          )
+      )
+    ];
+    
+    // Create the IIFE
+    return ts.factory.createCallExpression(
+      ts.factory.createParenthesizedExpression(
+        ts.factory.createFunctionExpression(
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          [],
+          undefined,
+          ts.factory.createBlock(statements, true)
+        )
+      ),
+      undefined,
+      []
+    );
+  }
+  
+  // Regular property access - no special handling needed
   if (node.computed) {
     return ts.factory.createElementAccessExpression(object, property);
   } else {
