@@ -96,6 +96,8 @@ const abs = function (x) {
 const factorial = function (n) {
     return n <= 1 ? 1 : n * get(factorial, n - 1);
 };
+console.log("square : ", get(square, 10));
+export { square };
 const calculate_area = function (radius) {
     return function () {
         const r_squared = get(square, radius);

@@ -6,6 +6,8 @@ import { generateTypeScript } from "./ts-ast-to-ts-code.ts";
 import { dirname, resolve, readTextFile, writeTextFile } from "../platform/platform.ts";
 import { expandMacros } from "../macro-expander.ts";
 import { HQLNode } from "./hql_ast.ts";
+import { HqlImportHandler } from "./hql_import_handler.ts";
+import * as IR from "./hql_ir.ts";
 
 // Minimal runtime functions to support data structure access
 const RUNTIME_FUNCTIONS = `
@@ -58,17 +60,20 @@ export async function transformAST(
       console.log("Expanded AST:", JSON.stringify(expandedNodes, null, 2));
     }
     
-    // Step 2: Transform to IR
-    const ir = transformToIR(expandedNodes, currentDir);
+    // Step 2: Create an import handler for processing HQL imports
+    const importHandler = new HqlImportHandler(options);
+    
+    // Step 3: Transform to IR, passing the import handler
+    const ir = await transformToIR(expandedNodes, currentDir, options, importHandler);
     
     if (options.verbose) {
       console.log("IR:", JSON.stringify(ir, null, 2));
     }
     
-    // Step 3: Generate TypeScript code 
+    // Step 4: Generate TypeScript code 
     const tsCode = generateTypeScript(ir);
     
-    // Step 4: Prepend runtime functions
+    // Step 5: Prepend runtime functions
     return RUNTIME_FUNCTIONS + tsCode;
   } catch (error) {
     console.error("Transformation error:", error);
@@ -76,15 +81,18 @@ export async function transformAST(
   }
 }
 
-/**
- * Transform HQL source to TypeScript.
- */
 export async function transpile(
   source: string, 
   filePath: string, 
   options: TransformOptions = {}
 ): Promise<string> {
   try {
+    // Create an import handler for preprocessing HQL imports
+    const importHandler = new HqlImportHandler(options);
+    
+    // First, preprocess all HQL imports to generate JS equivalents
+    await importHandler.preprocessImports(source, filePath);
+    
     // Parse the HQL source into an AST
     const astNodes = parse(source);
 
@@ -92,13 +100,62 @@ export async function transpile(
       console.log("Parsed AST:", JSON.stringify(astNodes, null, 2));
     }
     
-    // Transform the AST with macro expansion
-    const code = await transformAST(astNodes, dirname(filePath), options);
+    // Now do the usual macro expansion
+    const expandedNodes = await expandMacros(astNodes);
     
-    return code;
+    if (options.verbose) {
+      console.log("Expanded AST:", JSON.stringify(expandedNodes, null, 2));
+    }
+    
+    // Transform to IR - we'll modify this to handle HQL import paths
+    let ir = transformToIR(expandedNodes, dirname(filePath));
+    
+    // Post-process the IR to rewrite HQL imports to JS imports
+    ir = rewriteHqlImportsInIR(ir, importHandler);
+    
+    if (options.verbose) {
+      console.log("IR:", JSON.stringify(ir, null, 2));
+    }
+    
+    // Generate TypeScript code
+    const tsCode = generateTypeScript(ir);
+    
+    // Prepend runtime functions
+    return RUNTIME_FUNCTIONS + tsCode;
   } catch (error) {
     throw new Error(`Transpile error: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/**
+ * Post-process the IR to rewrite HQL imports to JS imports.
+ * This is a safe way to modify imports without changing the transformer architecture.
+ */
+function rewriteHqlImportsInIR(ir: IR.IRProgram, importHandler: HqlImportHandler): IR.IRProgram {
+  const newBody = ir.body.map(node => {
+    // Look for JsImportReference nodes
+    if (node.type === IR.IRNodeType.JsImportReference) {
+      const importNode = node as IR.IRJsImportReference;
+      const source = importNode.source;
+      
+      // If this is an HQL import, rewrite it to the JS equivalent
+      if (HqlImportHandler.isHqlFile(source)) {
+        const jsPath = importHandler.getJsImportPath(source);
+        if (jsPath) {
+          return {
+            ...importNode,
+            source: jsPath
+          };
+        }
+      }
+    }
+    return node;
+  });
+  
+  return {
+    ...ir,
+    body: newBody
+  };
 }
 
 /**

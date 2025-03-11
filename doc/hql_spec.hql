@@ -93,6 +93,10 @@
       1
       (* n (factorial (- n 1)))))
 
+(console.log "square : " (square 10))
+
+(export "square" square)
+
 ;; --- Expression Sequencing with 'do' ---
 (defn calculate-area (radius)
   (do
