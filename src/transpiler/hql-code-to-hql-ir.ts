@@ -1,4 +1,4 @@
-// Complete implementation of hql-code-to-hql-ir.ts with method chain enhancements
+// Complete implementation of hql-code-to-hql-ir.ts with collection access enhancement
 
 import * as IR from "./hql_ir.ts";
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
@@ -201,117 +201,6 @@ function transformMethodChain(list: ListNode, currentDir: string): IR.IRNode {
   }
   
   return result;
-}
-
-/**
- * Helper function to determine if a symbol name looks like a property access
- */
-function isPropertyName(name: string): boolean {
-  // Simple properties like "length", "name", "size", etc.
-  const commonProps = ["length", "name", "size", "prototype", "constructor"];
-  if (commonProps.includes(name)) return true;
-  
-  // Camel case properties like "toLowerCase", "appendChild", etc.
-  if (/^[a-z][a-zA-Z0-9]*$/.test(name)) return true;
-  
-  return false;
-}
-
-/**
- * Helper function to determine if a symbol name looks like a method name
- */
-function isMethodName(name: string): boolean {
-  // Common method names like "map", "filter", "reduce", etc.
-  const commonMethods = ["map", "filter", "reduce", "forEach", "find", "push", "pop", "shift", "unshift"];
-  if (commonMethods.includes(name)) return true;
-  
-  // Method names often follow camelCase 
-  if (/^[a-z][a-zA-Z0-9]*$/.test(name)) return true;
-  
-  return false;
-}
-
-/**
- * Helper function to determine if a symbol represents property access
- */
-function isPropertyAccess(symbol: SymbolNode): boolean {
-  return isPropertyName(symbol.name) || isMethodName(symbol.name);
-}
-
-/**
- * Helper function to process a member expression chain
- */
-function processMemberChain(
-  baseExpr: IR.IRMemberExpression, 
-  elements: HQLNode[], 
-  currentDir: string
-): IR.IRNode {
-  let current: IR.IRNode = baseExpr;
-  
-  for (let i = 0; i < elements.length; i++) {
-    const element = elements[i];
-    
-    if (element.type === "symbol") {
-      const symbolName = (element as SymbolNode).name;
-      
-      // If this is a property access
-      if (isPropertyName(symbolName)) {
-        current = {
-          type: IR.IRNodeType.MemberExpression,
-          object: current,
-          property: {
-            type: IR.IRNodeType.Identifier,
-            name: symbolName
-          } as IR.IRIdentifier,
-          computed: false
-        } as IR.IRMemberExpression;
-      } 
-      // If this is a method call, collect arguments
-      else if (isMethodName(symbolName)) {
-        const args: IR.IRNode[] = [];
-        i++;
-        
-        // Collect arguments until the next property accessor
-        while (i < elements.length && 
-              !(elements[i].type === "symbol" && isPropertyAccess(elements[i] as SymbolNode))) {
-          args.push(transformNode(elements[i], currentDir)!);
-          i++;
-          
-          if (i >= elements.length) break;
-        }
-        
-        // Step back to process the next property in next iteration
-        if (i < elements.length) i--;
-        
-        // Create method call expression
-        current = {
-          type: IR.IRNodeType.CallExpression,
-          callee: {
-            type: IR.IRNodeType.MemberExpression,
-            object: current,
-            property: {
-              type: IR.IRNodeType.Identifier,
-              name: symbolName
-            } as IR.IRIdentifier,
-            computed: false
-          } as IR.IRMemberExpression,
-          arguments: args
-        } as IR.IRCallExpression;
-      }
-    } else {
-      // This is a function argument - we assume it's for the current expression
-      const args = [transformNode(element, currentDir)!];
-      
-      // Transform to method call
-      current = {
-        type: IR.IRNodeType.CallExpression,
-        callee: current,
-        arguments: args
-      } as IR.IRCallExpression;
-    }
-  }
-  
-  return current;
 }
 
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
@@ -600,6 +489,53 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     
     if (PRIMITIVE_OPS.has(op)) {
       return transformPrimitiveOp(list, currentDir);
+    }
+    
+    // If symbol is 'get' and there are exactly 3 elements, this is a get operation
+    if (op === "get" && list.elements.length === 3) {
+      const collection = transformNode(list.elements[1], currentDir)!;
+      const index = transformNode(list.elements[2], currentDir)!;
+      
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.Identifier,
+          name: "get"
+        } as IR.IRIdentifier,
+        arguments: [collection, index]
+      } as IR.IRCallExpression;
+    }
+    
+    // Special case for "new" constructor
+    if (op === "new") {
+      const constructor = transformNode(list.elements[1], currentDir)!;
+      return {
+        type: IR.IRNodeType.NewExpression,
+        callee: constructor,
+        arguments: list.elements.slice(2).map(arg => transformNode(arg, currentDir)!)
+      } as IR.IRNewExpression;
+    }
+    
+    // NEW: Clojure-style collection access with exactly one argument
+    // and not a known special form, function, primitive, or special operator
+    if (list.elements.length === 2 && 
+        !KERNEL_PRIMITIVES.has(op) &&
+        !PRIMITIVE_OPS.has(op) &&
+        !op.startsWith('js-') &&
+        !["new", "empty-array", "empty-map", "empty-set", "vector", "hash-map", "hash-set"].includes(op)) {
+      
+      // Transform (collection index) into (get collection index)
+      const collection = transformNode(first, currentDir)!;
+      const index = transformNode(list.elements[1], currentDir)!;
+      
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.Identifier,
+          name: "get"
+        } as IR.IRIdentifier,
+        arguments: [collection, index]
+      } as IR.IRCallExpression;
     }
     
     // Standard function call

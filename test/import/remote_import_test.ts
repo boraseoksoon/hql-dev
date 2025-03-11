@@ -103,11 +103,10 @@ Deno.test("remote imports - mixed exports", async () => {
   // Verify default export usage (calling express as a function)
   assertStringIncludes(js, "const app = express(");
   
-  // Verify named export usage - we're now using IIFE for property access, not direct access
-  // The IIFE pattern includes these terms for property access
-  assertStringIncludes(js, "_obj = express");
-  assertStringIncludes(js, "Router");
-  assertStringIncludes(js, "json");
+  // Verify named export usage - the transpiler now uses direct property access
+  // Update tests to look for direct property access instead of IIFE pattern
+  assertStringIncludes(js, "express.Router");
+  assertStringIncludes(js, "express.json");
 });
 
 Deno.test("remote imports - multiple imports", async () => {

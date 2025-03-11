@@ -24,7 +24,7 @@ function get(obj, key, notFound = null) {
   // Handle objects (maps)
   return (key in obj) ? obj[key] : notFound;
 }
-const numbers = new(Array);
+const numbers = new Array();
 numbers.push(1);
 numbers.push(2);
 numbers.push(3);
@@ -47,21 +47,13 @@ new Set([1, 2, 3, 4, 5]);
 const json = {
     items: [1, 2, 3, 4, 5]
 };
-(function () {
-    const _obj = json;
-    const _member = _obj["items"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-})();
+json.items;
 const data = {
     items: [5, 10, 15, 20, 25, 30, 35, 40],
     factor: 2,
     prefix: "Value: "
 };
-(function () {
-    const _obj = data;
-    const _member = _obj["items"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-})();
+data.items;
 const empty_vector = [];
 const mixed_types = ["string", 42, true, null];
 const nested_vectors = [[1, 2], [3, 4]];
@@ -86,16 +78,12 @@ const simple_list = [1, 2, 3, 4, 5];
 const mixed_list = ["hello", 42, true];
 const vec_item = get(numbers, 2);
 const map_value = get(user, "name");
-const first_item = function () {
-    const _obj = numbers;
-    const _member = _obj["0"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const second_item = function () {
-    const _obj = numbers;
-    const _member = _obj["1"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
+const first_item = get(numbers, 0);
+const second_item = get(numbers, 1);
+const my_vector = [1, 2, 3, 4, 5];
+const element2 = get(my_vector, 2);
+const element3 = get(my_vector, 2);
+const element4 = get(my_vector, 2);
 const square = function (x) {
     return x * x;
 };
@@ -106,11 +94,11 @@ const abs = function (x) {
     return x < 0 ? 0 - x : x;
 };
 const factorial = function (n) {
-    return n <= 1 ? 1 : n * factorial(n - 1);
+    return n <= 1 ? 1 : n * get(factorial, n - 1);
 };
 const calculate_area = function (radius) {
     return function () {
-        const r_squared = square(radius);
+        const r_squared = get(square, radius);
         const area = pi * r_squared;
         return area;
     }([]);
@@ -150,7 +138,7 @@ const comparison_demo = function (a, b) {
     return list(a === b, a !== b, a < b, a > b, a <= b, a >= b);
 };
 const apply_twice = function (f, x) {
-    return f(f(x));
+    return get(f, get(f, x));
 };
 const make_multiplier = function (n) {
     return function (x) {
@@ -159,8 +147,8 @@ const make_multiplier = function (n) {
 };
 const demonstration = function () {
     return function () {
-        const double = make_multiplier(2);
-        return double(10);
+        const double = get(make_multiplier, 2);
+        return get(double, 10);
     }([]);
 };
 const log_all = function (...items) {
@@ -175,7 +163,7 @@ const showcase = function (n) {
     return function () {
         const result = n < 0 ? "Cannot compute for negative numbers" : "Identity element for factorial";
         return result ? result : function () {
-            const fact = factorial(n);
+            const fact = get(factorial, n);
             const msg = "Factorial of " + (n + " is " + fact);
             console.log(msg);
             return list(n, fact);
@@ -185,44 +173,16 @@ const showcase = function (n) {
 export { showcase };
 numbers.push(8);
 console.log(numbers);
-const pi_value = function () {
-    const _obj = Math;
-    const _member = _obj["PI"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const max_int_value = function () {
-    const _obj = Number;
-    const _member = _obj["MAX_SAFE_INTEGER"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const random_number = function () {
-    const _obj = Math;
-    const _member = _obj["random"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const current_timestamp = function () {
-    const _obj = Date;
-    const _member = _obj["now"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
+const pi_value = Math.PI;
+const max_int_value = Number.MAX_SAFE_INTEGER;
+const random_number = Math.random;
+const current_timestamp = Date.now;
 console.log("Hello from HQL!");
 console.warn("This is a warning");
-const date = new(Date);
-const current_year = function () {
-    const _obj = date;
-    const _member = _obj["getFullYear"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const month = function () {
-    const _obj = date;
-    const _member = _obj["getMonth"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const formatted_date = function () {
-    const _obj = date;
-    const _member = _obj["toLocaleDateString"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
+const date = new Date();
+const current_year = date.getFullYear;
+const month = date.getMonth;
+const formatted_date = date.toLocaleDateString;
 const abs_value = Math.abs(-42);
 const rounded = Math.round(3.7);
 const max_value = Math.max(1, 2, 3, 4, 5);
@@ -256,37 +216,17 @@ const express = (function () {
     return wrapper;
 })();
 const app = express();
-const router = function () {
-    const _obj = express;
-    const _member = _obj["Router"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-app.use(function () {
-    const _obj = express;
-    const _member = _obj["json"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}());
+const router = express.Router;
+app.use(express.json);
 const message = "Hello, World!";
-const upper_message = function () {
-    const _obj = message;
-    const _member = _obj["toUpperCase"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
+const upper_message = message.toUpperCase;
 const message_parts = message.split(" ");
 const array = [1, 2, 3];
 array.push(4);
 array.push(5);
 console.log(array);
-const year = function () {
-    const _obj = date;
-    const _member = _obj["getFullYear"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const date_string = function () {
-    const _obj = date;
-    const _member = _obj["toISOString"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
+const year = date.getFullYear;
+const date_string = date.toISOString;
 const nums = [1, 2, 3, 4, 5];
 const filtered = nums.filter(function (x) {
     return x > 2;
@@ -305,21 +245,9 @@ const config = {
         }
     }
 };
-const db_part = function () {
-    const _obj = config;
-    const _member = _obj["db"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const user_part = function () {
-    const _obj = db_part;
-    const _member = _obj["user"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const admin_name = function () {
-    const _obj = user_part;
-    const _member = _obj["name"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
+const db_part = config.db;
+const user_part = db_part.user;
+const admin_name = user_part.name;
 const get_user = function () {
     return {
         id: 1,
@@ -327,26 +255,10 @@ const get_user = function () {
     };
 };
 const user_obj = get_user();
-const user_name = function () {
-    const _obj = user_obj;
-    const _member = _obj["name"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const window_width = function () {
-    const _obj = window;
-    const _member = _obj["innerWidth"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const array_length = function () {
-    const _obj = array;
-    const _member = _obj["length"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
-const string_upper = function () {
-    const _obj = message;
-    const _member = _obj["toUpperCase"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-}();
+const user_name = user_obj.name;
+const window_width = window.innerWidth;
+const array_length = array.length;
+const string_upper = message.toUpperCase;
 const substring = message.substring(0, 5);
 const replaced = message.replace("Hello", "Hi");
 const even_numbers = numbers.filter(function (n) {
@@ -356,6 +268,9 @@ const doubled_evens = even_numbers.map(function (n) {
     return n * 2;
 });
 console.log("Doubled evens (step by step):", doubled_evens);
+[1, 2, 3, 4, 5, 6, 7, 8].filter(function (n) {
+    return n > 5;
+}).length;
 const chained_result = function () {
     const filtered = numbers.filter(function (n) {
         return n > 5;

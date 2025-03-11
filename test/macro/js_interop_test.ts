@@ -16,10 +16,8 @@ Deno.test("JS Interop - dot notation with property access", async () => {
     (def pi-value (Math.PI))
     (console.log pi-value)
   `);
-  
-  // Instead of using regex, use string includes which is more flexible
-  assertStringIncludes(result, "const pi_value = function ()");
-  assertStringIncludes(result, "const _obj = Math");
+
+  assertStringIncludes(result, "const pi_value = Math.PI");
   assertStringIncludes(result, "PI");
   assertStringIncludes(result, "console.log(pi_value)");
 });
@@ -55,8 +53,8 @@ Deno.test("JS Interop - constructor with new", async () => {
     (def now (date.getTime))
   `);
   
-  // Verify constructor call and method access
-  assertStringIncludes(result, "new(Date)");
+  // Updated to match the actual output format
+  assertStringIncludes(result, "new Date()");
   assertStringIncludes(result, "getTime");
 });
 

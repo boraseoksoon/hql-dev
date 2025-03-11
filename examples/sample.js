@@ -24,5 +24,7 @@ function get(obj, key, notFound = null) {
   // Handle objects (maps)
   return (key in obj) ? obj[key] : notFound;
 }
-const pi_value = Math.PI;
-console.log(pi_value);
+const my_vector = [1, 2, 3, 4, 5];
+const element2 = get(my_vector, 2);
+const element3 = get(my_vector, 2);
+const element4 = get(my_vector, 2);

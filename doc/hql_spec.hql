@@ -64,9 +64,13 @@
 ;; --- Data Structure Operations ---
 (def vec-item (get numbers 2))
 (def map-value (get user "name"))
-(def first-item (numbers.0))
-(def second-item (numbers.1))
+(def first-item (get numbers 0))
+(def second-item (get numbers 1))
 
+(def my-vector [1, 2, 3, 4, 5])
+(def element2 (get my-vector 2))  
+(def element3 (nth my-vector 2))
+(def element4 (my-vector 2))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 2. Functions & Control Flow

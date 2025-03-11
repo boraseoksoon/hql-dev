@@ -37,3 +37,8 @@
         (first test-result1) 
         (second test-result1)
         (second test-result2)))
+
+;; nth: Access a collection element by index (Clojure-style)
+;; Usage: (nth collection index) -> (get collection index)
+(defmacro nth (coll idx)
+  (list 'get coll idx))
