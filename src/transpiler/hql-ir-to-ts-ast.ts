@@ -372,6 +372,7 @@ function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
 }
 
 function convertCallMemberExpression(node: IR.IRCallMemberExpression): ts.CallExpression {
+  // Create member expression first
   let memberExpr: ts.Expression;
   
   if (node.property.type === IR.IRNodeType.StringLiteral) {
@@ -596,15 +597,8 @@ function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclar
   );
 }
 
-// In hql-ir-to-ts-ast.ts, update convertJsImportReference:
-
 function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] {
-  // Skip generating imports for HQL files - they're handled by our module system
-  if (node.source.endsWith('.hql')) {
-    return [];
-  }
-  
-  // Generate import statement for non-HQL modules
+  // Generate a unique internal module name based on the user-provided name
   const importName = sanitizeIdentifier(node.name);
   const internalModuleName = `${importName}Module`;
   
@@ -621,7 +615,8 @@ function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] 
     ts.factory.createStringLiteral(node.source)
   );
   
-  // Create a function body with correct variable references
+  // Create a simpler implementation using a function
+  // This is more readable and maintainable than the complex Object.assign approach
   const functionBody = ts.factory.createBlock(
     [
       // Create a wrapper function that will preserve the 'this' binding

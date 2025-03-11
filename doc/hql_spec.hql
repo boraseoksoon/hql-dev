@@ -339,10 +339,10 @@
   (console.log "macro_x is not less than 5")) ;; x is not less than 5
 
 ;; Use 'inc' to compute x+1.
-(def x_plus_one (inc x))
+(def x_plus_one (inc macro_x))
 
 ;; Use 'dec' to compute x-1.
-(def x_minus_one (dec x))
+(def x_minus_one (dec macro_x))
 
 (console.log x_plus_one)  ;; 11
 (console.log x_minus_one) ;; 9

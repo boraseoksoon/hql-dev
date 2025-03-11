@@ -313,7 +313,7 @@ macro_x > 5 ? function () {
 macro_x < 5 ? null : function () {
     return console.log("macro_x is not less than 5");
 }([]);
-const x_plus_one = x + 1;
-const x_minus_one = x - 1;
+const x_plus_one = macro_x + 1;
+const x_minus_one = macro_x - 1;
 console.log(x_plus_one);
 console.log(x_minus_one);

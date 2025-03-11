@@ -24,19 +24,5 @@ function get(obj, key, notFound = null) {
   // Handle objects (maps)
   return (key in obj) ? obj[key] : notFound;
 }
-
-// HQL Module: /Users/seoksoonjang/Desktop/hql/lib/lazy_seq.hql
-const seq = (function() {
-  const add = function(x, y) {
-  return x + y;
-};
-
-  
-  // Return module exports
-  return {
-    "add": add
-  };
-})();
-
-undefined.log(undefined);
-undefined.log(undefined);
+const pi = 3.14159;
+console.log(pi);
