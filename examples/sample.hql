@@ -1,26 +1,21 @@
 
-;; Assume core macros (including when, unless, inc, dec, etc.) are loaded.
+// (import lazy-seq "../lib/lazy_seq.hql")
 
-;; Define a variable.
-(def x 10)
+/*
+;; Creating JS objects
+(def numbers (new Array))
+(numbers.push 1)
+(numbers.push 2)
+(numbers.push 3)
+(numbers.push 4)
+(numbers.push 5)
+(numbers.push 6)
+(numbers.push 7)
+*/
 
-;; Use 'when' to log a message if x is greater than 5.
-(when (> x 5)
-  (js-call console "log" "x is greater than 5"))
+;; --- Basic Values and Definitions ---
+(def pi 3.14159)
+// (def greeting "Hello, HQL World!")
+// (def is-awesome true)
 
-;; Use 'unless' to log a message if x is not less than 5.
-(unless (< x 5)
-  (js-call console "log" "x is not less than 5"))
-
-
-;; Use 'inc' to compute x+1.
-(def x_plus_one (inc x))
-
-;; Use 'dec' to compute x-1.
-(def x_minus_one (dec x))
-
-(console.log x_plus_one)
-(console.log x_minus_one)
-
-(defn x_plus_one2 (x) (inc x))
-(console.log (x_plus_one2 1))
+(console.log pi)

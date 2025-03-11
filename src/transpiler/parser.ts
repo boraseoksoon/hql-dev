@@ -6,9 +6,19 @@ function tokenize(input: string): string[] {
   const tokens: string[] = [];
   let token = "";
   let inString = false;
+  let inMultilineComment = false;
   
   for (let i = 0; i < input.length; i++) {
     const ch = input[i];
+    
+    // If we're in a multiline comment, look for the end marker
+    if (inMultilineComment) {
+      if (ch === '*' && i + 1 < input.length && input[i + 1] === '/') {
+        inMultilineComment = false;
+        i++; // Skip the '/' character
+      }
+      continue; // Skip all chars inside multiline comment
+    }
     
     if (inString) {
       token += ch;
@@ -36,6 +46,24 @@ function tokenize(input: string): string[] {
     } else if (ch === "'") {
       if (token !== "") { tokens.push(token); token = ""; }
       tokens.push("'");
+    } else if (ch === '/' && i + 1 < input.length) {
+      // Check for C-style comments
+      const nextCh = input[i + 1];
+      
+      if (nextCh === '/') {
+        // Single-line comment: skip until end of line or end of input
+        if (token !== "") { tokens.push(token); token = ""; }
+        i++; // Skip the second '/'
+        while (i < input.length && input[i] !== '\n') i++;
+      } else if (nextCh === '*') {
+        // Multi-line comment: set flag and skip the '*'
+        if (token !== "") { tokens.push(token); token = ""; }
+        inMultilineComment = true;
+        i++; // Skip the '*' character
+      } else {
+        // Just a regular '/' character (e.g., division operator)
+        token += ch;
+      }
     } else if (ch === '(' || ch === ')') {
       if (token !== "") { tokens.push(token); token = ""; }
       tokens.push(ch);
@@ -71,12 +99,17 @@ function tokenize(input: string): string[] {
     } else if (/\s/.test(ch)) {
       if (token !== "") { tokens.push(token); token = ""; }
     } else if (ch === ';') {
-      // Skip comments
+      // Skip comments until end of line or end of input
       if (token !== "") { tokens.push(token); token = ""; }
       while (i < input.length && input[i] !== '\n') i++;
     } else {
       token += ch;
     }
+  }
+  
+  // Check if we ended with an unclosed multiline comment
+  if (inMultilineComment) {
+    throw new ParseError("Unclosed multiline comment", { line: 0, column: 0, offset: 0 });
   }
   
   if (token !== "") tokens.push(token);
