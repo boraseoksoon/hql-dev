@@ -5,26 +5,205 @@ import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import { KERNEL_PRIMITIVES, PRIMITIVE_OPS } from "../bootstrap.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 
+import { parse } from "./parser.ts";
+import { expandMacros } from "../macro-expander.ts";
+import { dirname, join, resolve, readTextFile, existsFn } from "../platform/platform.ts";
+
+// Global registry for processed HQL modules
+// Add this to the file where HQLProcessedModule is defined
+interface HQLProcessedModule {
+  path: string;           // Full file path
+  name: string;           // Module variable name
+  ir: IR.IRProgram;       // Processed IR
+  exports: string[];      // List of exported names
+  varNames: Map<string, string>; // Map of export names to variable names
+  functionDefs?: Map<string, IR.IRNode>; // Map of function names to function definitions
+}
+
+// Keep track of all processed HQL modules
+export const hqlProcessedModules: HQLProcessedModule[] = [];
+
+// Function to check if a node is an HQL import
+function isHQLImport(node: HQLNode): boolean {
+  if (node.type !== "list") return false;
+  
+  const list = node as ListNode;
+  return list.elements.length === 3 && 
+         list.elements[0].type === "symbol" && 
+         (list.elements[0] as SymbolNode).name === "js-import" &&
+         list.elements[2].type === "literal" &&
+         String((list.elements[2] as LiteralNode).value).endsWith(".hql");
+}
+
+// Get module name from import form
+function getImportModuleName(list: ListNode): string {
+  if (list.elements[1].type === "symbol") {
+    return (list.elements[1] as SymbolNode).name;
+  } else if (list.elements[1].type === "literal") {
+    return String((list.elements[1] as LiteralNode).value);
+  }
+  throw new Error("Import module name must be a symbol or string literal");
+}
+
+// Get import path from import form
+function getImportPath(list: ListNode): string {
+  if (list.elements[2].type === "literal") {
+    return String((list.elements[2] as LiteralNode).value);
+  }
+  throw new Error("Import path must be a string literal");
+}
+
+// Extract all exports from a module
+function extractModuleExports(ir: IR.IRProgram): [string[], Map<string, string>] {
+  const exportNames: string[] = [];
+  const varNames = new Map<string, string>();
+  
+  for (const node of ir.body) {
+    if (node.type === IR.IRNodeType.ExportVariableDeclaration) {
+      const exportDecl = node as IR.IRExportVariableDeclaration;
+      const varDecl = exportDecl.declaration;
+      
+      if (varDecl.declarations.length > 0 && 
+          varDecl.declarations[0].id.type === IR.IRNodeType.Identifier) {
+        const exportName = exportDecl.exportName;
+        const varName = varDecl.declarations[0].id.name;
+        
+        exportNames.push(exportName);
+        varNames.set(exportName, varName);
+      }
+    } else if (node.type === IR.IRNodeType.ExportNamedDeclaration) {
+      const exportDecl = node as IR.IRExportNamedDeclaration;
+      
+      for (const specifier of exportDecl.specifiers) {
+        if (specifier.exported && specifier.local &&
+            specifier.exported.type === IR.IRNodeType.Identifier &&
+            specifier.local.type === IR.IRNodeType.Identifier) {
+          const exportName = specifier.exported.name;
+          const varName = specifier.local.name;
+          
+          exportNames.push(exportName);
+          varNames.set(exportName, varName);
+        }
+      }
+    }
+  }
+  
+  return [exportNames, varNames];
+}
+
+async function processHQLModule(moduleName: string, importPath: string, currentDir: string): Promise<string> {
+  const fullPath = resolve(join(currentDir, importPath));
+  
+  // Check if already processed
+  const existing = hqlProcessedModules.find(m => m.path === fullPath);
+  if (existing) {
+    return existing.name;
+  }
+  
+  try {
+    console.log(`Processing HQL import: ${importPath} (${fullPath})`);
+    
+    // Check if file exists
+    const exists = await existsFn(fullPath);
+    if (!exists) {
+      throw new Error(`HQL import file not found: ${importPath}`);
+    }
+    
+    // Read and process the HQL file
+    const hqlSource = await readTextFile(fullPath);
+    console.log(`HQL source loaded: ${hqlSource.substring(0, 100)}...`);
+    
+    const ast = parse(hqlSource);
+    const expanded = await expandMacros(ast);
+    
+    // Create sanitized module name
+    const safeModuleName = sanitizeIdentifier(moduleName);
+    
+    // Transform the expanded AST to IR 
+    const ir = await transformToIR(expanded, dirname(fullPath));
+    
+    // Extract exports and function definitions
+    const exportMap = new Map<string, string>();
+    const exportNames: string[] = [];
+    const functionDefs = new Map<string, IR.IRNode>();
+    
+    // Look for function definitions and exports
+    for (const node of ir.body) {
+      // Store all function definitions
+      if (node.type === IR.IRNodeType.VariableDeclaration) {
+        const varDecl = node as IR.IRVariableDeclaration;
+        if (varDecl.declarations.length > 0 && varDecl.declarations[0].init) {
+          const init = varDecl.declarations[0].init;
+          if (init.type === IR.IRNodeType.FunctionExpression) {
+            const id = varDecl.declarations[0].id;
+            functionDefs.set(id.name, init);
+          }
+        }
+      }
+      
+      // Process exports
+      if (node.type === IR.IRNodeType.ExportVariableDeclaration) {
+        const exportDecl = node as IR.IRExportVariableDeclaration;
+        const varDecl = exportDecl.declaration.declarations[0];
+        if (varDecl && varDecl.id && varDecl.id.type === IR.IRNodeType.Identifier) {
+          const exportName = exportDecl.exportName;
+          const varName = varDecl.id.name;
+          console.log(`Found export: ${exportName} -> ${varName}`);
+          exportNames.push(exportName);
+          exportMap.set(exportName, varName);
+        }
+      } else if (node.type === IR.IRNodeType.ExportNamedDeclaration) {
+        const exportDecl = node as IR.IRExportNamedDeclaration;
+        for (const specifier of exportDecl.specifiers) {
+          if (specifier.exported && specifier.local) {
+            const exportName = specifier.exported.name;
+            const varName = specifier.local.name;
+            console.log(`Found named export: ${exportName} -> ${varName}`);
+            exportNames.push(exportName);
+            exportMap.set(exportName, varName);
+          }
+        }
+      }
+    }
+    
+    // Register the processed module with function definitions
+    hqlProcessedModules.push({
+      path: fullPath,
+      name: safeModuleName,
+      ir: ir,
+      exports: exportNames,
+      varNames: exportMap,
+      functionDefs: functionDefs  // Add this to store function definitions
+    });
+    
+    console.log(`Registered HQL module: ${safeModuleName} with ${exportNames.length} exports`);
+    return safeModuleName;
+  } catch (error) {
+    console.error(`Error processing HQL import "${importPath}": ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
+}
+
 /**
  * Transform an array of HQL AST nodes into an IR program.
  */
-export function transformToIR(nodes: HQLNode[], currentDir: string): IR.IRProgram {
+export async function transformToIR(nodes: HQLNode[], currentDir: string): Promise<IR.IRProgram> {
   const body: IR.IRNode[] = [];
   for (const node of nodes) {
-    const ir = transformNode(node, currentDir);
+    const ir = await transformNode(node, currentDir);
     if (ir) body.push(ir);
   }
   return { type: IR.IRNodeType.Program, body };
 }
 
-export function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
+export async function transformNode(node: HQLNode, currentDir: string): Promise<IR.IRNode | null> {
   switch (node.type) {
     case "literal":
       return transformLiteral(node as LiteralNode);
     case "symbol":
       return transformSymbol(node as SymbolNode);
     case "list":
-      return transformList(node as ListNode, currentDir);
+      return await transformList(node as ListNode, currentDir);
     default:
       return null;
   }
@@ -203,7 +382,7 @@ function transformMethodChain(list: ListNode, currentDir: string): IR.IRNode {
   return result;
 }
 
-function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
+async function transformList(list: ListNode, currentDir: string): Promise<IR.IRNode | null> {
   if (list.elements.length === 0) {
     // Transform empty lists to empty array expressions
     return {
@@ -214,18 +393,39 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   
   const first = list.elements[0];
 
+  // Check if this is an HQL import
+  if (isHQLImport(list)) {
+    try {
+      const moduleName = getImportModuleName(list);
+      const importPath = getImportPath(list);
+      
+      // Process the HQL module
+      const safeModuleName = await processHQLModule(moduleName, importPath, currentDir);
+      
+      // Create a JsImportReference node (we'll handle it specially in code generation)
+      return {
+        type: IR.IRNodeType.JsImportReference,
+        name: safeModuleName,
+        source: importPath
+      } as IR.IRJsImportReference;
+    } catch (error) {
+      console.error(`Error processing HQL import: ${error instanceof Error ? error.message : String(error)}`);
+      // Fall back to normal JS import handling
+    }
+  }
+  
   // Handle special case for js-get-invoke
   if (first.type === "symbol" && 
       (first as SymbolNode).name === "js-get-invoke" && 
       list.elements.length === 3) {
-    const object = transformNode(list.elements[1], currentDir)!;
-    const property = transformNode(list.elements[2], currentDir)!;
+    const object = await transformNode(list.elements[1], currentDir);
+    const property = await transformNode(list.elements[2], currentDir);
     
     // If the property is a string literal, convert to MemberExpression
-    if (property.type === IR.IRNodeType.StringLiteral) {
+    if (property && property.type === IR.IRNodeType.StringLiteral) {
       return {
         type: IR.IRNodeType.MemberExpression,
-        object,
+        object: object!,
         property: {
           type: IR.IRNodeType.Identifier,
           name: (property as IR.IRStringLiteral).value
@@ -236,15 +436,15 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     
     return {
       type: IR.IRNodeType.MemberExpression,
-      object,
-      property,
+      object: object!,
+      property: property!,
       computed: true
     } as IR.IRMemberExpression;
   }
   
   // Case 1: First element is a list
   if (first.type === "list") {
-    const innerExpr = transformNode(first, currentDir);
+    const innerExpr = await transformNode(first, currentDir);
     
     // If there are more elements after the inner list
     if (list.elements.length > 1) {
@@ -253,7 +453,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       // If the second element is a symbol with dot notation, it's a method call
       if (second.type === "symbol" && (second as SymbolNode).name.startsWith('.')) {
         const methodName = (second as SymbolNode).name.substring(1);
-        const args = list.elements.slice(2).map(arg => transformNode(arg, currentDir)!);
+        const args = await Promise.all(list.elements.slice(2).map(arg => transformNode(arg, currentDir)));
         
         return {
           type: IR.IRNodeType.CallExpression,
@@ -266,7 +466,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
             } as IR.IRIdentifier,
             computed: false
           } as IR.IRMemberExpression,
-          arguments: args
+          arguments: args.filter(Boolean) as IR.IRNode[]
         } as IR.IRCallExpression;
       }
       
@@ -285,11 +485,11 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       
       // Otherwise, call with arguments
       else {
-        const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
+        const args = await Promise.all(list.elements.slice(1).map(arg => transformNode(arg, currentDir)));
         return {
           type: IR.IRNodeType.CallExpression,
           callee: innerExpr!,
-          arguments: args
+          arguments: args.filter(Boolean) as IR.IRNode[]
         } as IR.IRCallExpression;
       }
     }
@@ -349,7 +549,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       }
       
       // Method call (with arguments)
-      const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
+      const args = await Promise.all(list.elements.slice(1).map(arg => transformNode(arg, currentDir)));
       
       return {
         type: IR.IRNodeType.CallExpression,
@@ -362,7 +562,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
           } as IR.IRIdentifier,
           computed: false
         } as IR.IRMemberExpression,
-        arguments: args
+        arguments: args.filter(Boolean) as IR.IRNode[]
       } as IR.IRCallExpression;
     }
     
@@ -417,10 +617,10 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     
     // Data structure literals
     if (op === "vector") {
-      const elements = list.elements.slice(1).map(elem => transformNode(elem, currentDir)!);
+      const elements = await Promise.all(list.elements.slice(1).map(elem => transformNode(elem, currentDir)));
       return {
         type: IR.IRNodeType.ArrayExpression,
-        elements
+        elements: elements.filter(Boolean) as IR.IRNode[]
       } as IR.IRArrayExpression;
     }
     
@@ -449,18 +649,23 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
             value: (keyNode as SymbolNode).name
           } as IR.IRStringLiteral;
         } else {
-          keyExpr = transformNode(keyNode, currentDir)!;
+          keyExpr = await transformNode(keyNode, currentDir) || {
+            type: IR.IRNodeType.StringLiteral,
+            value: "undefined"
+          } as IR.IRStringLiteral;
         }
         
-        const valueExpr = transformNode(valueNode, currentDir)!;
+        const valueExpr = await transformNode(valueNode, currentDir);
         
-        const objectProperty: IR.IRObjectProperty = {
-          type: IR.IRNodeType.ObjectProperty,
-          key: keyExpr,
-          value: valueExpr
-        };
-        
-        properties.push(objectProperty);
+        if (valueExpr) {
+          const objectProperty: IR.IRObjectProperty = {
+            type: IR.IRNodeType.ObjectProperty,
+            key: keyExpr,
+            value: valueExpr
+          };
+          
+          properties.push(objectProperty);
+        }
       }
       
       return {
@@ -470,7 +675,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     }
     
     if (op === "hash-set") {
-      const elements = list.elements.slice(1).map(elem => transformNode(elem, currentDir)!);
+      const elements = await Promise.all(list.elements.slice(1).map(elem => transformNode(elem, currentDir)));
       
       return {
         type: IR.IRNodeType.NewExpression,
@@ -481,7 +686,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
         arguments: [
           {
             type: IR.IRNodeType.ArrayExpression,
-            elements
+            elements: elements.filter(Boolean) as IR.IRNode[]
           } as IR.IRArrayExpression
         ]
       } as IR.IRNewExpression;
@@ -493,8 +698,8 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     
     // If symbol is 'get' and there are exactly 3 elements, this is a get operation
     if (op === "get" && list.elements.length === 3) {
-      const collection = transformNode(list.elements[1], currentDir)!;
-      const index = transformNode(list.elements[2], currentDir)!;
+      const collection = await transformNode(list.elements[1], currentDir);
+      const index = await transformNode(list.elements[2], currentDir);
       
       return {
         type: IR.IRNodeType.CallExpression,
@@ -502,17 +707,18 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
           type: IR.IRNodeType.Identifier,
           name: "get"
         } as IR.IRIdentifier,
-        arguments: [collection, index]
+        arguments: [collection!, index!]
       } as IR.IRCallExpression;
     }
     
     // Special case for "new" constructor
     if (op === "new") {
-      const constructor = transformNode(list.elements[1], currentDir)!;
+      const constructor = await transformNode(list.elements[1], currentDir);
+      const args = await Promise.all(list.elements.slice(2).map(arg => transformNode(arg, currentDir)));
       return {
         type: IR.IRNodeType.NewExpression,
-        callee: constructor,
-        arguments: list.elements.slice(2).map(arg => transformNode(arg, currentDir)!)
+        callee: constructor!,
+        arguments: args.filter(Boolean) as IR.IRNode[]
       } as IR.IRNewExpression;
     }
     
@@ -525,8 +731,8 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
         !["new", "empty-array", "empty-map", "empty-set", "vector", "hash-map", "hash-set"].includes(op)) {
       
       // Transform (collection index) into (get collection index)
-      const collection = transformNode(first, currentDir)!;
-      const index = transformNode(list.elements[1], currentDir)!;
+      const collection = await transformNode(first, currentDir);
+      const index = await transformNode(list.elements[1], currentDir);
       
       return {
         type: IR.IRNodeType.CallExpression,
@@ -534,29 +740,29 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
           type: IR.IRNodeType.Identifier,
           name: "get"
         } as IR.IRIdentifier,
-        arguments: [collection, index]
+        arguments: [collection!, index!]
       } as IR.IRCallExpression;
     }
     
     // Standard function call
-    const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
+    const args = await Promise.all(list.elements.slice(1).map(arg => transformNode(arg, currentDir)));
     return {
       type: IR.IRNodeType.CallExpression,
       callee: {
         type: IR.IRNodeType.Identifier,
         name: sanitizeIdentifier(op)
       } as IR.IRIdentifier,
-      arguments: args
+      arguments: args.filter(Boolean) as IR.IRNode[]
     } as IR.IRCallExpression;
   }
   
   // Default: transform to a function call
-  const callee = transformNode(first, currentDir);
-  const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
+  const callee = await transformNode(first, currentDir);
+  const args = await Promise.all(list.elements.slice(1).map(arg => transformNode(arg, currentDir)));
   return { 
     type: IR.IRNodeType.CallExpression, 
     callee, 
-    arguments: args 
+    arguments: args.filter(Boolean) as IR.IRNode[]
   } as IR.IRCallExpression;
 }
 

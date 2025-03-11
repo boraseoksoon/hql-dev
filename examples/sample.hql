@@ -1,21 +1,11 @@
+(import seq "../lib/lazy_seq.hql")
 
-// (import lazy-seq "../lib/lazy_seq.hql")
+(console.log "??")
 
-/*
-;; Creating JS objects
-(def numbers (new Array))
-(numbers.push 1)
-(numbers.push 2)
-(numbers.push 3)
-(numbers.push 4)
-(numbers.push 5)
-(numbers.push 6)
-(numbers.push 7)
-*/
+(js-call console "log" "??")
 
-;; --- Basic Values and Definitions ---
-(def pi 3.14159)
-// (def greeting "Hello, HQL World!")
-// (def is-awesome true)
+;; (console.log seq)
 
-(console.log pi)
+;; (console.log seq)
+
+;; (seq.add 10 20)

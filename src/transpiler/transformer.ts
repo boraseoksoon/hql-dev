@@ -1,7 +1,7 @@
 // src/transpiler/transformer.ts - Updated with minimal runtime
 
 import { parse } from "./parser.ts";
-import { transformToIR } from "./hql-code-to-hql-ir.ts";
+import { transformToIR, hqlProcessedModules } from "./hql-code-to-hql-ir.ts";
 import { generateTypeScript } from "./ts-ast-to-ts-code.ts";
 import { dirname, resolve, readTextFile, writeTextFile } from "../platform/platform.ts";
 import { expandMacros } from "../macro-expander.ts";
@@ -51,22 +51,45 @@ export async function transformAST(
   options: TransformOptions = {}
 ): Promise<string> {
   try {
+    // Reset the module registry for this run
+    if (typeof hqlProcessedModules !== 'undefined') {
+      hqlProcessedModules.length = 0;
+    }
+    
+    if (options.verbose) {
+      console.log("Starting macro expansion...");
+    }
+    
     // Step 1: Expand macros in the AST
     const expandedNodes = await expandMacros(astNodes);
     
     if (options.verbose) {
       console.log("Expanded AST:", JSON.stringify(expandedNodes, null, 2));
+      console.log("Starting IR transformation...");
     }
     
     // Step 2: Transform to IR
-    const ir = transformToIR(expandedNodes, currentDir);
+    const ir = await transformToIR(expandedNodes, currentDir);
     
     if (options.verbose) {
       console.log("IR:", JSON.stringify(ir, null, 2));
+      console.log("Processed HQL modules:", hqlProcessedModules.map(m => m.name).join(", "));
+      
+      // Log exports from each module
+      for (const mod of hqlProcessedModules) {
+        console.log(`Exports from ${mod.name}:`, 
+          mod.exports.map(e => `${e} -> ${mod.varNames.get(e)}`).join(", ") || "None");
+      }
+      
+      console.log("Generating TypeScript code...");
     }
     
     // Step 3: Generate TypeScript code 
     const tsCode = generateTypeScript(ir);
+    
+    if (options.verbose) {
+      console.log("TypeScript generation complete.");
+    }
     
     // Step 4: Prepend runtime functions
     return RUNTIME_FUNCTIONS + tsCode;
