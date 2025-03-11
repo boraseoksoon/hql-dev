@@ -1,4 +1,4 @@
-// src/transpiler/hql-to-ir.ts - Updated transformPrimitiveOp function
+// Complete implementation of hql-code-to-hql-ir.ts with method chain enhancements
 
 import * as IR from "./hql_ir.ts";
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
@@ -63,69 +63,256 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
   return { type: IR.IRNodeType.Identifier, name, isJS } as IR.IRIdentifier;
 }
 
+/**
+ * Transforms a method chain expression like (obj.method1.method2) or
+ * ((obj.method1 arg).method2) into the correct IR representation.
+ */
 function transformMethodChain(list: ListNode, currentDir: string): IR.IRNode {
-  // The first element is the inner function call that produces an object
-  const innerCall = list.elements[0] as ListNode;
+  // Handle the first element which should be either a list (method call) or a variable
+  const firstElement = list.elements[0];
+  let target: IR.IRNode;
   
-  // Inner call might be a regular function call or dot notation
-  const innerCallIR = transformNode(innerCall, currentDir)!;
-  
-  // Get the method name from the second element
-  let methodName: string;
-  let args: IR.IRNode[] = [];
-  
-  if (list.elements.length > 1 && list.elements[1].type === "symbol") {
-    const fullName = (list.elements[1] as SymbolNode).name;
-    
-    // If it has a dot, it's a method on the result
-    if (fullName.includes('.')) {
-      // The method name is everything after the dot
-      methodName = fullName.split('.').slice(1).join('.');
-      
-      // Everything after the method symbol is args
-      args = list.elements.slice(2).map(arg => transformNode(arg, currentDir)!);
-    } else {
-      // It's a direct property access or method call
-      methodName = fullName;
-      args = list.elements.slice(2).map(arg => transformNode(arg, currentDir)!);
-    }
+  if (firstElement.type === "list") {
+    // This is something like ((array.filter fn).length)
+    target = transformNode(firstElement, currentDir)!;
   } else {
-    throw new Error("Invalid method chain syntax - expected method name after object expression");
+    // This is something like (array.filter)
+    target = transformNode(firstElement, currentDir)!;
   }
   
-  // Create the expression for a method call on the inner result
-  return {
-    type: IR.IRNodeType.CallExpression,
-    callee: {
-      type: IR.IRNodeType.MemberExpression,
-      object: innerCallIR,
-      property: { 
-        type: IR.IRNodeType.Identifier, 
-        name: methodName 
-      } as IR.IRIdentifier,
-      computed: false
-    } as IR.IRMemberExpression,
-    arguments: args
-  } as IR.IRCallExpression;
-}
-
-// Helper function for transforming nested property access
-function transformNestedPropertyAccess(innerExpr: IR.IRNode, propertySymbol: SymbolNode): IR.IRNode {
-  const propertyName = propertySymbol.name;
+  // Now process the rest of the elements as a chain
+  let result = target;
   
-  // Create a member expression for the property access
-  return {
-    type: IR.IRNodeType.MemberExpression,
-    object: innerExpr,
-    property: {
-      type: IR.IRNodeType.Identifier,
-      name: propertyName
-    } as IR.IRIdentifier,
-    computed: false
-  } as IR.IRMemberExpression;
+  for (let i = 1; i < list.elements.length; i++) {
+    const element = list.elements[i];
+    
+    if (element.type === "symbol" && (element as SymbolNode).name.includes('.')) {
+      // This is a property access with method call like .method
+      const symbolName = (element as SymbolNode).name;
+      const parts = symbolName.split('.');
+      
+      // Skip the first part if it's empty (since symbol might start with .)
+      for (let j = symbolName.startsWith('.') ? 1 : 0; j < parts.length; j++) {
+        const prop = parts[j];
+        if (prop === '') continue;
+        
+        // Create property access on the current result
+        result = {
+          type: IR.IRNodeType.MemberExpression,
+          object: result,
+          property: { 
+            type: IR.IRNodeType.Identifier, 
+            name: prop 
+          } as IR.IRIdentifier,
+          computed: false
+        } as IR.IRMemberExpression;
+      }
+      
+      // If the next element exists and isn't a dot-prefixed symbol, 
+      // it's arguments for a method call
+      if (i + 1 < list.elements.length && 
+          !(list.elements[i+1].type === "symbol" && 
+            (list.elements[i+1] as SymbolNode).name.startsWith('.'))) {
+        
+        // Collect method arguments
+        const args: IR.IRNode[] = [];
+        i++; // Move to the first argument
+        
+        while (i < list.elements.length && 
+               !(list.elements[i].type === "symbol" && 
+                 (list.elements[i] as SymbolNode).name.startsWith('.'))) {
+          args.push(transformNode(list.elements[i], currentDir)!);
+          i++;
+          
+          if (i >= list.elements.length) break;
+        }
+        
+        // Adjust the index since we'll increment in the loop
+        i--;
+        
+        // Transform property access into method call
+        result = {
+          type: IR.IRNodeType.CallExpression,
+          callee: result,
+          arguments: args
+        } as IR.IRCallExpression;
+      }
+    } else if (element.type === "symbol") {
+      // Regular property access like 'length'
+      const prop = (element as SymbolNode).name;
+      
+      result = {
+        type: IR.IRNodeType.MemberExpression,
+        object: result,
+        property: { 
+          type: IR.IRNodeType.Identifier, 
+          name: sanitizeIdentifier(prop) 
+        } as IR.IRIdentifier,
+        computed: false
+      } as IR.IRMemberExpression;
+      
+      // Check if next items are method arguments
+      if (i + 1 < list.elements.length && 
+          !(list.elements[i+1].type === "symbol" && 
+            (list.elements[i+1] as SymbolNode).name.startsWith('.'))) {
+        
+        // Collect method arguments
+        const args: IR.IRNode[] = [];
+        i++; // Move to the first argument
+        
+        while (i < list.elements.length && 
+               !(list.elements[i].type === "symbol" && 
+                 (list.elements[i] as SymbolNode).name.startsWith('.'))) {
+          args.push(transformNode(list.elements[i], currentDir)!);
+          i++;
+          
+          if (i >= list.elements.length) break;
+        }
+        
+        // Adjust the index since we'll increment in the loop
+        i--;
+        
+        // Transform property access into method call
+        result = {
+          type: IR.IRNodeType.CallExpression,
+          callee: result,
+          arguments: args
+        } as IR.IRCallExpression;
+      }
+    } else {
+      // This is an argument to a method call
+      const args: IR.IRNode[] = [transformNode(element, currentDir)!];
+      
+      // Collect any additional arguments
+      while (i + 1 < list.elements.length && 
+             !(list.elements[i+1].type === "symbol" && 
+               (list.elements[i+1] as SymbolNode).name.startsWith('.'))) {
+        i++;
+        args.push(transformNode(list.elements[i], currentDir)!);
+      }
+      
+      // Transform the previous result into a method call
+      result = {
+        type: IR.IRNodeType.CallExpression,
+        callee: result,
+        arguments: args
+      } as IR.IRCallExpression;
+    }
+  }
+  
+  return result;
 }
 
-// Complete updated transformList function for src/transpiler/hql-code-to-hql-ir.ts
+/**
+ * Helper function to determine if a symbol name looks like a property access
+ */
+function isPropertyName(name: string): boolean {
+  // Simple properties like "length", "name", "size", etc.
+  const commonProps = ["length", "name", "size", "prototype", "constructor"];
+  if (commonProps.includes(name)) return true;
+  
+  // Camel case properties like "toLowerCase", "appendChild", etc.
+  if (/^[a-z][a-zA-Z0-9]*$/.test(name)) return true;
+  
+  return false;
+}
+
+/**
+ * Helper function to determine if a symbol name looks like a method name
+ */
+function isMethodName(name: string): boolean {
+  // Common method names like "map", "filter", "reduce", etc.
+  const commonMethods = ["map", "filter", "reduce", "forEach", "find", "push", "pop", "shift", "unshift"];
+  if (commonMethods.includes(name)) return true;
+  
+  // Method names often follow camelCase 
+  if (/^[a-z][a-zA-Z0-9]*$/.test(name)) return true;
+  
+  return false;
+}
+
+/**
+ * Helper function to determine if a symbol represents property access
+ */
+function isPropertyAccess(symbol: SymbolNode): boolean {
+  return isPropertyName(symbol.name) || isMethodName(symbol.name);
+}
+
+/**
+ * Helper function to process a member expression chain
+ */
+function processMemberChain(
+  baseExpr: IR.IRMemberExpression, 
+  elements: HQLNode[], 
+  currentDir: string
+): IR.IRNode {
+  let current: IR.IRNode = baseExpr;
+  
+  for (let i = 0; i < elements.length; i++) {
+    const element = elements[i];
+    
+    if (element.type === "symbol") {
+      const symbolName = (element as SymbolNode).name;
+      
+      // If this is a property access
+      if (isPropertyName(symbolName)) {
+        current = {
+          type: IR.IRNodeType.MemberExpression,
+          object: current,
+          property: {
+            type: IR.IRNodeType.Identifier,
+            name: symbolName
+          } as IR.IRIdentifier,
+          computed: false
+        } as IR.IRMemberExpression;
+      } 
+      // If this is a method call, collect arguments
+      else if (isMethodName(symbolName)) {
+        const args: IR.IRNode[] = [];
+        i++;
+        
+        // Collect arguments until the next property accessor
+        while (i < elements.length && 
+              !(elements[i].type === "symbol" && isPropertyAccess(elements[i] as SymbolNode))) {
+          args.push(transformNode(elements[i], currentDir)!);
+          i++;
+          
+          if (i >= elements.length) break;
+        }
+        
+        // Step back to process the next property in next iteration
+        if (i < elements.length) i--;
+        
+        // Create method call expression
+        current = {
+          type: IR.IRNodeType.CallExpression,
+          callee: {
+            type: IR.IRNodeType.MemberExpression,
+            object: current,
+            property: {
+              type: IR.IRNodeType.Identifier,
+              name: symbolName
+            } as IR.IRIdentifier,
+            computed: false
+          } as IR.IRMemberExpression,
+          arguments: args
+        } as IR.IRCallExpression;
+      }
+    } else {
+      // This is a function argument - we assume it's for the current expression
+      const args = [transformNode(element, currentDir)!];
+      
+      // Transform to method call
+      current = {
+        type: IR.IRNodeType.CallExpression,
+        callee: current,
+        arguments: args
+      } as IR.IRCallExpression;
+    }
+  }
+  
+  return current;
+}
 
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (list.elements.length === 0) {
@@ -138,6 +325,34 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   
   const first = list.elements[0];
 
+  // Handle special case for js-get-invoke
+  if (first.type === "symbol" && 
+      (first as SymbolNode).name === "js-get-invoke" && 
+      list.elements.length === 3) {
+    const object = transformNode(list.elements[1], currentDir)!;
+    const property = transformNode(list.elements[2], currentDir)!;
+    
+    // If the property is a string literal, convert to MemberExpression
+    if (property.type === IR.IRNodeType.StringLiteral) {
+      return {
+        type: IR.IRNodeType.MemberExpression,
+        object,
+        property: {
+          type: IR.IRNodeType.Identifier,
+          name: (property as IR.IRStringLiteral).value
+        } as IR.IRIdentifier,
+        computed: false
+      } as IR.IRMemberExpression;
+    }
+    
+    return {
+      type: IR.IRNodeType.MemberExpression,
+      object,
+      property,
+      computed: true
+    } as IR.IRMemberExpression;
+  }
+  
   // Case 1: First element is a list
   if (first.type === "list") {
     const innerExpr = transformNode(first, currentDir);
@@ -147,8 +362,8 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       const second = list.elements[1];
       
       // If the second element is a symbol with dot notation, it's a method call
-      if (second.type === "symbol" && (second as SymbolNode).name.includes('.')) {
-        const methodName = (second as SymbolNode).name.split('.').slice(1).join('.');
+      if (second.type === "symbol" && (second as SymbolNode).name.startsWith('.')) {
+        const methodName = (second as SymbolNode).name.substring(1);
         const args = list.elements.slice(2).map(arg => transformNode(arg, currentDir)!);
         
         return {
@@ -168,7 +383,15 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       
       // If the second element is a regular symbol, use transformNestedPropertyAccess
       else if (second.type === "symbol") {
-        return transformNestedPropertyAccess(innerExpr!, second as SymbolNode);
+        return {
+          type: IR.IRNodeType.MemberExpression,
+          object: innerExpr!,
+          property: {
+            type: IR.IRNodeType.Identifier,
+            name: sanitizeIdentifier((second as SymbolNode).name)
+          } as IR.IRIdentifier,
+          computed: false
+        } as IR.IRMemberExpression;
       }
       
       // Otherwise, call with arguments
@@ -800,8 +1023,6 @@ function transformJsGetInvoke(list: ListNode, currentDir: string): IR.IRNode {
   }
 }
 
-// Complete transformPrimitiveOp function for src/transpiler/hql-code-to-hql-ir.ts
-
 function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
   const op = (list.elements[0] as SymbolNode).name;
   const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
@@ -919,15 +1140,5 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
     type: IR.IRNodeType.CallExpression,
     callee: { type: IR.IRNodeType.Identifier, name: op } as IR.IRIdentifier,
     arguments: args,
-  } as IR.IRCallExpression;
-}
-
-function transformCall(list: ListNode, currentDir: string): IR.IRNode {
-  const callee = transformNode(list.elements[0], currentDir)!;
-  const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
-  return {
-    type: IR.IRNodeType.CallExpression,
-    callee,
-    arguments: args
   } as IR.IRCallExpression;
 }

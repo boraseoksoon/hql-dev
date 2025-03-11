@@ -290,6 +290,8 @@
 (def doubled-evens (even-numbers.map (fn (n) (* n 2))))
 (console.log "Doubled evens (step by step):" doubled-evens)
 
+(([1, 2, 3, 4, 5, 6, 7, 8].filter (fn (n) (> n 5))).length)
+
 ;; Approach 2: Use do block with temporary variables
 (def chained-result 
   (do

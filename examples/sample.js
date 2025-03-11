@@ -24,27 +24,5 @@ function get(obj, key, notFound = null) {
   // Handle objects (maps)
   return (key in obj) ? obj[key] : notFound;
 }
-[1, 2, 3, 4, 5];
-new Set([1, 2, 3, 4, 5]);
-({
-    key: "value"
-});
-[1, 2, 3, 4, 5];
-const json = {
-    items: [1, 2, 3, 4, 5]
-};
-(function () {
-    const _obj = json;
-    const _member = _obj["items"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-})();
-const data = {
-    items: [5, 10, 15, 20, 25, 30, 35, 40],
-    factor: 2,
-    prefix: "Value: "
-};
-(function () {
-    const _obj = data;
-    const _member = _obj["items"];
-    return typeof _member === "function" ? _member.call(_obj) : _member;
-})();
+const pi_value = Math.PI;
+console.log(pi_value);

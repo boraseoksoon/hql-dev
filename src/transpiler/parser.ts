@@ -39,6 +39,13 @@ function tokenize(input: string): string[] {
     } else if (ch === '(' || ch === ')') {
       if (token !== "") { tokens.push(token); token = ""; }
       tokens.push(ch);
+      
+      // Special handling for dot after closing parenthesis
+      if (ch === ')' && i + 1 < input.length && input[i + 1] === '.') {
+        // Add the dot separately
+        i++; // Skip the dot
+        tokens.push(".");
+      }
     } else if (ch === '[') {
       if (token !== "") { tokens.push(token); token = ""; }
       tokens.push('[');
@@ -176,10 +183,14 @@ function parseExpression(): HQLNode {
     return { type: "literal", value: false } as LiteralNode;
   } else if (token === "nil") {
     return { type: "literal", value: null } as LiteralNode;
-  } else if (token.includes('.') && !token.startsWith('.') && !token.endsWith('.')) {
-    // For bare dot-notation, throw an error instead of transforming it
-    throw new ParseError(`Dot notation "${token}" must be wrapped in parentheses`, 
-      { line: 0, column: 0, offset: 0 });
+  } else if (token === ".") {
+    // Handle the property access after a parenthesized expression
+    if (currentPos < currentTokens.length) {
+      const nextToken = currentTokens[currentPos++];
+      return { type: "symbol", name: "." + nextToken } as SymbolNode;
+    } else {
+      throw new ParseError("Expected property name after '.'", { line: 0, column: 0, offset: 0 });
+    }
   } else {
     return { type: "symbol", name: token } as SymbolNode;
   }
@@ -278,7 +289,29 @@ function parseList(): ListNode {
   
   currentPos++; // Skip the closing parenthesis
   
-  return { type: "list", elements } as ListNode;
+  // Check if there's a dot after the list
+  if (currentPos < currentTokens.length && currentTokens[currentPos] === '.') {
+    currentPos++; // Skip the dot
+    
+    if (currentPos >= currentTokens.length) {
+      throw new ParseError("Expected property name after dot", { line: 0, column: 0, offset: 0 });
+    }
+    
+    // Get the property/method name
+    const propName = currentTokens[currentPos++];
+    
+    // Create a new list that represents property access on the original list result
+    return {
+      type: "list",
+      elements: [
+        { type: "symbol", name: "js-get-invoke" },
+        { type: "list", elements }, // Original list becomes the object
+        { type: "literal", value: propName }
+      ]
+    };
+  }
+  
+  return { type: "list", elements };
 }
 
 // Updated parser functions in src/transpiler/parser.ts

@@ -1,4 +1,4 @@
-// Complete implementation for ir-to-official-ts.ts
+// Complete implementation for hql-ir-to-ts-ast.ts
 
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
@@ -83,8 +83,6 @@ function convertIRNode(node: IR.IRNode): ts.Statement | ts.Statement[] | null {
       return convertCommentBlock(node as IR.IRCommentBlock);
     case IR.IRNodeType.Raw:
       return convertRaw(node as IR.IRRaw);
-    case IR.IRNodeType.ObjectExpression:
-      return createExpressionStatement(convertObjectExpression(node as IR.IRObjectExpression));
     default:
       console.warn(`Cannot convert node of type ${node.type} to expression`);
       return null;
@@ -126,32 +124,6 @@ function convertObjectPropertyKey(node: IR.IRNode): ts.PropertyName {
   }
 }
 
-function convertPropertyKey(node: IR.IRNode): ts.PropertyName {
-  if (node.type === IR.IRNodeType.StringLiteral) {
-    const value = (node as IR.IRStringLiteral).value;
-    
-    // If it's a valid JS identifier without quotes, use as identifier
-    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(value)) {
-      return ts.factory.createIdentifier(value);
-    }
-    
-    // Otherwise use as string literal
-    return ts.factory.createStringLiteral(value);
-  }
-  
-  if (node.type === IR.IRNodeType.Identifier) {
-    return ts.factory.createIdentifier((node as IR.IRIdentifier).name);
-  }
-  
-  if (node.type === IR.IRNodeType.NumericLiteral) {
-    return ts.factory.createNumericLiteral((node as IR.IRNumericLiteral).value.toString());
-  }
-  
-  // For computed properties
-  const expr = convertIRExpr(node);
-  return ts.factory.createComputedPropertyName(expr);
-}
-
 // Helper to create expression statements
 function createExpressionStatement(expr: ts.Expression): ts.ExpressionStatement {
   return ts.factory.createExpressionStatement(expr);
@@ -187,6 +159,36 @@ function convertIdentifier(node: IR.IRIdentifier): ts.Identifier {
   return ts.factory.createIdentifier(node.name);
 }
 
+/**
+ * Enhanced conversion for call expressions to handle method chains
+ */
+function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
+  // If the callee is a member expression, use specialized handling
+  if (node.callee.type === IR.IRNodeType.MemberExpression) {
+    return convertCallExpressionWithMemberCallee(node);
+  }
+  
+  // If the callee is itself a call expression, handle chained calls
+  if (node.callee.type === IR.IRNodeType.CallExpression) {
+    const innerCall = convertCallExpression(node.callee as IR.IRCallExpression);
+    
+    // Create a call using the result of the inner call
+    return ts.factory.createCallExpression(
+      innerCall,
+      undefined,
+      node.arguments.map(arg => convertIRExpr(arg))
+    );
+  }
+  
+  // Standard call expression handling
+  const callee = convertIRExpr(node.callee);
+  const args = node.arguments.map(arg => convertIRExpr(arg));
+  return ts.factory.createCallExpression(callee, undefined, args);
+}
+
+/**
+ * Enhanced function to handle call expressions with member expressions as callee
+ */
 function convertCallExpressionWithMemberCallee(node: IR.IRCallExpression): ts.CallExpression {
   // Check if the callee is a member expression
   if (node.callee.type === IR.IRNodeType.MemberExpression) {
@@ -219,7 +221,7 @@ function convertCallExpressionWithMemberCallee(node: IR.IRCallExpression): ts.Ca
     );
   }
   
-  // Regular call expression handling
+  // Fallback to regular call expression
   return ts.factory.createCallExpression(
     convertIRExpr(node.callee),
     undefined,
@@ -227,18 +229,9 @@ function convertCallExpressionWithMemberCallee(node: IR.IRCallExpression): ts.Ca
   );
 }
 
-function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
-  // If the callee is a member expression, use our specialized converter
-  if (node.callee.type === IR.IRNodeType.MemberExpression) {
-    return convertCallExpressionWithMemberCallee(node);
-  }
-  
-  // Standard call expression handling
-  const callee = convertIRExpr(node.callee);
-  const args = node.arguments.map(arg => convertIRExpr(arg));
-  return ts.factory.createCallExpression(callee, undefined, args);
-}
-
+/**
+ * Improved handling for nested member expressions and method chains
+ */
 function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
   const object = convertIRExpr(node.object);
   const property = convertIRExpr(node.property);
@@ -341,6 +334,25 @@ function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
       undefined,
       []
     );
+  }
+
+  // Handle member expressions where the object is a call expression (method chaining)
+  if (node.object.type === IR.IRNodeType.CallExpression) {
+    // First convert the inner call expression
+    const callExpr = convertCallExpression(node.object as IR.IRCallExpression);
+    
+    // Then create a property access on its result
+    if (node.computed) {
+      return ts.factory.createElementAccessExpression(callExpr, property);
+    } else {
+      if (ts.isIdentifier(property) || ts.isStringLiteral(property)) {
+        const propName = ts.isIdentifier(property) ? property.text : property.text;
+        return ts.factory.createPropertyAccessExpression(callExpr, ts.factory.createIdentifier(propName));
+      } else {
+        // Fallback to element access
+        return ts.factory.createElementAccessExpression(callExpr, property);
+      }
+    }
   }
   
   // Regular property access - no special handling needed
@@ -468,42 +480,42 @@ function convertArrayExpression(node: IR.IRArrayExpression): ts.ArrayLiteralExpr
 }
 
 function convertFunctionExpression(node: IR.IRFunctionExpression): ts.FunctionExpression {
-    // Convert parameters, handling rest parameters (marked with ... prefix)
-    const parameters = node.params.map(param => {
-      // Check if this is a rest parameter (name starts with '...')
-      if (param.name && param.name.startsWith('...')) {
-        const paramName = param.name.slice(3); // Remove the '...' prefix
-        const dotDotDotToken = ts.factory.createToken(ts.SyntaxKind.DotDotDotToken);
-        const identifier = ts.factory.createIdentifier(paramName);
-        
-        // Create a parameter with dot-dot-dot token for rest parameters
-        // Using the minimal 3-argument form
-        return ts.factory.createParameterDeclaration(
-          undefined, // modifiers
-          dotDotDotToken,
-          identifier
-        );
-      }
-  
-      // Regular parameters - use the minimal form
+  // Convert parameters, handling rest parameters (marked with ... prefix)
+  const parameters = node.params.map(param => {
+    // Check if this is a rest parameter (name starts with '...')
+    if (param.name && param.name.startsWith('...')) {
+      const paramName = param.name.slice(3); // Remove the '...' prefix
+      const dotDotDotToken = ts.factory.createToken(ts.SyntaxKind.DotDotDotToken);
+      const identifier = ts.factory.createIdentifier(paramName);
+      
+      // Create a parameter with dot-dot-dot token for rest parameters
+      // Using the minimal 3-argument form
       return ts.factory.createParameterDeclaration(
-        undefined, // modifiers 
-        undefined, // dotDotDotToken
-        convertIdentifier(param)
+        undefined, // modifiers
+        dotDotDotToken,
+        identifier
       );
-    });
-    
-    // Create the function expression with the converted parameters and body
-    return ts.factory.createFunctionExpression(
-      undefined, // modifiers
-      undefined, // asteriskToken
-      undefined, // name
-      undefined, // typeParameters
-      parameters,
-      undefined, // type
-      convertBlockStatement(node.body)
+    }
+
+    // Regular parameters - use the minimal form
+    return ts.factory.createParameterDeclaration(
+      undefined, // modifiers 
+      undefined, // dotDotDotToken
+      convertIdentifier(param)
     );
-  }
+  });
+  
+  // Create the function expression with the converted parameters and body
+  return ts.factory.createFunctionExpression(
+    undefined, // modifiers
+    undefined, // asteriskToken
+    undefined, // name
+    undefined, // typeParameters
+    parameters,
+    undefined, // type
+    convertBlockStatement(node.body)
+  );
+}
 
 // Statement conversions
 function convertVariableDeclaration(node: IR.IRVariableDeclaration): ts.VariableStatement {
@@ -584,8 +596,6 @@ function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclar
     ts.factory.createStringLiteral(node.source)
   );
 }
-
-// src/transpiler/hql-ir-to-ts-ast.ts - Simplified alternative
 
 function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] {
   // Generate a unique internal module name based on the user-provided name
