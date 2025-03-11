@@ -306,3 +306,14 @@ const sum_chain = numbers.filter(function (n) {
     return acc + n;
 }, 0);
 console.log("Sum from complex chain:", sum_chain);
+const macro_x = 10;
+macro_x > 5 ? function () {
+    return console.log("macro_x is greater than 5");
+}([]) : null;
+macro_x < 5 ? null : function () {
+    return console.log("macro_x is not less than 5");
+}([]);
+const x_plus_one = x + 1;
+const x_minus_one = x - 1;
+console.log(x_plus_one);
+console.log(x_minus_one);

@@ -319,3 +319,30 @@
      .filter (fn (n) (= (% n 4) 0)))
     .reduce (fn (acc n) (+ acc n)) 0))
 (console.log "Sum from complex chain:" sum-chain)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 7. Daily Macros
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Assume core macros (including when/unless) are already loaded.
+
+;; Define a variable
+(def macro_x 10)
+
+;; Use 'when' to log a message if x is greater than 5.
+(when (> macro_x 5)
+  (js-call console "log" "macro_x is greater than 5"))  ;; x is greater than 5
+
+;; Use 'unless' to log a message if x is not less than 5.
+(unless (< macro_x 5)
+  (console.log "macro_x is not less than 5")) ;; x is not less than 5
+
+;; Use 'inc' to compute x+1.
+(def x_plus_one (inc x))
+
+;; Use 'dec' to compute x-1.
+(def x_minus_one (dec x))
+
+(console.log x_plus_one)  ;; 11
+(console.log x_minus_one) ;; 9

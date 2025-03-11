@@ -24,7 +24,18 @@ function get(obj, key, notFound = null) {
   // Handle objects (maps)
   return (key in obj) ? obj[key] : notFound;
 }
-const my_vector = [1, 2, 3, 4, 5];
-const element2 = get(my_vector, 2);
-const element3 = get(my_vector, 2);
-const element4 = get(my_vector, 2);
+const x = 10;
+x > 5 ? function () {
+    return console.log("x is greater than 5");
+}([]) : null;
+x < 5 ? null : function () {
+    return console.log("x is not less than 5");
+}([]);
+const x_plus_one = x + 1;
+const x_minus_one = x - 1;
+console.log(x_plus_one);
+console.log(x_minus_one);
+const x_plus_one2 = function (x) {
+    return x + 1;
+};
+console.log(get(x_plus_one2, 1));

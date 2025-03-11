@@ -42,3 +42,18 @@
 ;; Usage: (nth collection index) -> (get collection index)
 (defmacro nth (coll idx)
   (list 'get coll idx))
+
+;; when: Execute body only if test is truthy; otherwise, return nil.
+(defmacro when (test & body)
+  (list 'if test (cons 'do body) (list 'quote 'nil)))
+
+;; unless: Execute body only if test is falsy; otherwise, return nil.
+(defmacro unless (test & body)
+  (list 'if test (list 'quote 'nil) (cons 'do body)))
+
+(defmacro inc (x)
+  (list '+ x '1))
+
+(defmacro dec (x)
+  (list '- x '1))
+
