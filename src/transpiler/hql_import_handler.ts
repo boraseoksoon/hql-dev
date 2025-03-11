@@ -20,6 +20,14 @@ export class HqlImportHandler {
    * and creating a mapping of HQL imports to JS imports for later use.
    */
   async preprocessImports(source: string, filePath: string): Promise<void> {
+    // When bundling is enabled, skip preprocessing to avoid writing any extra files.
+    if (this.options.bundle) {
+      if (this.options.verbose) {
+        console.log("Bundling mode enabled, skipping HQL import preprocessing.");
+      }
+      return;
+    }
+    
     // Simple regex to find potential HQL imports
     // This is just a heuristic - actual macro expansion will handle the real work
     const importRegex = /\(import\s+([^\s)]+)\s+['"]([^'"]+\.hql)['"]\)/g;
@@ -73,6 +81,14 @@ export class HqlImportHandler {
       throw new Error(`HQL import not found: "${importPath}" (resolved to "${resolvedPath}")`);
     }
     
+    // In bundling mode, skip transpiling to disk to avoid extra JS files.
+    if (this.options.bundle) {
+      if (this.options.verbose) {
+        console.log(`Bundling mode enabled, skipping transpile of "${resolvedPath}" to disk.`);
+      }
+      return;
+    }
+    
     // Read the imported file to preprocess its imports too
     const importedSource = await readTextFile(resolvedPath);
     
@@ -82,12 +98,11 @@ export class HqlImportHandler {
     // Determine the output JavaScript path
     const jsOutputPath = this.getJsOutputPath(resolvedPath);
     
-    // Transpile the imported HQL file
+    // Transpile the imported HQL file (which writes the JS file to disk)
     await transpileFile(resolvedPath, jsOutputPath, {
       ...this.options,
-      // Ensure bundle option is set correctly based on the parent request
-      bundle: this.options.bundle === true,
-      // Avoid verbose logging for nested imports unless explicitly requested
+      // In non-bundled mode, transpile each file normally.
+      bundle: false,
       verbose: this.options.verbose === true
     });
     
@@ -103,6 +118,10 @@ export class HqlImportHandler {
    * Get the JS import path for a given HQL import path, if it exists in our map.
    */
   getJsImportPath(hqlImportPath: string): string | undefined {
+    // In bundling mode, we don't write extra files, so return undefined.
+    if (this.options.bundle) {
+      return undefined;
+    }
     return this.importMap.get(hqlImportPath);
   }
   
