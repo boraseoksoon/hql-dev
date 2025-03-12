@@ -356,3 +356,70 @@
 
 (console.log x_plus_one)  ;; 11
 (console.log x_minus_one) ;; 9
+
+;; Type predicate examples
+(def symb 'hello)
+(def lst '(1 2 3))
+(def mp {"name" : "John"})
+
+(symbol? symb)  ;; => true
+(list? lst)     ;; => true
+(map? mp)       ;; => true
+(nil? nil)      ;; => true
+
+;; Sequence operation examples
+(def list-numbers '(1 2 3 4 5))
+
+(first list-numbers)     ;; => 1
+(rest list-numbers)      ;; => (2 3 4 5)
+(next list-numbers)      ;; => (2 3 4 5) or nil if less than 2 elements
+(seq list-numbers)       ;; => (1 2 3 4 5) or nil if empty
+(empty? '())        ;; => true
+(empty? list-numbers)    ;; => false
+
+;; Collection manipulation examples
+(def xs '(1 2 3))
+(def ys '(4 5 6))
+
+(conj xs 4)         ;; => (1 2 3 4)
+(concat xs ys)      ;; => (1 2 3 4 5 6)
+(concat xs '() ys)  ;; => (1 2 3 4 5 6)
+
+;; Collection manipulation examples
+(def xs2 '(1 2 3))
+(def ys2 '(4 5 6))
+
+(conj x2s 4)         ;; => (1 2 3 4)
+(concat xs2 ys2)      ;; => (1 2 3 4 5 6)
+(concat xs2 '() ys2)  ;; => (1 2 3 4 5 6)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 8. let
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(let (x 10)
+  (+ x 5))
+
+;; Let with multiple bindings
+(let (x 10
+      y 20)
+  (+ x y))
+
+;; Nested let expressions
+(let (outer 5)
+  (let (inner (+ outer 2))
+    (* outer inner)))
+
+;; Let with expressions as binding values
+(let (sum (+ 2 3)
+      product (* 4 5))
+  (list sum product))
+
+;; Using let inside a function definition
+(defn calculate (base)
+  (let (squared (* base base)
+        cubed (* squared base))
+    (+ squared cubed)))
+
+(calculate 3)

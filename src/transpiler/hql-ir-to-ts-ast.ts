@@ -154,7 +154,8 @@ function convertNullLiteral(): ts.NullLiteral {
 }
 
 function convertIdentifier(node: IR.IRIdentifier): ts.Identifier {
-  return ts.factory.createIdentifier(node.name);
+  const sanitizedName = sanitizeIdentifier(node.name);
+  return ts.factory.createIdentifier(sanitizedName);
 }
 
 /**

@@ -1,4 +1,3 @@
-// cli/transpile.ts
 import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI, watchFile, OptimizationOptions } from "../src/bundler.ts";
 import { MODES } from "./modes.ts";
@@ -11,6 +10,7 @@ function printHelp() {
   console.error("  --verbose, -v     Enable verbose logging");
   console.error("  --force, -f       Overwrite output files without prompting");
   console.error("  --performance     Apply all performance optimizations");
+  console.error("  --print           Print final JS output directly in CLI");
   console.error("  --help, -h        Display this help message");
   console.error("\nOptimization Options:");
   console.error("  --mode=<mode>     Use a preset mode (development, production, performance)");
@@ -43,6 +43,7 @@ function runCLI(): void {
   let runAfter = false;
   let force = false;
   let performance = false;
+  const printOutput = args.includes("--print");
   
   // Optimization options
   let optimizationOptions: OptimizationOptions = {};
@@ -150,7 +151,11 @@ function runCLI(): void {
       ...optimizationOptions 
     })
       .then(async (bundledPath) => {
-        if (runAfter) {
+        if (printOutput) {
+          // Read and print the bundled file content to stdout.
+          const finalOutput = await Deno.readTextFile(bundledPath);
+          console.log(finalOutput);
+        } else if (runAfter) {
           console.log(`Running bundled output: ${bundledPath}`);
           await import("file://" + resolve(bundledPath));
         }

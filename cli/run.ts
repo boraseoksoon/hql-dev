@@ -1,4 +1,3 @@
-// cli/run.ts
 import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI, OptimizationOptions } from "../src/bundler.ts";
 import { Logger } from "../src/logger.ts";
@@ -9,6 +8,7 @@ function printHelp() {
   console.error("\nOptions:");
   console.error("  --verbose         Enable verbose logging");
   console.error("  --performance     Apply aggressive performance optimizations (minify, drop console/debugger, etc.)");
+  console.error("  --print           Print final JS output directly in CLI");
   console.error("  --help, -h        Display this help message");
 }
 
@@ -23,6 +23,7 @@ async function runModule(): Promise<void> {
   const args = Deno.args.filter((arg) => !arg.startsWith("--"));
   const verbose = Deno.args.includes("--verbose");
   const performance = Deno.args.includes("--performance");
+  const printOutput = Deno.args.includes("--print");
   const logger = new Logger(verbose);
 
   if (args.length < 1) {
@@ -46,10 +47,16 @@ async function runModule(): Promise<void> {
 
   // Transpile and bundle the input file.
   const bundledPath = await transpileCLI(inputPath, tempOutput, { verbose, ...optimizationOptions });
-  logger.log(`Running bundled output: ${bundledPath}`);
 
-  // Dynamically import the bundled module.
-  await import("file://" + resolve(bundledPath));
+  if (printOutput) {
+    // Print the final JS output directly to the CLI.
+    const finalOutput = await Deno.readTextFile(bundledPath);
+    console.log(finalOutput);
+  } else {
+    logger.log(`Running bundled output: ${bundledPath}`);
+    // Dynamically import the bundled module.
+    await import("file://" + resolve(bundledPath));
+  }
 
   // Clean up the temporary directory.
   await Deno.remove(tempDir, { recursive: true });

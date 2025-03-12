@@ -16,6 +16,9 @@ export function sanitizeIdentifier(name: string): string {
     sanitized = sanitized.slice(0, -1) + '_pred';
   }
   
+  // Handle question marks in other positions
+  sanitized = sanitized.replace(/\?/g, '_pred_');
+  
   // Replace hyphens with underscores
   sanitized = sanitized.replace(/-/g, '_');
   
