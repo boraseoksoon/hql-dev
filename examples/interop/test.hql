@@ -1,10 +1,11 @@
 ;; examples/interop/test.hql
 
-/*
+
 (console.log "ya11")
 (import module "./test.js")
 (console.log "ya22")
-*/
+
+
 
 (import spec "../../doc/hql_spec.hql")
 (console.log "do spec square : " (spec.square 10))

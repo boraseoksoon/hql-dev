@@ -4,6 +4,12 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// examples/interop/test.js
+var test_exports = {};
+__export(test_exports, {
+  hqlUnless: () => hqlUnless
+});
+
 // hql:/Users/seoksoonjang/Desktop/hql/doc/hql_spec.hql
 var hql_spec_exports = {};
 __export(hql_spec_exports, {
@@ -228,6 +234,11 @@ var x_minus_one = macro_x - 1;
 console.log(x_plus_one);
 console.log(x_minus_one);
 
+// examples/interop/test.js
+function hqlUnless(bool) {
+  return hql_unless(bool);
+}
+
 // examples/interop/test2.js
 var test2_exports = {};
 __export(test2_exports, {
@@ -237,16 +248,17 @@ function hqlSquare(a) {
   return square(a);
 }
 
-// examples/interop/test.js
-var test_exports = {};
-__export(test_exports, {
-  hqlUnless: () => hqlUnless
-});
-function hqlUnless(bool) {
-  return hql_unless(bool);
-}
-
 // examples/interop/output.js
+console.log("ya11");
+var module = function() {
+  const wrapper = void 0 !== void 0 ? void 0 : {};
+  for (const [key, value] of Object.entries(test_exports)) {
+    if (key !== "default")
+      wrapper[key] = value;
+  }
+  return wrapper;
+}();
+console.log("ya22");
 var spec = function() {
   const wrapper = void 0 !== void 0 ? void 0 : {};
   for (const [key, value] of Object.entries(hql_spec_exports)) {

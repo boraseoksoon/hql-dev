@@ -2,9 +2,25 @@
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { parse } from "./transpiler/parser.ts";
 import { transformAST, transpile } from "./transpiler/transformer.ts";
-import { readTextFile, writeTextFile, mkdir } from "./platform/platform.ts";
+import { readTextFile, writeTextFile, mkdir, exists } from "./platform/platform.ts";
 import { build, stop } from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import { Logger } from "./logger.ts";
+
+/**
+ * Represents esbuild optimization options
+ */
+export interface OptimizationOptions {
+  minify?: boolean;
+  target?: string;
+  sourcemap?: boolean | string;
+  drop?: string[];
+  charset?: 'ascii' | 'utf8';
+  legalComments?: 'none' | 'inline' | 'eof' | 'external';
+  treeShaking?: boolean;
+  pure?: string[];
+  keepNames?: boolean;
+  define?: Record<string, string>;
+}
 
 /**
  * Rebase relative import specifiers using the original file directory.
@@ -31,15 +47,47 @@ export async function ensureDir(dir: string): Promise<void> {
 }
 
 /**
+ * Prompt the user for a yes/no question
+ */
+async function promptYesNo(question: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  
+  await Deno.stdout.write(encoder.encode(question));
+  const buf = new Uint8Array(1);
+  await Deno.stdin.read(buf);
+  const answer = decoder.decode(buf).toLowerCase();
+  
+  // Also echo a newline for better formatting
+  await Deno.stdout.write(encoder.encode("\n"));
+  
+  return answer === 'y';
+}
+
+/**
  * Write code to a file and log the output path.
+ * Asks for confirmation before overwriting existing files unless force is true.
  */
 export async function writeOutput(
   code: string,
   outputPath: string,
-  logger: Logger
+  logger: Logger,
+  force: boolean = false
 ): Promise<void> {
   const outputDir = dirname(outputPath);
   await ensureDir(outputDir);
+  
+  // Check if file exists before writing
+  if (!force && await exists(outputPath)) {
+    // Prompt the user for confirmation
+    const answer = await promptYesNo(`File '${outputPath}' already exists. Overwrite? (y/n): `);
+    
+    if (!answer) {
+      logger.log("Operation cancelled. File not overwritten.");
+      return;
+    }
+  }
+  
   await writeTextFile(outputPath, code);
   logger.log(`Output written to: ${outputPath}`);
 }
@@ -91,30 +139,68 @@ export function createExternalNpmPlugin(): any {
 }
 
 /**
- * Bundle the code using esbuild with our plugins.
+ * Bundle the code using esbuild with our plugins and optimization options.
  */
 export async function bundleWithEsbuild(
-  entryPath: string,
-  outputPath: string,
-  options: { verbose?: boolean } = {}
-): Promise<string> {
-  const logger = new Logger(options.verbose || false);
-  const hqlPlugin = createHqlPlugin({ verbose: options.verbose });
-  const externalNpmPlugin = createExternalNpmPlugin();
-
-  await build({
-    entryPoints: [entryPath],
-    bundle: true,
-    outfile: outputPath,
-    format: "esm",
-    plugins: [hqlPlugin, externalNpmPlugin],
-    logLevel: options.verbose ? "info" : "silent",
-    allowOverwrite: true,
-  });
-  stop();
-  logger.log(`Successfully bundled output to ${outputPath}`);
-  return outputPath;
-}
+    entryPath: string,
+    outputPath: string,
+    options: { verbose?: boolean; force?: boolean } & OptimizationOptions = {}
+  ): Promise<string> {
+    const logger = new Logger(options.verbose || false);
+    const hqlPlugin = createHqlPlugin({ verbose: options.verbose });
+    const externalNpmPlugin = createExternalNpmPlugin();
+  
+    // If force is true, ensure the file doesn't exist before building
+    if (options.force && await exists(outputPath)) {
+      try {
+        await Deno.remove(outputPath);
+        logger.log(`Removed existing file: ${outputPath}`);
+      } catch (err) {
+        logger.error(`Failed to remove existing file: ${outputPath}`);
+      }
+    }
+  
+    // Build options with all esbuild optimization options
+    const buildOptions: any = {
+      entryPoints: [entryPath],
+      bundle: true,
+      outfile: outputPath,
+      format: "esm",
+      plugins: [hqlPlugin, externalNpmPlugin],
+      logLevel: options.verbose ? "info" : "silent",
+      allowOverwrite: true, // Always allow overwrite in esbuild itself
+      
+      // Optimization options
+      minify: options.minify,
+      target: options.target,
+      sourcemap: options.sourcemap,
+      drop: options.drop,
+      charset: options.charset,
+      legalComments: options.legalComments,
+      treeShaking: options.treeShaking,
+      pure: options.pure,
+      keepNames: options.keepNames,
+      define: options.define,
+    };
+  
+    // Remove undefined options
+    Object.keys(buildOptions).forEach(key => {
+      if (buildOptions[key] === undefined) {
+        delete buildOptions[key];
+      }
+    });
+  
+    await build(buildOptions);
+    stop();
+    
+    if (options.minify) {
+      logger.log(`Successfully bundled and minified output to ${outputPath}`);
+    } else {
+      logger.log(`Successfully bundled output to ${outputPath}`);
+    }
+    
+    return outputPath;
+  }
 
 /**
  * Process the entry file to determine if it's HQL or JS, and
@@ -123,7 +209,7 @@ export async function bundleWithEsbuild(
 async function processEntryFile(
   inputPath: string,
   outputPath: string,
-  options: { verbose?: boolean } = {}
+  options: { verbose?: boolean; force?: boolean } & OptimizationOptions = {}
 ): Promise<string> {
   const logger = new Logger(options.verbose || false);
   const resolvedInputPath = resolve(inputPath);
@@ -144,7 +230,7 @@ async function processEntryFile(
     code = await readTextFile(resolvedInputPath);
   }
 
-  await writeOutput(code, outputPath, logger);
+  await writeOutput(code, outputPath, logger, options.force);
   logger.log(`Entry processed and output written to ${outputPath}`);
   
   return outputPath;
@@ -158,7 +244,11 @@ async function processEntryFile(
 export async function transpileCLI(
   inputPath: string,
   outputPath?: string,
-  options: { verbose?: boolean; bundle?: boolean } = {}
+  options: { 
+    verbose?: boolean; 
+    bundle?: boolean; 
+    force?: boolean
+  } & OptimizationOptions = {}
 ): Promise<string> {
   const logger = new Logger(options.verbose || false);
   logger.log(`Processing entry: ${inputPath}`);
@@ -187,7 +277,7 @@ export async function transpileCLI(
  */
 export async function watchFile(
   inputPath: string,
-  options: { verbose?: boolean } = {}
+  options: { verbose?: boolean; force?: boolean } & OptimizationOptions = {}
 ): Promise<void> {
   const logger = new Logger(options.verbose || false);
   logger.log(`Watching ${inputPath} for changes...`);
@@ -250,7 +340,7 @@ function processImports(code: string, sourceDir: string): string {
  */
 export async function bundleCode(
   inputPath: string,
-  options: { verbose?: boolean } = {}
+  options: { verbose?: boolean; force?: boolean } & OptimizationOptions = {}
 ): Promise<string> {
   const logger = new Logger(options.verbose || false);
   logger.log(`Bundling entry: ${inputPath}`);
