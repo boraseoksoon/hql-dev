@@ -58,10 +58,12 @@
   (list '- x '1))
 
 (defmacro let (bindings body)
-  (list 
-    (list 'fn 
-      (list (first bindings)) 
-      body)
-    (first (rest bindings))))
-
-      
+  (if (< (length bindings) 2)
+      body
+      (list 
+        (list 'fn 
+          (list (first bindings)) 
+          (if (> (length bindings) 2)
+              (list 'let (rest (rest bindings)) body)
+              body))
+        (first (rest bindings)))))

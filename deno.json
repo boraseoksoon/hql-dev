@@ -25,7 +25,7 @@
    "test-empty-literals": "deno test --allow-all test/data_structures/empty_literals_test.ts",
    "test-normal-literals": "deno test --allow-all test/data_structures/normal_literals_test.ts",
    "test-hql-spec": "deno task run ./doc/hql_spec.hql",
-   "test-hql-sample": "deno task transpile ./examples/sample.hql",
+   "test-hql-sample": "deno task run ./examples/sample.hql",
    "transpile": "deno run -A cli/transpile.ts",
    "run": "deno run -A cli/run.ts"
   }

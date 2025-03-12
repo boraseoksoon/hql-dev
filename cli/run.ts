@@ -52,11 +52,11 @@ async function runModule(): Promise<void> {
     // Print the final JS output directly to the CLI.
     const finalOutput = await Deno.readTextFile(bundledPath);
     console.log(finalOutput);
-  } else {
-    logger.log(`Running bundled output: ${bundledPath}`);
-    // Dynamically import the bundled module.
-    await import("file://" + resolve(bundledPath));
   }
+  
+  logger.log(`Running bundled output: ${bundledPath}`);
+  // Dynamically import the bundled module.
+  await import("file://" + resolve(bundledPath));
 
   // Clean up the temporary directory.
   await Deno.remove(tempDir, { recursive: true });

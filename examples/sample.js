@@ -10,37 +10,23 @@ function get(obj, key, notFound = null) {
   }
   return key in obj ? obj[key] : notFound;
 }
-var symb = "hello";
-var lst = [1, 2, 3];
-var mp = {
-  name: "John"
-};
-symbol_pred(symb);
-list_pred(lst);
-map_pred(mp);
-nil_pred(null);
-var numbers = [1, 2, 3, 4, 5];
-first(numbers);
-rest(numbers);
-next(numbers);
-seq(numbers);
-empty_pred([]);
-empty_pred(numbers);
-var xs = [1, 2, 3];
-var ys = [4, 5, 6];
-conj(xs, 4);
-concat(xs, ys);
-concat(xs, [], ys);
-var xs2 = [1, 2, 3];
-var ys2 = [4, 5, 6];
-conj(x2s, 4);
-concat(xs2, ys2);
-concat(xs2, [], ys2);
+function list(...items) {
+  return items;
+}
 (function(x) {
-  return x + 5;
+  return function(y) {
+    return function(z) {
+      return console.log(x + y + z);
+    }(30);
+  }(20);
 })(10);
 (function(x) {
-  return x + y;
+  return console.log(x + 5);
+})(10);
+(function(x) {
+  return function(y) {
+    return x + y;
+  }(20);
 })(10);
 (function(outer) {
   return function(inner) {
@@ -48,11 +34,15 @@ concat(xs2, [], ys2);
   }(outer + 2);
 })(5);
 (function(sum) {
-  return list(sum, product);
+  return function(product) {
+    return list(sum, product);
+  }(4 * 5);
 })(2 + 3);
 var calculate = function(base) {
   return function(squared) {
-    return squared + cubed;
+    return function(cubed) {
+      return squared + cubed;
+    }(squared * base);
   }(base * base);
 };
 get(calculate, 3);

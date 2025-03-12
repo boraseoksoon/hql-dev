@@ -1,43 +1,8 @@
-;; Type predicate examples
-(def symb 'hello)
-(def lst '(1 2 3))
-(def mp {"name" : "John"})
-
-(symbol? symb)  ;; => true
-(list? lst)     ;; => true
-(map? mp)       ;; => true
-(nil? nil)      ;; => true
-
-
-;; Sequence operation examples
-(def numbers '(1 2 3 4 5))
-
-(first numbers)     ;; => 1
-(rest numbers)      ;; => (2 3 4 5)
-(next numbers)      ;; => (2 3 4 5) or nil if less than 2 elements
-(seq numbers)       ;; => (1 2 3 4 5) or nil if empty
-(empty? '())        ;; => true
-(empty? numbers)    ;; => false
-
-;; Collection manipulation examples
-(def xs '(1 2 3))
-(def ys '(4 5 6))
-
-(conj xs 4)         ;; => (1 2 3 4)
-(concat xs ys)      ;; => (1 2 3 4 5 6)
-(concat xs '() ys)  ;; => (1 2 3 4 5 6)
-
-;; Collection manipulation examples
-(def xs2 '(1 2 3))
-(def ys2 '(4 5 6))
-
-(conj x2s 4)         ;; => (1 2 3 4)
-(concat xs2 ys2)      ;; => (1 2 3 4 5 6)
-(concat xs2 '() ys2)  ;; => (1 2 3 4 5 6)
-
+(let (x 10 y 20 z 30) 
+  ((+ x y z)))
 
 (let (x 10)
-  (+ x 5))
+  (console.log (+ x 5)))
 
 ;; Let with multiple bindings
 (let (x 10

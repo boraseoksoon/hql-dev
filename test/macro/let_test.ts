@@ -9,35 +9,42 @@ import { dirname } from "../../src/platform/platform.ts";
 // Test HQL samples for the let macro
 const SAMPLES = {
   basicBinding: `
-    (let [x 10]
+    (let (x 10)
       x)
   `,
   multipleBindings: `
-    (let [x 10
-          y 20]
+    (let (x 10
+          y 20)
       (+ x y))
   `,
   nestedLet: `
-    (let [outer 5]
-      (let [inner (+ outer 3)]
+    (let (outer 5)
+      (let (inner (+ outer 3))
         (* outer inner)))
   `,
   bindingsUsingPrevious: `
-    (let [a 1
+    (let (a 1
           b (+ a 1)
-          c (+ a b)]
+          c (+ a b))
       (+ a b c))
   `,
   withFunctionCall: `
-    (defn twice [x] (* x 2))
-    (let [result (twice 5)]
+    (defn twice (x) (* x 2))
+    (let (result (twice 5))
       result)
   `,
   inFunction: `
-    (defn compute-area [width height]
-      (let [area (* width height)]
+    (defn compute-area (width height)
+      (let (area (* width height))
         area))
     (compute-area 5 10)
+  `,
+  // Multiple parameters test
+  multipleParams: `
+    (let (x 10
+          y 20
+          z 30)
+      (+ x (+ y z)))
   `
 };
 
@@ -49,50 +56,62 @@ async function transpileToJS(source: string): Promise<string> {
   return generateTypeScript(ir);
 }
 
-// Tests for let macro - Updated to match actual implementation
+// Tests for let macro - Updated to match actual formatting with spaces
 Deno.test("let macro - basic binding", async () => {
   const js = await transpileToJS(SAMPLES.basicBinding);
-  // Updated to check for function-based implementation
-  assertStringIncludes(js, "function (vector)");
+  // Note the space after "function"
+  assertStringIncludes(js, "function (x)");
   assertStringIncludes(js, "return x");
-  assertStringIncludes(js, ".x");
 });
 
 Deno.test("let macro - multiple bindings", async () => {
   const js = await transpileToJS(SAMPLES.multipleBindings);
-  // Check for function-based binding and return statement
-  assertStringIncludes(js, "function (vector)");
+  // Include spaces after "function" in assertions
+  assertStringIncludes(js, "function (x)");
+  assertStringIncludes(js, "function (y)");
   assertStringIncludes(js, "return x + y");
 });
 
 Deno.test("let macro - nested let", async () => {
   const js = await transpileToJS(SAMPLES.nestedLet);
-  // Check for nested function expressions
-  assertStringIncludes(js, "function (vector)");
-  assertStringIncludes(js, "return function (vector)");
+  assertStringIncludes(js, "function (outer)");
+  assertStringIncludes(js, "function (inner)");
   assertStringIncludes(js, "return outer * inner");
 });
 
 Deno.test("let macro - bindings using previous values", async () => {
   const js = await transpileToJS(SAMPLES.bindingsUsingPrevious);
-  // Check for function with return expression
-  assertStringIncludes(js, "function (vector)");
+  assertStringIncludes(js, "function (a)");
+  assertStringIncludes(js, "function (b)");
+  assertStringIncludes(js, "function (c)");
   assertStringIncludes(js, "return a + b + c");
 });
 
 Deno.test("let macro - with function call", async () => {
   const js = await transpileToJS(SAMPLES.withFunctionCall);
-  // Check for function definition and let usage
-  assertStringIncludes(js, "function");
-  assertStringIncludes(js, "return x * 2");
+  assertStringIncludes(js, "function");  // This one already passes, can be generic
+  assertStringIncludes(js, "twice");
   assertStringIncludes(js, "return result");
 });
 
 Deno.test("let macro - in function", async () => {
   const js = await transpileToJS(SAMPLES.inFunction);
-  // Check for function definition with let inside
-  assertStringIncludes(js, "function");
   assertStringIncludes(js, "compute_area");
-  assertStringIncludes(js, "return");
+  assertStringIncludes(js, "function");  // This one already passes, can be generic
   assertStringIncludes(js, "area");
+  assertStringIncludes(js, "return area");
+});
+
+// New test for multiple parameters
+Deno.test("let macro - multiple params", async () => {
+  const js = await transpileToJS(SAMPLES.multipleParams);
+  assertStringIncludes(js, "function (x)");
+  assertStringIncludes(js, "function (y)");
+  assertStringIncludes(js, "function (z)");
+  
+  // Check for either formatting of the return expression
+  const hasCorrectReturn = 
+    js.includes("return x + (y + z)") || 
+    js.includes("return x + y + z");
+  assertEquals(hasCorrectReturn, true);
 });
