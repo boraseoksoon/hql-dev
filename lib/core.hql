@@ -57,3 +57,11 @@
 (defmacro dec (x)
   (list '- x '1))
 
+(defmacro let (bindings body)
+  (list 
+    (list 'fn 
+      (list (first bindings)) 
+      body)
+    (first (rest bindings))))
+
+      

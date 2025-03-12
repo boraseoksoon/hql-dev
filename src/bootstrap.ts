@@ -33,7 +33,7 @@ export const LIST_PRIMITIVES = new Set(["first", "rest", "cons", "=", "length"])
 */
 export const PRIMITIVE_OPS = new Set([
   // Arithmetic operators
-  "+", "-", "*", "/", "%",   // Added modulo operator here
+  "+", "-", "*", "/", "%",
   
   // Comparison operators
   "=", "!=", "<", ">", "<=", ">=", "eq?",
@@ -42,7 +42,16 @@ export const PRIMITIVE_OPS = new Set([
   "js-import", "js-export", "js-get", "js-call",
   
   // List operations
-  ...LIST_PRIMITIVES
+  "first", "rest", "cons", "second", "length",
+  
+  // New sequence operations
+  "next", "seq", "empty?",
+  
+  // New collection manipulation
+  "conj", "concat",
+  
+  // New type predicates
+  "symbol?", "list?", "map?", "nil?"
 ]);
 
 export class Env {
@@ -117,23 +126,30 @@ function setupPrimitives(env: Env): void {
   env.define("-", (a: number, b: number) => a - b);
   env.define("*", (...args: number[]) => args.reduce((a, b) => a * b, 1));
   env.define("/", (a: number, b: number) => a / b);
+  env.define("%", (a: number, b: number) => a % b);
   env.define("=", (a: any, b: any) => a === b);
+  env.define("!=", (a: any, b: any) => a !== b);
+  env.define("<", (a: number, b: number) => a < b);
+  env.define(">", (a: number, b: number) => a > b);
+  env.define("<=", (a: number, b: number) => a <= b);
+  env.define(">=", (a: number, b: number) => a >= b);
+  env.define("eq?", (a: any, b: any) => a === b);
   
-  // JS interop primitives now delegate to our interop module.
+  // JS interop primitives
   env.define("js-import", jsImport);
   env.define("js-export", jsExport);
   env.define("js-get", jsGet);
   env.define("js-call", jsCall);
   
-  // Register gensym for macro hygiene.
+  // Register gensym for macro hygiene
   env.define("gensym", gensym);
   
-  // Helper "list" primitive for constructing list nodes.
+  // Helper "list" primitive for constructing list nodes
   env.define("list", (...args: any[]) => {
     return { type: "list", elements: args };
   });
   
-  // Minimal list operations for macros
+  // Existing list operations
   env.define("first", (list: any) => {
     if (list.type === "list" && list.elements.length > 0) {
       return list.elements[0];
@@ -167,6 +183,81 @@ function setupPrimitives(env: Env): void {
       return list.elements.length;
     }
     throw new Error("length requires a list");
+  });
+  
+  // New sequence operations
+  env.define("next", (list: any) => {
+    if (list.type === "list" && list.elements.length > 1) {
+      return { type: "list", elements: list.elements.slice(1) };
+    }
+    return { type: "literal", value: null };
+  });
+  
+  env.define("seq", (coll: any) => {
+    if (coll.type === "list") {
+      return coll.elements.length > 0 ? coll : { type: "literal", value: null };
+    }
+    return { type: "literal", value: null };
+  });
+  
+  env.define("empty?", (coll: any) => {
+    if (coll.type === "list") {
+      return { type: "literal", value: coll.elements.length === 0 };
+    }
+    if (coll.type === "literal" && coll.value === null) {
+      return { type: "literal", value: true };
+    }
+    return { type: "literal", value: false };
+  });
+  
+  // Collection manipulation
+  env.define("conj", (coll: any, ...items: any[]) => {
+    if (coll.type === "list") {
+      return { 
+        type: "list", 
+        elements: [...coll.elements, ...items]
+      };
+    }
+    throw new Error("conj requires a collection as first argument");
+  });
+  
+  env.define("concat", (...lists: any[]) => {
+    const allElements = [];
+    for (const list of lists) {
+      if (list.type === "list") {
+        allElements.push(...list.elements);
+      } else {
+        throw new Error("concat requires list arguments");
+      }
+    }
+    return { type: "list", elements: allElements };
+  });
+  
+  // Type predicates
+  env.define("symbol?", (value: any) => {
+    return { type: "literal", value: value.type === "symbol" };
+  });
+  
+  env.define("list?", (value: any) => {
+    return { type: "literal", value: value.type === "list" };
+  });
+  
+  env.define("map?", (value: any) => {
+    // Check if it's an object-like structure representing a map
+    return { 
+      type: "literal", 
+      value: value.type === "list" && 
+             value.elements.length > 0 &&
+             value.elements[0].type === "symbol" &&
+             value.elements[0].name === "hash-map"
+    };
+  });
+  
+  env.define("nil?", (value: any) => {
+    return { 
+      type: "literal", 
+      value: value.type === "literal" && value.value === null 
+    };
   });
 }
 
