@@ -30,9 +30,7 @@ export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
 function convertIRNode(node: IR.IRNode): ts.Statement | ts.Statement[] | null {
   switch (node.type) {
     case IR.IRNodeType.ObjectExpression:
-      return ts.factory.createExpressionStatement(
-        convertObjectExpression(node as IR.IRObjectExpression)
-      );
+      return createExpressionStatement(convertObjectExpression(node as IR.IRObjectExpression));
     case IR.IRNodeType.StringLiteral:
       return createExpressionStatement(convertStringLiteral(node as IR.IRStringLiteral));
     case IR.IRNodeType.NumericLiteral:
