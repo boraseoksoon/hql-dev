@@ -343,8 +343,8 @@
   (console.log "macro_x is not less than 5")) ;; x is not less than 5
 
 (defn hql-unless (x)
-  (unless (x)
-    (!x)))
+  (unless x
+    (not x)))
 
 (export "unless" hql-unless)
 

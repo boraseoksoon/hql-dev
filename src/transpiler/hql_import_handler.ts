@@ -1,5 +1,5 @@
 // src/transpiler/hql_import_handler.ts
-import { join, dirname, resolve, readTextFile, writeTextFile, exists } from "../platform/platform.ts";
+import { dirname, resolve, readTextFile, exists } from "../platform/platform.ts";
 import { transpileFile } from "./transformer.ts";
 import { TransformOptions } from "./transformer.ts";
 
@@ -7,7 +7,7 @@ import { TransformOptions } from "./transformer.ts";
  * Manages pre-processing of HQL imports before normal transformation.
  * This approach preserves the synchronous nature of the transformation pipeline.
  */
-export class HqlImportHandler {
+export class HQLImportHandler {
   // Track processed files to avoid circular dependencies
   private processedFiles = new Set<string>();
   // Map of HQL paths to their JS equivalents

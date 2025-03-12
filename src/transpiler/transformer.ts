@@ -6,7 +6,7 @@ import { generateTypeScript } from "./ts-ast-to-ts-code.ts";
 import { dirname, resolve, readTextFile, writeTextFile } from "../platform/platform.ts";
 import { expandMacros } from "../macro-expander.ts";
 import { HQLNode } from "./hql_ast.ts";
-import { HqlImportHandler } from "./hql_import_handler.ts";
+import { HQLImportHandler } from "./hql_import_handler.ts";
 import * as IR from "./hql_ir.ts";
 
 // Minimal runtime functions to support data structure access
@@ -59,12 +59,9 @@ export async function transformAST(
     if (options.verbose) {
       console.log("Expanded AST:", JSON.stringify(expandedNodes, null, 2));
     }
-    
-    // Step 2: Create an import handler for processing HQL imports
-    const importHandler = new HqlImportHandler(options);
-    
-    // Step 3: Transform to IR, passing the import handler
-    const ir = await transformToIR(expandedNodes, currentDir, options, importHandler);
+
+    // Step 2: Transform to IR, passing the import handler
+    const ir = await transformToIR(expandedNodes, currentDir);
     
     if (options.verbose) {
       console.log("IR:", JSON.stringify(ir, null, 2));
@@ -88,7 +85,7 @@ export async function transpile(
 ): Promise<string> {
   try {
     // Create an import handler for preprocessing HQL imports
-    const importHandler = new HqlImportHandler(options);
+    const importHandler = new HQLImportHandler(options);
     
     // First, preprocess all HQL imports to generate JS equivalents
     await importHandler.preprocessImports(source, filePath);
@@ -131,7 +128,7 @@ export async function transpile(
  * Post-process the IR to rewrite HQL imports to JS imports.
  * This is a safe way to modify imports without changing the transformer architecture.
  */
-function rewriteHqlImportsInIR(ir: IR.IRProgram, importHandler: HqlImportHandler): IR.IRProgram {
+function rewriteHqlImportsInIR(ir: IR.IRProgram, importHandler: HQLImportHandler): IR.IRProgram {
   const newBody = ir.body.map(node => {
     // Look for JsImportReference nodes
     if (node.type === IR.IRNodeType.JsImportReference) {
@@ -139,7 +136,7 @@ function rewriteHqlImportsInIR(ir: IR.IRProgram, importHandler: HqlImportHandler
       const source = importNode.source;
       
       // If this is an HQL import, rewrite it to the JS equivalent
-      if (HqlImportHandler.isHqlFile(source)) {
+      if (HQLImportHandler.isHqlFile(source)) {
         const jsPath = importHandler.getJsImportPath(source);
         if (jsPath) {
           return {

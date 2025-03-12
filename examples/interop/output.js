@@ -219,9 +219,8 @@ macro_x < 5 ? null : function() {
   return console.log("macro_x is not less than 5");
 }([]);
 var hql_unless = function(x) {
-  return x() ? null : function() {
-    _x();
-    return null;
+  return x ? null : function() {
+    return x ? 0 : 1;
   }([]);
 };
 var x_plus_one = macro_x + 1;
