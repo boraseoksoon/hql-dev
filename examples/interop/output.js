@@ -4,20 +4,12 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// hql:/Users/seoksoonjang/Desktop/hql/lib/lazy_seq.hql
-var lazy_seq_exports = {};
-__export(lazy_seq_exports, {
-  add: () => add
-});
-var add = function(x, y) {
-  return x + y;
-};
-
 // hql:/Users/seoksoonjang/Desktop/hql/doc/hql_spec.hql
 var hql_spec_exports = {};
 __export(hql_spec_exports, {
   showcase: () => showcase,
-  square: () => square
+  square: () => square,
+  unless: () => hql_unless
 });
 import * as pathModule from "https://deno.land/std@0.170.0/path/mod.ts";
 import * as fileModule from "https://deno.land/std@0.170.0/fs/mod.ts";
@@ -226,21 +218,36 @@ macro_x > 5 ? function() {
 macro_x < 5 ? null : function() {
   return console.log("macro_x is not less than 5");
 }([]);
+var hql_unless = function(x) {
+  return x() ? null : function() {
+    _x();
+    return null;
+  }([]);
+};
 var x_plus_one = macro_x + 1;
 var x_minus_one = macro_x - 1;
 console.log(x_plus_one);
 console.log(x_minus_one);
 
-// examples/test/output.js
-var module = function() {
-  const wrapper = void 0 !== void 0 ? void 0 : {};
-  for (const [key, value] of Object.entries(lazy_seq_exports)) {
-    if (key !== "default")
-      wrapper[key] = value;
-  }
-  return wrapper;
-}();
-s;
+// examples/interop/test2.js
+var test2_exports = {};
+__export(test2_exports, {
+  hqlSquare: () => hqlSquare
+});
+function hqlSquare(a) {
+  return square(a);
+}
+
+// examples/interop/test.js
+var test_exports = {};
+__export(test_exports, {
+  hqlUnless: () => hqlUnless
+});
+function hqlUnless(bool) {
+  return hql_unless(bool);
+}
+
+// examples/interop/output.js
 var spec = function() {
   const wrapper = void 0 !== void 0 ? void 0 : {};
   for (const [key, value] of Object.entries(hql_spec_exports)) {
@@ -249,4 +256,22 @@ var spec = function() {
   }
   return wrapper;
 }();
-console.log("do square : ", spec.square(10));
+console.log("do spec square : ", spec.square(10));
+var module2 = function() {
+  const wrapper = void 0 !== void 0 ? void 0 : {};
+  for (const [key, value] of Object.entries(test2_exports)) {
+    if (key !== "default")
+      wrapper[key] = value;
+  }
+  return wrapper;
+}();
+console.log("module2.hqlSquare wrong : ", module2.hqlSquare(3));
+var module1 = function() {
+  const wrapper = void 0 !== void 0 ? void 0 : {};
+  for (const [key, value] of Object.entries(test_exports)) {
+    if (key !== "default")
+      wrapper[key] = value;
+  }
+  return wrapper;
+}();
+console.log("module1.hqlUnless : ", module1.hqlUnless(true));

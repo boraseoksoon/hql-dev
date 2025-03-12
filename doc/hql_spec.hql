@@ -342,6 +342,12 @@
 (unless (< macro_x 5)
   (console.log "macro_x is not less than 5")) ;; x is not less than 5
 
+(defn hql-unless (x)
+  (unless (x)
+    (!x)))
+
+(export "unless" hql-unless)
+
 ;; Use 'inc' to compute x+1.
 (def x_plus_one (inc macro_x))
 
