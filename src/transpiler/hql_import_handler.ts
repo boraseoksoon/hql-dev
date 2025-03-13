@@ -1,4 +1,5 @@
-// src/transpiler/hql_import_handler.ts
+// src/transpiler/hql_import_handler.ts - Restored proper import handling
+
 import { dirname, resolve, readTextFile, exists } from "../platform/platform.ts";
 import { transpileFile } from "./transformer.ts";
 import { TransformOptions } from "./transformer.ts";
@@ -118,7 +119,7 @@ export class HQLImportHandler {
    * Get the JS import path for a given HQL import path, if it exists in our map.
    */
   getJsImportPath(hqlImportPath: string): string | undefined {
-    // In bundling mode, we don't write extra files, so return undefined.
+    // In bundling mode, we don't write extra files
     if (this.options.bundle) {
       return undefined;
     }

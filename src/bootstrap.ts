@@ -360,9 +360,9 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
   
   switch (expr.type) {
     case "literal":
-    return (expr as LiteralNode).value;
+      return (expr as LiteralNode).value;
     case "symbol":
-    return env.lookup((expr as SymbolNode).name);
+      return env.lookup((expr as SymbolNode).name);
     case "list": {
       const list = expr as ListNode;
       if (list.elements.length === 0) return [];
@@ -371,6 +371,8 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
         const op = (first as SymbolNode).name;
         
         // Handle kernel primitives
+        
+        // quote: returns its argument without evaluation
         if (op === "quote") {
           if (list.elements.length !== 2) {
             throw new Error("quote requires exactly one argument");
@@ -378,7 +380,7 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
           return list.elements[1];
         }
         
-        // Handle quasiquote
+        // quasiquote: process unquote and unquote-splicing
         if (op === "quasiquote") {
           if (list.elements.length !== 2) {
             throw new Error("quasiquote requires exactly one argument");
@@ -386,7 +388,7 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
           return evaluateQuasiquote(list.elements[1], env);
         }
         
-        // Handle if special form for macro expansion
+        // if: conditional evaluation
         if (op === "if") {
           if (list.elements.length < 3 || list.elements.length > 4) {
             throw new Error("if requires 2 or 3 arguments");
@@ -400,7 +402,8 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
             return null;
           }
         }
-      
+        
+        // defmacro: define a macro and register it in the environment
         if (op === "defmacro") {
           if (list.elements.length < 4) {
             throw new Error("defmacro requires a name, parameters, and body");
@@ -485,6 +488,7 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
       throw new Error("List does not start with a symbol");
     }
     default:
-    throw new Error(`Unknown node type: ${(expr as any).type || JSON.stringify(expr)}`);
+      throw new Error(`Unknown node type: ${(expr as any).type || JSON.stringify(expr)}`);
   }
 }
+

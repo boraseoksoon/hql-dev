@@ -1,14 +1,35 @@
-// src/interop.ts - Enhanced for expression-everywhere philosophy
+// src/interop.ts - Fixed to support both new and old import patterns
+
+import { Env } from "./bootstrap.ts";
 
 /**
- * jsImport performs a dynamic import of a module at runtime.
- * In macro expansion, however, we use it only as a marker.
- * For our transpiler, its behavior is not invoked—the IR transformation
- * handles import statements and generates static ESM imports.
+ * jsImport performs a dynamic import of a module at runtime with Deno compatibility.
+ * Supports both the original single-parameter and new multi-parameter patterns.
  */
-export async function jsImport(source: string): Promise<any> {
-  // At runtime, you might want to dynamically import:
-  return await import(source);
+export async function jsImport(nameOrSource: string, source?: string, env?: Env): Promise<any> {
+  try {
+    // Handle original single-parameter pattern
+    if (source === undefined) {
+      return await import(nameOrSource);
+    }
+    
+    // Handle new multi-parameter pattern
+    // With native npm support, we can use the source directly
+    const module = await import(source);
+    
+    // If an environment is provided, register the module in it
+    if (env) {
+      // Define module in the environment instead of using registerModule
+      // This is compatible with the Env type
+      env.define(nameOrSource, module);
+    }
+    
+    return module;
+  } catch (error) {
+    const errorSource = source || nameOrSource;
+    console.error(`Import error for ${errorSource}:`, error);
+    throw new Error(`Failed to import ${errorSource}: ${error.message}`);
+  }
 }
 
 /**

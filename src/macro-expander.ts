@@ -1,71 +1,232 @@
-// src/macro-expander.ts - Refactored for better organization and clarity
+// src/macro-expander.ts - Updated to ensure imports work with macros
 
 import { parse } from "./transpiler/parser.ts";
 import { Env, initializeGlobalEnv, evaluateForMacro } from "./bootstrap.ts";
 import { HQLNode, ListNode, SymbolNode } from "./transpiler/hql_ast.ts";
 
-// Singleton global environment for macros
+// Global macro environment
 let globalEnv: Env | null = null;
 
+// Module import registry to track imports used by macros
+export const moduleRegistry = new Set<string>();
+
 /**
- * Initialize the macro environment by creating a minimal environment and loading core macros.
+ * Initialize the macro environment by creating a minimal environment
+ * and loading core macros.
  */
 async function initMacroEnvironment(): Promise<Env> {
   if (!globalEnv) {
     globalEnv = await initializeGlobalEnv();
     await loadCoreMacros(globalEnv);
+    await loadExtensions(globalEnv);
   }
   return globalEnv;
 }
 
 /**
  * Load core macros from lib/core.hql into the provided environment.
+ * These are the foundational macros built on top of the minimal kernel.
  */
-export async function loadCoreMacros(env: Env): Promise<void> {
-  const coreSource = await Deno.readTextFile("./lib/core.hql");
-  const astNodes = parse(coreSource);
-
-  const macroDefs = [];
-  const otherForms = [];
-
-  // Partition out defmacro forms first
-  for (const node of astNodes) {
-    if (isDefmacroForm(node)) macroDefs.push(node);
-    else otherForms.push(node);
-  }
-
-  // 1) Register macros
-  for (const m of macroDefs) {
-    evaluateForMacro(m, env);
-  }
-
-  // 2) Evaluate other top-level forms
-  for (const f of otherForms) {
-    evaluateForMacro(f, env);
+async function loadCoreMacros(env: Env): Promise<void> {
+  try {
+    const coreSource = await Deno.readTextFile("./lib/core.hql");
+    const coreAST = parse(coreSource);
+    
+    // Process core macros sequentially to respect definitions
+    for (const node of coreAST) {
+      try {
+        // Special handling for import statements to make them work during macro expansion
+        if (node.type === "list" && 
+            node.elements[0]?.type === "symbol" && 
+            (node.elements[0] as SymbolNode).name === "import") {
+          
+          if (node.elements.length !== 3) {
+            throw new Error("import requires exactly 2 arguments: name and path");
+          }
+          
+          const nameNode = node.elements[1];
+          const pathNode = node.elements[2];
+          
+          if (nameNode.type !== "symbol") {
+            throw new Error("import name must be a symbol");
+          }
+          
+          if (pathNode.type !== "literal" || typeof pathNode.value !== "string") {
+            throw new Error("import path must be a string literal");
+          }
+          
+          const moduleName = (nameNode as SymbolNode).name;
+          const modulePath = pathNode.value as string;
+          
+          // Track the import in the registry
+          if (modulePath.startsWith("npm:")) {
+            moduleRegistry.add(modulePath.substring(4));
+          }
+          
+          // Use the js-import function defined in the environment
+          const jsImportFn = env.lookup("js-import");
+          await jsImportFn(moduleName, modulePath, env);
+          
+        } else {
+          // Process other forms normally
+          await evaluateForMacro(node, env);
+        }
+      } catch (e) {
+        console.error(`Error processing core macro:`, e);
+        throw new Error(`Error loading core macro ${JSON.stringify(node)}: ${e.message}`);
+      }
+    }
+    
+    // Always ensure lodash is available if registered (important for macros)
+    if (moduleRegistry.has("lodash")) {
+      try {
+        const jsImportFn = env.lookup("js-import");
+        await jsImportFn("lodash", "npm:lodash", env);
+      } catch (e) {
+        console.error("Failed to ensure lodash is available:", e);
+      }
+    }
+    
+  } catch (e) {
+    console.error(`Failed to load core macros:`, e);
+    throw new Error(`Failed to load core macros: ${e.message}`);
   }
 }
 
-function isDefmacroForm(node: HQLNode): boolean {
-  return (
-    node.type === "list" &&
-    node.elements.length > 0 &&
-    node.elements[0].type === "symbol" &&
-    node.elements[0].name === "defmacro"
-  );
+/**
+ * Load extensions from lib/extensions.hql after core macros are loaded.
+ */
+async function loadExtensions(env: Env): Promise<void> {
+  try {
+    // First check if the file exists
+    try {
+      await Deno.stat("./lib/extensions.hql");
+    } catch (e) {
+      console.log("No extensions.hql file found, skipping");
+      return;
+    }
+    
+    // Load and parse extensions file
+    const extSource = await Deno.readTextFile("./lib/extensions.hql");
+    const extAST = parse(extSource);
+    
+    // Process extensions sequentially
+    for (const node of extAST) {
+      try {
+        // Special handling for import statements
+        if (node.type === "list" && 
+            node.elements[0]?.type === "symbol" && 
+            (node.elements[0] as SymbolNode).name === "import") {
+          
+          if (node.elements.length !== 3) {
+            throw new Error("import requires exactly 2 arguments: name and path");
+          }
+          
+          const nameNode = node.elements[1];
+          const pathNode = node.elements[2];
+          
+          if (nameNode.type !== "symbol") {
+            throw new Error("import name must be a symbol");
+          }
+          
+          if (pathNode.type !== "literal" || typeof pathNode.value !== "string") {
+            throw new Error("import path must be a string literal");
+          }
+          
+          const moduleName = (nameNode as SymbolNode).name;
+          const modulePath = pathNode.value as string;
+          
+          // Track the import in the registry
+          if (modulePath.startsWith("npm:")) {
+            moduleRegistry.add(modulePath.substring(4));
+          }
+          
+          // Use the js-import function defined in the environment
+          const jsImportFn = env.lookup("js-import");
+          await jsImportFn(moduleName, modulePath, env);
+          
+        } else {
+          // Process other forms normally
+          await evaluateForMacro(node, env);
+        }
+      } catch (e) {
+        console.error(`Error processing extension:`, e);
+        throw new Error(`Error loading extension ${JSON.stringify(node)}: ${e.message}`);
+      }
+    }
+    
+    console.log("Extensions loaded successfully");
+  } catch (e) {
+    // Don't fail if extensions file doesn't exist
+    if (e instanceof Deno.errors.NotFound) {
+      console.log("No extensions.hql file found, skipping");
+      return;
+    }
+    
+    console.error(`Failed to load extensions:`, e);
+    throw new Error(`Failed to load extensions: ${e.message}`);
+  }
 }
 
 /**
  * Public function to expand macros in an array of HQL AST nodes.
+ * This is the main entry point for macro expansion in the pipeline.
  */
 export async function expandMacros(nodes: HQLNode[]): Promise<HQLNode[]> {
   const env = await initMacroEnvironment();
-  return nodes.map(node => expandNode(node, env));
+  
+  // Process nodes sequentially, so macros defined earlier can be used later
+  const result: HQLNode[] = [];
+  
+  for (const node of nodes) {
+    // Special handling for import forms at the top level
+    if (node.type === "list" && 
+        node.elements[0]?.type === "symbol" && 
+        (node.elements[0] as SymbolNode).name === "import") {
+          
+      if (node.elements.length !== 3) {
+        throw new Error("import requires exactly 2 arguments: name and path");
+      }
+      
+      const nameNode = node.elements[1];
+      const pathNode = node.elements[2];
+      
+      if (nameNode.type !== "symbol") {
+        throw new Error("import name must be a symbol");
+      }
+      
+      if (pathNode.type !== "literal" || typeof pathNode.value !== "string") {
+        throw new Error("import path must be a string literal");
+      }
+      
+      const moduleName = (nameNode as SymbolNode).name;
+      const modulePath = pathNode.value;
+      
+      // Track the import in the registry
+      if (typeof modulePath === 'string' && modulePath.startsWith("npm:")) {
+        moduleRegistry.add(modulePath.substring(4));
+      }
+      
+      // Use the js-import function from the environment
+      const jsImportFn = env.lookup("js-import");
+      await jsImportFn(moduleName, modulePath, env);
+      
+      // Keep the import node in the result for the transpiler
+      result.push(node);
+    } else {
+      // Expand other nodes normally
+      result.push(await expandNode(node, env));
+    }
+  }
+  
+  return result;
 }
 
 /**
  * Process a quasiquoted expression, expanding unquotes and unquote-splicing.
+ * This is crucial for expressive macro definitions.
  */
-function processQuasiquote(node: HQLNode, env: Env): HQLNode {
+async function processQuasiquote(node: HQLNode, env: Env): Promise<HQLNode> {
   // Handle non-list nodes directly
   if (node.type !== "list") {
     return node;
@@ -84,22 +245,22 @@ function processQuasiquote(node: HQLNode, env: Env): HQLNode {
         throw new Error("unquote requires exactly 1 argument");
       }
       // Expand the unquoted expression
-      return expandNode(list.elements[1], env);
+      return await expandNode(list.elements[1], env);
     }
     
-    // Handle unquote-splicing
+    // Handle unquote-splicing (should be caught by processListQuasiquote)
     if (symbolName === "unquote-splicing") {
       throw new Error("unquote-splicing not allowed in this context");
     }
   }
   
-  return processListQuasiquote(list, env);
+  return await processListQuasiquote(list, env);
 }
 
 /**
  * Helper function to process quasiquote for list nodes.
  */
-function processListQuasiquote(list: ListNode, env: Env): ListNode {
+async function processListQuasiquote(list: ListNode, env: Env): Promise<ListNode> {
   const processedElements: HQLNode[] = [];
   
   for (let i = 0; i < list.elements.length; i++) {
@@ -113,7 +274,7 @@ function processListQuasiquote(list: ListNode, env: Env): ListNode {
       }
       
       // Expand the unquote-splicing expression
-      const expanded = expandNode((elem as ListNode).elements[1], env);
+      const expanded = await expandNode((elem as ListNode).elements[1], env);
       if (expanded.type !== "list") {
         throw new Error("unquote-splicing requires a list result");
       }
@@ -122,7 +283,7 @@ function processListQuasiquote(list: ListNode, env: Env): ListNode {
       processedElements.push(...(expanded as ListNode).elements);
     } else {
       // Regular processing
-      processedElements.push(processQuasiquote(elem, env));
+      processedElements.push(await processQuasiquote(elem, env));
     }
   }
   
@@ -144,8 +305,9 @@ function isUnquoteSplicing(node: HQLNode): boolean {
 
 /**
  * Recursively expand macros in a given HQL AST node.
+ * This is the core function for macro expansion.
  */
-function expandNode(node: HQLNode, env: Env): HQLNode {
+async function expandNode(node: HQLNode, env: Env): Promise<HQLNode> {
   if (node.type !== "list") {
     // Literals and symbols pass through unchanged
     return node;
@@ -161,17 +323,21 @@ function expandNode(node: HQLNode, env: Env): HQLNode {
   // Only lists that start with a symbol can be macro invocations
   if (first.type !== "symbol") {
     // Recursively expand each element in the list
+    const expandedElements = await Promise.all(
+      list.elements.map(child => expandNode(child, env))
+    );
+    
     return {
       type: "list",
-      elements: list.elements.map(child => expandNode(child, env))
+      elements: expandedElements
     } as ListNode;
   }
   
   const symbolName = (first as SymbolNode).name;
   
-  // Handle macro invocation
+  // Check if this is a macro invocation
   if (env.hasMacro(symbolName)) {
-    return expandMacroInvocation(list, symbolName, env);
+    return await expandMacroInvocation(list, symbolName, env);
   }
   
   // Handle special forms
@@ -185,27 +351,49 @@ function expandNode(node: HQLNode, env: Env): HQLNode {
       throw new Error("quasiquote requires exactly 1 argument");
     }
     // Process the quasiquoted expression
-    return processQuasiquote(list.elements[1], env);
+    return await processQuasiquote(list.elements[1], env);
   }
   
-  // Recursively expand each element in the list if it's not a special form
+  // Special handling for def and defmacro to support sequential definition
+  if (symbolName === "def" || symbolName === "defmacro") {
+    // Expand the initialization expression if present
+    if (list.elements.length === 3) {
+      return {
+        type: "list",
+        elements: [
+          first,
+          list.elements[1],
+          await expandNode(list.elements[2], env)
+        ]
+      } as ListNode;
+    }
+    return list;
+  }
+  
+  // Recursively expand each element in the list for other forms
+  const expandedElements = await Promise.all(
+    list.elements.map(child => expandNode(child, env))
+  );
+  
   return {
     type: "list",
-    elements: list.elements.map(child => expandNode(child, env))
+    elements: expandedElements
   } as ListNode;
 }
 
 /**
- * Helper function to expand a macro invocation.
+ * Expand a macro invocation by calling the macro function and expanding the result.
  */
-function expandMacroInvocation(list: ListNode, macroName: string, env: Env): HQLNode {
+async function expandMacroInvocation(list: ListNode, macroName: string, env: Env): Promise<HQLNode> {
   const macroFn = env.getMacro(macroName)!;
   const args = list.elements.slice(1);
   
   try {
-    const expanded = macroFn(args, env);
-    // Recursively expand the result, in case it contains more macros.
-    return expandNode(expanded, env);
+    // The macro function is now async
+    const expanded = await macroFn(args, env);
+    
+    // Recursively expand the result, in case it contains more macros
+    return await expandNode(expanded, env);
   } catch (e) {
     throw new Error(
       `Error expanding macro '${macroName}' with args ${JSON.stringify(args)}: ${e.message}`

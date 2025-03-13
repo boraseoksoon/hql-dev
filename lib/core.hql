@@ -72,7 +72,6 @@
               body))
         (first (rest bindings)))))
 
-
 (defmacro str (& args)
   (cons '+ args))
 
@@ -85,4 +84,9 @@
 (defmacro contains? (s x)
   (list 'js-call s 'has x))
 
+(defmacro add-one (x)
+  (list '+ x (list 'literal 1)))
+
+(defmacro big-double (x)
+  (list '* (list 'literal 2) (add-one x)))
 
