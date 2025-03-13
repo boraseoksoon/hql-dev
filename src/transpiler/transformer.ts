@@ -25,7 +25,18 @@ function getProperty(obj, prop) {
  * Collection access function - get an element from a collection
  */
 function get(obj, key, notFound = null) {
+  // Handle null/undefined case
   if (obj == null) return notFound;
+  
+  // Handle function case: call the function with key as argument
+  if (typeof obj === 'function') {
+    try {
+      return obj(key);
+    } catch (e) {
+      // If function call fails, fall back to property access
+      return (key in obj) ? obj[key] : notFound;
+    }
+  }
   
   // Handle arrays (vectors)
   if (Array.isArray(obj)) {
@@ -39,8 +50,9 @@ function get(obj, key, notFound = null) {
     return obj.has(key) ? key : notFound;
   }
   
-  // Handle objects (maps)
-  return (key in obj) ? obj[key] : notFound;
+  // Handle objects (maps) - includes handling of numeric keys
+  const propKey = typeof key === 'number' ? String(key) : key;
+  return (propKey in obj) ? obj[propKey] : notFound;
 }
 
 // ==== Type Predicates ====

@@ -32,11 +32,15 @@
 
 ;; cond: Simple conditional with two branches
 ;; Usage: (cond (test1 result1) (test2 result2))
-(defmacro cond (test-result1 test-result2)
-  (list 'if 
-        (first test-result1) 
-        (second test-result1)
-        (second test-result2)))
+(defmacro cond (& clauses)
+  (if (= (length clauses) 0)
+      'nil
+      (list 'if
+            (first (first clauses))
+            (second (first clauses))
+            (if (> (length clauses) 1)
+                (cons 'cond (rest clauses))
+                'nil))))
 
 ;; nth: Access a collection element by index (Clojure-style)
 ;; Usage: (nth collection index) -> (get collection index)
@@ -67,3 +71,11 @@
               (list 'let (rest (rest bindings)) body)
               body))
         (first (rest bindings)))))
+
+
+(defmacro str (& args)
+  (cons '+ args))
+
+(defmacro if-let (binding then else)
+  (list 'let binding (list 'if (first binding) then else)))
+

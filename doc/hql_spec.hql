@@ -116,11 +116,6 @@
 (defn isLargerThan? (a b)
   (if (> a b) a b))
 
-(defn classify-number (n)
-  (cond
-    ((< n 0) "negative")
-    ((= n 0) "zero")))
-
 (defn between (x min max)
   (and (>= x min) (<= x max)))
 
@@ -134,6 +129,17 @@
   (cond
     ((and (>= x 0) (< x 10)) "single digit")
     ((and (>= x 10) (< x 100)) "double digit")))
+
+(defn classify-number (x)
+  (cond
+    ((< x 0) "negative")
+    ((= x 0) "zero")
+    ((< x 10) "small positive")
+    ((< x 100) "medium positive")
+    (true "large positive")))
+
+(console.log (classify-number 10))
+(console.log (classify-number 100))
 
 ;; --- Arithmetic and Comparison Operators ---
 (defn arithmetic-demo (a b)
@@ -393,6 +399,31 @@
 (concat xs2 ys2)      ;; => (1 2 3 4 5 6)
 (concat xs2 '() ys2)  ;; => (1 2 3 4 5 6)
 
+;; str
+
+;; Basic string concatenation
+(def first-name "John")
+(def last-name "Doe")
+(def full-name (str first-name " " last-name))
+(console.log full-name)  ;; "John Doe"
+
+;; Mixing strings and numbers
+(def age 30)
+(def bio (str full-name " is " age " years old"))
+(console.log bio)  ;; "John Doe is 30 years old"
+
+;; Creating a formatted message
+(def score 95)
+(def max-score 100)
+(def percentage (* (/ score max-score) 100))
+(def result-message (str "Score: " score "/" max-score " (" percentage "%)"))
+(console.log result-message)  ;; "Score: 95/100 (95%)"
+
+;; Using with other expressions
+(def items ["apple", "banana", "orange"])
+(def item-count (items.length))
+(def summary (str "Found " item-count " items: " (get items 0) ", " (get items 1) ", " (get items 2)))
+(console.log summary)  ;; "Found 3 items: apple, banana, orange"
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 8. let
@@ -426,3 +457,58 @@
     (+ squared cubed)))
 
 (calculate 3)
+
+;; if-let
+
+;;-------------------------------------------------
+;; Helper Functions
+;;-------------------------------------------------
+(defn get-number () 42)
+(defn get-nothing () nil)
+(defn get-zero () 0)
+(defn get-string () "Hello")
+
+;;-------------------------------------------------
+;; if-let Tests
+;;-------------------------------------------------
+;; Test 1: if-let with a truthy number (42)
+(defn test-if-let-truthy-number ()
+  (if-let (x (get-number))
+    (str "Got number: " x)
+    "No number"))
+
+;; Test 2: if-let with a nil value
+(defn test-if-let-nil ()
+  (if-let (x (get-nothing))
+    (str "Got something: " x)
+    "Got nothing"))
+
+;; Test 3: if-let with zero (0 is falsy in JS/HQL)
+(defn test-if-let-zero ()
+  (if-let (x (get-zero))
+    (str "Got zero: " x)
+    "Zero is considered falsy"))
+
+;; Test 4: if-let with a non-empty string (truthy)
+(defn test-if-let-string ()
+  (if-let (x (get-string))
+    (str "Got string: " x)
+    "No string"))
+
+;; Test 5: Nested if-let:
+;; First binding x from get-number; then, if x > 40, bind y from get-string.
+(defn test-if-let-nested ()
+  (if-let (x (get-number))
+    (if-let (y (if (> x 40) (get-string) nil))
+      (str "Nested test: x = " x ", y = " y)
+      (str "Nested test: x = " x ", no y"))
+    "No number"))
+
+;;-------------------------------------------------
+;; Run Tests: Console Output
+;;-------------------------------------------------
+(console.log (test-if-let-truthy-number))  ;; Expected: "Got number: 42"
+(console.log (test-if-let-nil))            ;; Expected: "Got nothing"
+(console.log (test-if-let-zero))           ;; Expected: "Zero is considered falsy"
+(console.log (test-if-let-string))         ;; Expected: "Got string: Hello"
+(console.log (test-if-let-nested))         ;; Expected: "Nested test: x = 42, y = Hello"

@@ -1,28 +1,10 @@
-(let (x 10 y 20 z 30) 
-  ((+ x y z)))
+(defn classify-number (x)
+  (cond
+    ((< x 0) "negative")
+    ((= x 0) "zero")
+    ((< x 10) "small positive")
+    ((< x 100) "medium positive")
+    (true "large positive")))
 
-(let (x 10)
-  (console.log (+ x 5)))
-
-;; Let with multiple bindings
-(let (x 10
-      y 20)
-  (+ x y))
-
-;; Nested let expressions
-(let (outer 5)
-  (let (inner (+ outer 2))
-    (* outer inner)))
-
-;; Let with expressions as binding values
-(let (sum (+ 2 3)
-      product (* 4 5))
-  (list sum product))
-
-;; Using let inside a function definition
-(defn calculate (base)
-  (let (squared (* base base)
-        cubed (* squared base))
-    (+ squared cubed)))
-
-(calculate 3)
+(console.log (classify-number 10))
+(console.log (classify-number 100))

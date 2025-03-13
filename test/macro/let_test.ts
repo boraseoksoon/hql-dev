@@ -115,3 +115,79 @@ Deno.test("let macro - multiple params", async () => {
     js.includes("return x + y + z");
   assertEquals(hasCorrectReturn, true);
 });
+
+// if-let macro samples in HQL
+const IF_LET_SAMPLES = {
+  truthy: `
+    (if-let (x 42)
+      (str "Truthy: " x)
+      "Falsy")
+  `,
+  falsy: `
+    (if-let (x nil)
+      (str "Truthy: " x)
+      "Falsy")
+  `,
+  zero: `
+    (if-let (x 0)
+      (str "Truthy: " x)
+      "Falsy")
+  `,
+  nested: `
+    (if-let (x (if-let (y 100)
+                    (str "Inner: " y)
+                    "Inner Falsy"))
+      (str "Outer: " x)
+      "Outer Falsy")
+  `,
+  functionCall: `
+    (defn double (n) (* n 2))
+    (if-let (result (double 5))
+      (str "Result: " result)
+      "No result")
+  `
+};
+
+
+// Test: if-let macro with a truthy binding
+Deno.test("if-let macro - truthy binding", async () => {
+  const js = await transpileToJS(IF_LET_SAMPLES.truthy);
+  // We expect the generated JS to include a function that binds 'x' and returns the then branch.
+  assertStringIncludes(js, "function (x)");
+  assertStringIncludes(js, "?");
+  assertStringIncludes(js, "Truthy: ");
+});
+
+// Test: if-let macro with a falsy (nil) binding
+Deno.test("if-let macro - falsy binding", async () => {
+  const js = await transpileToJS(IF_LET_SAMPLES.falsy);
+  // For a nil value, the else branch "Falsy" should be returned.
+  assertStringIncludes(js, "function (x)");
+  assertStringIncludes(js, "Falsy");
+});
+
+// Test: if-let macro with a zero binding (0 is falsy)
+Deno.test("if-let macro - zero binding", async () => {
+  const js = await transpileToJS(IF_LET_SAMPLES.zero);
+  // Zero is falsy, so the else branch should be used.
+  assertStringIncludes(js, "Falsy");
+});
+
+// Test: Nested if-let macro
+Deno.test("if-let macro - nested if-let", async () => {
+  const js = await transpileToJS(IF_LET_SAMPLES.nested);
+  // Expect nested function bindings for x and y, along with both "Inner:" and "Outer:" strings.
+  assertStringIncludes(js, "function (x)");
+  assertStringIncludes(js, "function (y)");
+  assertStringIncludes(js, "Inner: ");
+  assertStringIncludes(js, "Outer: ");
+});
+
+// Test: if-let macro using a function call
+Deno.test("if-let macro - with function call", async () => {
+  const js = await transpileToJS(IF_LET_SAMPLES.functionCall);
+  // The output should contain the function name "double" and a binding for "result".
+  assertStringIncludes(js, "double");
+  assertStringIncludes(js, "function (result)");
+  assertStringIncludes(js, "Result: ");
+});
