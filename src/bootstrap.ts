@@ -52,16 +52,20 @@ export const PRIMITIVE_OPS = new Set([
   
   // New type predicates
   "symbol?", "list?", "map?", "nil?", 
+]);
 
-  "new",
+export const PRIMITIVE_CLASS = new Set([
+  "new"
+])
+
+export const PRIMITIVE_DATA_STRUCTURE = new Set([
   "empty-array",
   "empty-map",
   "empty-set",
   "vector",
   "hash-map",
   "hash-set"
-]);
-
+])
 export class Env {
   bindings = new Map<string, any>();
   macros = new Map<string, MacroFunction>();

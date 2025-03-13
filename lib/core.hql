@@ -79,3 +79,10 @@
 (defmacro if-let (binding then else)
   (list 'let binding (list 'if (first binding) then else)))
 
+(defmacro print (& args)
+  (cons 'console.log args))
+
+(defmacro contains? (s x)
+  (list 'js-call s 'has x))
+
+

@@ -21,17 +21,37 @@ async function initMacroEnvironment(): Promise<Env> {
 /**
  * Load core macros from lib/core.hql into the provided environment.
  */
-async function loadCoreMacros(env: Env): Promise<void> {
+export async function loadCoreMacros(env: Env): Promise<void> {
   const coreSource = await Deno.readTextFile("./lib/core.hql");
-  const coreAST = parse(coreSource);
-  
-  for (const node of coreAST) {
-    try {
-      evaluateForMacro(node, env);
-    } catch (e) {
-      throw new Error(`Error loading core macro ${JSON.stringify(node)}: ${e.message}`);
-    }
+  const astNodes = parse(coreSource);
+
+  const macroDefs = [];
+  const otherForms = [];
+
+  // Partition out defmacro forms first
+  for (const node of astNodes) {
+    if (isDefmacroForm(node)) macroDefs.push(node);
+    else otherForms.push(node);
   }
+
+  // 1) Register macros
+  for (const m of macroDefs) {
+    evaluateForMacro(m, env);
+  }
+
+  // 2) Evaluate other top-level forms
+  for (const f of otherForms) {
+    evaluateForMacro(f, env);
+  }
+}
+
+function isDefmacroForm(node: HQLNode): boolean {
+  return (
+    node.type === "list" &&
+    node.elements.length > 0 &&
+    node.elements[0].type === "symbol" &&
+    node.elements[0].name === "defmacro"
+  );
 }
 
 /**

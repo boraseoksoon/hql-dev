@@ -72,6 +72,26 @@
 (def element3 (nth my-vector 2))
 (def element4 (my-vector 2))
 
+;; look up
+(def user2 {"name": "Alice", "status": "active"})
+(print (get user2 "name"))  ; returns "Alice"
+(print (user2.name))  ; also returns "Alice"
+(print (user2["name"]))  ; returns "Alice"
+
+(def my-list (list "a" "b" "c"))
+(nth my-list 1)  ;; returns "b"
+(print (my-list 1)) ;; b
+
+(def my-vector2 (vector 10 20 30))
+(nth my-vector2 2)  ;; returns 30
+(print (my-vector2 2)) ;; 30
+
+(def my-set #[1, 2, 3])
+(print (my-set 2))  ;; 2
+(print (js-call my-set "has" 2))  ;; true
+
+(print (contains? my-set 2))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 2. Functions & Control Flow
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

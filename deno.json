@@ -1,5 +1,6 @@
 {
   "tasks": {
+   "parallel-test": "deno run -A ./test/parallel_tests.ts",
    "test": "deno task macro-test && deno task js-interop-test && deno task operator-test && deno task import-test && deno task data-structures-test && deno task hql-spec-test",
    "import-test": "deno task test-remote-import",
    "macro-test": "deno task test-do && deno task test-and && deno task test-or && deno task test-not && deno task test-defn && deno task test-cond && deno task test-export && deno task quote-quasiquote-tests && deno task test-daily-macro && deno task test-let && deno task test-core-primitives",

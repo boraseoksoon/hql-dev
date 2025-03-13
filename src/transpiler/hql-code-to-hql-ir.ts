@@ -2,7 +2,7 @@
 
 import * as IR from "./hql_ir.ts";
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
-import { KERNEL_PRIMITIVES, PRIMITIVE_OPS } from "../bootstrap.ts";
+import { KERNEL_PRIMITIVES, PRIMITIVE_OPS, PRIMITIVE_DATA_STRUCTURE, PRIMITIVE_CLASS } from "../bootstrap.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 
 /**
@@ -133,9 +133,8 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     const noArgResult = transformNoArgFunction(list, op);
     if (noArgResult) return noArgResult;
     
-    // Handle Clojure-style collection access
-    const clojureStyleResult = transformCollectionAccess(list, op, currentDir);
-    if (clojureStyleResult) return clojureStyleResult;
+    const sExpressionCollectionAccess = transformCollectionAccess(list, op, currentDir);
+    if (sExpressionCollectionAccess) return sExpressionCollectionAccess;
     
     // Standard function call
     return transformStandardFunctionCall(list, op, currentDir);
@@ -513,7 +512,8 @@ function transformNoArgFunction(list: ListNode, op: string): IR.IRNode | null {
 function shouldTransformCollectionAccess(list: ListNode, op: string): boolean {
   return list.elements.length === 2 &&
          !KERNEL_PRIMITIVES.has(op) &&
-         !PRIMITIVE_OPS.has(op) &&
+         !PRIMITIVE_DATA_STRUCTURE.has(op) &&
+         !PRIMITIVE_CLASS.has(op) &&
          !op.startsWith("js-");
 }
 
