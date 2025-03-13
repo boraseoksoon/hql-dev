@@ -10,11 +10,12 @@ function parseHQL(source: string) {
   return parse(source)[0];
 }
 
-// Tests for quote operations
+// These are additional tests that can be added to your existing quote_test.ts file
+
 Deno.test("quote - nested quoted lists", async () => {
   const ast = parseHQL("'(a (b c) d)");
   const env = await initializeGlobalEnv();
-  const result = await evaluateForMacro(ast, env);
+  const result = evaluateForMacro(ast, env);
   
   assertEquals(result.type, "list");
   assertEquals(result.elements.length, 3);
@@ -32,7 +33,7 @@ Deno.test("quote - quote prevents evaluation of expressions", async () => {
   
   // Quote should prevent evaluation of x
   const ast = parseHQL("'(+ x 1)");
-  const result = await evaluateForMacro(ast, env);
+  const result = evaluateForMacro(ast, env);
   
   assertEquals(result.type, "list");
   assertEquals(result.elements.length, 3);

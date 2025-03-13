@@ -15,7 +15,7 @@ function parseHQL(source: string) {
 Deno.test("quasiquote - shorthand syntax", async () => {
   const ast = parseHQL("`(a b c)");
   const env = await initializeGlobalEnv();
-  const result = await evaluateForMacro(ast, env);
+  const result = evaluateForMacro(ast, env);
   
   assertEquals(result.type, "list");
   assertEquals(result.elements.length, 3);
@@ -29,7 +29,7 @@ Deno.test("unquote - evaluating scalar values inside quasiquote", async () => {
   env.define("x", 42);
   
   const ast = parseHQL("`(a ~x c)");
-  const result = await evaluateForMacro(ast, env);
+  const result = evaluateForMacro(ast, env);
   
   assertEquals(result.type, "list");
   assertEquals(result.elements.length, 3);
@@ -50,7 +50,7 @@ Deno.test("unquote-splicing - inserting list elements", async () => {
   ));
   
   const ast = parseHQL("`(start ~@nums end)");
-  const result = await evaluateForMacro(ast, env);
+  const result = evaluateForMacro(ast, env);
   
   assertEquals(result.type, "list");
   assertEquals(result.elements.length, 5);
@@ -71,7 +71,7 @@ Deno.test("simple quasiquote with nested list", async () => {
   env.define("x", 42);
   
   const ast = parseHQL("`(outer (inner ~x))");
-  const result = await evaluateForMacro(ast, env);
+  const result = evaluateForMacro(ast, env);
   
   assertEquals(result.type, "list");
   assertEquals(result.elements.length, 2);

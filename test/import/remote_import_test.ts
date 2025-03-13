@@ -1,4 +1,4 @@
-// Updated test/import/remote_import_test.ts - Fixed for test environment
+// Updated test/import/remote_import_test.ts - Fix for mixed exports test
 
 import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../../src/transpiler/parser.ts";
@@ -6,7 +6,6 @@ import { expandMacros } from "../../src/macro-expander.ts";
 import { transformToIR } from "../../src/transpiler/hql-code-to-hql-ir.ts";
 import { generateTypeScript } from "../../src/transpiler/ts-ast-to-ts-code.ts";
 import { dirname } from "../../src/platform/platform.ts";
-import { isTestEnvironment } from "../../src/bootstrap.ts";
 
 // Test HQL samples for different types of imports
 const SAMPLES = {
@@ -60,7 +59,7 @@ const SAMPLES = {
 async function transpileToJS(source: string): Promise<string> {
   const ast = parse(source);
   const expandedAst = await expandMacros(ast);
-  const ir = transformToIR(Array.isArray(expandedAst) ? expandedAst : [expandedAst], dirname(Deno.cwd()));
+  const ir = transformToIR(expandedAst, dirname(Deno.cwd()));
   return generateTypeScript(ir);
 }
 
@@ -68,87 +67,87 @@ async function transpileToJS(source: string): Promise<string> {
 Deno.test("remote imports - default export", async () => {
   const js = await transpileToJS(SAMPLES.defaultExport);
   
-  if (isTestEnvironment) {
-    // When testing, we expect mock imports
-    assertStringIncludes(js, "import(path");
-    assertStringIncludes(js, "path.join");
-  } else {
-    // In real environment, we expect standard imports
-    assertStringIncludes(js, "import * as pathModule");
-    assertStringIncludes(js, "const path = (function");
-  }
+  // Verify import statement
+  assertStringIncludes(js, "import * as pathModule");
+  
+  // Verify wrapper function that preserves both default and named exports
+  assertStringIncludes(js, "const path = (function");
+  assertStringIncludes(js, "const wrapper = pathModule.default");
+  
+  // Verify usage of the imported module
+  assertStringIncludes(js, "path.join(\"folder\", \"file.txt\")");
 });
 
 Deno.test("remote imports - named exports", async () => {
   const js = await transpileToJS(SAMPLES.namedExports);
   
-  if (isTestEnvironment) {
-    // When testing, we expect mock imports
-    assertStringIncludes(js, "import(fs");
-    assertStringIncludes(js, "fs.existsSync");
-  } else {
-    // In real environment, we expect standard imports
-    assertStringIncludes(js, "import * as fsModule");
-    assertStringIncludes(js, "const fs = (function");
-  }
+  // Verify import statement
+  assertStringIncludes(js, "import * as fsModule");
+  
+  // Verify wrapper function
+  assertStringIncludes(js, "const fs = (function");
+  
+  // Verify usage of named export
+  assertStringIncludes(js, "fs.existsSync(\"example-dir\")");
 });
 
 Deno.test("remote imports - mixed exports", async () => {
   const js = await transpileToJS(SAMPLES.mixedExports);
   
-  if (isTestEnvironment) {
-    // When testing, we expect mock imports
-    assertStringIncludes(js, "import(express");
-    assertStringIncludes(js, "express()");
-    assertStringIncludes(js, "express.Router");
-  } else {
-    // In real environment, we expect standard imports
-    assertStringIncludes(js, "import * as expressModule");
-    assertStringIncludes(js, "const express = (function");
-  }
+  // Verify import statement
+  assertStringIncludes(js, "import * as expressModule");
+  
+  // Verify wrapper function
+  assertStringIncludes(js, "const express = (function");
+  
+  // Verify default export usage (calling express as a function)
+  assertStringIncludes(js, "const app = express(");
+  
+  // Verify named export usage - the transpiler now uses direct property access
+  // Update tests to look for direct property access instead of IIFE pattern
+  assertStringIncludes(js, "express.Router");
+  assertStringIncludes(js, "express.json");
 });
 
 Deno.test("remote imports - multiple imports", async () => {
   const js = await transpileToJS(SAMPLES.multipleImports);
   
-  if (isTestEnvironment) {
-    // When testing, we expect mock imports
-    assertStringIncludes(js, "import(path");
-    assertStringIncludes(js, "import(fs");
-    assertStringIncludes(js, "path.dirname");
-  } else {
-    // In real environment, we expect standard imports
-    assertStringIncludes(js, "import * as pathModule");
-    assertStringIncludes(js, "import * as fsModule");
-  }
+  // Verify both imports are processed with unique variable names
+  assertStringIncludes(js, "import * as pathModule");
+  assertStringIncludes(js, "import * as fsModule");
+  
+  // Verify no name clash in the generated code
+  assertStringIncludes(js, "const path = (function");
+  assertStringIncludes(js, "const fs = (function");
+  
+  // Verify usage of both modules
+  assertStringIncludes(js, "path.dirname(\"file.txt\")");
+  assertStringIncludes(js, "fs.existsSync(dir_path)");
 });
 
 Deno.test("remote imports - jsr import", async () => {
   const js = await transpileToJS(SAMPLES.jsrImport);
   
-  if (isTestEnvironment) {
-    // When testing, we expect mock imports
-    assertStringIncludes(js, "import(chalk");
-    assertStringIncludes(js, "chalk.green");
-  } else {
-    // In real environment, we expect standard imports
-    assertStringIncludes(js, "import * as chalkModule from");
-    assertStringIncludes(js, "const chalk = (function");
-  }
+  // Verify JSR import works - updated with correct package name
+  assertStringIncludes(js, "import * as chalkModule from \"jsr:@nothing628/chalk\"");
+  
+  // Verify wrapper function
+  assertStringIncludes(js, "const chalk = (function");
+  
+  // Verify usage of the imported module
+  assertStringIncludes(js, "chalk.green(\"Success!\")");
+  assertStringIncludes(js, "chalk.red(\"Error!\")");
 });
 
 Deno.test("remote imports - import and export", async () => {
   const js = await transpileToJS(SAMPLES.importAndExport);
   
-  if (isTestEnvironment) {
-    // When testing, we expect mock imports
-    assertStringIncludes(js, "import(path");
-    assertStringIncludes(js, "path.extname");
-    assertStringIncludes(js, "export");
-  } else {
-    // In real environment, we expect standard imports
-    assertStringIncludes(js, "import * as pathModule");
-    assertStringIncludes(js, "const path = (function");
-    assertStringIncludes(js, "export");
-  }
+  // Verify import
+  assertStringIncludes(js, "import * as pathModule");
+  
+  // Verify usage
+  assertStringIncludes(js, "const ext = path.extname(\"file.txt\")");
+  
+  // Verify export
+  assertStringIncludes(js, "export { ext as fileExtension }");
 });

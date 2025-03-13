@@ -1,20 +1,17 @@
-// src/transpiler/transformer.ts - Fixed import handling
+// src/transpiler/transformer.ts - Updated with minimal runtime
 
 import { parse } from "./parser.ts";
 import { transformToIR } from "./hql-code-to-hql-ir.ts";
 import { generateTypeScript } from "./ts-ast-to-ts-code.ts";
 import { dirname, resolve, readTextFile, writeTextFile } from "../platform/platform.ts";
-import { expandMacros } from "../macro.ts";
+import { expandMacros } from "../macro-expander.ts";
 import { HQLNode } from "./hql_ast.ts";
 import { HQLImportHandler } from "./hql_import_handler.ts";
 import * as IR from "./hql_ir.ts";
-import { isTestEnvironment } from "../bootstrap.ts";
 
-// Comprehensive runtime functions supporting both old and new code
+// Replace the current RUNTIME_FUNCTIONS with this enhanced version:
 const RUNTIME_FUNCTIONS = `
-/**
- * Enhanced runtime for HQL
- */
+// Enhanced runtime functions for HQL transpilation
 
 /**
  * Helper for property access
@@ -175,7 +172,7 @@ function conj(coll, ...items) {
  */
 function concat(...colls) {
   return [].concat(...colls.map(coll => 
-     coll == null ? [] : Array.isArray(coll) ? coll : [coll]
+    coll == null ? [] : Array.isArray(coll) ? coll : [coll]
   ));
 }
 
@@ -188,6 +185,7 @@ function list(...items) {
 }
 `;
 
+
 export interface TransformOptions {
   verbose?: boolean;
   bundle?: boolean;
@@ -195,60 +193,7 @@ export interface TransformOptions {
 }
 
 /**
- * Ensure that a value is an array of HQLNodes
- */
-function ensureNodeArray(nodes: HQLNode | HQLNode[]): HQLNode[] {
-  return Array.isArray(nodes) ? nodes : [nodes];
-}
-
-/**
- * Extract imports from original source to ensure they're preserved
- * This processes the given source code to find all import statements
- */
-function extractImports(source: string): Array<{name: string, source: string}> {
-  const imports: Array<{name: string, source: string}> = [];
-  
-  // Extract imports using a regex that matches (import name "source")
-  const importRegex = /\(import\s+([^\s)]+)\s+["']([^"']+)["']\)/g;
-  let match;
-  
-  while ((match = importRegex.exec(source)) !== null) {
-    const name = match[1];
-    const importSource = match[2];
-    
-    imports.push({
-      name: name,
-      source: importSource
-    });
-  }
-  
-  return imports;
-}
-
-/**
- * Generate import code that works with both old and new HQL
- */
-function generateImportCode(name: string, source: string): string {
-  // Rewrite npm: URLs to esm.sh for Deno compatibility if needed
-  let importUrl = source;
-  
-  // Simple dynamic import that will work in all contexts
-  return `// Import ${name} from ${source}
-import * as ${name}Module from "${importUrl}";
-var ${name} = (function() {
-  // Handle both ESM and CommonJS-style modules
-  const wrapper = ${name}Module.default !== undefined ? ${name}Module.default : {};
-  for (const [key, value] of Object.entries(${name}Module)) {
-    if (key !== "default") wrapper[key] = value;
-  }
-  return wrapper;
-})();
-`;
-}
-
-/**
  * Transform a parsed AST with macro expansion.
- * Fixed to handle both single node and array returns from expandMacros.
  */
 export async function transformAST(
   astNodes: HQLNode[], 
@@ -256,56 +201,37 @@ export async function transformAST(
   options: TransformOptions = {}
 ): Promise<string> {
   try {
-    // Extract imports from the original source
-    const sourceStr = JSON.stringify(astNodes);
-    const extractedImports = extractImports(sourceStr);
-    
     // Step 1: Expand macros in the AST
-    const expandedMacros = await expandMacros(astNodes);
-    // Ensure we have an array of nodes
-    const expandedNodes = ensureNodeArray(expandedMacros);
+    const expandedNodes = await expandMacros(astNodes);
     
     if (options.verbose) {
       console.log("Expanded AST:", JSON.stringify(expandedNodes, null, 2));
     }
 
-    // Step 2: Transform to IR
-    const ir = transformToIR(expandedNodes, currentDir);
+    // Step 2: Transform to IR, passing the import handler
+    const ir = await transformToIR(expandedNodes, currentDir);
     
     if (options.verbose) {
       console.log("IR:", JSON.stringify(ir, null, 2));
     }
     
-    // Step 3: Generate TypeScript code
+    // Step 4: Generate TypeScript code 
     const tsCode = generateTypeScript(ir);
     
-    // Step 4: Generate import code
-    let importCode = "";
-    for (const imp of extractedImports) {
-      importCode += generateImportCode(imp.name, imp.source);
-    }
-    
-    // Step 5: Combine runtime functions, imports, and generated code
-    return RUNTIME_FUNCTIONS + importCode + tsCode;
+    // Step 5: Prepend runtime functions
+    return RUNTIME_FUNCTIONS + tsCode;
   } catch (error) {
     console.error("Transformation error:", error);
     throw error;
   }
 }
 
-/**
- * Transpile HQL source code to JavaScript.
- * Fixed to maintain bidirectional import functionality.
- */
 export async function transpile(
   source: string, 
   filePath: string, 
   options: TransformOptions = {}
 ): Promise<string> {
   try {
-    // Extract all imports from the source
-    const extractedImports = extractImports(source);
-    
     // Create an import handler for preprocessing HQL imports
     const importHandler = new HQLImportHandler(options);
     
@@ -319,16 +245,14 @@ export async function transpile(
       console.log("Parsed AST:", JSON.stringify(astNodes, null, 2));
     }
     
-    // Perform macro expansion
-    const expandedMacros = await expandMacros(astNodes);
-    // Ensure we have an array of nodes
-    const expandedNodes = ensureNodeArray(expandedMacros);
+    // Now do the usual macro expansion
+    const expandedNodes = await expandMacros(astNodes);
     
     if (options.verbose) {
       console.log("Expanded AST:", JSON.stringify(expandedNodes, null, 2));
     }
     
-    // Transform to IR
+    // Transform to IR - we'll modify this to handle HQL import paths
     let ir = transformToIR(expandedNodes, dirname(filePath));
     
     // Post-process the IR to rewrite HQL imports to JS imports
@@ -341,14 +265,8 @@ export async function transpile(
     // Generate TypeScript code
     const tsCode = generateTypeScript(ir);
     
-    // Generate import code
-    let importCode = "";
-    for (const imp of extractedImports) {
-      importCode += generateImportCode(imp.name, imp.source);
-    }
-    
-    // Combine runtime functions, imports, and generated code
-    return RUNTIME_FUNCTIONS + importCode + tsCode;
+    // Prepend runtime functions
+    return RUNTIME_FUNCTIONS + tsCode;
   } catch (error) {
     throw new Error(`Transpile error: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -356,6 +274,7 @@ export async function transpile(
 
 /**
  * Post-process the IR to rewrite HQL imports to JS imports.
+ * This is a safe way to modify imports without changing the transformer architecture.
  */
 function rewriteHqlImportsInIR(ir: IR.IRProgram, importHandler: HQLImportHandler): IR.IRProgram {
   const newBody = ir.body.map(node => {
@@ -395,9 +314,7 @@ export async function transpileFile(
   const absPath = resolve(inputPath);
   try {
     const source = await readTextFile(absPath);
-    
     const tsCode = await transpile(source, absPath, options);
-    
     if (outputPath) {
       await writeTextFile(outputPath, tsCode);
     }

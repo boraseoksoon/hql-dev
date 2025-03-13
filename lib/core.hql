@@ -72,6 +72,7 @@
               body))
         (first (rest bindings)))))
 
+
 (defmacro str (& args)
   (cons '+ args))
 
@@ -84,9 +85,27 @@
 (defmacro contains? (s x)
   (list 'js-call s 'has x))
 
+;; demo_macro_composition.hql
+
+;; Define a simple macro that adds one to its argument.
 (defmacro add-one (x)
-  (list '+ x (list 'literal 1)))
+  `(+
+     ~x
+     1))
 
-(defmacro big-double (x)
-  (list '* (list 'literal 2) (add-one x)))
+;; Define a simple macro that doubles its argument.
+(defmacro double (x)
+  `(* ~x 2))
 
+;; Define a macro that relies on the above two macros.
+;; It first doubles the value and then adds one.
+(defmacro double-and-add-one (x)
+  `(add-one (double ~x)))
+
+(import other "./other.hql")
+(defmacro add-one (x) `(+ ~x 1))
+(defmacro square-plus-one (x) `(add-one (other.square ~x)))
+
+(import other2 "./other2.hql")
+(defmacro double-and-add-five (x)
+  `(+ (other2.double-it ~x) 5))
