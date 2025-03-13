@@ -51,7 +51,15 @@ export const PRIMITIVE_OPS = new Set([
   "conj", "concat",
   
   // New type predicates
-  "symbol?", "list?", "map?", "nil?"
+  "symbol?", "list?", "map?", "nil?", 
+
+  "new",
+  "empty-array",
+  "empty-map",
+  "empty-set",
+  "vector",
+  "hash-map",
+  "hash-set"
 ]);
 
 export class Env {

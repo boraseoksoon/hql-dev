@@ -134,7 +134,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     if (noArgResult) return noArgResult;
     
     // Handle Clojure-style collection access
-    const clojureStyleResult = transformClojureStyleAccess(list, op, currentDir);
+    const clojureStyleResult = transformCollectionAccess(list, op, currentDir);
     if (clojureStyleResult) return clojureStyleResult;
     
     // Standard function call
@@ -510,17 +510,20 @@ function transformNoArgFunction(list: ListNode, op: string): IR.IRNode | null {
   return null;
 }
 
+function shouldTransformCollectionAccess(list: ListNode, op: string): boolean {
+  return list.elements.length === 2 &&
+         !KERNEL_PRIMITIVES.has(op) &&
+         !PRIMITIVE_OPS.has(op) &&
+         !op.startsWith("js-");
+}
+
 /**
- * Transform Clojure-style collection access.
+ * Transform collection access.
+ * (myList 2) => (get myList 2)
+ * (myMap "key") => (get myMap "key")
  */
-function transformClojureStyleAccess(list: ListNode, op: string, currentDir: string): IR.IRNode | null {
-  if (list.elements.length === 2 && 
-      !KERNEL_PRIMITIVES.has(op) &&
-      !PRIMITIVE_OPS.has(op) &&
-      !op.startsWith('js-') &&
-      !["new", "empty-array", "empty-map", "empty-set", "vector", "hash-map", "hash-set"].includes(op)) {
-    
-    // Transform (collection index) into (get collection index)
+export function transformCollectionAccess(list: ListNode, op: string, currentDir: string): IR.IRNode | null {
+  if (shouldTransformCollectionAccess(list, op)) {
     const collection = transformNode(list.elements[0], currentDir)!;
     const index = transformNode(list.elements[1], currentDir)!;
     
