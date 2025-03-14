@@ -6,7 +6,6 @@ import { generateTypeScript } from "./ts-ast-to-ts-code.ts";
 import { dirname, resolve, readTextFile, writeTextFile } from "../platform/platform.ts";
 import { expandMacros } from "../macro-expander.ts";
 import { HQLNode, ListNode, SymbolNode } from "./hql_ast.ts";
-import * as IR from "./hql_ir.ts";
 import { HQLImportHandler } from "./hql_import_handler.ts";
 import { moduleRegistry } from "../macro-expander.ts";
 import { Env, initializeGlobalEnv } from "../bootstrap.ts";
@@ -198,7 +197,6 @@ export interface TransformOptions {
  * Transform a parsed AST with macro expansion.
  */
 export async function transformAST(
-
   astNodes: HQLNode[], 
   currentDir: string, 
   options: TransformOptions = {}
@@ -213,24 +211,49 @@ export async function transformAST(
       console.log("Expanded AST : ", JSON.stringify(expandedNodes, null, 2));
     }
 
-    // NEW: Check for modules used in the expanded AST
+    // Check for modules used in the expanded AST
     const usedModules = findUsedModulesInNodes(expandedNodes);
-    console.log(">>>>>>>>>>>>>>>>>>> usedModules : ", usedModules)
+    console.log(">>>>>>>>>>>>>>>>>>> usedModules : ", usedModules);
     if (options.verbose) {
       console.log("Used modules:", Array.from(usedModules));
     }
    
-    const fullAST = [];
+    const fullAST: HQLNode[] = [];
+    const processedImports = new Set<string>();
     
-    console.log("moduleRegistry : ", moduleRegistry)
-    console.log("env : ", env)
+    console.log("moduleRegistry : ", moduleRegistry);
+    console.log("env : ", env);
 
+    // First, extract import statements from the expanded nodes
+    for (const node of expandedNodes) {
+      if (isImportNode(node)) {
+        if (node.elements.length >= 3 && 
+            node.elements[1].type === "symbol" && 
+            node.elements[2].type === "literal") {
+          
+          const moduleName = (node.elements[1] as SymbolNode).name;
+          // Skip if we've already processed this import
+          if (processedImports.has(moduleName)) {
+            continue;
+          }
+          
+          // Add to our AST and mark as processed
+          fullAST.push(node);
+          processedImports.add(moduleName);
+        }
+      } else {
+        // Non-import nodes are added as-is
+        fullAST.push(node);
+      }
+    }
+    
+    // Add any used modules from registry that weren't explicitly imported
     for (const moduleName of usedModules) {
-      if (moduleRegistry.has(moduleName)) {
+      if (moduleRegistry.has(moduleName) && !processedImports.has(moduleName)) {
         const importPath = moduleRegistry.get(moduleName)!;
-        console.log(`[transformAST] Adding import for module: ${moduleName} from ${importPath}`);
+        console.log(`[transformAST] Adding implicit import for module: ${moduleName} from ${importPath}`);
         
-        fullAST.push({
+        fullAST.unshift({
           type: "list" as const,
           elements: [
             { type: "symbol" as const, name: "js-import" },
@@ -238,11 +261,10 @@ export async function transformAST(
             { type: "literal" as const, value: importPath }
           ]
         });    
+        
+        processedImports.add(moduleName);
       }
     }
-        
-    // Add the original expanded nodes
-    fullAST.push(...expandedNodes);
 
     // Step 2: Transform to IR with the augmented AST
     const ir = transformToIR(fullAST, currentDir);
@@ -260,6 +282,19 @@ export async function transformAST(
     console.error("Transformation error:", error);
     throw error;
   }
+}
+
+/**
+ * Check if a node is an import statement
+ */
+function isImportNode(node: HQLNode): boolean {
+  return (
+    node.type === "list" &&
+    node.elements.length >= 3 &&
+    node.elements[0].type === "symbol" &&
+    ((node.elements[0] as SymbolNode).name === "import" || 
+     (node.elements[0] as SymbolNode).name === "js-import")
+  );
 }
 
 export async function transpile(

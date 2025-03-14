@@ -6,6 +6,8 @@ import { dirname, resolve } from "./platform/platform.ts";
 import { parse } from "./transpiler/parser.ts";
 import { readTextFile } from "./platform/platform.ts";
 
+export const moduleRegistry = new Map<string, string>();
+
 /**
  * Detects if a node is an import statement
  */
@@ -159,8 +161,6 @@ export function registerModule(moduleName: string, mod: any, env: Env): void {
   }
 }
 
-export const moduleRegistry = new Map<string, string>();
-
 /**
  * Process an import statement from any source
  * Handles HQL files and remote modules consistently
@@ -198,11 +198,8 @@ export async function processImportNode(
     // HQL files need their own processing
     if (importPath.endsWith('.hql')) {
       await processHqlImport(importName, importPath, env, currentDir);
-    }
-    // All other imports - try to load dynamically
-    else {
-      try {
-        let mod;
+    } else {
+      let mod;
         if (importPath.startsWith("npm:")) {
           const dataUrl = `data:application/javascript,export * from "${importPath}";`;
           mod = await import(dataUrl);
@@ -213,114 +210,10 @@ export async function processImportNode(
         env.define(importName, mod);
         registerModule(importName, mod, env);
         console.log(`[processImportNode] Successfully registered module: ${importName}`);
-      } catch (error) {
-        console.error(`[processImportNode] Error importing module ${importPath}:`, error);
-        
-        // Create a placeholder module
-        const placeholder = createModulePlaceholder(importName, importPath);
-        env.define(importName, placeholder);
-        
-        // Register common methods as macro placeholders
-        for (const [key, value] of Object.entries(placeholder)) {
-          if (typeof value === 'function' && !key.startsWith('__')) {
-            const qualifiedName = `${importName}.${key}`;
-            console.log(`[processImportNode] Registering placeholder macro: ${qualifiedName}`);
-            env.defineMacro(qualifiedName, createPlaceholderMacro(qualifiedName, key));
-          }
-        }
-        
-        console.log(`[processImportNode] Created placeholder for module: ${importName}`);
-      }
     }
   } catch (error) {
     console.error(`[processImportNode] Critical error processing import ${importPath}:`, error);
-    
-    // Create a minimal placeholder to avoid breaking the entire expansion
-    const errorPlaceholder = {
-      __importError: true,
-      __importPath: importPath,
-      __errorMessage: error.message
-    };
-    
-    env.define(importName, errorPlaceholder);
   }
-}
-
-/**
- * Create a placeholder module with appropriate methods
- */
-function createModulePlaceholder(moduleName: string, importPath: string): any {
-  const placeholder: any = {
-    __isPlaceholder: true,
-    __importPath: importPath,
-    __message: `This is a placeholder for ${importPath} that will be replaced at runtime`,
-    toString: () => `[Module placeholder for ${importPath}]`
-  };
-  
-  // Path module placeholders
-  if (moduleName === 'path' || importPath.includes('path')) {
-    placeholder.join = createPlaceholderFunction('join');
-    placeholder.resolve = createPlaceholderFunction('resolve');
-    placeholder.dirname = createPlaceholderFunction('dirname');
-    placeholder.basename = createPlaceholderFunction('basename');
-    placeholder.extname = createPlaceholderFunction('extname');
-  } 
-  // FS module placeholders
-  else if (moduleName === 'fs' || importPath.includes('fs')) {
-    placeholder.existsSync = createPlaceholderFunction('existsSync');
-    placeholder.readFileSync = createPlaceholderFunction('readFileSync');
-    placeholder.writeFileSync = createPlaceholderFunction('writeFileSync');
-  }
-  // Lodash module placeholders
-  else if (moduleName === 'lodash' || importPath.includes('lodash')) {
-    placeholder.capitalize = createPlaceholderFunction('capitalize');
-    placeholder.map = createPlaceholderFunction('map');
-    placeholder.filter = createPlaceholderFunction('filter');
-    placeholder.reduce = createPlaceholderFunction('reduce');
-  }
-  
-  return placeholder;
-}
-
-/**
- * Create a placeholder function that returns a default value
- */
-function createPlaceholderFunction(name: string): Function {
-  return function(...args: any[]) {
-    console.log(`Placeholder function ${name} called with args:`, args);
-    
-    // Return reasonable defaults based on function name
-    if (name === 'join' || name === 'resolve' || name === 'dirname' || name === 'basename') {
-      return String(args[0] || '');
-    } else if (name === 'existsSync') {
-      return false;
-    } else if (name === 'capitalize' && typeof args[0] === 'string') {
-      // Basic capitalize implementation for lodash
-      return args[0].charAt(0).toUpperCase() + args[0].slice(1);
-    } else {
-      return null;
-    }
-  };
-}
-
-/**
- * Create a placeholder macro that converts to js-call for runtime
- */
-function createPlaceholderMacro(qualifiedName: string, methodName: string): MacroFunction {
-  return (args: HQLNode[], env: Env) => {
-    const [moduleName] = qualifiedName.split('.');
-    
-    // Return a js-call node for runtime evaluation
-    return {
-      type: "list",
-      elements: [
-        { type: "symbol", name: "js-call" },
-        { type: "symbol", name: moduleName },
-        { type: "literal", value: methodName },
-        ...args
-      ]
-    };
-  };
 }
 
 /**
@@ -456,10 +349,12 @@ export async function processHqlImport(
   }
 }
 
+// Fix for the expandNode function in macro-expander.ts
+
 /**
  * Recursively expands macros in an HQL AST node.
  */
-function expandNode(node: HQLNode, env?: Env = undefined, depth = 0): HQLNode {
+function expandNode(node: HQLNode, env: Env, depth = 0): HQLNode {
   const indent = " ".repeat(depth * 2);
   console.log(`${indent}[expandNode:${depth}] Processing node type: ${node.type}`);
 
@@ -719,7 +614,9 @@ export async function expandMacros(nodes: HQLNode[], env?: Env): Promise<HQLNode
     
     // Expand nodes with detailed logging
     console.log("[expandMacros] Starting recursive node expansion");
-    const expanded = nodes.map(node => expandNode(node, env));
+    
+    // Add non-null assertion operator to tell TypeScript that env is definitely defined here
+    const expanded = nodes.map(node => expandNode(node, env!));
     
     console.log("[expandMacros] Expansion complete");
     

@@ -1,5 +1,7 @@
 // examples/sample.js
 import * as lodashModule from "npm:lodash";
+var joined_path = "folder/file.txt";
+console.log(joined_path);
 var lodash = function() {
   const wrapper = lodashModule.default !== void 0 ? lodashModule.default : {};
   for (const [key, value] of Object.entries(lodashModule)) {
@@ -9,5 +11,4 @@ var lodash = function() {
   return wrapper;
 }();
 console.log(lodash.capitalize("is it working?"));
-var joined_path = "folder/file.txt";
-console.log(joined_path);
+console.log(10 * 10 + 1);
