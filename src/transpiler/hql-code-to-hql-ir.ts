@@ -95,6 +95,31 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (first.type === "symbol") {
     const op = (first as SymbolNode).name;
     
+    // Case 2: First element is a symbol
+    if (op === "import" && list.elements.length === 3) {
+      // Extract module name and path
+      const nameNode = list.elements[1];
+      const pathNode = list.elements[2];
+      
+      if (nameNode.type !== "symbol") {
+        throw new Error("Import name must be a symbol");
+      }
+      
+      if (pathNode.type !== "literal") {
+        throw new Error("Import path must be a string literal");
+      }
+      
+      const name = (nameNode as SymbolNode).name;
+      const path = String((pathNode as LiteralNode).value);
+      
+      // Create a JsImportReference - same as js-import handling
+      return {
+        type: IR.IRNodeType.JsImportReference,
+        name,
+        source: path
+      } as IR.IRJsImportReference;
+    }
+    
     // Handle dot notation
     const dotNotationResult = transformDotNotation(list, op, currentDir);
     if (dotNotationResult) return dotNotationResult;
@@ -107,6 +132,8 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     if (KERNEL_PRIMITIVES.has(op)) {
       return transformKernelPrimitive(list, op, currentDir);
     }
+    
+    console.log(">>>>>> transformList list : ", list)
     
     // Handle JS interop primitives
     const jsInteropResult = transformJsInteropPrimitive(list, op, currentDir);

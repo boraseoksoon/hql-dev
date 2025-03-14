@@ -5,9 +5,11 @@ import { transformToIR } from "./hql-code-to-hql-ir.ts";
 import { generateTypeScript } from "./ts-ast-to-ts-code.ts";
 import { dirname, resolve, readTextFile, writeTextFile } from "../platform/platform.ts";
 import { expandMacros } from "../macro-expander.ts";
-import { HQLNode } from "./hql_ast.ts";
-import { HQLImportHandler } from "./hql_import_handler.ts";
+import { HQLNode, ListNode, SymbolNode } from "./hql_ast.ts";
 import * as IR from "./hql_ir.ts";
+import { HQLImportHandler } from "./hql_import_handler.ts";
+import { moduleRegistry } from "../macro-expander.ts";
+import { Env, initializeGlobalEnv } from "../bootstrap.ts";
 
 // Replace the current RUNTIME_FUNCTIONS with this enhanced version:
 const RUNTIME_FUNCTIONS = `
@@ -196,29 +198,63 @@ export interface TransformOptions {
  * Transform a parsed AST with macro expansion.
  */
 export async function transformAST(
+
   astNodes: HQLNode[], 
   currentDir: string, 
   options: TransformOptions = {}
 ): Promise<string> {
   try {
+    const env: Env = await initializeGlobalEnv();
+
     // Step 1: Expand macros in the AST
-    const expandedNodes = await expandMacros(astNodes);
+    const expandedNodes = await expandMacros(astNodes, env);
     
     if (options.verbose) {
-      console.log("Expanded AST:", JSON.stringify(expandedNodes, null, 2));
+      console.log("Expanded AST : ", JSON.stringify(expandedNodes, null, 2));
     }
 
-    // Step 2: Transform to IR, passing the import handler
-    const ir = await transformToIR(expandedNodes, currentDir);
+    // NEW: Check for modules used in the expanded AST
+    const usedModules = findUsedModulesInNodes(expandedNodes);
+    console.log(">>>>>>>>>>>>>>>>>>> usedModules : ", usedModules)
+    if (options.verbose) {
+      console.log("Used modules:", Array.from(usedModules));
+    }
+   
+    const fullAST = [];
+    
+    console.log("moduleRegistry : ", moduleRegistry)
+    console.log("env : ", env)
+
+    for (const moduleName of usedModules) {
+      if (moduleRegistry.has(moduleName)) {
+        const importPath = moduleRegistry.get(moduleName)!;
+        console.log(`[transformAST] Adding import for module: ${moduleName} from ${importPath}`);
+        
+        fullAST.push({
+          type: "list" as const,
+          elements: [
+            { type: "symbol" as const, name: "js-import" },
+            { type: "symbol" as const, name: moduleName },
+            { type: "literal" as const, value: importPath }
+          ]
+        });    
+      }
+    }
+        
+    // Add the original expanded nodes
+    fullAST.push(...expandedNodes);
+
+    // Step 2: Transform to IR with the augmented AST
+    const ir = transformToIR(fullAST, currentDir);
     
     if (options.verbose) {
       console.log("IR:", JSON.stringify(ir, null, 2));
     }
     
-    // Step 4: Generate TypeScript code 
+    // Step 3: Generate TypeScript code 
     const tsCode = generateTypeScript(ir);
     
-    // Step 5: Prepend runtime functions
+    // Step 4: Prepend runtime functions
     return RUNTIME_FUNCTIONS + tsCode;
   } catch (error) {
     console.error("Transformation error:", error);
@@ -251,12 +287,8 @@ export async function transpile(
     if (options.verbose) {
       console.log("Expanded AST:", JSON.stringify(expandedNodes, null, 2));
     }
-    
-    // Transform to IR - we'll modify this to handle HQL import paths
-    let ir = transformToIR(expandedNodes, dirname(filePath));
-    
-    // Post-process the IR to rewrite HQL imports to JS imports
-    ir = rewriteHqlImportsInIR(ir, importHandler);
+
+    const ir = transformToIR(expandedNodes, dirname(filePath));
     
     if (options.verbose) {
       console.log("IR:", JSON.stringify(ir, null, 2));
@@ -272,35 +304,32 @@ export async function transpile(
   }
 }
 
-/**
- * Post-process the IR to rewrite HQL imports to JS imports.
- * This is a safe way to modify imports without changing the transformer architecture.
- */
-function rewriteHqlImportsInIR(ir: IR.IRProgram, importHandler: HQLImportHandler): IR.IRProgram {
-  const newBody = ir.body.map(node => {
-    // Look for JsImportReference nodes
-    if (node.type === IR.IRNodeType.JsImportReference) {
-      const importNode = node as IR.IRJsImportReference;
-      const source = importNode.source;
-      
-      // If this is an HQL import, rewrite it to the JS equivalent
-      if (HQLImportHandler.isHqlFile(source)) {
-        const jsPath = importHandler.getJsImportPath(source);
-        if (jsPath) {
-          return {
-            ...importNode,
-            source: jsPath
-          };
-        }
-      }
-    }
-    return node;
-  });
+// Helper function to find modules used in js-call nodes
+function findUsedModulesInNodes(nodes: HQLNode[]): Set<string> {
+  const usedModules = new Set<string>();
   
-  return {
-    ...ir,
-    body: newBody
-  };
+  function traverse(node: HQLNode) {
+    if (node.type === "list") {
+      const listNode = node as ListNode;
+      
+      // Check for js-call pattern
+      if (
+        listNode.elements.length >= 3 &&
+        listNode.elements[0].type === "symbol" &&
+        (listNode.elements[0] as SymbolNode).name === "js-call" &&
+        listNode.elements[1].type === "symbol"
+      ) {
+        const moduleName = (listNode.elements[1] as SymbolNode).name;
+        usedModules.add(moduleName);
+      }
+      
+      // Traverse all elements
+      listNode.elements.forEach(traverse);
+    }
+  }
+  
+  nodes.forEach(traverse);
+  return usedModules;
 }
 
 /**

@@ -1,3 +1,4 @@
-;; Use the composed macro.
-(print (square-plus-one 3))
-(print (double-and-add-five 3))
+(print (lodash-capitalize "is it working?"))
+
+(def joined-path (path.join "folder" "file.txt"))
+(console.log joined-path)

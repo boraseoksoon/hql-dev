@@ -4,7 +4,8 @@ import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./transpiler/hql_ast
 import { jsImport, jsExport, jsGet, jsCall } from "./interop.ts";
 import { gensym } from "./gensym.ts";
 import { parse } from "./transpiler/parser.ts";
-import { resolve, dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { processImportNode, isMacroImport } from "./macro-expander.ts";
 
 /* -------------------- Constants -------------------- */
 
@@ -41,6 +42,7 @@ export const PRIMITIVE_DATA_STRUCTURE = new Set([
 export class Env {
   bindings = new Map<string, any>();
   macros = new Map<string, MacroFunction>();
+  moduleImports = new Map<string, string>(); // Track module import paths
   parent: Env | null = null;
   
   constructor(parent: Env | null = null) {
@@ -321,82 +323,34 @@ function setupPrimitives(env: Env): void {
 /* -------------------- Core Macro Loading -------------------- */
 
 /*
-  loadCoreMacros loads the core macros defined in lib/core.hql using a two-pass approach:
-  First, register all defmacro forms.
-  Then, evaluate all non-defmacro forms.
+  loadCoreMacros loads the core macros defined in lib/core.hql
 */
-export async function loadCoreMacros(env: Env): Promise<void> {
+export async function loadCoreMacros(env: any): Promise<void> {
   console.log("[bootstrap] Loading core macros");
   const coreSource = await Deno.readTextFile("./lib/core.hql");
-  const astNodes = parse(coreSource);
-  
+  const astNodes: HQLNode[] = parse(coreSource);
   const coreDir = dirname("./lib/core.hql");
-  
-  // First pass: process all imports
+
+  // First pass: Process all imports
   for (const node of astNodes) {
-    if (isImportNode(node)) {
+    if (isMacroImport(node)) {
       console.log("[bootstrap] Processing import in core.hql");
       await processImportNode(node as ListNode, env, coreDir);
     }
   }
-  
-  // Second pass: register all macros
+
+  // Second pass: Process all macro definitions
   for (const node of astNodes) {
     if (isMacroDefinition(node)) {
       console.log("[bootstrap] Registering macro definition");
       evaluateForMacro(node, env);
-    }
-  }
-  
-  // Third pass: evaluate other definitions
-  for (const node of astNodes) {
-    if (!isImportNode(node) && !isMacroDefinition(node)) {
+    } else if (!isMacroImport(node)) {
+      // For any other definitions that are not imports or macro definitions
       evaluateForMacro(node, env);
     }
   }
   
   console.log("[bootstrap] Core macros loaded successfully");
-}
-
-async function processImportNode(
-  importNode: ListNode,
-  env: Env,
-  currentDir: string
-): Promise<void> {
-  if (importNode.elements.length < 3) {
-    throw new Error("Import requires a name and a path");
-  }
-  
-  const nameNode = importNode.elements[1];
-  const pathNode = importNode.elements[2];
-  
-  if (nameNode.type !== "symbol") {
-    throw new Error("Import name must be a symbol");
-  }
-  const importName = (nameNode as SymbolNode).name;
-  
-  if (pathNode.type !== "literal") {
-    throw new Error("Import path must be a string literal");
-  }
-  const importPath = String((pathNode as LiteralNode).value);
-  
-  console.log(`[bootstrap] Processing import: ${importName} from ${importPath}`);
-  
-  // Only handle HQL files specially
-  if (importPath.endsWith('.hql')) {
-    await processHqlImport(importName, importPath, env, currentDir);
-  } else {
-    console.log(`[bootstrap] Skipping non-HQL import: ${importPath}`);
-  }
-}
-
-function isImportNode(node: HQLNode): boolean {
-  return (
-    node.type === "list" &&
-    (node as ListNode).elements.length > 0 &&
-    (node as ListNode).elements[0].type === "symbol" &&
-    ((node as ListNode).elements[0] as SymbolNode).name === "import"
-  );
 }
 
 // Helper to identify macro definition nodes
@@ -409,138 +363,20 @@ function isMacroDefinition(node: HQLNode): boolean {
   );
 }
 
-/**
- * Process an import statement during core macro loading
- */
-async function processImport(node: ListNode, env: Env, currentDir: string): Promise<void> {
-  if (node.elements.length < 3) {
-    throw new Error("Import requires at least 2 arguments: name and path");
-  }
-  
-  const nameNode = node.elements[1];
-  const pathNode = node.elements[2];
-  
-  if (nameNode.type !== "symbol") {
-    throw new Error("Import name must be a symbol");
-  }
-  const importName = (nameNode as SymbolNode).name;
-  
-  if (pathNode.type !== "literal") {
-    throw new Error("Import path must be a string literal");
-  }
-  const importPath = String((pathNode as LiteralNode).value);
-  
-  console.log(`[bootstrap] Processing import: ${importName} from ${importPath}`);
-  
-  // Check if it's an HQL import
-  if (importPath.endsWith('.hql')) {
-    await processHqlImport(importName, importPath, env, currentDir);
-  } else {
-    console.log(`[bootstrap] Non-HQL import (skipping): ${importPath}`);
-    // Note: Non-HQL imports would usually be handled by the transpiler later
-  }
-}
-
-/**
- * Process an HQL file import during core macro loading
- */
-async function processHqlImport(
-  moduleName: string,
-  modulePath: string,
-  env: Env,
-  currentDir: string
-): Promise<void> {
-  try {
-    // Resolve path relative to current directory
-    const resolvedPath = resolve(currentDir, modulePath);
-    console.log(`[bootstrap] Resolved import path: ${resolvedPath}`);
-    
-    // Read and parse the file
-    const source = await Deno.readTextFile(resolvedPath);
-    const importedAst = parse(source);
-    console.log(`[bootstrap] Parsed imported file: ${importedAst.length} nodes`);
-    
-    // Create module object to store exports
-    const moduleExports: Record<string, any> = {};
-    
-    // Process any nested imports first
-    for (const node of importedAst) {
-      if (isImportNode(node)) {
-        const importDir = dirname(resolvedPath);
-        await processImportNode(node as ListNode, env, importDir);
-      }
-    }
-    
-    // Register all macro definitions from the imported file
-    for (const node of importedAst) {
-      if (isMacroDefinition(node)) {
-        const macroNode = node as ListNode;
-        if (macroNode.elements.length >= 3 && macroNode.elements[1].type === "symbol") {
-          const macroName = (macroNode.elements[1] as SymbolNode).name;
-          console.log(`[bootstrap] Found macro in imported file: ${macroName}`);
-          
-          // Evaluate the macro
-          evaluateForMacro(node, env);
-          
-          // Get the macro function from the environment
-          const macroFn = env.getMacro(macroName);
-          if (macroFn) {
-            // Store in module exports
-            moduleExports[macroName] = macroFn;
-            
-            // CRITICAL: Register the macro with a qualified name
-            const qualifiedName = `${moduleName}.${macroName}`;
-            env.defineMacro(qualifiedName, macroFn);
-            console.log(`[bootstrap] Registered qualified macro: ${qualifiedName}`);
-          }
-        }
-      }
-    }
-    
-    // Register all other definitions
-    for (const node of importedAst) {
-      if (!isImportNode(node) && !isMacroDefinition(node)) {
-        if (
-          node.type === "list" && 
-          (node as ListNode).elements.length > 0 &&
-          (node as ListNode).elements[0].type === "symbol" &&
-          ((node as ListNode).elements[0] as SymbolNode).name === "def"
-        ) {
-          const defNode = node as ListNode;
-          if (defNode.elements.length >= 3 && defNode.elements[1].type === "symbol") {
-            const defName = (defNode.elements[1] as SymbolNode).name;
-            console.log(`[bootstrap] Found definition in imported file: ${defName}`);
-            
-            // Evaluate the definition
-            const value = evaluateForMacro(node, env);
-            
-            // Store in module exports
-            moduleExports[defName] = value;
-            
-            // Register with qualified name
-            const qualifiedName = `${moduleName}.${defName}`;
-            env.define(qualifiedName, value);
-            console.log(`[bootstrap] Registered qualified definition: ${qualifiedName}`);
-          }
-        }
-      }
-    }
-    
-    // Register the complete module
-    env.define(moduleName, moduleExports);
-    console.log(`[bootstrap] Registered module ${moduleName} with exports:`, Object.keys(moduleExports));
-  } catch (error) {
-    console.error(`[bootstrap] Error processing HQL import ${modulePath}:`, error);
-    throw error;
-  }
-}
-
 /* -------------------- Global Environment Initialization -------------------- */
 
 export async function initializeGlobalEnv(): Promise<Env> {
   const env = new Env();
   setupPrimitives(env);
-  await loadCoreMacros(env);
+  
+  try {
+    await loadCoreMacros(env);
+    console.log("[bootstrap] Core macros loaded successfully");
+  } catch (error) {
+    console.error("[bootstrap] Error loading core macros:", error);
+    console.log("[bootstrap] Continuing with partial macro functionality");
+  }
+  
   return env;
 }
 
@@ -604,7 +440,6 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
       if (first.type === "symbol") {
         const op = (first as SymbolNode).name;
         if (op === "js-import") {
-          // Expect form: (js-import (quote name) path)
           const quoted = list.elements[1];
           if (quoted.type !== "list") throw new Error("js-import: expected quoted name");
           const qlist = quoted as ListNode;

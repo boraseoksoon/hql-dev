@@ -109,3 +109,12 @@
 (import other2 "./other2.hql")
 (defmacro double-and-add-five (x)
   `(+ (other2.double-it ~x) 5))
+
+(import path "https://deno.land/std@0.170.0/path/mod.ts")
+;; (import chalk "jsr:@nothing628/chalk")
+;; (import express "npm:express")
+
+(import lodash "npm:lodash")
+(defmacro lodash-capitalize (s)
+  `(js-call lodash "capitalize" ~s))
+

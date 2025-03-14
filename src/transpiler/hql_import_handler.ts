@@ -8,9 +8,7 @@ import { TransformOptions } from "./transformer.ts";
  * This approach preserves the synchronous nature of the transformation pipeline.
  */
 export class HQLImportHandler {
-  // Track processed files to avoid circular dependencies
   private processedFiles = new Set<string>();
-  // Map of HQL paths to their JS equivalents
   private importMap = new Map<string, string>();
   
   constructor(private options: TransformOptions = {}) {}
