@@ -1,23 +1,40 @@
-// src/bootstrap.ts
+// src/bootstrap.ts - Refactored for improved modularity and controlled logging
 import { dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { HQLNode, LiteralNode, SymbolNode, ListNode, isMacroImport } from "./transpiler/hql_ast.ts";
 import { jsImport, jsExport, jsGet, jsCall } from "./interop.ts";
 import { gensym } from "./gensym.ts";
 import { parse } from "./transpiler/parser.ts";
 import { processImportNode } from "./macro-expander.ts";
+import { Logger } from "./logger.ts";
+import { Env } from "./environment.ts"
 
 /* -------------------- Constants -------------------- */
 
+/**
+ * Primitive language forms that are built into the kernel
+ */
 export const KERNEL_PRIMITIVES = new Set([
   "quote", "if", "fn", "def", "quasiquote", "unquote", "unquote-splicing"
 ]);
 
+/**
+ * Forms derived from kernel primitives (implemented as macros)
+ */
 export const DERIVED_FORMS = new Set(["defmacro"]);
 
+/**
+ * Combined set of all core language forms
+ */
 export const CORE_FORMS = new Set([...KERNEL_PRIMITIVES, ...DERIVED_FORMS]);
 
+/**
+ * Primitive list operations
+ */
 export const LIST_PRIMITIVES = new Set(["first", "rest", "cons", "=", "length"]);
 
+/**
+ * Primitive operations available in the language
+ */
 export const PRIMITIVE_OPS = new Set([
   "+", "-", "*", "/", "%",
   "=", "!=", "<", ">", "<=", ">=", "eq?",
@@ -28,212 +45,59 @@ export const PRIMITIVE_OPS = new Set([
   "symbol?", "list?", "map?", "nil?"
 ]);
 
+/**
+ * Primitive class operations
+ */
 export const PRIMITIVE_CLASS = new Set(["new"]);
 
+/**
+ * Primitive data structure operations
+ */
 export const PRIMITIVE_DATA_STRUCTURE = new Set([
   "empty-array", "empty-map", "empty-set", "vector", "hash-map", "hash-set"
 ]);
 
-/* -------------------- Environment -------------------- */
-
-// Enhanced Env class with detailed logging for debugging
-
-export class Env {
-  bindings = new Map<string, any>();
-  macros = new Map<string, MacroFunction>();
-  moduleImports = new Map<string, string>(); // Track module import paths
-  parent: Env | null = null;
-  
-  constructor(parent: Env | null = null) {
-    this.parent = parent;
-  }
-  
-  lookup(symbol: string): any {
-    console.log(`[Env.lookup] Looking up symbol: ${symbol}`);
-    
-    // First try direct lookup
-    if (this.bindings.has(symbol)) {
-      console.log(`[Env.lookup] Found symbol in current environment: ${symbol}`);
-      return this.bindings.get(symbol);
-    }
-    
-    // Handle dot notation for module access
-    if (symbol.includes('.')) {
-      const [moduleName, memberName] = symbol.split('.');
-      console.log(`[Env.lookup] Looking up module.member: ${moduleName}.${memberName}`);
-      
-      // Try direct lookup of fully qualified name first
-      if (this.bindings.has(symbol)) {
-        console.log(`[Env.lookup] Found fully qualified name in environment: ${symbol}`);
-        return this.bindings.get(symbol);
-      }
-      
-      // Try module-based lookup
-      if (this.bindings.has(moduleName)) {
-        const module = this.bindings.get(moduleName);
-        console.log(`[Env.lookup] Found module: ${moduleName}, looking for member: ${memberName}`);
-        
-        if (typeof module === 'object' && module !== null && memberName in module) {
-          console.log(`[Env.lookup] Found member in module: ${memberName}`);
-          return module[memberName];
-        } else {
-          console.log(`[Env.lookup] Member not found in module: ${memberName}`);
-        }
-      } else {
-        console.log(`[Env.lookup] Module not found: ${moduleName}`);
-      }
-    }
-    
-    // Try parent environment
-    if (this.parent) {
-      console.log(`[Env.lookup] Looking in parent environment for: ${symbol}`);
-      return this.parent.lookup(symbol);
-    }
-    
-    // Not found
-    console.log(`[Env.lookup] Symbol not found: ${symbol}`);
-    throw new Error(`Symbol not found: ${symbol}`);
-  }
-  
-  define(symbol: string, value: any): void {
-    console.log(`[Env.define] Defining symbol: ${symbol}`);
-    this.bindings.set(symbol, value);
-  }
-  
-  defineMacro(name: string, fn: MacroFunction): void {
-    console.log(`[Env.defineMacro] Defining macro: ${name}`);
-    this.macros.set(name, fn);
-  }
-  
-  hasMacro(name: string): boolean {
-    console.log(`[Env.hasMacro] Checking for macro: ${name}`);
-    
-    // Direct lookup in this environment
-    if (this.macros.has(name)) {
-      console.log(`[Env.hasMacro] Found macro in current environment: ${name}`);
-      return true;
-    }
-    
-    // Handle dot notation for module access
-    if (name.includes('.')) {
-      const [moduleName, macroName] = name.split('.');
-      console.log(`[Env.hasMacro] Checking for module.macro: ${moduleName}.${macroName}`);
-      
-      // First check if the fully qualified name is registered directly
-      if (this.macros.has(name)) {
-        console.log(`[Env.hasMacro] Found fully qualified macro: ${name}`);
-        return true;
-      }
-      
-      // Try module-based lookup
-      try {
-        if (this.bindings.has(moduleName)) {
-          const module = this.bindings.get(moduleName);
-          console.log(`[Env.hasMacro] Found module: ${moduleName}, checking for macro: ${macroName}`);
-          
-          if (module && typeof module === 'object' && macroName in module) {
-            const member = module[macroName];
-            console.log(`[Env.hasMacro] Found member in module: ${macroName}, is function: ${typeof member === 'function'}`);
-            return typeof member === 'function';
-          }
-        }
-      } catch (error) {
-        console.log(`[Env.hasMacro] Error in module lookup: ${error.message}`);
-      }
-    }
-    
-    // Try parent environment
-    if (this.parent) {
-      console.log(`[Env.hasMacro] Checking parent environment for macro: ${name}`);
-      return this.parent.hasMacro(name);
-    }
-    
-    console.log(`[Env.hasMacro] Macro not found: ${name}`);
-    return false;
-  }
-  
-  getMacro(name: string): MacroFunction | null {
-    console.log(`[Env.getMacro] Getting macro: ${name}`);
-    
-    // Direct lookup
-    if (this.macros.has(name)) {
-      console.log(`[Env.getMacro] Found macro in current environment: ${name}`);
-      return this.macros.get(name)!;
-    }
-    
-    // Handle dot notation for module access
-    if (name.includes('.')) {
-      const [moduleName, macroName] = name.split('.');
-      console.log(`[Env.getMacro] Getting module.macro: ${moduleName}.${macroName}`);
-      
-      // Try fully qualified name first
-      if (this.macros.has(name)) {
-        console.log(`[Env.getMacro] Found fully qualified macro: ${name}`);
-        return this.macros.get(name)!;
-      }
-      
-      // Try module-based lookup
-      try {
-        if (this.bindings.has(moduleName)) {
-          const module = this.bindings.get(moduleName);
-          console.log(`[Env.getMacro] Found module: ${moduleName}, looking for macro: ${macroName}`);
-          
-          if (module && typeof module === 'object' && macroName in module) {
-            const member = module[macroName];
-            console.log(`[Env.getMacro] Found member in module: ${macroName}, is function: ${typeof member === 'function'}`);
-            
-            if (typeof member === 'function') {
-              return member;
-            }
-          }
-        }
-      } catch (error) {
-        console.log(`[Env.getMacro] Error in module lookup: ${error.message}`);
-      }
-    }
-    
-    // Try parent environment
-    if (this.parent) {
-      console.log(`[Env.getMacro] Checking parent environment for macro: ${name}`);
-      return this.parent.getMacro(name);
-    }
-    
-    console.log(`[Env.getMacro] Macro not found: ${name}`);
-    return null;
-  }
-  
-  extend(params: string[], args: any[]): Env {
-    console.log(`[Env.extend] Extending environment with ${params.length} parameters`);
-    const env = new Env(this);
-    for (let i = 0; i < params.length; i++) {
-      env.define(params[i], args[i]);
-    }
-    return env;
-  }
-}
-
+/**
+ * Type definition for macro functions
+ */
 export type MacroFunction = (args: HQLNode[], env: Env) => HQLNode;
 
+/**
+ * Create a symbol node with the given name
+ */
 export function makeSymbol(name: string): SymbolNode {
   return { type: "symbol", name };
 }
 
+/**
+ * Create a literal node with the given value
+ */
 export function makeLiteral(value: any): LiteralNode {
   return { type: "literal", value };
 }
 
+/**
+ * Create a list node with the given elements
+ */
 export function makeList(...elements: HQLNode[]): ListNode {
   return { type: "list", elements };
 }
 
 /* -------------------- Primitives Setup -------------------- */
 
+/**
+ * Set up primitive operations in the environment
+ * @param env Environment to set up primitives in
+ */
 function setupPrimitives(env: Env): void {
+  // Arithmetic operations
   env.define("+", (...args: number[]) => args.reduce((a, b) => a + b, 0));
   env.define("-", (a: number, b: number) => a - b);
   env.define("*", (...args: number[]) => args.reduce((a, b) => a * b, 1));
   env.define("/", (a: number, b: number) => a / b);
   env.define("%", (a: number, b: number) => a % b);
+  
+  // Comparison operations
   env.define("=", (a: any, b: any) => a === b);
   env.define("!=", (a: any, b: any) => a !== b);
   env.define("<", (a: number, b: number) => a < b);
@@ -242,14 +106,28 @@ function setupPrimitives(env: Env): void {
   env.define(">=", (a: number, b: number) => a >= b);
   env.define("eq?", (a: any, b: any) => a === b);
 
+  // JS interop functions
   env.define("js-import", jsImport);
   env.define("js-export", jsExport);
   env.define("js-get", jsGet);
   env.define("js-call", jsCall);
 
+  // Utility functions
   env.define("gensym", gensym);
   env.define("list", (...args: any[]) => ({ type: "list", elements: args }));
 
+  // List operations
+  setupListOperations(env);
+  
+  // Predicate functions
+  setupPredicateFunctions(env);
+}
+
+/**
+ * Set up list manipulation operations in the environment
+ * @param env Environment to set up list operations in
+ */
+function setupListOperations(env: Env): void {
   env.define("first", (list: any) => {
     if (list.type === "list" && list.elements.length > 0) return list.elements[0];
     throw new Error("first requires a non-empty list");
@@ -285,12 +163,6 @@ function setupPrimitives(env: Env): void {
     return { type: "literal", value: null };
   });
   
-  env.define("empty?", (coll: any) => {
-    if (coll.type === "list") return { type: "literal", value: coll.elements.length === 0 };
-    if (coll.type === "literal" && coll.value === null) return { type: "literal", value: true };
-    return { type: "literal", value: false };
-  });
-  
   env.define("conj", (coll: any, ...items: any[]) => {
     if (coll.type === "list") return { type: "list", elements: [...coll.elements, ...items] };
     throw new Error("conj requires a collection as first argument");
@@ -307,23 +179,40 @@ function setupPrimitives(env: Env): void {
     }
     return { type: "list", elements: allElements };
   });
-  
+}
+
+/**
+ * Set up predicate functions in the environment
+ * @param env Environment to set up predicate functions in
+ */
+function setupPredicateFunctions(env: Env): void {
   env.define("symbol?", (value: any) => ({ type: "literal", value: value.type === "symbol" }));
   env.define("list?", (value: any) => ({ type: "literal", value: value.type === "list" }));
-  env.define("map?", (value: any) => ({ type: "literal", value: value.type === "list" &&
+  env.define("map?", (value: any) => ({ 
+    type: "literal", 
+    value: value.type === "list" &&
            value.elements.length > 0 &&
            value.elements[0].type === "symbol" &&
-           value.elements[0].name === "hash-map" }));
+           value.elements[0].name === "hash-map" 
+  }));
   env.define("nil?", (value: any) => ({ type: "literal", value: value.type === "literal" && value.value === null }));
+  
+  env.define("empty?", (coll: any) => {
+    if (coll.type === "list") return { type: "literal", value: coll.elements.length === 0 };
+    if (coll.type === "literal" && coll.value === null) return { type: "literal", value: true };
+    return { type: "literal", value: false };
+  });
 }
 
 /* -------------------- Core Macro Loading -------------------- */
 
-/*
-  loadCoreMacros loads the core macros defined in lib/core.hql
-*/
-async function loadCoreMacros(env: any): Promise<void> {
-  console.log("[bootstrap] Loading core macros");
+/**
+ * Load core macros from lib/core.hql
+ * @param env Environment to load macros into
+ * @param logger Logger instance
+ */
+async function loadCoreMacros(env: Env, logger: Logger): Promise<void> {
+  logger.debug("Loading core macros");
   const coreSource = await Deno.readTextFile("./lib/core.hql");
   const astNodes: HQLNode[] = parse(coreSource);
   const coreDir = dirname("./lib/core.hql");
@@ -331,7 +220,7 @@ async function loadCoreMacros(env: any): Promise<void> {
   // First pass: Process all imports
   for (const node of astNodes) {
     if (isMacroImport(node)) {
-      console.log("[bootstrap] Processing import in core.hql");
+      logger.debug("Processing import in core.hql");
       await processImportNode(node as ListNode, env, coreDir);
     }
   }
@@ -339,7 +228,7 @@ async function loadCoreMacros(env: any): Promise<void> {
   // Second pass: Process all macro definitions
   for (const node of astNodes) {
     if (isMacroDefinition(node)) {
-      console.log("[bootstrap] Registering macro definition");
+      logger.debug("Registering macro definition");
       evaluateForMacro(node, env);
     } else if (!isMacroImport(node)) {
       // For any other definitions that are not imports or macro definitions
@@ -347,10 +236,14 @@ async function loadCoreMacros(env: any): Promise<void> {
     }
   }
   
-  console.log("[bootstrap] Core macros loaded successfully");
+  logger.debug("Core macros loaded successfully");
 }
 
-// Helper to identify macro definition nodes
+/**
+ * Check if a node is a macro definition
+ * @param node Node to check
+ * @returns True if node is a macro definition
+ */
 function isMacroDefinition(node: HQLNode): boolean {
   return (
     node.type === "list" &&
@@ -362,15 +255,21 @@ function isMacroDefinition(node: HQLNode): boolean {
 
 /* -------------------- Global Environment Initialization -------------------- */
 
-export async function initializeGlobalEnv(): Promise<Env> {
-  const env = new Env();
+/**
+ * Initialize the global environment with primitives and core macros
+ * @param options Options for initialization
+ * @returns Initialized environment
+ */
+export async function initializeGlobalEnv(options: { verbose?: boolean } = {}): Promise<Env> {
+  const logger = new Logger(options.verbose);
+  const env = new Env(null, logger);
   setupPrimitives(env);
   
   try {
-    await loadCoreMacros(env);
-    console.log("[bootstrap] Core macros loaded successfully");
+    await loadCoreMacros(env, logger);
+    logger.debug("Core macros loaded successfully");
   } catch (error) {
-    console.error("[bootstrap] Error loading core macros:", error);
+    logger.error(`Error loading core macros: ${error instanceof Error ? error.message : String(error)}`);
   }
   
   return env;
@@ -378,8 +277,14 @@ export async function initializeGlobalEnv(): Promise<Env> {
 
 /* -------------------- Quasiquote Evaluation -------------------- */
 
+/**
+ * Evaluate a quasiquoted expression
+ * @param expr Expression to evaluate
+ * @param env Environment for evaluation
+ * @returns Evaluated expression
+ */
 function evaluateQuasiquote(expr: HQLNode, env: Env): HQLNode {
-  // If the expr is a list and its first element is the symbol "unquote", evaluate and return its argument.
+  // Handle unquote
   if (expr.type === "list") {
     const listExpr = expr as ListNode;
     if (listExpr.elements.length > 0 && listExpr.elements[0].type === "symbol") {
@@ -390,6 +295,8 @@ function evaluateQuasiquote(expr: HQLNode, env: Env): HQLNode {
       }
     }
   }
+  
+  // Handle unquote-splicing and recursively process lists
   if (expr.type === "list") {
     const list = expr as ListNode;
     const result: HQLNode[] = [];
@@ -412,46 +319,45 @@ function evaluateQuasiquote(expr: HQLNode, env: Env): HQLNode {
     }
     return { type: "list", elements: result };
   }
+  
+  // Return other node types as-is
   return expr;
 }
 
 /* -------------------- Macro Evaluator -------------------- */
 
+/**
+ * Evaluate an expression for macro expansion
+ * @param expr Expression to evaluate
+ * @param env Environment for evaluation
+ * @returns Evaluated expression
+ */
 export function evaluateForMacro(expr: HQLNode, env: Env): any {
   if (!expr || typeof expr !== "object" || !("type" in expr)) {
     throw new Error(`Invalid expression: ${JSON.stringify(expr)}`);
   }
+  
   switch (expr.type) {
     case "literal":
       return (expr as LiteralNode).value;
+      
     case "symbol": {
       const name = (expr as SymbolNode).name;
       if (env.hasMacro(name)) return env.getMacro(name);
       return env.lookup(name);
     }
+    
     case "list": {
       const list = expr as ListNode;
       if (list.elements.length === 0) return [];
+      
       const first = list.elements[0];
       if (first.type === "symbol") {
         const op = (first as SymbolNode).name;
+        
+        // Handle special forms
         if (op === "js-import") {
-          const quoted = list.elements[1];
-          if (quoted.type !== "list") throw new Error("js-import: expected quoted name");
-          const qlist = quoted as ListNode;
-          if (qlist.elements.length !== 2 ||
-              qlist.elements[0].type !== "symbol" ||
-              (qlist.elements[0] as SymbolNode).name !== "quote" ||
-              qlist.elements[1].type !== "symbol") {
-            throw new Error("js-import: expected (quote name)");
-          }
-          const origName = (qlist.elements[1] as SymbolNode).name;
-          // Append "Module" to the imported name as per test expectations.
-          const moduleVar = origName + "Module";
-          const pathExpr = list.elements[2];
-          if (pathExpr.type !== "literal") throw new Error("js-import: module path must be a literal");
-          const modulePath = (pathExpr as LiteralNode).value;
-          return { type: "JsImportReference", name: moduleVar, source: modulePath };
+          return handleJsImport(list, env);
         }
         if (op === "quote") {
           if (list.elements.length !== 2) throw new Error("quote requires exactly one argument");
@@ -462,75 +368,191 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
           return evaluateQuasiquote(list.elements[1], env);
         }
         if (op === "if") {
-          if (list.elements.length < 3 || list.elements.length > 4) throw new Error("if requires 2 or 3 arguments");
-          const test = evaluateForMacro(list.elements[1], env);
-          if (test) return evaluateForMacro(list.elements[2], env);
-          else if (list.elements.length > 3) return evaluateForMacro(list.elements[3], env);
-          else return null;
+          return handleIf(list, env);
         }
         if (op === "def") {
-          if (list.elements.length !== 3) throw new Error("def requires exactly two arguments");
-          const nameExpr = list.elements[1];
-          if (nameExpr.type !== "symbol") throw new Error("def requires a symbol as its first argument");
-          const varName = (nameExpr as SymbolNode).name;
-          const value = evaluateForMacro(list.elements[2], env);
-          env.define(varName, value);
-          return value;
+          return handleDef(list, env);
         }
         if (op === "defmacro") {
-          if (list.elements.length < 4) throw new Error("defmacro requires a name, parameters, and body");
-          const nameExpr = list.elements[1];
-          if (nameExpr.type !== "symbol") throw new Error("defmacro requires a symbol for the name");
-          const macroName = (nameExpr as SymbolNode).name;
-          const paramsNode = list.elements[2];
-          if (paramsNode.type !== "list") throw new Error("defmacro parameters must be a list");
-          const paramElements = (paramsNode as ListNode).elements;
-          const paramNames: string[] = [];
-          let hasRestParam = false;
-          let restParamName = "";
-          for (let i = 0; i < paramElements.length; i++) {
-            const param = paramElements[i];
-            if (param.type !== "symbol") throw new Error("Macro parameters must be symbols");
-            if ((param as SymbolNode).name === "&") {
-              if (i + 1 < paramElements.length && paramElements[i + 1].type === "symbol") {
-                hasRestParam = true;
-                restParamName = (paramElements[i + 1] as SymbolNode).name;
-                i++;
-              } else {
-                throw new Error("& must be followed by a symbol in parameter list");
-              }
-            } else {
-              paramNames.push((param as SymbolNode).name);
-            }
-          }
-          const body = list.elements.slice(3);
-          const macroFn = (args: HQLNode[], callEnv: Env): HQLNode => {
-            const macroEnv = callEnv.extend([], []);
-            for (let i = 0; i < paramNames.length; i++) {
-              macroEnv.define(paramNames[i], i < args.length ? args[i] : makeLiteral(null));
-            }
-            if (hasRestParam) {
-              const restArgs = args.slice(paramNames.length);
-              macroEnv.define(restParamName, { type: "list", elements: restArgs });
-            }
-            let result: HQLNode = makeLiteral(null);
-            for (const e of body) {
-              result = evaluateForMacro(e, macroEnv);
-            }
-            return result;
-          };
-          env.defineMacro(macroName, macroFn);
-          return makeLiteral(null);
+          return handleDefmacro(list, env);
         }
-        // Fallback: function application.
-        const func = evaluateForMacro(first, env);
-        const args = list.elements.slice(1).map(e => evaluateForMacro(e, env));
-        if (typeof func !== "function") throw new Error(`${(first as SymbolNode).name} is not a function`);
-        return func(...args);
+        
+        // Fallback: function application
+        return handleFunctionCall(list, env);
       }
       throw new Error("List does not start with a symbol");
     }
+    
     default:
       throw new Error(`Unknown node type: ${(expr as any).type || JSON.stringify(expr)}`);
   }
+}
+
+/**
+ * Handle js-import special form
+ * @param list List node containing js-import form
+ * @param env Environment for evaluation
+ * @returns Import reference object
+ */
+function handleJsImport(list: ListNode, env: Env): any {
+  const quoted = list.elements[1];
+  if (quoted.type !== "list") throw new Error("js-import: expected quoted name");
+  const qlist = quoted as ListNode;
+  if (qlist.elements.length !== 2 ||
+      qlist.elements[0].type !== "symbol" ||
+      (qlist.elements[0] as SymbolNode).name !== "quote" ||
+      qlist.elements[1].type !== "symbol") {
+    throw new Error("js-import: expected (quote name)");
+  }
+  const origName = (qlist.elements[1] as SymbolNode).name;
+  // Append "Module" to the imported name as per test expectations.
+  const moduleVar = origName + "Module";
+  const pathExpr = list.elements[2];
+  if (pathExpr.type !== "literal") throw new Error("js-import: module path must be a literal");
+  const modulePath = (pathExpr as LiteralNode).value;
+  return { type: "JsImportReference", name: moduleVar, source: modulePath };
+}
+
+/**
+ * Handle if special form
+ * @param list List node containing if form
+ * @param env Environment for evaluation
+ * @returns Result of if expression
+ */
+function handleIf(list: ListNode, env: Env): any {
+  if (list.elements.length < 3 || list.elements.length > 4) throw new Error("if requires 2 or 3 arguments");
+  const test = evaluateForMacro(list.elements[1], env);
+  if (test) return evaluateForMacro(list.elements[2], env);
+  else if (list.elements.length > 3) return evaluateForMacro(list.elements[3], env);
+  else return null;
+}
+
+/**
+ * Handle def special form
+ * @param list List node containing def form
+ * @param env Environment for evaluation
+ * @returns Defined value
+ */
+function handleDef(list: ListNode, env: Env): any {
+  if (list.elements.length !== 3) throw new Error("def requires exactly two arguments");
+  const nameExpr = list.elements[1];
+  if (nameExpr.type !== "symbol") throw new Error("def requires a symbol as its first argument");
+  const varName = (nameExpr as SymbolNode).name;
+  const value = evaluateForMacro(list.elements[2], env);
+  env.define(varName, value);
+  return value;
+}
+
+/**
+ * Handle defmacro special form
+ * @param list List node containing defmacro form
+ * @param env Environment for evaluation
+ * @returns Null value
+ */
+function handleDefmacro(list: ListNode, env: Env): any {
+  if (list.elements.length < 4) throw new Error("defmacro requires a name, parameters, and body");
+  
+  const nameExpr = list.elements[1];
+  if (nameExpr.type !== "symbol") throw new Error("defmacro requires a symbol for the name");
+  const macroName = (nameExpr as SymbolNode).name;
+  
+  const paramsNode = list.elements[2];
+  if (paramsNode.type !== "list") throw new Error("defmacro parameters must be a list");
+  
+  const { paramNames, hasRestParam, restParamName } = processDefmacroParams(paramsNode as ListNode);
+  const body = list.elements.slice(3);
+  
+  // Create the macro function
+  const macroFn = createMacroFunction(paramNames, hasRestParam, restParamName, body);
+  env.defineMacro(macroName, macroFn);
+  
+  return makeLiteral(null);
+}
+
+/**
+ * Process parameter list for defmacro
+ * @param paramsNode List node containing parameters
+ * @returns Processed parameter information
+ */
+function processDefmacroParams(paramsNode: ListNode): { 
+  paramNames: string[], 
+  hasRestParam: boolean, 
+  restParamName: string 
+} {
+  const paramElements = paramsNode.elements;
+  const paramNames: string[] = [];
+  let hasRestParam = false;
+  let restParamName = "";
+  
+  for (let i = 0; i < paramElements.length; i++) {
+    const param = paramElements[i];
+    if (param.type !== "symbol") throw new Error("Macro parameters must be symbols");
+    
+    if ((param as SymbolNode).name === "&") {
+      if (i + 1 < paramElements.length && paramElements[i + 1].type === "symbol") {
+        hasRestParam = true;
+        restParamName = (paramElements[i + 1] as SymbolNode).name;
+        i++;
+      } else {
+        throw new Error("& must be followed by a symbol in parameter list");
+      }
+    } else {
+      paramNames.push((param as SymbolNode).name);
+    }
+  }
+  
+  return { paramNames, hasRestParam, restParamName };
+}
+
+/**
+ * Create a macro function
+ * @param paramNames Parameter names
+ * @param hasRestParam Whether the macro has a rest parameter
+ * @param restParamName Name of the rest parameter
+ * @param body Body expressions
+ * @returns Macro function
+ */
+function createMacroFunction(
+  paramNames: string[], 
+  hasRestParam: boolean, 
+  restParamName: string, 
+  body: HQLNode[]
+): MacroFunction {
+  return (args: HQLNode[], callEnv: Env): HQLNode => {
+    const macroEnv = callEnv.extend([], []);
+    
+    // Bind positional parameters
+    for (let i = 0; i < paramNames.length; i++) {
+      macroEnv.define(paramNames[i], i < args.length ? args[i] : makeLiteral(null));
+    }
+    
+    // Bind rest parameter if present
+    if (hasRestParam) {
+      const restArgs = args.slice(paramNames.length);
+      macroEnv.define(restParamName, { type: "list", elements: restArgs });
+    }
+    
+    // Evaluate body expressions
+    let result: HQLNode = makeLiteral(null);
+    for (const e of body) {
+      result = evaluateForMacro(e, macroEnv);
+    }
+    
+    return result;
+  };
+}
+
+/**
+ * Handle function call
+ * @param list List node containing function call
+ * @param env Environment for evaluation
+ * @returns Result of function call
+ */
+function handleFunctionCall(list: ListNode, env: Env): any {
+  const func = evaluateForMacro(list.elements[0], env);
+  const args = list.elements.slice(1).map(e => evaluateForMacro(e, env));
+  
+  if (typeof func !== "function") throw new Error(`${(list.elements[0] as SymbolNode).name} is not a function`);
+  
+  return func(...args);
 }
