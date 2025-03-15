@@ -1,4 +1,4 @@
-HQL (Higher Query Language)
+HQL (Higher Quick Language)
 
 HQL is a minimal, Lisp‑inspired language built around S‑expressions. Its core is intentionally lean—only a few basic constructs are built into the parser. All higher‑level language features (like functions with named/typed parameters and literal data structures) are added through an elegant macro system. This design follows the classic Lisp philosophy: a tiny core extended by powerful, user‑defined macros.
 

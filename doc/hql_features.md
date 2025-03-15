@@ -1,4 +1,4 @@
-HQL: Higher Query Language
+HQL: Higher Quick Language
 
 HQL aspires to be the last programming language by embracing the following core principles:
 "macro everywhere, minimal-core, expression-oriented, single-bundled-output, platform agnostic"

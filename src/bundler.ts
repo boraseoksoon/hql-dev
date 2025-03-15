@@ -129,9 +129,9 @@ export function createHqlPlugin(options: { verbose?: boolean }): any {
  */
 export function createExternalNpmPlugin(): any {
   return {
-    name: "external-npm",
+    name: "external-npm-jsr",
     setup(build: any) {
-      build.onResolve({ filter: /^npm:/ }, (args: any) => {
+      build.onResolve({ filter: /^(npm:|jsr:)/ }, (args: any) => {
         return { path: args.path, external: true };
       });
     },
