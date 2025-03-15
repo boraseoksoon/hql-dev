@@ -1,114 +1,19 @@
 // src/macro-expander.ts - Enhanced for full module support
 
-import { HQLNode, ListNode, SymbolNode, LiteralNode } from "./transpiler/hql_ast.ts";
+import { HQLNode, ListNode, SymbolNode, LiteralNode, isMacroImport } from "./transpiler/hql_ast.ts";
 import { Env, initializeGlobalEnv, evaluateForMacro, MacroFunction } from "./bootstrap.ts";
-import { dirname, resolve } from "./platform/platform.ts";
+import { dirname, resolve, readTextFile } from "./platform/platform.ts";
 import { parse } from "./transpiler/parser.ts";
-import { readTextFile } from "./platform/platform.ts";
 
 export const moduleRegistry = new Map<string, string>();
 
 /**
- * Detects if a node is an import statement
- */
-export function isMacroImport(node: HQLNode): boolean {
-  return (
-    node.type === "list" &&
-    (node as ListNode).elements.length >= 3 &&
-    (node as ListNode).elements[0].type === "symbol" &&
-    ((node as ListNode).elements[0] as SymbolNode).name === "import"
-  );
-}
-
-/**
- * Create a macro wrapper around a JavaScript function
- * This properly converts HQL AST nodes to JavaScript values
- */
-function createFunctionMacroWrapper(func: Function): MacroFunction {
-  return (args: HQLNode[], env: Env) => {
-    // Convert HQL AST nodes to JavaScript values
-    const jsArgs = args.map(arg => {
-      // For literal nodes, extract their value
-      if (arg.type === "literal") {
-        return (arg as LiteralNode).value;
-      }
-      
-      // For symbols, look them up in the environment
-      if (arg.type === "symbol") {
-        try {
-          return env.lookup((arg as SymbolNode).name);
-        } catch (e) {
-          // If lookup fails, return the symbol name
-          return (arg as SymbolNode).name;
-        }
-      }
-      
-      // For lists, evaluate them first, then extract value
-      if (arg.type === "list") {
-        const evaluated = evaluateForMacro(arg, env);
-        // If the result is a primitive value, return it directly
-        if (typeof evaluated === 'string' || 
-            typeof evaluated === 'number' || 
-            typeof evaluated === 'boolean' || 
-            evaluated === null) {
-          return evaluated;
-        }
-        // Otherwise return the evaluated expression
-        return evaluated;
-      }
-      
-      // Fall back to just returning the node
-      return arg;
-    });
-    
-    // Call the function with the converted arguments
-    try {
-      const result = func(...jsArgs);
-      
-      // If the result is a primitive value, wrap it in a literal node
-      if (typeof result === 'string' || 
-          typeof result === 'number' || 
-          typeof result === 'boolean' || 
-          result === null) {
-        return { type: "literal", value: result };
-      }
-      
-      // For more complex results, try to convert them to HQL nodes
-      if (Array.isArray(result)) {
-        return {
-          type: "list",
-          elements: result.map(item => 
-            typeof item === 'object' && item !== null ? 
-              item : 
-              { type: "literal", value: item }
-          )
-        };
-      }
-      
-      // Last resort, stringify the result
-      return { type: "literal", value: String(result) };
-    } catch (error) {
-      console.error(`Error calling function as macro: ${error.message}`);
-      // Return a meaningful error representation
-      return { 
-        type: "list", 
-        elements: [
-          { type: "symbol", name: "js-error" },
-          { type: "literal", value: error.message }
-        ]
-      };
-    }
-  };
-}
-
-/**
  * Enhanced preloadMacroImports that handles all import types
  */
-export async function preloadMacroImports(
+async function preloadMacroImports(
   nodes: HQLNode[],
   env: Env,
   basePath: string = Deno.cwd(),
-  processedPaths: Set<string> = new Set()
 ): Promise<void> {
   console.log(`[preloadMacroImports] Processing imports from ${basePath}`);
   
@@ -122,13 +27,11 @@ export async function preloadMacroImports(
       if (importNameNode.type !== "symbol") {
         throw new Error("Macro import: import name must be a symbol");
       }
-      const importName = (importNameNode as SymbolNode).name;
 
       if (importPathNode.type !== "literal") {
         throw new Error("Macro import: module path must be a literal string");
       }
-      const importPath = String((importPathNode as LiteralNode).value);
-      
+
       await processImportNode(node as ListNode, env, basePath);
     }
   }
@@ -152,8 +55,7 @@ export function registerModule(moduleName: string, mod: any, env: Env): void {
     
     // Define the exported value
     env.define(qualifiedName, value);
-    
-    // If it's a function, also register it as a macro with proper wrapping
+
     if (typeof value === 'function') {
       const macroWrapper = createFunctionMacroWrapper(value);
       env.defineMacro(qualifiedName, macroWrapper);
@@ -166,7 +68,6 @@ export function registerModule(moduleName: string, mod: any, env: Env): void {
  * Handles HQL files and remote modules consistently
  */
 export async function processImportNode(
-
   importNode: ListNode,
   env: Env,
   currentDir: string
@@ -194,25 +95,12 @@ export async function processImportNode(
 
   console.log(`[processImportNode] Processing import: moduleRegistry : `, moduleRegistry);
 
-  try {
-    // HQL files need their own processing
-    if (importPath.endsWith('.hql')) {
+  if (importPath.endsWith('.hql')) {
+    try {
       await processHqlImport(importName, importPath, env, currentDir);
-    } else {
-      let mod;
-        if (importPath.startsWith("npm:")) {
-          const dataUrl = `data:application/javascript,export * from "${importPath}";`;
-          mod = await import(dataUrl);
-        } else {
-          mod = await import(importPath);
-        }
-        
-        env.define(importName, mod);
-        registerModule(importName, mod, env);
-        console.log(`[processImportNode] Successfully registered module: ${importName}`);
+    } catch (error) {
+      console.error(`[processImportNode] Critical error processing import ${importPath}:`, error);
     }
-  } catch (error) {
-    console.error(`[processImportNode] Critical error processing import ${importPath}:`, error);
   }
 }
 
@@ -244,15 +132,6 @@ export async function processHqlImport(
       source = await readTextFile(resolvedPath);
     } catch (error) {
       console.error(`[processHqlImport] Error reading file ${resolvedPath}:`, error);
-      
-      // Create a placeholder module with error information
-      const placeholder = {
-        __importError: true,
-        __importPath: modulePath,
-        __errorMessage: `Failed to read HQL file: ${error.message}`
-      };
-      
-      env.define(moduleName, placeholder);
       return;
     }
     
@@ -337,19 +216,8 @@ export async function processHqlImport(
     console.log(`[processHqlImport] Registered module ${moduleName} with exports:`, Object.keys(moduleExports));
   } catch (error) {
     console.error(`[processHqlImport] Error processing HQL import ${modulePath}:`, error);
-    
-    // Create a placeholder module with error information
-    const placeholder = {
-      __importError: true,
-      __importPath: modulePath,
-      __errorMessage: error.message
-    };
-    
-    env.define(moduleName, placeholder);
   }
 }
-
-// Fix for the expandNode function in macro-expander.ts
 
 /**
  * Recursively expands macros in an HQL AST node.
@@ -608,7 +476,6 @@ export async function expandMacros(nodes: HQLNode[], env?: Env): Promise<HQLNode
         console.log("[expandMacros] All imports processed successfully");
       } catch (error) {
         console.error("[expandMacros] Error during import processing:", error);
-        console.log("[expandMacros] Continuing with macro expansion despite import errors");
       }
     }
     
@@ -653,4 +520,85 @@ function collectAllImports(nodes: HQLNode[]): HQLNode[] {
   
   nodes.forEach(traverse);
   return imports;
+}
+
+/**
+ * Create a macro wrapper around a JavaScript function
+ * This properly converts HQL AST nodes to JavaScript values
+ */
+function createFunctionMacroWrapper(func: Function): MacroFunction {
+  return (args: HQLNode[], env: Env) => {
+    // Convert HQL AST nodes to JavaScript values
+    const jsArgs = args.map(arg => {
+      // For literal nodes, extract their value
+      if (arg.type === "literal") {
+        return (arg as LiteralNode).value;
+      }
+      
+      // For symbols, look them up in the environment
+      if (arg.type === "symbol") {
+        try {
+          return env.lookup((arg as SymbolNode).name);
+        } catch (e) {
+          // If lookup fails, return the symbol name
+          return (arg as SymbolNode).name;
+        }
+      }
+      
+      // For lists, evaluate them first, then extract value
+      if (arg.type === "list") {
+        const evaluated = evaluateForMacro(arg, env);
+        // If the result is a primitive value, return it directly
+        if (typeof evaluated === 'string' || 
+            typeof evaluated === 'number' || 
+            typeof evaluated === 'boolean' || 
+            evaluated === null) {
+          return evaluated;
+        }
+        // Otherwise return the evaluated expression
+        return evaluated;
+      }
+      
+      // Fall back to just returning the node
+      return arg;
+    });
+    
+    // Call the function with the converted arguments
+    try {
+      const result = func(...jsArgs);
+      
+      // If the result is a primitive value, wrap it in a literal node
+      if (typeof result === 'string' || 
+          typeof result === 'number' || 
+          typeof result === 'boolean' || 
+          result === null) {
+        return { type: "literal", value: result };
+      }
+      
+      // For more complex results, try to convert them to HQL nodes
+      if (Array.isArray(result)) {
+        return {
+          type: "list",
+          elements: result.map(item => 
+            typeof item === 'object' && item !== null ? 
+              item : 
+              { type: "literal", value: item }
+          )
+        };
+      }
+      
+      // Last resort, stringify the result
+      return { type: "literal", value: String(result) };
+    } catch (error) {
+      console.error(`Error calling function as macro: ${error.message}`);
+      // Return a meaningful error representation
+      return { 
+        type: "list", 
+        elements: [
+          { type: "symbol", name: "js-error" },
+          { type: "literal", value: error.message }
+        ]
+      };
+    }
+  };
 }

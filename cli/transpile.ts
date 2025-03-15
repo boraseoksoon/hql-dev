@@ -1,12 +1,11 @@
 import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { transpileCLI, watchFile, OptimizationOptions } from "../src/bundler.ts";
+import { transpileCLI, OptimizationOptions } from "../src/bundler.ts";
 import { MODES } from "./modes.ts";
 
 function printHelp() {
   console.error("Usage: deno run -A cli/transpile.ts <input.hql|input.js> [output.js] [options]");
   console.error("\nBasic Options:");
   console.error("  --run             Run the compiled output");
-  console.error("  --watch           Watch for changes and recompile");
   console.error("  --verbose, -v     Enable verbose logging");
   console.error("  --force, -f       Overwrite output files without prompting");
   console.error("  --performance     Apply all performance optimizations");
@@ -38,7 +37,6 @@ function runCLI(): void {
   let outputPath: string | undefined = undefined;
   
   // Basic options
-  let watch = false;
   let verbose = false;
   let runAfter = false;
   let force = false;
@@ -55,7 +53,6 @@ function runCLI(): void {
   
   for (const arg of args) {
     // Parse basic options
-    if (arg === "--watch") watch = true;
     if (arg === "--verbose" || arg === "-v") verbose = true;
     if (arg === "--run") runAfter = true;
     if (arg === "--force" || arg === "-f") force = true;
@@ -142,29 +139,25 @@ function runCLI(): void {
     }
   }
 
-  if (watch) {
-    watchFile(inputPath, { verbose, force, ...optimizationOptions }).catch(() => Deno.exit(1));
-  } else {
-    transpileCLI(inputPath, outputPath, { 
-      verbose, 
-      force, 
-      ...optimizationOptions 
+  transpileCLI(inputPath, outputPath, { 
+    verbose, 
+    force, 
+    ...optimizationOptions 
+  })
+    .then(async (bundledPath) => {
+      if (printOutput) {
+        // Read and print the bundled file content to stdout.
+        const finalOutput = await Deno.readTextFile(bundledPath);
+        console.log(finalOutput);
+      } else if (runAfter) {
+        console.log(`Running bundled output: ${bundledPath}`);
+        await import("file://" + resolve(bundledPath));
+      }
     })
-      .then(async (bundledPath) => {
-        if (printOutput) {
-          // Read and print the bundled file content to stdout.
-          const finalOutput = await Deno.readTextFile(bundledPath);
-          console.log(finalOutput);
-        } else if (runAfter) {
-          console.log(`Running bundled output: ${bundledPath}`);
-          await import("file://" + resolve(bundledPath));
-        }
-      })
-      .catch((error) => {
-        console.error("Error during transpilation:", error.message || error);
-        Deno.exit(1);
-      });
-  }
+    .catch((error) => {
+      console.error("Error during transpilation:", error.message || error);
+      Deno.exit(1);
+    });
 }
 
 if (import.meta.main) {

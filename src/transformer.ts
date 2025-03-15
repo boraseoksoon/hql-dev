@@ -1,15 +1,15 @@
 // src/transpiler/transformer.ts - Updated with minimal runtime
 
-import { parse } from "./parser.ts";
-import { transformToIR } from "./hql-code-to-hql-ir.ts";
-import { generateTypeScript } from "./ts-ast-to-ts-code.ts";
-import { dirname, resolve, readTextFile, writeTextFile } from "../platform/platform.ts";
-import { expandMacros } from "../macro-expander.ts";
-import { HQLNode, ListNode, SymbolNode } from "./hql_ast.ts";
+import { parse } from "./transpiler/parser.ts";
+import { transformToIR } from "./transpiler/hql-code-to-hql-ir.ts";
+import { generateTypeScript } from "./transpiler/ts-ast-to-ts-code.ts";
+import { dirname, resolve, readTextFile, writeTextFile } from "./platform/platform.ts";
+import { expandMacros } from "./macro-expander.ts";
+import { HQLNode, ListNode, SymbolNode, isImportNode } from "./transpiler/hql_ast.ts";
 import { HQLImportHandler } from "./hql_import_handler.ts";
-import { moduleRegistry } from "../macro-expander.ts";
-import { Env, initializeGlobalEnv } from "../bootstrap.ts";
-import { RUNTIME_FUNCTIONS } from "./runtime.ts"
+import { moduleRegistry } from "./macro-expander.ts";
+import { Env, initializeGlobalEnv } from "./bootstrap.ts";
+import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts"
 export interface TransformOptions {
   verbose?: boolean;
   bundle?: boolean;
@@ -43,9 +43,6 @@ export async function transformAST(
    
     const fullAST: HQLNode[] = [];
     const processedImports = new Set<string>();
-    
-    console.log("moduleRegistry : ", moduleRegistry);
-    console.log("env : ", env);
 
     // First, extract import statements from the expanded nodes
     for (const node of expandedNodes) {
@@ -106,19 +103,6 @@ export async function transformAST(
     console.error("Transformation error:", error);
     throw error;
   }
-}
-
-/**
- * Check if a node is an import statement
- */
-function isImportNode(node: HQLNode): boolean {
-  return (
-    node.type === "list" &&
-    node.elements.length >= 3 &&
-    node.elements[0].type === "symbol" &&
-    ((node.elements[0] as SymbolNode).name === "import" || 
-     (node.elements[0] as SymbolNode).name === "js-import")
-  );
 }
 
 export async function transpile(

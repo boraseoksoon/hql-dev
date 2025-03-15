@@ -1,10 +1,10 @@
 // src/bundler.ts - Refactored for modularity and reduced redundancy
 import { dirname, resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { parse } from "./transpiler/parser.ts";
-import { transformAST, transpile } from "./transpiler/transformer.ts";
-import { readTextFile, writeTextFile, mkdir, exists } from "./platform/platform.ts";
 import { build, stop } from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import { Logger } from "./logger.ts";
+import { parse } from "./transpiler/parser.ts";
+import { transformAST, transpile } from "./transformer.ts";
+import { readTextFile, writeTextFile, mkdir, exists } from "./platform/platform.ts";
 
 /**
  * Represents esbuild optimization options
@@ -25,7 +25,7 @@ export interface OptimizationOptions {
 /**
  * Rebase relative import specifiers using the original file directory.
  */
-export function rebaseImports(code: string, originalDir: string): string {
+function rebaseImports(code: string, originalDir: string): string {
   return code.replace(
     /(from\s+['"])(\.{1,2}\/[^'"]+)(['"])/g,
     (_, prefix, relPath, suffix) => {
@@ -38,7 +38,7 @@ export function rebaseImports(code: string, originalDir: string): string {
 /**
  * Ensure that the output directory exists.
  */
-export async function ensureDir(dir: string): Promise<void> {
+async function ensureDir(dir: string): Promise<void> {
   try {
     await mkdir(dir, { recursive: true });
   } catch (error) {
@@ -68,7 +68,7 @@ async function promptYesNo(question: string): Promise<boolean> {
  * Write code to a file and log the output path.
  * Asks for confirmation before overwriting existing files unless force is true.
  */
-export async function writeOutput(
+async function writeOutput(
   code: string,
   outputPath: string,
   logger: Logger,
@@ -127,7 +127,7 @@ export function createHqlPlugin(options: { verbose?: boolean }): any {
 /**
  * Create the esbuild plugin to mark npm: imports as external.
  */
-export function createExternalNpmPlugin(): any {
+export function createExternalPlugin(): any {
   return {
     name: "external-npm-jsr",
     setup(build: any) {
@@ -148,7 +148,7 @@ export async function bundleWithEsbuild(
   ): Promise<string> {
     const logger = new Logger(options.verbose || false);
     const hqlPlugin = createHqlPlugin({ verbose: options.verbose });
-    const externalNpmPlugin = createExternalNpmPlugin();
+    const externalPlugin = createExternalPlugin();
   
     // If force is true, ensure the file doesn't exist before building
     if (options.force && await exists(outputPath)) {
@@ -166,7 +166,7 @@ export async function bundleWithEsbuild(
       bundle: true,
       outfile: outputPath,
       format: "esm",
-      plugins: [hqlPlugin, externalNpmPlugin],
+      plugins: [hqlPlugin, externalPlugin],
       logLevel: options.verbose ? "info" : "silent",
       allowOverwrite: true, // Always allow overwrite in esbuild itself
       

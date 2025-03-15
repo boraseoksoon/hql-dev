@@ -2,7 +2,7 @@
 
 import { assertEquals, assertMatch, assertStringIncludes } from "https://deno.land/std@0.170.0/testing/asserts.ts";
 import { parse } from "../../src/transpiler/parser.ts";
-import { transpile } from "../../src/transpiler/transformer.ts";
+import { transpile } from "../../src/transformer.ts";
 
 // Helper to parse and transpile HQL
 async function transpileHQL(source: string): Promise<string> {

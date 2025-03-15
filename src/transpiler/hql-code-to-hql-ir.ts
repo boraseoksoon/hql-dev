@@ -133,7 +133,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       return transformKernelPrimitive(list, op, currentDir);
     }
     
-    console.log(">>>>>> transformList list : ", list)
+    // console.log(">>>>>> transformList list : ", list)
     
     // Handle JS interop primitives
     const jsInteropResult = transformJsInteropPrimitive(list, op, currentDir);

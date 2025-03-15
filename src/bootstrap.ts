@@ -1,11 +1,10 @@
 // src/bootstrap.ts
-
-import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./transpiler/hql_ast.ts";
+import { dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { HQLNode, LiteralNode, SymbolNode, ListNode, isMacroImport } from "./transpiler/hql_ast.ts";
 import { jsImport, jsExport, jsGet, jsCall } from "./interop.ts";
 import { gensym } from "./gensym.ts";
 import { parse } from "./transpiler/parser.ts";
-import { dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { processImportNode, isMacroImport } from "./macro-expander.ts";
+import { processImportNode } from "./macro-expander.ts";
 
 /* -------------------- Constants -------------------- */
 
@@ -215,8 +214,6 @@ export class Env {
 
 export type MacroFunction = (args: HQLNode[], env: Env) => HQLNode;
 
-export let globalEnv: Env | null = null;
-
 export function makeSymbol(name: string): SymbolNode {
   return { type: "symbol", name };
 }
@@ -325,7 +322,7 @@ function setupPrimitives(env: Env): void {
 /*
   loadCoreMacros loads the core macros defined in lib/core.hql
 */
-export async function loadCoreMacros(env: any): Promise<void> {
+async function loadCoreMacros(env: any): Promise<void> {
   console.log("[bootstrap] Loading core macros");
   const coreSource = await Deno.readTextFile("./lib/core.hql");
   const astNodes: HQLNode[] = parse(coreSource);
@@ -374,7 +371,6 @@ export async function initializeGlobalEnv(): Promise<Env> {
     console.log("[bootstrap] Core macros loaded successfully");
   } catch (error) {
     console.error("[bootstrap] Error loading core macros:", error);
-    console.log("[bootstrap] Continuing with partial macro functionality");
   }
   
   return env;
