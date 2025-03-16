@@ -2,8 +2,14 @@
 (defmacro add-one (x)
   (list '+ x 1))
 
+(defmacro minus-one (x)
+  (list '- x 1))
+
 (defn addguy (x)
     (add-one x))
 
-;; Export for use by utils.js
+(defn minusguys (x)
+    (minus-one x))
+
+(export "minusguys" minusguys)
 (export "addguy" addguy)

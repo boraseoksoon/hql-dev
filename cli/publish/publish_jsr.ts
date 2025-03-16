@@ -124,8 +124,36 @@ export async function publishJSR(options: {
     stdout: "inherit",
     stderr: "inherit",
   });
-  const status = await publishProc.status();
+  
+  let status;
+try {
+  const publishProc = runCmd({
+    cmd: ["deno", "run", "-A", "https://jsr.io/api/publish", ...publishFlags],
+    cwd: tempDir,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  status = await publishProc.status();
   publishProc.close();
+} catch (error) {
+    console.error(`\n❌ Error running JSR publish command: ${error instanceof Error ? error.message : String(error)}`);
+    console.log(`\nAttempting fallback publish method...`);
+    
+    try {
+      // Try alternative publish method 
+      const publishProc = runCmd({
+        cmd: ["npx", "jsr", "publish", ...publishFlags],
+        cwd: tempDir,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      status = await publishProc.status();
+      publishProc.close();
+    } catch (secondError) {
+      console.error(`\n❌ JSR publish failed with all methods. See errors above.`);
+      exit(1);
+    }
+  }
 
   if (!status.success) {
     console.error(`\n❌ JSR publish failed with code ${status.code}.`);

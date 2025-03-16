@@ -110,7 +110,7 @@
 (defmacro double-and-add-five (x)
   `(+ (other2.double-it ~x) 5))
 
-(import path "https://deno.land/std@0.170.0/path/mod.ts")
+;; (import path "https://deno.land/std@0.170.0/path/mod.ts")
 
 (import lodash "npm:lodash")
 (defmacro lodash-capitalize (s)

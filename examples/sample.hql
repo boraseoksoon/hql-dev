@@ -1,10 +1,7 @@
-(import chalk "jsr:@nothing628/chalk")
+(import chalk "jsr:@nothing628/chalk@1.0.0")
 (console.log (chalk.red "chalk!"))
 
-(def joined-path (path.join "folder" "file.txt"))
-(console.log joined-path)
-
-(import lodash "npm:lodash")
+(import lodash "npm:lodash@4.17.21")
 (print (lodash-capitalize "is it working?"))
 
 (console.log (square-plus-one 10))
