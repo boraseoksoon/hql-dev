@@ -48,11 +48,19 @@ export async function processImportNode(
   if (pathNode.type !== "literal") {
     throw new Error("Import path must be a string literal");
   }
-  const importPath = String((pathNode as LiteralNode).value);
+  const rawImportPath = String((pathNode as LiteralNode).value);
+  
+  // Resolve relative paths against currentDir (the directory containing the import statement)
+  let importPath = rawImportPath;
+  if (rawImportPath.startsWith("./") || rawImportPath.startsWith("../")) {
+    // Only resolve relative paths, not absolute or remote imports
+    importPath = resolve(currentDir, rawImportPath);
+    logger.debug(`Resolved import path: ${rawImportPath} -> ${importPath}`);
+  }
   
   logger.debug(`Processing import: ${importName} from ${importPath}`);
   
-  // Register the import in our global registry
+  // Register the import in our global registry with resolved path
   moduleRegistry.set(importName, importPath);
 
   // Process HQL imports

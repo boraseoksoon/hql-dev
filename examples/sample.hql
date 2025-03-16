@@ -8,3 +8,5 @@
 (print (lodash-capitalize "is it working?"))
 
 (console.log (square-plus-one 10))
+
+(console.log "js-adder : " (js-adder 10 20))

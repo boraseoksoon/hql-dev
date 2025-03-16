@@ -117,3 +117,9 @@
   `(js-call lodash "capitalize" ~s))
 
 ;; (import express "npm:express")
+
+;; Add these lines to your existing core.hql file
+
+(import other3 "./other3.js")
+(defmacro js-adder (a b)
+  (list (quote js-call) (quote other3) (quote "js_add") a b))
