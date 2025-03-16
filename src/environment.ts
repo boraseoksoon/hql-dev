@@ -87,7 +87,15 @@ export class Env {
    */
   define(symbol: string, value: any): void {
     this.logger.debug(`Defining symbol: ${symbol}`);
-    this.bindings.set(symbol, value);
+    
+    // Special handling for module objects
+    if (typeof value === 'object' && value !== null) {
+      // Ensure we don't get undefined logger errors when accessing module properties
+      const safeValue = { ...value, logger: this.logger };
+      this.bindings.set(symbol, safeValue);
+    } else {
+      this.bindings.set(symbol, value);
+    }
   }
   
   /**

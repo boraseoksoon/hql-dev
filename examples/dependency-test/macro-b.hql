@@ -13,4 +13,4 @@
 
 ;; Define functions that *use* the macros
 (def double-five (double-it 5))
-(def doubled-and-added (double-and-add 5))
+;; (def doubled-and-added (double-and-add 5))

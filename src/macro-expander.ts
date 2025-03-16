@@ -73,6 +73,8 @@ export async function processImportNode(
   }
 }
 
+// In src/macro-expander.ts - Improved JS module handling
+
 /**
  * Process an HQL file import
  * @param moduleName Name to register the module as
@@ -82,6 +84,8 @@ export async function processImportNode(
  * @param processedPaths Set of already processed paths to avoid cycles
  * @param logger Logger instance
  */
+// In src/macro-expander.ts, modify the processHqlImport function
+
 export async function processHqlImport(
   moduleName: string,
   modulePath: string,
@@ -117,14 +121,46 @@ export async function processHqlImport(
     // Create module object to store exports
     const moduleExports: Record<string, any> = {};
     
-    // Process any nested imports first
+    // First scan for any JS imports and handle them directly
+    for (const node of importedAst) {
+      if (
+        node.type === "list" &&
+        node.elements.length >= 3 &&
+        node.elements[0].type === "symbol" &&
+        (node.elements[0] as SymbolNode).name === "import" &&
+        node.elements[1].type === "symbol" &&
+        node.elements[2].type === "literal" &&
+        String((node.elements[2] as LiteralNode).value).endsWith('.js')
+      ) {
+        const jsModuleName = (node.elements[1] as SymbolNode).name;
+        const jsImportPath = String((node.elements[2] as LiteralNode).value);
+        const resolvedJsPath = resolve(dirname(resolvedPath), jsImportPath);
+        
+        logger.debug(`Importing JS module: ${jsModuleName} from ${resolvedJsPath}`);
+        
+        try {
+          // Try to import the JS module
+          const jsModule = await import(resolvedJsPath);
+          
+          // Register the module in the environment
+          env.define(jsModuleName, jsModule);
+          logger.debug(`Successfully imported JS module: ${jsModuleName}`);
+        } catch (error) {
+          logger.error(`Failed to import JS module ${jsModuleName}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+    
+    // Now process any nested HQL imports
     await processNestedImports(importedAst, env, dirname(resolvedPath), processedPaths, logger);
     
-    // Register module definitions and exports
+    // Process macro definitions
     processMacroDefinitions(importedAst, env, moduleName, moduleExports, logger);
+    
+    // Process regular definitions
     processDefinitions(importedAst, env, moduleName, moduleExports, logger);
     
-    // Register the module itself
+    // Register the module with its exports
     env.define(moduleName, moduleExports);
     logger.debug(`Registered module ${moduleName} with exports: ${Object.keys(moduleExports).join(', ')}`);
   } catch (error) {
@@ -132,14 +168,40 @@ export async function processHqlImport(
   }
 }
 
+// In src/macro-expander.ts - Add this helper function:
+
 /**
- * Process nested imports in an AST
- * @param ast AST nodes to process
- * @param env Environment to register imports in
- * @param currentDir Current directory for resolving relative paths
- * @param processedPaths Set of already processed paths to avoid cycles
+ * Process JavaScript import from an HQL file
+ * @param jsImportName Name to register the module as
+ * @param jsImportPath Path to the JS file
+ * @param sourceDir Directory containing the importing file
+ * @param env Environment to register the module in
  * @param logger Logger instance
  */
+async function processJsImport(
+  jsImportName: string, 
+  jsImportPath: string,
+  sourceDir: string,
+  env: Env, 
+  logger: Logger
+): Promise<void> {
+  try {
+    const resolvedPath = resolve(sourceDir, jsImportPath);
+    logger.debug(`Importing JS module: ${jsImportName} from ${resolvedPath}`);
+    
+    // Use dynamic import to load the JS module
+    const jsModule = await import(resolvedPath);
+    
+    // Register the module in the environment
+    env.define(jsImportName, jsModule);
+    logger.debug(`Successfully imported JS module: ${jsImportName}`);
+  } catch (error) {
+    logger.error(`Failed to import JS module ${jsImportName}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// Then modify processNestedImports to process JS imports immediately:
+
 async function processNestedImports(
   ast: HQLNode[],
   env: Env,
@@ -148,9 +210,26 @@ async function processNestedImports(
   logger: Logger
 ): Promise<void> {
   for (const node of ast) {
+    // Process HQL imports
     if (isMacroImport(node)) {
-      const importDir = currentDir;
-      await processImportNode(node as ListNode, env, importDir, logger);
+      await processImportNode(node as ListNode, env, currentDir, logger);
+    }
+    
+    // Process JS imports
+    if (
+      node.type === "list" &&
+      (node as ListNode).elements.length >= 3 &&
+      (node as ListNode).elements[0].type === "symbol" &&
+      ((node as ListNode).elements[0] as SymbolNode).name === "import" &&
+      (node as ListNode).elements[1].type === "symbol" &&
+      (node as ListNode).elements[2].type === "literal" &&
+      String(((node as ListNode).elements[2] as LiteralNode).value).endsWith('.js')
+    ) {
+      const jsImportName = ((node as ListNode).elements[1] as SymbolNode).name;
+      const jsImportPath = String(((node as ListNode).elements[2] as LiteralNode).value);
+      
+      // Process the JS import first before any macros that might use it
+      await processJsImport(jsImportName, jsImportPath, currentDir, env, logger);
     }
   }
 }
@@ -209,6 +288,8 @@ function processMacroDefinitions(
  * @param moduleExports Object to store exported definitions
  * @param logger Logger instance
  */
+// Add this to processDefinitions in src/macro-expander.ts
+
 function processDefinitions(
   ast: HQLNode[],
   env: Env,
@@ -229,6 +310,42 @@ function processDefinitions(
         logger.debug(`Found definition: ${defName}`);
         
         try {
+          // Enhance error handling for nested macro expansions
+          const valueExpr = defList.elements[2];
+          
+          // Log the value expression to help debug
+          logger.debug(`Definition value: ${JSON.stringify(valueExpr)}`);
+          
+          // Special handling for values that use dot notation
+          if (valueExpr.type === "list" && 
+              valueExpr.elements.length > 0 && 
+              valueExpr.elements[0].type === "symbol") {
+            
+            const firstSymbol = (valueExpr.elements[0] as SymbolNode).name;
+            
+            if (firstSymbol.includes('.')) {
+              logger.debug(`Definition contains dot notation: ${firstSymbol}`);
+              
+              // Extract module and method names
+              const [modName, methodName] = firstSymbol.split('.');
+              
+              // Check if module exists
+              if (!env.bindings.has(modName)) {
+                logger.error(`Module not found: ${modName}`);
+                continue; // Skip this definition
+              }
+              
+              // Check if method exists in module
+              const module = env.bindings.get(modName);
+              if (!module || typeof module !== 'object' || !(methodName in module)) {
+                logger.error(`Method ${methodName} not found in module ${modName}`);
+                continue; // Skip this definition
+              }
+              
+              logger.debug(`Module and method verified: ${modName}.${methodName}`);
+            }
+          }
+          
           // Evaluate the definition in the environment
           const value = evaluateForMacro(node, env);
           
@@ -414,7 +531,7 @@ function convertResultToHqlNode(result: any): HQLNode {
  * @returns Expanded AST node
  */
 
-function expandNode(
+export function expandNode(
   node: HQLNode,
   env: Env,
   depth = 0,
@@ -686,14 +803,61 @@ function tryCompileTimeEvaluation(
 }
 
 /**
- * Expand a regular macro
- * @param symbolName Macro name
- * @param node Node to expand
- * @param env Environment for expansion
- * @param depth Current recursion depth
- * @param logger Logger instance
- * @returns Expanded node
+ * Safely get a method from a module or object
+ * @param env Environment to look up the module in
+ * @param moduleName Name of the module
+ * @param methodName Name of the method
+ * @returns The method if found, or null
  */
+function safeGetModuleMethod(env: Env, moduleName: string, methodName: string): any {
+  try {
+    // Check if the module exists in environment
+    if (env.bindings.has(moduleName)) {
+      const module = env.bindings.get(moduleName);
+      
+      // Check if the module has the method
+      if (module && typeof module === 'object' && methodName in module) {
+        return module[methodName];
+      }
+    }
+  } catch (e) {
+    // Safely handle any errors
+    return null;
+  }
+  return null;
+}
+
+function processMacroExpansion(expanded: HQLNode, env: Env, depth: number, logger: Logger): HQLNode {
+  // Special handling for dot notation in the result of macro expansion
+  if (expanded.type === "list" && 
+      expanded.elements.length > 0 && 
+      expanded.elements[0].type === "symbol") {
+    
+    const firstSymbol = (expanded.elements[0] as SymbolNode).name;
+    
+    // If the first symbol has dot notation (like utils.double)
+    if (firstSymbol.includes(".") && !firstSymbol.startsWith(".")) {
+      const [moduleName, methodName] = firstSymbol.split(".");
+      logger.debug(`[${depth}] Macro expanded to module method: ${moduleName}.${methodName}`);
+      
+      // Convert to a js-call expression which the system can handle
+      return {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "js-call" },
+          { type: "symbol", name: moduleName },
+          { type: "literal", value: methodName },
+          ...expanded.elements.slice(1)
+        ]
+      };
+    }
+  }
+  
+  // If not dot notation, just return the original expansion
+  return expanded;
+}
+
+// Now modify the expandRegularMacro function to use our new helper
 function expandRegularMacro(
   symbolName: string,
   node: ListNode,
@@ -712,8 +876,11 @@ function expandRegularMacro(
     const expanded = macroFn(args, env);
     logger.debug(`[${depth}] Successfully expanded macro: ${symbolName}`);
     
+    // Process the expansion to handle dot notation
+    const processedExpansion = processMacroExpansion(expanded, env, depth, logger);
+    
     // Recursively expand the result
-    return expandNode(expanded, env, depth + 1, logger);
+    return expandNode(processedExpansion, env, depth + 1, logger);
   } catch (err) {
     logger.error(`[${depth}] Error expanding macro: ${err instanceof Error ? err.message : String(err)}`);
     

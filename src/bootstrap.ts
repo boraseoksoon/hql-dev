@@ -5,6 +5,8 @@ import { jsImport, jsExport, jsGet, jsCall } from "./interop.ts";
 import { gensym } from "./gensym.ts";
 import { parse } from "./transpiler/parser.ts";
 import { processImportNode } from "./macro-expander.ts";
+import { expandNode } from "./macro-expander.ts";
+
 import { Logger } from "./logger.ts";
 import { Env } from "./environment.ts"
 
@@ -361,6 +363,8 @@ function evaluateQuasiquote(expr: HQLNode, env: Env): HQLNode {
  * @param env Environment for evaluation
  * @returns Evaluated expression
  */
+// In src/bootstrap.ts, modify the evaluateForMacro function:
+
 export function evaluateForMacro(expr: HQLNode, env: Env): any {
   if (!expr || typeof expr !== "object" || !("type" in expr)) {
     throw new Error(`Invalid expression: ${JSON.stringify(expr)}`);
@@ -372,12 +376,32 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
       
     case "symbol": {
       const name = (expr as SymbolNode).name;
-      // Special case for native functions like 'list'
-      if (name === "list") {
-        return (...args: any[]) => ({ type: "list", elements: args });
+      if (env.hasMacro(name)) return env.getMacro(name);
+      
+      // Handle dot notation (module.property)
+      if (name.includes('.')) {
+        const [moduleName, propName] = name.split('.');
+        
+        try {
+          if (!env.bindings.has(moduleName)) {
+            throw new Error(`Module not found: ${moduleName}`);
+          }
+          
+          const module = env.bindings.get(moduleName);
+          if (!module || typeof module !== 'object') {
+            throw new Error(`Invalid module: ${moduleName}`);
+          }
+          
+          if (!(propName in module)) {
+            throw new Error(`Property ${propName} not found in module ${moduleName}`);
+          }
+          
+          return module[propName];
+        } catch (error) {
+          throw new Error(`Error accessing ${name}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       
-      if (env.hasMacro(name)) return env.getMacro(name);
       return env.lookup(name);
     }
     
@@ -411,10 +435,37 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
           return handleDefmacro(list, env);
         }
         
-        // Handle list function specially
-        if (op === "list") {
-          const args = list.elements.slice(1).map(arg => evaluateForMacro(arg, env));
-          return { type: "list", elements: args };
+        // Handle dot notation (module.method) in function position
+        if (op.includes('.') && !op.startsWith('.')) {
+          const [moduleName, methodName] = op.split('.');
+          
+          try {
+            if (!env.bindings.has(moduleName)) {
+              throw new Error(`Module not found: ${moduleName}`);
+            }
+            
+            const module = env.bindings.get(moduleName);
+            if (!module || typeof module !== 'object') {
+              throw new Error(`Invalid module: ${moduleName}`);
+            }
+            
+            if (!(methodName in module)) {
+              throw new Error(`Method ${methodName} not found in module ${moduleName}`);
+            }
+            
+            const method = module[methodName];
+            if (typeof method !== 'function') {
+              throw new Error(`${methodName} is not a function in module ${moduleName}`);
+            }
+            
+            // Evaluate the arguments
+            const args = list.elements.slice(1).map(arg => evaluateForMacro(arg, env));
+            
+            // Call the method
+            return method(...args);
+          } catch (error) {
+            throw new Error(`Error calling ${op}: ${error instanceof Error ? error.message : String(error)}`);
+          }
         }
         
         // Fallback: function application
@@ -552,6 +603,10 @@ function processDefmacroParams(paramsNode: ListNode): {
  * @param body Body expressions
  * @returns Macro function
  */
+// In src/bootstrap.ts, update the createMacroFunction function:
+
+// Fix in src/bootstrap.ts - Modify the createMacroFunction to avoid the extend error:
+
 function createMacroFunction(
   paramNames: string[], 
   hasRestParam: boolean, 
@@ -559,9 +614,13 @@ function createMacroFunction(
   body: HQLNode[]
 ): MacroFunction {
   return (args: HQLNode[], callEnv: Env): HQLNode => {
-    // Create a new environment for macro evaluation
-    // Use a safer approach to create the environment
-    const macroEnv = new Env(callEnv, callEnv.logger);
+    // Create a new environment without using extend
+    const macroEnv = new Env(callEnv, callEnv?.logger);
+    
+    // Add the list function to handle the quoted list in macros like double-it
+    macroEnv.define("list", function(...listArgs: any[]) {
+      return { type: "list", elements: listArgs };
+    });
     
     // Bind positional parameters
     for (let i = 0; i < paramNames.length; i++) {
