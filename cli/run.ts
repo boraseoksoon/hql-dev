@@ -1,3 +1,4 @@
+// Modified run.ts with transient file tracking
 import { resolve, dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI, OptimizationOptions } from "../src/bundler.ts";
 import { Logger } from "../src/logger.ts";
@@ -6,12 +7,16 @@ import { parse } from "../src/transpiler/parser.ts";
 import { transpile } from "../src/transformer.ts";
 import { isImportNode } from "../src/transpiler/hql_ast.ts";
 
+// Track generated JS files for cleanup
+const generatedJsFiles = new Set<string>();
+
 function printHelp() {
   console.error("Usage: deno run -A cli/run.ts <target.hql|target.js> [options]");
   console.error("\nOptions:");
   console.error("  --verbose         Enable verbose logging");
   console.error("  --performance     Apply aggressive performance optimizations (minify, drop console/debugger, etc.)");
   console.error("  --print           Print final JS output directly in CLI");
+  console.error("  --keep-js         Keep intermediate JS files (don't clean up)");
   console.error("  --help, -h        Display this help message");
 }
 
@@ -42,6 +47,9 @@ async function preprocessHqlImports(entryPath: string, logger: Logger): Promise<
         const source = await Deno.readTextFile(filePath);
         const transpiled = await transpile(source, filePath, { bundle: false, verbose: logger.enabled });
         await Deno.writeTextFile(jsOutputPath, transpiled);
+        
+        // Track the generated JS file for cleanup
+        generatedJsFiles.add(jsOutputPath);
         
         // Find imports in the HQL file and process them
         const ast = parse(source);
@@ -153,6 +161,31 @@ async function restoreOriginalFiles(logger: Logger): Promise<void> {
   }
 }
 
+// New function to clean up generated JS files
+async function cleanupGeneratedFiles(logger: Logger, keepFiles: boolean = false): Promise<void> {
+  if (keepFiles) {
+    logger.log(`Keeping ${generatedJsFiles.size} intermediate JS files as requested`);
+    return;
+  }
+  
+  logger.debug(`Cleaning up ${generatedJsFiles.size} generated JS files`);
+  for (const filePath of generatedJsFiles) {
+    try {
+      // Check if file exists before attempting to remove
+      const fileInfo = await Deno.stat(filePath).catch(() => null);
+      if (fileInfo) {
+        await Deno.remove(filePath);
+        logger.debug(`Removed generated file: ${filePath}`);
+      }
+    } catch (e) {
+      logger.error(`Error removing generated file ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  
+  // Clear the set after cleanup
+  generatedJsFiles.clear();
+}
+
 async function runModule(): Promise<void> {
   // Check if help is requested
   if (Deno.args.includes("--help") || Deno.args.includes("-h")) {
@@ -165,6 +198,7 @@ async function runModule(): Promise<void> {
   const verbose = Deno.args.includes("--verbose");
   const performance = Deno.args.includes("--performance");
   const printOutput = Deno.args.includes("--print");
+  const keepJs = Deno.args.includes("--keep-js"); // New flag to keep JS files
   const logger = new Logger(verbose);
 
   if (args.length < 1) {
@@ -209,8 +243,23 @@ async function runModule(): Promise<void> {
     
     // Restore original JS files
     await restoreOriginalFiles(logger);
+    
+    // Clean up generated JS files
+    await cleanupGeneratedFiles(logger, keepJs);
   } catch (error) {
     logger.error(`Error during processing: ${error instanceof Error ? error.message : String(error)}`);
+    
+    // Ensure cleanup even if an error occurs
+    try {
+      // Restore original JS files
+      await restoreOriginalFiles(logger);
+      
+      // Clean up generated JS files
+      await cleanupGeneratedFiles(logger, keepJs);
+    } catch (cleanupError) {
+      logger.error(`Error during cleanup: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    }
+    
     throw error;
   }
 }
