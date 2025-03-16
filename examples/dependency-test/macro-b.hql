@@ -1,9 +1,13 @@
+;; macro-b.hql
+
 ;; Import utils.js for functions
 (import utils "./utils.js")
 
 ;; Define the macros (no exports needed for internal use)
 (defmacro double-it (x)
   (list 'utils.double x))
+
+(console.log "utils.minus 10 " (utils.minus 10))
 
 (defmacro add-one (x)
   (list '+ x 1))
