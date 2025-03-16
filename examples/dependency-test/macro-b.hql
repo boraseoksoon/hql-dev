@@ -14,7 +14,3 @@
 ;; Define functions that *use* the macros
 (def double-five (double-it 5))
 (def doubled-and-added (double-and-add 5))
-
-;; Export the result values (not the macros themselves)
-(export "double-five" double-five) 
-(export "doubled-and-added" doubled-and-added)

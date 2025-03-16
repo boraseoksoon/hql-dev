@@ -8,7 +8,7 @@ import { expandMacros } from "./macro-expander.ts";
 import { HQLNode, ListNode, SymbolNode, isImportNode } from "./transpiler/hql_ast.ts";
 import { HQLImportHandler } from "./hql_import_handler.ts";
 import { moduleRegistry } from "./macro-expander.ts";
-import { initializeGlobalEnv } from "./bootstrap.ts";
+import { initializeGlobalEnv, evaluateForMacro } from "./bootstrap.ts";
 import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts";
 import { Logger } from "./logger.ts";
 import { Env } from "./environment.ts"
@@ -22,13 +22,6 @@ export interface TransformOptions {
   module?: "esm"; // Only ESM supported
 }
 
-/**
- * Transform a parsed AST by applying macro expansion and code generation
- * @param astNodes AST nodes to transform
- * @param currentDir Current directory for resolving imports
- * @param options Transformation options
- * @returns Generated TypeScript code
- */
 export async function transformAST(
   astNodes: HQLNode[], 
   currentDir: string, 
@@ -39,34 +32,29 @@ export async function transformAST(
   try {
     // Initialize the environment for macro expansion
     const env: Env = await initializeGlobalEnv({ verbose: options.verbose });
-
-    // Step 1: Expand macros in the AST
-    const expandedNodes = await expandMacros(astNodes, env, { verbose: options.verbose });
-    
+    const expandedNodes = await expandMacros(astNodes, env, currentDir, { verbose: options.verbose });
     logger.debug("Macro expansion completed");
-    
-    // Check for modules used in the expanded AST
     const usedModules = findUsedModulesInNodes(expandedNodes);
     logger.debug(`Used modules: ${Array.from(usedModules).join(', ')}`);
-   
-    // Prepare the full AST by handling imports
     const fullAST = prepareFullAST(expandedNodes, usedModules);
-    
-    // Step 2: Transform to IR with the augmented AST
     const ir = transformToIR(fullAST, currentDir);
     logger.debug("Transformed to IR");
-    
-    // Step 3: Generate TypeScript code 
     const tsCode = generateTypeScript(ir);
     logger.debug("Generated TypeScript code");
-    
-    // Step 4: Prepend runtime functions
     return RUNTIME_FUNCTIONS + tsCode;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`Transformation error: ${errorMessage}`);
     throw error;
   }
+}
+
+// Add this helper function to detect macro definitions
+function isMacroDefinition(node: HQLNode): boolean {
+  return node.type === "list" && 
+         (node as ListNode).elements.length > 0 && 
+         (node as ListNode).elements[0].type === "symbol" && 
+         ((node as ListNode).elements[0] as SymbolNode).name === "defmacro";
 }
 
 /**
@@ -198,7 +186,9 @@ export async function transpile(
     logger.debug("Parsed HQL to AST");
 
     // Now do the usual macro expansion
-    const expandedNodes = await expandMacros(astNodes);
+    // Get the directory of the file for proper path resolution
+    const fileDir = dirname(filePath);
+    const expandedNodes = await expandMacros(astNodes, undefined, fileDir, { verbose: options.verbose });
     logger.debug("Expanded macros");
     
     // Transform to IR

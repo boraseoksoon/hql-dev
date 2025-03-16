@@ -114,6 +114,8 @@ function setupPrimitives(env: Env): void {
 
   // Utility functions
   env.define("gensym", gensym);
+  
+  // CRITICAL FIX: Ensure list function is defined
   env.define("list", (...args: any[]) => ({ type: "list", elements: args }));
 
   // List operations
@@ -219,20 +221,36 @@ async function loadCoreMacros(env: Env, logger: Logger): Promise<void> {
 
   // First pass: Process all imports
   for (const node of astNodes) {
-    if (isMacroImport(node)) {
-      logger.debug("Processing import in core.hql");
-      await processImportNode(node as ListNode, env, coreDir);
+    try {
+      if (isMacroImport(node)) {
+        logger.debug("Processing import in core.hql");
+        await processImportNode(node as ListNode, env, coreDir);
+      }
+    } catch (error) {
+      // Log but continue processing
+      logger.error(`Error processing import: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   // Second pass: Process all macro definitions
   for (const node of astNodes) {
-    if (isMacroDefinition(node)) {
-      logger.debug("Registering macro definition");
-      evaluateForMacro(node, env);
-    } else if (!isMacroImport(node)) {
-      // For any other definitions that are not imports or macro definitions
-      evaluateForMacro(node, env);
+    try {
+      if (isMacroDefinition(node)) {
+        logger.debug("Registering macro definition");
+        evaluateForMacro(node, env);
+      } else if (!isMacroImport(node)) {
+        // For any other definitions that are not imports or macro definitions
+        // We wrap this in a try/catch and continue on error
+        try {
+          evaluateForMacro(node, env);
+        } catch (error) {
+          // Just log the error and continue
+          logger.error(`Error evaluating expression: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    } catch (error) {
+      // Log but continue processing other nodes
+      logger.error(`Error processing core.hql node: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
@@ -263,13 +281,24 @@ function isMacroDefinition(node: HQLNode): boolean {
 export async function initializeGlobalEnv(options: { verbose?: boolean } = {}): Promise<Env> {
   const logger = new Logger(options.verbose);
   const env = new Env(null, logger);
+  
+  // Setup primitives
   setupPrimitives(env);
+  logger.debug("Primitives set up successfully");
+  
+  // Log available symbols for debugging
+  if (options.verbose) {
+    logger.debug(`Available symbols: ${Array.from(env.bindings.keys()).join(', ')}`);
+  }
   
   try {
     await loadCoreMacros(env, logger);
     logger.debug("Core macros loaded successfully");
   } catch (error) {
     logger.error(`Error loading core macros: ${error instanceof Error ? error.message : String(error)}`);
+    
+    // The error is not fatal - we'll continue with what we have
+    logger.debug("Continuing despite core macro loading error");
   }
   
   return env;
@@ -343,6 +372,11 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
       
     case "symbol": {
       const name = (expr as SymbolNode).name;
+      // Special case for native functions like 'list'
+      if (name === "list") {
+        return (...args: any[]) => ({ type: "list", elements: args });
+      }
+      
       if (env.hasMacro(name)) return env.getMacro(name);
       return env.lookup(name);
     }
@@ -375,6 +409,12 @@ export function evaluateForMacro(expr: HQLNode, env: Env): any {
         }
         if (op === "defmacro") {
           return handleDefmacro(list, env);
+        }
+        
+        // Handle list function specially
+        if (op === "list") {
+          const args = list.elements.slice(1).map(arg => evaluateForMacro(arg, env));
+          return { type: "list", elements: args };
         }
         
         // Fallback: function application
@@ -519,7 +559,9 @@ function createMacroFunction(
   body: HQLNode[]
 ): MacroFunction {
   return (args: HQLNode[], callEnv: Env): HQLNode => {
-    const macroEnv = callEnv.extend([], []);
+    // Create a new environment for macro evaluation
+    // Use a safer approach to create the environment
+    const macroEnv = new Env(callEnv, callEnv.logger);
     
     // Bind positional parameters
     for (let i = 0; i < paramNames.length; i++) {

@@ -413,6 +413,7 @@ function convertResultToHqlNode(result: any): HQLNode {
  * @param logger Logger instance
  * @returns Expanded AST node
  */
+
 function expandNode(
   node: HQLNode,
   env: Env,
@@ -432,6 +433,22 @@ function expandNode(
   }
   
   const first = listNode.elements[0];
+  
+  // Special case for defmacro - handle it first before other checks
+  if (first.type === "symbol" && (first as SymbolNode).name === "defmacro") {
+    logger.debug(`[${depth}] Found defmacro definition`);
+    
+    try {
+      // Evaluate the defmacro to register the macro in the environment
+      evaluateForMacro(node, env);
+      
+      // Return a no-op to replace the defmacro form in the AST
+      return { type: "literal", value: null } as LiteralNode;
+    } catch (err) {
+      logger.error(`[${depth}] Error defining macro: ${err instanceof Error ? err.message : String(err)}`);
+      return { type: "literal", value: null } as LiteralNode; // Still return a no-op on error
+    }
+  }
   
   // Handle js-call that might be a module.function reference
   if (isJsCallWithModuleFunction(listNode)) {
@@ -848,16 +865,18 @@ function collectAllImports(nodes: HQLNode[]): HQLNode[] {
  * Initializes environment, loads imports, and expands macros recursively.
  * @param nodes AST nodes to expand
  * @param env Optional environment to use
+ * @param baseDir Base directory for resolving imports
  * @param options Expansion options
  * @returns Expanded AST nodes
  */
 export async function expandMacros(
   nodes: HQLNode[],
   env?: Env,
+  baseDir: string = Deno.cwd(),
   options: MacroExpanderOptions = {}
 ): Promise<HQLNode[]> {
   const logger = new Logger(options.verbose);
-  logger.debug("Starting full recursive expansion");
+  logger.debug(`Starting full recursive expansion with baseDir: ${baseDir}`);
   
   try {
     if (!env) {
@@ -873,7 +892,7 @@ export async function expandMacros(
     // Process all imports before expansion
     if (importNodes.length > 0) {
       try {
-        await preloadMacroImports(importNodes, env, Deno.cwd(), logger);
+        await preloadMacroImports(importNodes, env, baseDir, logger);
         logger.debug("All imports processed successfully");
       } catch (error) {
         logger.error(`Error during import processing: ${error instanceof Error ? error.message : String(error)}`);

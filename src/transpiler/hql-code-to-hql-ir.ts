@@ -86,6 +86,12 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   
   const first = list.elements[0];
 
+  // Special case for defmacro - handle it explicitly to avoid runtime errors
+  if (first.type === "symbol" && (first as SymbolNode).name === "defmacro") {
+    // Return a null literal which will be harmless in the output JS
+    return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+  }
+  
   // Case 1: First element is a list
   if (first.type === "list") {
     return transformNestedList(list, currentDir);
@@ -363,9 +369,39 @@ function transformKernelPrimitive(list: ListNode, op: string, currentDir: string
       return transformFn(list, currentDir);
     case "def":
       return transformDef(list, currentDir);
+    case "quasiquote":
+      return transformQuasiquote(list, currentDir);
+    case "unquote":
+      return transformUnquote(list, currentDir);
+    case "unquote-splicing":
+      return transformUnquoteSplicing(list, currentDir);
     default:
       throw new Error(`Unknown kernel primitive: ${op}`);
   }
+}
+
+function transformQuasiquote(list: ListNode, currentDir: string): IR.IRNode {
+  if (list.elements.length !== 2) {
+    throw new Error("quasiquote requires exactly one argument");
+  }
+  // For IR generation, treat quasiquoted expressions similar to quoted ones
+  return transformNode(list.elements[1], currentDir)!;
+}
+
+function transformUnquote(list: ListNode, currentDir: string): IR.IRNode {
+  if (list.elements.length !== 2) {
+    throw new Error("unquote requires exactly one argument");
+  }
+  // For IR generation, unquote should be expanded during macro processing
+  return transformNode(list.elements[1], currentDir)!;
+}
+
+function transformUnquoteSplicing(list: ListNode, currentDir: string): IR.IRNode {
+  if (list.elements.length !== 2) {
+    throw new Error("unquote-splicing requires exactly one argument");
+  }
+  // For IR generation, unquote-splicing should be expanded during macro processing
+  return transformNode(list.elements[1], currentDir)!;
 }
 
 /**

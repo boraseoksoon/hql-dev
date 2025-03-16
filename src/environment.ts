@@ -65,10 +65,14 @@ export class Env {
       }
     }
     
-    // Try parent environment
-    if (this.parent) {
+    // Try parent environment with safety check
+    if (this.parent && typeof this.parent.lookup === 'function') {
       this.logger.debug(`Looking in parent environment for: ${symbol}`);
-      return this.parent.lookup(symbol);
+      try {
+        return this.parent.lookup(symbol);
+      } catch (err) {
+        // If parent throws "not found", continue with our own "not found"
+      }
     }
     
     // Not found
@@ -138,10 +142,14 @@ export class Env {
       }
     }
     
-    // Try parent environment
-    if (this.parent) {
+    // Try parent environment with safety check
+    if (this.parent && typeof this.parent.hasMacro === 'function') {
       this.logger.debug(`Checking parent environment for macro: ${name}`);
-      return this.parent.hasMacro(name);
+      try {
+        return this.parent.hasMacro(name);
+      } catch (err) {
+        this.logger.debug(`Error checking parent for macro ${name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     
     this.logger.debug(`Macro not found: ${name}`);
@@ -189,14 +197,18 @@ export class Env {
           }
         }
       } catch (error) {
-        this.logger.debug(`Error in module lookup: ${error.message}`);
+        this.logger.debug(`Error in module lookup: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     
-    // Try parent environment
-    if (this.parent) {
+    // Try parent environment with safety check
+    if (this.parent && typeof this.parent.getMacro === 'function') {
       this.logger.debug(`Checking parent environment for macro: ${name}`);
-      return this.parent.getMacro(name);
+      try {
+        return this.parent.getMacro(name);
+      } catch (err) {
+        this.logger.debug(`Error getting macro from parent: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     
     this.logger.debug(`Macro not found: ${name}`);
@@ -211,10 +223,14 @@ export class Env {
    */
   extend(params: string[], args: any[]): Env {
     this.logger.debug(`Extending environment with ${params.length} parameters`);
+    // Create a new environment with this as the parent
     const env = new Env(this, this.logger);
+    
+    // Bind parameters to arguments
     for (let i = 0; i < params.length; i++) {
-      env.define(params[i], args[i]);
+      env.define(params[i], i < args.length ? args[i] : null);
     }
+    
     return env;
   }
 }

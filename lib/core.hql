@@ -123,3 +123,10 @@
 (import other3 "./other3.js")
 (defmacro js-adder (a b)
   (list (quote js-call) (quote other3) (quote "js_add") a b))
+
+;; Macro that uses def inside the macro definition
+(defmacro plus-constant (x)
+  (def constant 10)  ;; Using def inside the macro definition
+  `(+ ~x ~constant))
+
+(export "plus-constant" plus-constant)

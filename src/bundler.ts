@@ -115,6 +115,8 @@ async function writeOutput(
  * @param options Plugin options
  * @returns esbuild plugin object
  */
+// In src/bundler.ts
+
 export function createHqlPlugin(options: { verbose?: boolean }): any {
   const logger = new Logger(options.verbose);
   
@@ -141,7 +143,13 @@ export function createHqlPlugin(options: { verbose?: boolean }): any {
           bundle: true,
           verbose: options.verbose,
         });
-        return { contents: transpiledHql, loader: "js" };
+        
+        // Add resolveDir to tell esbuild where to look for imported files
+        return { 
+          contents: transpiledHql, 
+          loader: "js",
+          resolveDir: dirname(args.path) // This is the key addition
+        };
       });
     },
   };
@@ -206,6 +214,8 @@ async function processEntryFile(
  * @param options Bundling options
  * @returns Path to the bundled output
  */
+// In src/bundler.ts
+
 export async function bundleWithEsbuild(
   entryPath: string,
   outputPath: string,
@@ -227,18 +237,36 @@ export async function bundleWithEsbuild(
 
   // Create build options from optimization options
   const buildOptions = createBuildOptions(entryPath, outputPath, options, [hqlPlugin, externalPlugin]);
-
-  // Run the build
-  await build(buildOptions);
-  stop();
   
-  if (options.minify) {
-    logger.log(`Successfully bundled and minified output to ${outputPath}`);
-  } else {
-    logger.log(`Successfully bundled output to ${outputPath}`);
+  // Set better error handling and logging
+  try {
+    logger.log(`Starting bundling with esbuild for ${entryPath}`);
+    
+    // Print the import path for debugging
+    const entryDir = dirname(entryPath);
+    logger.log(`Entry directory: ${entryDir}`);
+    
+    // Run the build
+    const result = await build(buildOptions);
+    
+    // Log any warnings
+    if (result.warnings.length > 0) {
+      logger.warn(`esbuild warnings: ${JSON.stringify(result.warnings, null, 2)}`);
+    }
+    
+    stop();
+    
+    if (options.minify) {
+      logger.log(`Successfully bundled and minified output to ${outputPath}`);
+    } else {
+      logger.log(`Successfully bundled output to ${outputPath}`);
+    }
+    
+    return outputPath;
+  } catch (error) {
+    logger.error(`esbuild error: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
   }
-  
-  return outputPath;
 }
 
 /**
