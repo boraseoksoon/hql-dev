@@ -407,18 +407,13 @@ export function registerModule(
   
   // Register each export for qualified access
   for (const [key, value] of Object.entries(mod)) {
-    if (key === "default") continue; // Skip default export as it's handled differently
+    if (key === "default") continue; // Skip default export
     
     const qualifiedName = `${moduleName}.${key}`;
     logger.debug(`Registering qualified name: ${qualifiedName}`);
     
     // Define the exported value
     env.define(qualifiedName, value);
-
-    if (typeof value === 'function') {
-      const macroWrapper = createFunctionMacroWrapper(value);
-      env.defineMacro(qualifiedName, macroWrapper);
-    }
   }
 }
 
@@ -857,7 +852,6 @@ function processMacroExpansion(expanded: HQLNode, env: Env, depth: number, logge
   return expanded;
 }
 
-// Now modify the expandRegularMacro function to use our new helper
 function expandRegularMacro(
   symbolName: string,
   node: ListNode,
@@ -866,7 +860,19 @@ function expandRegularMacro(
   logger: Logger
 ): HQLNode {
   logger.debug(`[${depth}] Found regular macro: ${symbolName}`);
-  const macroFn = env.getMacro(symbolName)!;
+  const macroFn = env.getMacro(symbolName);
+  
+  // Safety check: ensure we have a macro function
+  if (!macroFn) {
+    logger.error(`[${depth}] Macro function not found: ${symbolName}`);
+    return {
+      type: "list",
+      elements: [
+        { type: "symbol", name: "js-error" },
+        { type: "literal", value: `Macro '${symbolName}' not found` }
+      ]
+    };
+  }
   
   // Expand arguments first
   const args = node.elements.slice(1).map(arg => expandNode(arg, env, depth + 1, logger));
@@ -876,11 +882,65 @@ function expandRegularMacro(
     const expanded = macroFn(args, env);
     logger.debug(`[${depth}] Successfully expanded macro: ${symbolName}`);
     
-    // Process the expansion to handle dot notation
-    const processedExpansion = processMacroExpansion(expanded, env, depth, logger);
+    // Special handling for nested macros with arithmetic operations
+    if (expanded.type === "list" && expanded.elements.length > 0) {
+      // Use proper type guard instead of assertion
+      const firstElement = expanded.elements[0];
+      
+      if (firstElement.type === "symbol") {
+        const op = firstElement.name;
+        
+        // For arithmetic operations, ensure all arguments are fully expanded
+        if (['+', '-', '*', '/', '%'].includes(op)) {
+          // Keep the original operator
+          const newElements: HQLNode[] = [firstElement];
+          
+          // Process all arguments
+          for (let i = 1; i < expanded.elements.length; i++) {
+            // Recursively expand nested expressions - fix the type error by explicitly typing the result
+            const expandedNode: HQLNode = expandNode(expanded.elements[i], env, depth + 1, logger);
+            newElements.push(expandedNode);
+          }
+          
+          // If we have a binary operation but only one argument, add a default second argument
+          if (newElements.length === 2) {
+            // Add a default right operand for safety
+            newElements.push({ type: "literal", value: 0 });
+            logger.debug(`[${depth}] Added default right operand to binary operation`);
+          }
+          
+          expanded.elements = newElements;
+        }
+      }
+    }
+    
+    // Handle special case for macros that expand to dot notation
+    if (expanded.type === "list" && 
+        expanded.elements.length > 0 && 
+        expanded.elements[0].type === "symbol") {
+      
+      const firstSymbol = (expanded.elements[0] as SymbolNode).name;
+      
+      // If the first symbol has dot notation (like utils.double)
+      if (firstSymbol.includes(".") && !firstSymbol.startsWith(".")) {
+        const [moduleName, methodName] = firstSymbol.split(".");
+        logger.debug(`[${depth}] Macro expanded to module method: ${moduleName}.${methodName}`);
+        
+        // Convert to a js-call expression which the system can handle
+        return {
+          type: "list",
+          elements: [
+            { type: "symbol", name: "js-call" },
+            { type: "symbol", name: moduleName },
+            { type: "literal", value: methodName },
+            ...expanded.elements.slice(1)
+          ]
+        };
+      }
+    }
     
     // Recursively expand the result
-    return expandNode(processedExpansion, env, depth + 1, logger);
+    return expandNode(expanded, env, depth + 1, logger);
   } catch (err) {
     logger.error(`[${depth}] Error expanding macro: ${err instanceof Error ? err.message : String(err)}`);
     

@@ -233,140 +233,42 @@ function convertCallExpressionWithMemberCallee(node: IR.IRCallExpression): ts.Ca
  */
 function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
   const object = convertIRExpr(node.object);
-  const property = convertIRExpr(node.property);
   
-  // Special case: If the object is an InteropIIFE, we need to handle this differently
-  if (node.object.type === IR.IRNodeType.InteropIIFE) {
-    const iife = node.object as IR.IRInteropIIFE;
+  // For identifier properties, use PropertyAccessExpression
+  if (node.property.type === IR.IRNodeType.Identifier) {
+    const propertyName = (node.property as IR.IRIdentifier).name;
     
-    // Create an IIFE to handle the nested property access
-    const statements: ts.Statement[] = [
-      // const _obj = original object;
-      ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList(
-          [ts.factory.createVariableDeclaration(
-            ts.factory.createIdentifier("_obj"),
-            undefined,
-            undefined,
-            convertIRExpr(iife.object)
-          )],
-          ts.NodeFlags.Const
-        )
-      ),
-      
-      // const _member = _obj["originalProp"];
-      ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList(
-          [ts.factory.createVariableDeclaration(
-            ts.factory.createIdentifier("_member"),
-            undefined,
-            undefined,
-            ts.factory.createElementAccessExpression(
-              ts.factory.createIdentifier("_obj"),
-              convertIRExpr(iife.property)
-            )
-          )],
-          ts.NodeFlags.Const
-        )
-      ),
-      
-      // const _result = typeof _member === "function" ? _member.call(_obj) : _member;
-      ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList(
-          [ts.factory.createVariableDeclaration(
-            ts.factory.createIdentifier("_result"),
-            undefined,
-            undefined,
-            ts.factory.createConditionalExpression(
-              ts.factory.createBinaryExpression(
-                ts.factory.createTypeOfExpression(ts.factory.createIdentifier("_member")),
-                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                ts.factory.createStringLiteral("function")
-              ),
-              ts.factory.createToken(ts.SyntaxKind.QuestionToken),
-              ts.factory.createCallExpression(
-                ts.factory.createPropertyAccessExpression(
-                  ts.factory.createIdentifier("_member"),
-                  ts.factory.createIdentifier("call")
-                ),
-                undefined,
-                [ts.factory.createIdentifier("_obj")]
-              ),
-              ts.factory.createToken(ts.SyntaxKind.ColonToken),
-              ts.factory.createIdentifier("_member")
-            )
-          )],
-          ts.NodeFlags.Const
-        )
-      ),
-      
-      // return _result.propName; - using the property from the outer part
-      ts.factory.createReturnStatement(
-        node.computed ?
-          ts.factory.createElementAccessExpression(
-            ts.factory.createIdentifier("_result"),
-            property
-          ) :
-          ts.factory.createPropertyAccessExpression(
-            ts.factory.createIdentifier("_result"),
-            property as ts.Identifier
-          )
-      )
-    ];
-    
-    // Create the IIFE
-    return ts.factory.createCallExpression(
-      ts.factory.createParenthesizedExpression(
-        ts.factory.createFunctionExpression(
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          [],
-          undefined,
-          ts.factory.createBlock(statements, true)
-        )
-      ),
-      undefined,
-      []
+    // Create a property access expression (using dot notation)
+    return ts.factory.createPropertyAccessExpression(
+      object,
+      ts.factory.createIdentifier(propertyName)
     );
-  }
-
-  // Handle member expressions where the object is a call expression (method chaining)
-  if (node.object.type === IR.IRNodeType.CallExpression) {
-    // First convert the inner call expression
-    const callExpr = convertCallExpression(node.object as IR.IRCallExpression);
+  } 
+  // For string literals, either use PropertyAccessExpression or ElementAccessExpression
+  else if (node.property.type === IR.IRNodeType.StringLiteral) {
+    const propValue = (node.property as IR.IRStringLiteral).value;
     
-    // Then create a property access on its result
-    if (node.computed) {
-      return ts.factory.createElementAccessExpression(callExpr, property);
-    } else {
-      if (ts.isIdentifier(property) || ts.isStringLiteral(property)) {
-        const propName = ts.isIdentifier(property) ? property.text : property.text;
-        return ts.factory.createPropertyAccessExpression(callExpr, ts.factory.createIdentifier(propName));
-      } else {
-        // Fallback to element access
-        return ts.factory.createElementAccessExpression(callExpr, property);
-      }
-    }
-  }
-  
-  // Regular property access - no special handling needed
-  if (node.computed) {
-    return ts.factory.createElementAccessExpression(object, property);
-  } else {
-    if (ts.isIdentifier(property) || ts.isStringLiteral(property)) {
-      const propName = ts.isIdentifier(property) ? property.text : property.text;
+    // If the property name is a valid identifier, use property access
+    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propValue)) {
       return ts.factory.createPropertyAccessExpression(
-        object, 
-        ts.factory.createIdentifier(propName)
+        object,
+        ts.factory.createIdentifier(propValue)
+      );
+    } 
+    // Otherwise use computed access
+    else {
+      return ts.factory.createElementAccessExpression(
+        object,
+        ts.factory.createStringLiteral(propValue)
       );
     }
-    // Fallback
-    return ts.factory.createElementAccessExpression(object, property);
+  } 
+  // For all other property types, use ElementAccessExpression
+  else {
+    return ts.factory.createElementAccessExpression(
+      object,
+      convertIRExpr(node.property)
+    );
   }
 }
 
@@ -420,6 +322,49 @@ function convertNewExpression(node: IR.IRNewExpression): ts.NewExpression {
 }
 
 function convertBinaryExpression(node: IR.IRBinaryExpression): ts.BinaryExpression {
+  // Add null checks for left and right operands
+  if (!node.left || !node.right) {
+    // Only log this in verbose mode or when specifically enabled
+    if (process.env.DEBUG || process.env.VERBOSE) {
+      console.warn(`Binary expression has null operand: ${JSON.stringify(node)}`);
+    }
+    
+    // Provide fallback operands when they're null
+    let left: ts.Expression;
+    if (node.left) {
+      left = convertIRExpr(node.left);
+    } else {
+      left = ts.factory.createNumericLiteral("0");
+    }
+    
+    let right: ts.Expression;
+    if (node.right) {
+      right = convertIRExpr(node.right);
+    } else {
+      // For null right operand, create a numeric literal 1 for addition, 0 for other operations
+      const defaultValue = node.operator === "+" ? "1" : "0";
+      right = ts.factory.createNumericLiteral(defaultValue);
+    }
+    
+    // Determine operator - use the existing one if available
+    let operator: ts.BinaryOperator;
+    switch (node.operator || '+') { // Default to '+' if no operator
+      case '+': operator = ts.SyntaxKind.PlusToken; break;
+      case '-': operator = ts.SyntaxKind.MinusToken; break;
+      case '*': operator = ts.SyntaxKind.AsteriskToken; break;
+      case '/': operator = ts.SyntaxKind.SlashToken; break;
+      case '%': operator = ts.SyntaxKind.PercentToken; break;
+      default: operator = ts.SyntaxKind.PlusToken; // Default to addition
+    }
+    
+    return ts.factory.createBinaryExpression(
+      left,
+      ts.factory.createToken(operator),
+      right
+    );
+  }
+  
+  // Normal case when both operands are present
   let operator: ts.BinaryOperator;
   switch (node.operator) {
     case '+': operator = ts.SyntaxKind.PlusToken; break;
@@ -893,6 +838,12 @@ function convertRaw(node: IR.IRRaw): ts.ExpressionStatement {
 }
 
 function convertIRExpr(node: IR.IRNode): ts.Expression {
+  // Add null check to prevent "Cannot read properties of null" errors
+  if (!node) {
+    console.warn("Null node passed to convertIRExpr, returning 'undefined'");
+    return ts.factory.createIdentifier("undefined");
+  }
+  
   switch (node.type) {
     case IR.IRNodeType.ObjectExpression:
       return convertObjectExpression(node as IR.IRObjectExpression);

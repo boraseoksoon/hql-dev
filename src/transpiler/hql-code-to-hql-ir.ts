@@ -289,18 +289,24 @@ function transformDotNotation(list: ListNode, op: string, currentDir: string): I
     const objectName = parts[0];
     const property = parts.slice(1).join('.');
     
+    // Create a proper member expression that preserves the dot notation
     const objectExpr = {
       type: IR.IRNodeType.Identifier,
+      // Important: Don't sanitize the whole op, just the parts
       name: sanitizeIdentifier(objectName)
     } as IR.IRIdentifier;
     
     // Property access (no arguments)
     if (list.elements.length === 1) {
       return {
-        type: IR.IRNodeType.InteropIIFE,
+        type: IR.IRNodeType.MemberExpression,
         object: objectExpr,
-        property: { type: IR.IRNodeType.StringLiteral, value: property } as IR.IRStringLiteral
-      } as IR.IRInteropIIFE;
+        property: { 
+          type: IR.IRNodeType.Identifier, 
+          name: sanitizeIdentifier(property) 
+        } as IR.IRIdentifier,
+        computed: false
+      } as IR.IRMemberExpression;
     }
     
     // Method call (with arguments)
@@ -313,7 +319,7 @@ function transformDotNotation(list: ListNode, op: string, currentDir: string): I
         object: objectExpr,
         property: { 
           type: IR.IRNodeType.Identifier, 
-          name: property 
+          name: sanitizeIdentifier(property) 
         } as IR.IRIdentifier,
         computed: false
       } as IR.IRMemberExpression,
@@ -1087,7 +1093,30 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
     
     // Handle binary operations
     let result = args[0];
+    
+    // If we only have one argument, add a default second argument
+    if (args.length === 1) {
+      // Default second argument depends on the operator:
+      // - For +/-, use 0 
+      // - For */%, use 1
+      const defaultValue = (op === "*" || op === "/") ? 1 : 0;
+      
+      return {
+        type: IR.IRNodeType.BinaryExpression,
+        operator: op,
+        left: result,
+        right: {
+          type: IR.IRNodeType.NumericLiteral,
+          value: defaultValue
+        } as IR.IRNumericLiteral
+      } as IR.IRBinaryExpression;
+    }
+    
+    // For multiple arguments, chain them as binary operations
     for (let i = 1; i < args.length; i++) {
+      // Skip any null arguments (shouldn't happen, but just in case)
+      if (!args[i]) continue;
+      
       result = {
         type: IR.IRNodeType.BinaryExpression,
         operator: op,
@@ -1095,6 +1124,7 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
         right: args[i],
       } as IR.IRBinaryExpression;
     }
+    
     return result;
   }
   

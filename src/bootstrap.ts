@@ -607,6 +607,7 @@ function processDefmacroParams(paramsNode: ListNode): {
 
 // Fix in src/bootstrap.ts - Modify the createMacroFunction to avoid the extend error:
 
+// In createMacroFunction in src/bootstrap.ts
 function createMacroFunction(
   paramNames: string[], 
   hasRestParam: boolean, 
@@ -619,6 +620,23 @@ function createMacroFunction(
     
     // Add the list function to handle the quoted list in macros like double-it
     macroEnv.define("list", function(...listArgs: any[]) {
+      // Special handling for module.method notation in the first argument
+      if (listArgs.length > 0 && 
+          typeof listArgs[0] === 'string' && 
+          listArgs[0].includes('.') && 
+          !listArgs[0].startsWith('.')) {
+        // Convert 'module.method' to a js-call form
+        const [moduleName, methodName] = listArgs[0].split('.');
+        return {
+          type: "list",
+          elements: [
+            { type: "symbol", name: "js-call" },
+            { type: "symbol", name: moduleName },
+            { type: "literal", value: methodName },
+            ...listArgs.slice(1)
+          ]
+        };
+      }
       return { type: "list", elements: listArgs };
     });
     

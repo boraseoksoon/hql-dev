@@ -2,13 +2,26 @@
 
 /**
  * Sanitize a string to be a valid JavaScript identifier
+ * - Preserves dots for module property access
  * - Converts hyphens to underscores
- * - Converts question marks and other special chars to valid suffixes
- * - Ensures the name starts with a valid character
- * - Removes any other invalid characters
+ * - Converts question marks to _pred suffix
  */
 export function sanitizeIdentifier(name: string): string {
-  // Special handling for Lisp-style naming conventions
+  // Special handling for module property access (name contains a dot)
+  if (name.includes('.')) {
+    const parts = name.split('.');
+    // Sanitize each part separately, then rejoin with dots
+    return parts.map(part => sanitizeBasicIdentifier(part)).join('.');
+  }
+  
+  // No dots, use standard sanitization
+  return sanitizeBasicIdentifier(name);
+}
+
+/**
+ * Sanitize a basic identifier without dots
+ */
+function sanitizeBasicIdentifier(name: string): string {
   let sanitized = name;
   
   // Handle question mark suffixes (common in predicate functions)

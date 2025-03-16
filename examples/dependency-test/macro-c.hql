@@ -2,5 +2,8 @@
 (defmacro add-one (x)
   (list '+ x 1))
 
+(defn addguy (x)
+    (add-one x))
+
 ;; Export for use by utils.js
-(export "add-one" add-one)
+(export "addguy" addguy)
