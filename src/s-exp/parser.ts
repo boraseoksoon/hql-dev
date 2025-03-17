@@ -1,7 +1,6 @@
 // src/s-exp/parser.ts - Parser for S-expressions
 
-import { SExp, SSymbol, SList, SLiteral, 
-    createSymbol, createList, createLiteral, createNilLiteral } from './types';
+import { SExp, SSymbol, SList, SLiteral, createSymbol, createList, createLiteral, createNilLiteral } from './types.ts';
 
 /**
 * Parse HQL source into S-expressions

@@ -2,9 +2,9 @@
 
 import { SExp, SSymbol, SList, SLiteral, 
     isSymbol, isList, isLiteral, isDefMacro, isQuasiquote, isUnquote, isUnquoteSplicing,
-    createSymbol, createList, createLiteral, createNilLiteral, sexpToString, cloneSExp } from './types';
-import { SEnv, MacroFn } from './environment';
-import { Logger } from '../logger';
+    createSymbol, createList, createLiteral, createNilLiteral, sexpToString, cloneSExp } from './types.ts';
+import { SEnv, MacroFn } from './environment.ts';
+import { Logger } from '../logger.ts';
 
 /**
 * Options for macro expansion

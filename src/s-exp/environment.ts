@@ -2,8 +2,8 @@
 
 import { SExp, SSymbol, SList, SLiteral, 
     isSymbol, isList, isLiteral,
-    createSymbol, createList, createLiteral, createNilLiteral } from './types';
-import { Logger } from '../logger'; // Using existing logger system
+    createSymbol, createList, createLiteral, createNilLiteral } from './types.ts';
+import { Logger } from '../logger.ts'; // Using existing logger system
 
 /**
 * Type definition for macro functions

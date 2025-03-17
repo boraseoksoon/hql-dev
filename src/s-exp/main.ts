@@ -1,14 +1,14 @@
 // src/s-exp/main.ts - Main entry point for the S-expression layer
 
-import { SExp, sexpToString } from './types';
-import { parse } from './parser';
-import { SEnv, initializeGlobalEnv } from './environment';
-import { initializeCoreMacros } from './core-macros';
-import { expandMacros } from './macro';
-import { processImports } from './imports';
-import { convertToHqlAst } from './connector';
-import { transformAST } from '../transformer'; // Use existing transformer for final output
-import { Logger } from '../logger';
+import { SExp, sexpToString } from './types.ts';
+import { parse } from './parser.ts';
+import { SEnv, initializeGlobalEnv } from './environment.ts';
+import { initializeCoreMacros } from './core-macros.ts';
+import { expandMacros } from './macro.ts';
+import { processImports } from './imports.ts';
+import { convertToHqlAst } from './connector.ts';
+import { transformAST } from '../transformer.ts'; // Use existing transformer for final output
+import { Logger } from '../logger.ts';
 
 /**
  * Options for processing HQL code through the S-expression layer

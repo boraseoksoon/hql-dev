@@ -1,13 +1,11 @@
 // src/s-exp/imports.ts - Import handling for S-expressions
 
 import * as path from "https://deno.land/std/path/mod.ts";
-import { 
-  SExp, SList, SLiteral, isSymbol, isLiteral, isImport, createList, createSymbol, createLiteral 
-} from './types';
-import { SEnv } from './environment';
-import { defineMacro } from './macro';
-import { parse } from './parser';
-import { Logger } from '../logger';
+import { SExp, SList, SLiteral, isSymbol, isLiteral, isImport, createList, createSymbol, createLiteral } from './types.ts';
+import { SEnv } from './environment.ts';
+import { defineMacro } from './macro.ts';
+import { parse } from './parser.ts';
+import { Logger } from '../logger.ts';
 
 /**
  * Options for import processing

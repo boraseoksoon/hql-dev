@@ -2,9 +2,9 @@
 
 import { SExp, SList, SSymbol, SLiteral, 
     isSymbol, isList, isLiteral,
-    createSymbol, createList, createLiteral, createNilLiteral, sexpToString } from './types';
-import { SEnv } from './environment';
-import { Logger } from '../logger';
+    createSymbol, createList, createLiteral, createNilLiteral, sexpToString } from './types.ts';
+import { SEnv } from './environment.ts';
+import { Logger } from '../logger.ts';
 
 /**
 * Initialize core macros in an environment

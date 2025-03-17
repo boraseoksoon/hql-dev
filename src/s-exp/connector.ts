@@ -2,9 +2,9 @@
 
 import { SExp, SList, SSymbol, SLiteral, 
     isSymbol, isList, isLiteral, isQuote,
-    createSymbol, createList, createLiteral, createNilLiteral, sexpToString } from './types';
-import { HQLNode, ListNode, SymbolNode, LiteralNode } from '../transpiler/hql_ast';
-import { Logger } from '../logger';
+    createSymbol, createList, createLiteral, createNilLiteral, sexpToString } from './types.ts';
+import { HQLNode, ListNode, SymbolNode, LiteralNode } from '../transpiler/hql_ast.ts';
+import { Logger } from '../logger.ts';
 
 /**
 * Options for converting S-expressions to HQL AST
