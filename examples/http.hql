@@ -4,4 +4,5 @@
 (import file "https://deno.land/std@0.170.0/fs/mod.ts")
 (def exists (file.existsSync "example-dir"))
 
+(print "hello")
 (console.log exists)

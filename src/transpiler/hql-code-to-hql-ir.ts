@@ -2,7 +2,7 @@
 
 import * as IR from "./hql_ir.ts";
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
-import { KERNEL_PRIMITIVES, PRIMITIVE_OPS, PRIMITIVE_DATA_STRUCTURE, PRIMITIVE_CLASS } from "../bootstrap.ts";
+import { KERNEL_PRIMITIVES, PRIMITIVE_OPS, PRIMITIVE_DATA_STRUCTURE, PRIMITIVE_CLASS } from "./primitives.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 
 /**

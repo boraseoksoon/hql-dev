@@ -1,19 +1,14 @@
-// run.ts - Updated to use new S-expression front end
+// run.ts - Updated to run the finalized JavaScript code
 
 import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { processHql } from "../src/s-exp/main.ts";
 import { Logger } from "../src/logger.ts";
 
-// Simple help message function
-function printHelp(): void {
-  console.error("Usage: deno run -A run.ts <input.hql> [--verbose]");
-  Deno.exit(1);
-}
-
 async function run(): Promise<void> {
   const args = Deno.args;
   if (args.length < 1) {
-    printHelp();
+    console.error("Usage: deno run -A run.ts <input.hql> [--verbose]");
+    Deno.exit(1);
   }
   
   const inputPath = resolve(args[0]);
@@ -26,14 +21,16 @@ async function run(): Promise<void> {
     
     // Process the HQL source through the new S-expression front end.
     // This function parses, expands macros, connects to the legacy AST,
-    // and then passes the result into the existing pipeline to produce JS code.
+    // and passes the result into the existing pipeline to produce JS code.
     const jsCode = await processHql(source, { 
       verbose, 
       baseDir: Deno.cwd() 
     });
     
-    // Output the final JavaScript code
-    console.log(jsCode);
+    // Write the transpiled JavaScript to a temporary file.
+    const tempFilePath = await Deno.makeTempFile({ suffix: ".js" });
+    await Deno.writeTextFile(tempFilePath, jsCode);
+    await import(tempFilePath);
     
   } catch (error) {
     logger.error(`Error processing file: ${error instanceof Error ? error.message : String(error)}`);

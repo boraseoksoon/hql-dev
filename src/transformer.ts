@@ -1,20 +1,17 @@
-// src/transformer.ts - Refactored for cleaner module structure and improved logging
+// src/transformer.ts - New unified transformer
 
 import { parse } from "./transpiler/parser.ts";
 import { transformToIR } from "./transpiler/hql-code-to-hql-ir.ts";
 import { generateTypeScript } from "./transpiler/ts-ast-to-ts-code.ts";
-import { dirname, resolve, readTextFile, writeTextFile } from "./platform/platform.ts";
-import { expandMacros } from "./macro-expander.ts";
-import { HQLNode, ListNode, SymbolNode, isImportNode } from "./transpiler/hql_ast.ts";
-import { HQLImportHandler } from "./hql_import_handler.ts";
-import { moduleRegistry } from "./macro-expander.ts";
-import { initializeGlobalEnv, evaluateForMacro } from "./bootstrap.ts";
-import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts";
+import { expandMacros } from "./s-exp/macro.ts";
 import { Logger } from "./logger.ts";
-import { Env } from "./environment.ts"
+import { Env } from "./environment.ts";
+import { convertAST } from "./converter.ts"
+import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts"
+
 
 /**
- * Configuration options for code transformation
+ * Options for code transformation.
  */
 export interface TransformOptions {
   verbose?: boolean;
@@ -22,220 +19,76 @@ export interface TransformOptions {
   module?: "esm"; // Only ESM supported
 }
 
+/**
+ * Transforms HQL AST nodes through the new pipeline.
+ *
+ * Steps:
+ * 1. Initialize the environment.
+ * 2. Expand macros using the new unified expansion.
+ * 3. Transform the expanded AST into an IR.
+ * 4. Generate TypeScript code.
+ */
 export async function transformAST(
-  astNodes: HQLNode[], 
-  currentDir: string, 
+  astNodes: any[],
+  currentDir: string,
   options: TransformOptions = {}
 ): Promise<string> {
   const logger = new Logger(options.verbose);
-  
   try {
-    // Initialize the environment for macro expansion
-    const env: Env = await initializeGlobalEnv({ verbose: options.verbose });
-    const expandedNodes = await expandMacros(astNodes, env, currentDir, { verbose: options.verbose });
-    logger.debug("Macro expansion completed");
-    const usedModules = findUsedModulesInNodes(expandedNodes);
-    logger.debug(`Used modules: ${Array.from(usedModules).join(', ')}`);
-    const fullAST = prepareFullAST(expandedNodes, usedModules);
-    const ir = transformToIR(fullAST, currentDir);
-    logger.debug("Transformed to IR");
+    // Initialize environment
+    const env: Env = await Env.initializeGlobalEnv({ verbose: options.verbose });
+    
+    // Expand macros using new macro.ts.
+    const macroExpandedAst = await expandMacros(astNodes, env, currentDir, { verbose: options.verbose });
+    logger.debug("Macro expansion completed", macroExpandedAst);
+
+    // Convert the expanded AST (if needed)
+    const convertedAst = convertAST(macroExpandedAst);
+    logger.debug("AST conversion completed", convertedAst);
+
+    // Transform the converted AST into IR.
+    const ir = transformToIR(convertedAst, currentDir);
+    logger.debug("Transformed to IR", ir);
+
+    // Generate TypeScript code from IR.
     const tsCode = generateTypeScript(ir);
     logger.debug("Generated TypeScript code");
-    return RUNTIME_FUNCTIONS + tsCode;
+
+    // Prepend the runtime functions to the generated code.
+    const finalCode = `${RUNTIME_FUNCTIONS}\n\n${tsCode}`;
+    logger.debug("Final code assembled");
+
+    return finalCode;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`Transformation error: ${errorMessage}`);
+    logger.error(`Transformation error: ${errorMessage}`);
     throw error;
   }
 }
 
-// Add this helper function to detect macro definitions
-function isMacroDefinition(node: HQLNode): boolean {
-  return node.type === "list" && 
-         (node as ListNode).elements.length > 0 && 
-         (node as ListNode).elements[0].type === "symbol" && 
-         ((node as ListNode).elements[0] as SymbolNode).name === "defmacro";
-}
 
 /**
- * Find modules used in js-call nodes
- * @param nodes AST nodes to search
- * @returns Set of module names
+ * A simplified API for quick transpilation of HQL source.
  */
-function findUsedModulesInNodes(nodes: HQLNode[]): Set<string> {
-  const usedModules = new Set<string>();
-  
-  function traverse(node: HQLNode) {
-    if (node.type === "list") {
-      const listNode = node as ListNode;
-      
-      // Check for js-call pattern
-      if (
-        listNode.elements.length >= 3 &&
-        listNode.elements[0].type === "symbol" &&
-        (listNode.elements[0] as SymbolNode).name === "js-call" &&
-        listNode.elements[1].type === "symbol"
-      ) {
-        const moduleName = (listNode.elements[1] as SymbolNode).name;
-        usedModules.add(moduleName);
-      }
-      
-      // Traverse all elements
-      listNode.elements.forEach(traverse);
-    }
-  }
-  
-  nodes.forEach(traverse);
-  return usedModules;
-}
-
-/**
- * Prepare the full AST by handling imports and used modules
- * @param expandedNodes Expanded AST nodes
- * @param usedModules Set of used module names
- * @returns Full AST with all necessary imports
- */
-function prepareFullAST(expandedNodes: HQLNode[], usedModules: Set<string>): HQLNode[] {
-  const fullAST: HQLNode[] = [];
-  const processedImports = new Set<string>();
-
-  // First, extract import statements from the expanded nodes
-  for (const node of expandedNodes) {
-    if (isImportNode(node)) {
-      if (node.type === "list" && 
-        (node as ListNode).elements.length >= 3 &&
-        (node as ListNode).elements[1].type === "symbol" &&
-        (node as ListNode).elements[2].type === "literal") { 
-        
-        const moduleName = (node.elements[1] as SymbolNode).name;
-        // Skip if we've already processed this import
-        if (processedImports.has(moduleName)) {
-          continue;
-        }
-        
-        // Add to our AST and mark as processed
-        fullAST.push(node);
-        processedImports.add(moduleName);
-      }
-    } else {
-      // Non-import nodes are added as-is
-      fullAST.push(node);
-    }
-  }
-  
-  // Add any used modules from registry that weren't explicitly imported
-  addImplicitImports(fullAST, usedModules, processedImports);
-  
-  return fullAST;
-}
-
-/**
- * Add implicit imports for modules that are used but not explicitly imported
- * @param fullAST AST to add imports to
- * @param usedModules Set of used module names
- * @param processedImports Set of already processed module names
- */
-function addImplicitImports(
-  fullAST: HQLNode[],
-  usedModules: Set<string>,
-  processedImports: Set<string>
-): void {
-  for (const moduleName of usedModules) {
-    if (moduleRegistry.has(moduleName) && !processedImports.has(moduleName)) {
-      const importPath = moduleRegistry.get(moduleName)!;
-      
-      // Create an import node and add it to the beginning of the AST
-      const importNode: ListNode = {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "js-import" },
-          { type: "symbol", name: moduleName },
-          { type: "literal", value: importPath }
-        ]
-      };
-      
-      fullAST.unshift(importNode);
-      processedImports.add(moduleName);
-    }
-  }
-}
-
-/**
- * Transpile HQL source code to JavaScript
- * @param source Source code to transpile
- * @param filePath Path of the source file
- * @param options Transpilation options
- * @returns Transpiled JavaScript code
- */
-export async function transpile(
-  source: string, 
-  filePath: string, 
-  options: TransformOptions = {}
+export async function transpileHql(
+  source: string,
+  baseDir: string = Deno.cwd(),
+  verbose: boolean = false
 ): Promise<string> {
-  const logger = new Logger(options.verbose);
-  
-  try {
-    // Create an import handler for preprocessing HQL imports
-    const importHandler = new HQLImportHandler(options);
-    
-    // First, preprocess all HQL imports to generate JS equivalents
-    await importHandler.preprocessImports(source, filePath);
-    
-    // Parse the HQL source into an AST
-    const astNodes = parse(source);
-    logger.debug("Parsed HQL to AST");
-
-    // Now do the usual macro expansion
-    // Get the directory of the file for proper path resolution
-    const fileDir = dirname(filePath);
-    const expandedNodes = await expandMacros(astNodes, undefined, fileDir, { verbose: options.verbose });
-    logger.debug("Expanded macros");
-    
-    // Transform to IR
-    const ir = transformToIR(expandedNodes, dirname(filePath));
-    logger.debug("Transformed to IR");
-    
-    // Generate TypeScript code
-    const tsCode = generateTypeScript(ir);
-    logger.debug("Generated TypeScript code");
-    
-    // Prepend runtime functions and return
-    return RUNTIME_FUNCTIONS + tsCode;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Transpile error: ${errorMessage}`);
-  }
+  const astNodes = parse(source);
+  return transformAST(astNodes, baseDir, { verbose, module: "esm", bundle: false });
 }
 
-/**
- * Transpile an HQL file to JavaScript
- * @param inputPath Path to input file
- * @param outputPath Optional output path
- * @param options Transpilation options
- * @returns Generated JavaScript code
- */
-export async function transpileFile(
-  inputPath: string, 
-  outputPath?: string, 
-  options: TransformOptions = {}
-): Promise<string> {
-  const logger = new Logger(options.verbose);
-  const absPath = resolve(inputPath);
-  
-  try {
-    const source = await readTextFile(absPath);
-    const tsCode = await transpile(source, absPath, options);
+if (import.meta.main) {
+  // Test the transformer in standalone mode.
+  const source = `
+    (defn greet [name]
+      (console.log "Hello," name))
     
-    if (outputPath) {
-      await writeTextFile(outputPath, tsCode);
-      logger.log(`Output written to: ${outputPath}`);
-    }
-    
-    return tsCode;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to transpile "${inputPath}": ${errorMessage}`);
-  }
+    (greet "World")
+  `;
+  const jsCode = await transpileHql(source, Deno.cwd(), true);
+  console.log(jsCode);
 }
 
-export default transpile;
+export default transpileHql;

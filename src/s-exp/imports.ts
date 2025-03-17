@@ -44,7 +44,6 @@ export async function processImports(
       await processImport(importExpr, env, baseDir, processedImports, logger);
     } catch (error) {
       logger.error(`Error processing import: ${error.message}`);
-      // Continue with other imports
     }
   }
 }
