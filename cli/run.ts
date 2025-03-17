@@ -1,6 +1,4 @@
-// run.ts - Updated to run the finalized JavaScript code
-
-import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { resolve, dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { processHql } from "../src/s-exp/main.ts";
 import { Logger } from "../src/logger.ts";
 
@@ -12,6 +10,7 @@ async function run(): Promise<void> {
   }
   
   const inputPath = resolve(args[0]);
+  const inputDir = dirname(inputPath); // Get the directory of the input file
   const verbose = args.includes("--verbose");
   const logger = new Logger(verbose);
   
@@ -20,12 +19,13 @@ async function run(): Promise<void> {
     const source = await Deno.readTextFile(inputPath);
     
     // Process the HQL source through the new S-expression front end.
-    // This function parses, expands macros, connects to the legacy AST,
-    // and passes the result into the existing pipeline to produce JS code.
-    const jsCode = await processHql(source, { 
+    let jsCode = await processHql(source, { 
       verbose, 
-      baseDir: Deno.cwd() 
+      baseDir: inputDir  // Use input file's directory as base, not cwd()
     });
+
+    // Fix relative imports to use absolute paths
+    jsCode = fixImportPaths(jsCode, inputDir);
 
     if (verbose) {
       logger.log("*****************")
@@ -48,6 +48,20 @@ async function run(): Promise<void> {
     logger.error(`Error processing file: ${error instanceof Error ? error.message : String(error)}`);
     Deno.exit(1);
   }
+}
+
+/**
+ * Fix relative import paths in generated JavaScript code to use absolute paths.
+ * This ensures imports work when executed from a temporary location.
+ */
+function fixImportPaths(code: string, baseDir: string): string {
+  return code.replace(
+    /import\s+(?:\*\s+as\s+\w+|{\s*[\w\s,]+\s*}|\w+)\s+from\s+["'](\.[^"']+)["']/g,
+    (match, relPath) => {
+      const absPath = resolve(baseDir, relPath);
+      return match.replace(relPath, absPath);
+    }
+  );
 }
 
 if (import.meta.main) {

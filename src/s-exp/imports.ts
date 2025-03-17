@@ -109,8 +109,12 @@ async function processHqlImport(
   processedImports: Set<string>,
   logger: Logger
 ): Promise<void> {
-  // Resolve the absolute path
+  // Resolve the absolute path relative to the importing file's directory
   const resolvedPath = path.resolve(baseDir, modulePath);
+  
+  logger.debug(`Resolving import: ${moduleName} from ${modulePath}`);
+  logger.debug(`Base directory: ${baseDir}`);
+  logger.debug(`Resolved path: ${resolvedPath}`);
   
   // Check for circular imports
   if (processedImports.has(resolvedPath)) {
@@ -132,11 +136,12 @@ async function processHqlImport(
   // Parse it into S-expressions
   const importedExprs = parse(fileContent);
   
-  // Process nested imports first
+  // Process nested imports first - this is the critical fix
+  // Use the directory of the current file as the new base directory
   const importDir = path.dirname(resolvedPath);
   await processImports(importedExprs, env, { 
     verbose: logger.enabled,
-    baseDir: importDir 
+    baseDir: importDir  // Key fix: Use the directory of the imported file for nested imports
   });
   
   // Create module object to store exports
@@ -181,8 +186,7 @@ async function processHqlImport(
         // Extract function name and body
         if (expr.elements.length > 2 && isSymbol(expr.elements[1])) {
           const fnName = expr.elements[1].name;
-          
-          // We don't evaluate the function here, just register it for exports
+          // Register the function for exports
           moduleExports[fnName] = expr;
         }
       } catch (error) {
