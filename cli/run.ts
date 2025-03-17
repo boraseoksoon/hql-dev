@@ -1,69 +1,126 @@
-import { resolve, dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { processHql } from "../src/s-exp/main.ts";
+// cli/run.ts - Simplified version focused on just running HQL files
+
+import { resolve, dirname } from "../src/platform/platform.ts";
+import { transpileCLI, BundleOptions } from "../src/bundler.ts";
 import { Logger } from "../src/logger.ts";
 
-async function run(): Promise<void> {
+/**
+ * Simple performance optimization preset
+ */
+const PERFORMANCE_MODE = {
+  minify: true,
+  target: "es2020",
+  sourcemap: false,
+  drop: ["console", "debugger"],
+  treeShaking: true,
+};
+
+/**
+ * Print help message
+ */
+function printHelp() {
+  console.error("Usage: deno run -A cli/run.ts <target.hql|target.js> [options]");
+  console.error("\nOptions:");
+  console.error("  --verbose         Enable verbose logging");
+  console.error("  --performance     Apply performance optimizations");
+  console.error("  --print           Print final JS output directly in CLI");
+  console.error("  --help, -h        Display this help message");
+}
+
+/**
+ * Main module execution
+ */
+async function runModule(): Promise<void> {
+  // Parse command line arguments
   const args = Deno.args;
-  if (args.length < 1) {
-    console.error("Usage: deno run -A run.ts <input.hql> [--verbose]");
+  
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    Deno.exit(0);
+  }
+
+  // Get non-option arguments
+  const nonOptionArgs = args.filter(arg => !arg.startsWith("--") && !arg.startsWith("-"));
+  if (nonOptionArgs.length < 1) {
+    printHelp();
     Deno.exit(1);
   }
-  
-  const inputPath = resolve(args[0]);
-  const inputDir = dirname(inputPath); // Get the directory of the input file
+
+  // Parse basic options
   const verbose = args.includes("--verbose");
+  const performance = args.includes("--performance");
+  const printOutput = args.includes("--print");
+
   const logger = new Logger(verbose);
+  const inputPath = resolve(nonOptionArgs[0]);
+  logger.log(`Processing entry: ${inputPath}`);
+
+  // Create a temporary directory for output
+  const tempDir = await Deno.makeTempDir({ prefix: "hql_run_" });
+  logger.debug(`Created temporary directory: ${tempDir}`);
   
   try {
-    // Read the HQL source from the given file.
-    const source = await Deno.readTextFile(inputPath);
+    // Set up bundle options
+    const optimizationOptions = performance ? PERFORMANCE_MODE : { 
+      minify: false,
+      sourcemap: true 
+    };
     
-    // Process the HQL source through the new S-expression front end.
-    let jsCode = await processHql(source, { 
-      verbose, 
-      baseDir: inputDir  // Use input file's directory as base, not cwd()
-    });
+    // Combine all options
+    const bundleOptions: BundleOptions = {
+      verbose,
+      tempDir,
+      ...optimizationOptions
+    };
 
-    // Fix relative imports to use absolute paths
-    jsCode = fixImportPaths(jsCode, inputDir);
-
-    if (verbose) {
-      logger.log("*****************")
-      logger.log("*****************")
-      logger.log("*****************")
-      logger.log("*****************")
-      logger.log(jsCode)
-      logger.log("*****************")
-      logger.log("*****************")
-      logger.log("*****************")
-      logger.log("*****************")
-    }
-    
-    // Write the transpiled JavaScript to a temporary file.
-    const tempFilePath = await Deno.makeTempFile({ suffix: ".js" });
-    await Deno.writeTextFile(tempFilePath, jsCode);
-    await import(tempFilePath);
-    
+    // Process the file
+    await runSingleExecution(inputPath, tempDir, bundleOptions, printOutput, logger);
   } catch (error) {
-    logger.error(`Error processing file: ${error instanceof Error ? error.message : String(error)}`);
-    Deno.exit(1);
+    logger.error(`Error during processing: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    // Always clean up temp directory
+    try {
+      await Deno.remove(tempDir, { recursive: true });
+      logger.debug(`Cleaned up temporary directory: ${tempDir}`);
+    } catch (e) {
+      logger.debug(`Error cleaning up temporary directory: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 }
 
 /**
- * Fix relative import paths in generated JavaScript code to use absolute paths.
- * This ensures imports work when executed from a temporary location.
+ * Run a single execution
  */
-function fixImportPaths(code: string, baseDir: string): string {
-  return code.replace(
-    /import\s+(?:\*\s+as\s+\w+|{\s*[\w\s,]+\s*}|\w+)\s+from\s+["'](\.[^"']+)["']/g,
-    (match, relPath) => {
-      const absPath = resolve(baseDir, relPath);
-      return match.replace(relPath, absPath);
-    }
-  );
+async function runSingleExecution(
+  inputPath: string, 
+  tempDir: string,
+  options: BundleOptions,
+  printOutput: boolean,
+  logger: Logger
+): Promise<void> {
+  // Create a temporary output path
+  const fileName = inputPath.split('/').pop() || "output";
+  const tempOutputPath = `${tempDir}/${fileName.replace(/\.hql$/, ".run.js")}`;
+  
+  // Bundle the file
+  const bundledPath = await transpileCLI(inputPath, tempOutputPath, options);
+  
+  // Print if requested
+  if (printOutput) {
+    const bundledContent = await Deno.readTextFile(bundledPath);
+    console.log(bundledContent);
+    return;
+  }
+  
+  // Run the bundled output
+  logger.log(`Running bundled output: ${bundledPath}`);
+  await import("file://" + resolve(bundledPath));
 }
 
+// Run the module if invoked directly
 if (import.meta.main) {
-  run();
+  runModule().catch(error => {
+    console.error("Fatal error:", error);
+    Deno.exit(1);
+  });
 }

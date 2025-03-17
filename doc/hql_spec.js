@@ -1,30 +1,107 @@
-
-// Helper for property access
-function getProperty(obj, prop) {
-  const member = obj[prop];
-  return typeof member === "function" ? member.bind(obj) : member;
-}
-
-// Collection access function
+// doc/hql_spec.js
+import * as pathModule from "https://deno.land/std@0.170.0/path/mod.ts";
+import * as fileModule from "https://deno.land/std@0.170.0/fs/mod.ts";
+import * as expressModule from "npm:express";
 function get(obj, key, notFound = null) {
-  if (obj == null) return notFound;
-  
-  // Handle arrays (vectors)
-  if (Array.isArray(obj)) {
-    return (typeof key === 'number' && key >= 0 && key < obj.length) 
-      ? obj[key] 
-      : notFound;
+  if (obj == null)
+    return notFound;
+  if (typeof obj === "function") {
+    try {
+      return obj(key);
+    } catch (e) {
+      return key in obj ? obj[key] : notFound;
+    }
   }
-  
-  // Handle Sets
+  if (Array.isArray(obj)) {
+    return typeof key === "number" && key >= 0 && key < obj.length ? obj[key] : notFound;
+  }
   if (obj instanceof Set) {
     return obj.has(key) ? key : notFound;
   }
-  
-  // Handle objects (maps)
-  return (key in obj) ? obj[key] : notFound;
+  const propKey = typeof key === "number" ? String(key) : key;
+  return propKey in obj ? obj[propKey] : notFound;
 }
-const numbers = new Array();
+function symbol_pred(value) {
+  return typeof value === "string";
+}
+function list_pred(value) {
+  return Array.isArray(value);
+}
+function map_pred(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Set);
+}
+function nil_pred(value) {
+  return value === null || value === void 0;
+}
+function empty_pred(coll) {
+  if (coll == null)
+    return true;
+  if (Array.isArray(coll))
+    return coll.length === 0;
+  if (coll instanceof Set)
+    return coll.size === 0;
+  if (typeof coll === "object")
+    return Object.keys(coll).length === 0;
+  return false;
+}
+function first(coll) {
+  if (coll == null)
+    return null;
+  if (Array.isArray(coll) && coll.length > 0)
+    return coll[0];
+  return null;
+}
+function rest(coll) {
+  if (coll == null)
+    return [];
+  if (Array.isArray(coll))
+    return coll.slice(1);
+  return [];
+}
+function next(coll) {
+  if (coll == null)
+    return null;
+  if (Array.isArray(coll) && coll.length > 1)
+    return coll.slice(1);
+  return null;
+}
+function seq(coll) {
+  if (coll == null)
+    return null;
+  if (Array.isArray(coll))
+    return coll.length > 0 ? coll : null;
+  if (coll instanceof Set)
+    return coll.size > 0 ? Array.from(coll) : null;
+  if (typeof coll === "object") {
+    const entries = Object.entries(coll);
+    return entries.length > 0 ? entries : null;
+  }
+  return null;
+}
+function conj(coll, ...items2) {
+  if (coll == null)
+    return items2;
+  if (Array.isArray(coll))
+    return [...coll, ...items2];
+  if (coll instanceof Set) {
+    const newSet = new Set(coll);
+    items2.forEach((item) => newSet.add(item));
+    return newSet;
+  }
+  if (typeof coll === "object") {
+    return { ...coll, ...Object.fromEntries(items2) };
+  }
+  return coll;
+}
+function concat(...colls) {
+  return [].concat(...colls.map(
+    (coll) => coll == null ? [] : Array.isArray(coll) ? coll : [coll]
+  ));
+}
+function list(...items2) {
+  return items2;
+}
+var numbers = new Array();
 numbers.push(1);
 numbers.push(2);
 numbers.push(3);
@@ -32,296 +109,316 @@ numbers.push(4);
 numbers.push(5);
 numbers.push(6);
 numbers.push(7);
-const pi = 3.14159;
-const greeting = "Hello, HQL World!";
-const is_awesome = true;
-const symbol_x = "x";
-const quoted_list = [1, 2, 3];
-const quoted_expression = ["+", 1, ["*", 2, 3]];
-[1, 2, 3, 4, 5];
-new Set([1, 2, 3, 4, 5]);
-({
-    key: "value"
-});
-[1, 2, 3, 4, 5];
-const json = {
-    items: [1, 2, 3, 4, 5]
+var json = {
+  items: [1, 2, 3, 4, 5]
 };
 json.items;
-const data = {
-    items: [5, 10, 15, 20, 25, 30, 35, 40],
-    factor: 2,
-    prefix: "Value: "
+var data = {
+  items: [5, 10, 15, 20, 25, 30, 35, 40],
+  factor: 2,
+  prefix: "Value: "
 };
 data.items;
-const empty_vector = [];
-const mixed_types = ["string", 42, true, null];
-const nested_vectors = [[1, 2], [3, 4]];
-const empty_map = {};
-const user = {
-    name: "John",
-    age: 30
+var user = {
+  name: "John",
+  age: 30
 };
-const nested_map = {
-    profile: {
-        id: 1,
-        settings: {
-            theme: "dark"
-        }
-    }
+var vec_item = get(numbers, 2);
+var map_value = get(user, "name");
+var first_item = get(numbers, 0);
+var second_item = get(numbers, 1);
+var my_vector = [1, 2, 3, 4, 5];
+var element2 = get(my_vector, 2);
+var element3 = get(my_vector, 2);
+var element4 = get(my_vector, 2);
+var user2 = {
+  name: "Alice",
+  status: "active"
 };
-const empty_set = new Set();
-const unique_numbers = new Set([1, 2, 3, 4, 5]);
-const unique_strings = new Set(["apple", "banana", "cherry"]);
-const empty_list = [];
-const simple_list = [1, 2, 3, 4, 5];
-const mixed_list = ["hello", 42, true];
-const vec_item = get(numbers, 2);
-const map_value = get(user, "name");
-const first_item = get(numbers, 0);
-const second_item = get(numbers, 1);
-const my_vector = [1, 2, 3, 4, 5];
-const element2 = get(my_vector, 2);
-const element3 = get(my_vector, 2);
-const element4 = get(my_vector, 2);
-const square = function (x) {
-    return x * x;
-};
-const add_three = function (x, y, z) {
-    return x + (y + z);
-};
-const abs = function (x) {
-    return x < 0 ? 0 - x : x;
-};
-const factorial = function (n) {
-    return n <= 1 ? 1 : n * get(factorial, n - 1);
+console.log(get(user2, "name"));
+console.log(user2.name);
+console.log(get(user2, ["name"]));
+var my_list = list("a", "b", "c");
+get(my_list, 1);
+console.log(get(my_list, 1));
+var my_vector2 = [10, 20, 30];
+get(my_vector2, 2);
+console.log(get(my_vector2, 2));
+var my_set = /* @__PURE__ */ new Set([1, 2, 3]);
+console.log(get(my_set, 2));
+console.log(my_set.has(2));
+console.log(my_set.has(2));
+var square = function(x) {
+  return x * x;
 };
 console.log("square : ", get(square, 10));
-export { square };
-const calculate_area = function (radius) {
-    return function () {
-        const r_squared = get(square, radius);
-        const area = pi * r_squared;
-        return area;
-    }([]);
+var classify_number = function(x) {
+  return x < 0 ? "negative" : x === 0 ? "zero" : x < 10 ? "small positive" : x < 100 ? "medium positive" : true ? "large positive" : null;
 };
-const complex_calculation = function (x, y) {
-    return function () {
-        const sum = x + y;
-        return function () {
-            const product = x * y;
-            const difference = x - y;
-            return list(sum, product, difference);
-        }([]);
-    }([]);
+console.log(get(classify_number, 10));
+console.log(get(classify_number, 100));
+var log_all = function(...items2) {
+  return console.log(items2);
 };
-const isLargerThan_pred = function (a, b) {
-    return a > b ? a : b;
-};
-const classify_number = function (n) {
-    return n < 0 ? "negative" : "zero";
-};
-const between = function (x, min, max) {
-    return x >= min ? x <= max : x >= min;
-};
-const outside = function (x, min, max) {
-    return x < min ? x < min : x > max;
-};
-const not_between = function (x, min, max) {
-    return between(x, min, max) ? 0 : 1;
-};
-const validate_range = function (x) {
-    return (x >= 0 ? x < 10 : x >= 0) ? "single digit" : "double digit";
-};
-const arithmetic_demo = function (a, b) {
-    return list(a + b, a - b, a * b, a / b);
-};
-const comparison_demo = function (a, b) {
-    return list(a === b, a !== b, a < b, a > b, a <= b, a >= b);
-};
-const apply_twice = function (f, x) {
-    return get(f, get(f, x));
-};
-const make_multiplier = function (n) {
-    return function (x) {
-        return x * n;
-    };
-};
-const demonstration = function () {
-    return function () {
-        const double = get(make_multiplier, 2);
-        return get(double, 10);
-    }([]);
-};
-const log_all = function (...items) {
-    return console.log(items);
-};
-const with_prefix = function (prefix, ...rest) {
-    return console.log(prefix, rest);
+var with_prefix = function(prefix, ...rest2) {
+  return console.log(prefix, rest2);
 };
 log_all(1, 2, 3, 4, 5);
 with_prefix("Numbers:", 1, 2, 3);
-const showcase = function (n) {
-    return function () {
-        const result = n < 0 ? "Cannot compute for negative numbers" : "Identity element for factorial";
-        return result ? result : function () {
-            const fact = get(factorial, n);
-            const msg = "Factorial of " + (n + " is " + fact);
-            console.log(msg);
-            return list(n, fact);
-        }([]);
-    }([]);
-};
-export { showcase };
 numbers.push(8);
 console.log(numbers);
-const pi_value = Math.PI;
-const max_int_value = Number.MAX_SAFE_INTEGER;
-const random_number = Math.random;
-const current_timestamp = Date.now;
+var max_int_value = Number.MAX_SAFE_INTEGER;
+var current_timestamp = Date.now;
 console.log("Hello from HQL!");
 console.warn("This is a warning");
-const date = new Date();
-const current_year = date.getFullYear;
-const month = date.getMonth;
-const formatted_date = date.toLocaleDateString;
-const abs_value = Math.abs(-42);
-const rounded = Math.round(3.7);
-const max_value = Math.max(1, 2, 3, 4, 5);
-import * as pathModule from "https://deno.land/std@0.170.0/path/mod.ts";
-const path = (function () {
-    const wrapper = pathModule.default !== undefined ? pathModule.default : {};
-    for (const [key, value] of Object.entries(pathModule)) {
-        if (key !== "default")
-            wrapper[key] = value;
-    }
-    return wrapper;
-})();
-const joined_path = path.join("folder", "file.txt");
-import * as fileModule from "https://deno.land/std@0.170.0/fs/mod.ts";
-const file = (function () {
-    const wrapper = fileModule.default !== undefined ? fileModule.default : {};
-    for (const [key, value] of Object.entries(fileModule)) {
-        if (key !== "default")
-            wrapper[key] = value;
-    }
-    return wrapper;
-})();
-const exists = file.existsSync("example-dir");
-import * as expressModule from "npm:express";
-const express = (function () {
-    const wrapper = expressModule.default !== undefined ? expressModule.default : {};
-    for (const [key, value] of Object.entries(expressModule)) {
-        if (key !== "default")
-            wrapper[key] = value;
-    }
-    return wrapper;
-})();
-const app = express();
-const router = express.Router;
+var date = /* @__PURE__ */ new Date();
+var current_year = date.getFullYear;
+var month = date.getMonth;
+var formatted_date = date.toLocaleDateString;
+var abs_value = Math.abs(-42);
+var rounded = Math.round(3.7);
+var max_value = Math.max(1, 2, 3, 4, 5);
+var path = function() {
+  const wrapper = pathModule.default !== void 0 ? pathModule.default : {};
+  for (const [key, value] of Object.entries(pathModule)) {
+    if (key !== "default")
+      wrapper[key] = value;
+  }
+  return wrapper;
+}();
+var joined_path = path.join("folder", "file.txt");
+var file = function() {
+  const wrapper = fileModule.default !== void 0 ? fileModule.default : {};
+  for (const [key, value] of Object.entries(fileModule)) {
+    if (key !== "default")
+      wrapper[key] = value;
+  }
+  return wrapper;
+}();
+var exists = file.existsSync("example-dir");
+var express = function() {
+  const wrapper = expressModule.default !== void 0 ? expressModule.default : {};
+  for (const [key, value] of Object.entries(expressModule)) {
+    if (key !== "default")
+      wrapper[key] = value;
+  }
+  return wrapper;
+}();
+var app = express();
+var router = express.Router;
 app.use(express.json);
-const message = "Hello, World!";
-const upper_message = message.toUpperCase;
-const message_parts = message.split(" ");
-const array = [1, 2, 3];
+var message = "Hello, World!";
+var upper_message = message.toUpperCase;
+var message_parts = message.split(" ");
+var array = [1, 2, 3];
 array.push(4);
 array.push(5);
 console.log(array);
-const year = date.getFullYear;
-const date_string = date.toISOString;
-const nums = [1, 2, 3, 4, 5];
-const filtered = nums.filter(function (x) {
-    return x > 2;
+var year = date.getFullYear;
+var date_string = date.toISOString;
+var nums = [1, 2, 3, 4, 5];
+var filtered = nums.filter(function(x) {
+  return x > 2;
 });
-const doubled = filtered.map(function (x) {
-    return x * 2;
+var doubled = filtered.map(function(x) {
+  return x * 2;
 });
-const sum = nums.reduce(function (a, b) {
-    return a + b;
+var sum = nums.reduce(function(a, b) {
+  return a + b;
 }, 0);
-const max_sum = Math.max(sum, 10);
-const config = {
-    db: {
-        user: {
-            name: "admin"
-        }
+var max_sum = Math.max(sum, 10);
+var config = {
+  db: {
+    user: {
+      name: "admin"
     }
+  }
 };
-const db_part = config.db;
-const user_part = db_part.user;
-const admin_name = user_part.name;
-const get_user = function () {
-    return {
-        id: 1,
-        name: "John"
-    };
+var db_part = config.db;
+var user_part = db_part.user;
+var admin_name = user_part.name;
+var get_user = function() {
+  return {
+    id: 1,
+    name: "John"
+  };
 };
-const user_obj = get_user();
-const user_name = user_obj.name;
-const window_width = window.innerWidth;
-const array_length = array.length;
-const string_upper = message.toUpperCase;
-const substring = message.substring(0, 5);
-const replaced = message.replace("Hello", "Hi");
-const even_numbers = numbers.filter(function (n) {
-    return n % 2 === 0;
+var user_obj = get_user();
+var user_name = user_obj.name;
+var window_width = window.innerWidth;
+var array_length = array.length;
+var string_upper = message.toUpperCase;
+var substring = message.substring(0, 5);
+var replaced = message.replace("Hello", "Hi");
+var even_numbers = numbers.filter(function(n) {
+  return n % 2 === 0;
 });
-const doubled_evens = even_numbers.map(function (n) {
-    return n * 2;
+var doubled_evens = even_numbers.map(function(n) {
+  return n * 2;
 });
 console.log("Doubled evens (step by step):", doubled_evens);
-[1, 2, 3, 4, 5, 6, 7, 8].filter(function (n) {
-    return n > 5;
+[1, 2, 3, 4, 5, 6, 7, 8].filter(function(n) {
+  return n > 5;
 }).length;
-const chained_result = function () {
-    const filtered = numbers.filter(function (n) {
-        return n > 5;
-    });
-    const mapped = filtered.map(function (n) {
-        return n * 2;
-    });
-    return mapped.reduce(function (acc, n) {
-        return acc + n;
-    }, 0);
-}([]);
-console.log("Sum of doubled numbers > 5:", chained_result);
-const direct_chain = numbers.filter(function (n) {
-    return n % 2 === 0;
-}).map(function (n) {
+var chained_result = function() {
+  const filtered2 = numbers.filter(function(n) {
+    return n > 5;
+  });
+  const mapped = filtered2.map(function(n) {
     return n * 2;
+  });
+  return mapped.reduce(function(acc, n) {
+    return acc + n;
+  }, 0);
+};
+console.log("Sum of doubled numbers > 5:", chained_result);
+var direct_chain = numbers.filter(function(n) {
+  return n % 2 === 0;
+}).map(function(n) {
+  return n * 2;
 });
 console.log("Direct chain result:", direct_chain);
 console.log("\\n----- Test 5: Complex Method Chaining -----");
-const complex_chain = numbers.filter(function (n) {
-    return n > 3;
-}).map(function (n) {
-    return n * 3;
+var complex_chain = numbers.filter(function(n) {
+  return n > 3;
+}).map(function(n) {
+  return n * 3;
 }).slice(0, 3);
 console.log("Complex chain result:", complex_chain);
-const sum_chain = numbers.filter(function (n) {
-    return n > 5;
-}).map(function (n) {
-    return n * 2;
-}).filter(function (n) {
-    return n % 4 === 0;
-}).reduce(function (acc, n) {
-    return acc + n;
+var sum_chain = numbers.filter(function(n) {
+  return n > 5;
+}).map(function(n) {
+  return n * 2;
+}).filter(function(n) {
+  return n % 4 === 0;
+}).reduce(function(acc, n) {
+  return acc + n;
 }, 0);
 console.log("Sum from complex chain:", sum_chain);
-const macro_x = 10;
-macro_x > 5 ? function () {
-    return console.log("macro_x is greater than 5");
-}([]) : null;
-macro_x < 5 ? null : function () {
-    return console.log("macro_x is not less than 5");
-}([]);
-const hql_unless = function (x) {
-    return x ? null : function () {
-        return x ? 0 : 1;
-    }([]);
-};
-export { hql_unless as unless };
-const x_plus_one = macro_x + 1;
-const x_minus_one = macro_x - 1;
+var macro_x = 10;
+macro_x > 5 ? console.log("macro_x is greater than 5") : null;
+macro_x < 5 ? null : console.log("macro_x is not less than 5");
+var x_plus_one = macro_x + 1;
+var x_minus_one = macro_x - 1;
 console.log(x_plus_one);
 console.log(x_minus_one);
+var symb = "hello";
+var lst = [1, 2, 3];
+var mp = {
+  name: "John"
+};
+symbol_pred(symb);
+list_pred(lst);
+map_pred(mp);
+nil_pred(null);
+var list_numbers = [1, 2, 3, 4, 5];
+first(list_numbers);
+rest(list_numbers);
+next(list_numbers);
+seq(list_numbers);
+empty_pred([]);
+empty_pred(list_numbers);
+var xs = [1, 2, 3];
+var ys = [4, 5, 6];
+conj(xs, 4);
+concat(xs, ys);
+concat(xs, [], ys);
+var xs2 = [1, 2, 3];
+var ys2 = [4, 5, 6];
+conj(xs2, 4);
+concat(xs2, ys2);
+concat(xs2, [], ys2);
+var first_name = "John";
+var last_name = "Doe";
+var full_name = first_name + " " + last_name;
+console.log(full_name);
+var age = 30;
+var bio = full_name + " is " + age + " years old";
+console.log(bio);
+var score = 95;
+var max_score = 100;
+var percentage = score / max_score * 100;
+var result_message = "Score: " + score + "/" + max_score + " (" + percentage + "%)";
+console.log(result_message);
+var items = ["apple", "banana", "orange"];
+var item_count = items.length;
+var summary = "Found " + item_count + " items: " + get(items, 0) + ", " + get(items, 1) + ", " + get(items, 2);
+console.log(summary);
+(function(x) {
+  return function(y) {
+    return function(z) {
+      return x + y + z;
+    }(30);
+  }(20);
+})(10);
+(function(x) {
+  return console.log(x + 5);
+})(10);
+(function(x) {
+  return function(y) {
+    return x + y;
+  }(20);
+})(10);
+(function(outer) {
+  return function(inner) {
+    return outer * inner;
+  }(outer + 2);
+})(5);
+(function(sum2) {
+  return function(product) {
+    return list(sum2, product);
+  }(4 * 5);
+})(2 + 3);
+var calculate = function(base) {
+  return function(squared) {
+    return function(cubed) {
+      return squared + cubed;
+    }(squared * base);
+  }(base * base);
+};
+get(calculate, 3);
+var get_number = function() {
+  return 42;
+};
+var get_nothing = function() {
+  return null;
+};
+var get_zero = function() {
+  return 0;
+};
+var get_string = function() {
+  return "Hello";
+};
+var test_if_let_truthy_number = function() {
+  return function(x) {
+    return x ? "Got number: " + x : "No number";
+  }(get_number());
+};
+var test_if_let_nil = function() {
+  return function(x) {
+    return x ? "Got something: " + x : "Got nothing";
+  }(get_nothing());
+};
+var test_if_let_zero = function() {
+  return function(x) {
+    return x ? "Got zero: " + x : "Zero is considered falsy";
+  }(get_zero());
+};
+var test_if_let_string = function() {
+  return function(x) {
+    return x ? "Got string: " + x : "No string";
+  }(get_string());
+};
+var test_if_let_nested = function() {
+  return function(x) {
+    return x ? function(y) {
+      return y ? "Nested test: x = " + x + ", y = " + y : "Nested test: x = " + x + ", no y";
+    }(x > 40 ? get_string() : null) : "No number";
+  }(get_number());
+};
+console.log(test_if_let_truthy_number());
+console.log(test_if_let_nil());
+console.log(test_if_let_zero());
+console.log(test_if_let_string());
+console.log(test_if_let_nested());
+//# sourceMappingURL=hql_spec.js.map

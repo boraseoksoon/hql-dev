@@ -13,5 +13,7 @@
 (defn minusguys (x)
     (minus-one x))
 
+(console.log (minusguys 10))
+
 (export "minusguys" minusguys)
 (export "addguy" addguy)

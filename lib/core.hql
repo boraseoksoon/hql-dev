@@ -110,23 +110,16 @@
 (defmacro double-and-add-five (x)
   `(+ (other2.double-it ~x) 5))
 
-;; (import path "https://deno.land/std@0.170.0/path/mod.ts")
-
 (import lodash "npm:lodash")
 (defmacro lodash-capitalize (s)
   `(js-call lodash "capitalize" ~s))
-
-;; (import express "npm:express")
-
-;; Add these lines to your existing core.hql file
 
 (import other3 "./other3.js")
 (defmacro js-adder (a b)
   (list (quote js-call) (quote other3) (quote "js_add") a b))
 
-;; Macro that uses def inside the macro definition
-(defmacro plus-constant (x)
-  (def constant 10)  ;; Using def inside the macro definition
-  `(+ ~x ~constant))
-
-(export "plus-constant" plus-constant)
+(defmacro fancy-format (str)
+  (import lodash "npm:lodash")         ;← JS import
+  `(str "Formatted: " (js-call lodash  
+                         "capitalize"  ;← Calls JS during
+                         ~str)))       ;← macro expansion

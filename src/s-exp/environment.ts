@@ -52,77 +52,155 @@ this.macros.set(name, fn);
 /**
 * Import a module with all its exports
 */
-importModule(name: string, exports: Record<string, any>): void {
-this.logger.debug(`Importing module: ${name} with exports: ${Object.keys(exports).join(', ')}`);
+importModule(moduleName: string, exports: Record<string, any>): void {
+  this.logger.debug(`Importing module: ${moduleName} with exports: ${Object.keys(exports).join(', ')}`);
 
-// Store the module as a variable
-this.define(name, exports);
+  // Create a module object that directly contains all exports
+  const moduleObj: Record<string, any> = {...exports};
 
-// Keep track of module exports for qualified access
-this.moduleExports.set(name, exports);
+  // Store the module as a variable
+  this.define(moduleName, moduleObj);
 
-// Register qualified macros if present
-for (const [exportName, exportValue] of Object.entries(exports)) {
- if (typeof exportValue === 'function' && 'isMacro' in exportValue) {
-   const qualifiedName = `${name}.${exportName}`;
-   this.logger.debug(`Registering qualified macro: ${qualifiedName}`);
-   this.defineMacro(qualifiedName, exportValue as MacroFn);
- }
-}
+  // Keep track of module exports for qualified access
+  this.moduleExports.set(moduleName, exports);
+
+  // Register qualified macros if present
+  for (const [exportName, exportValue] of Object.entries(exports)) {
+    if (typeof exportValue === 'function' && 'isMacro' in exportValue) {
+      const qualifiedName = `${moduleName}.${exportName}`;
+      this.logger.debug(`Registering qualified macro: ${qualifiedName}`);
+      this.defineMacro(qualifiedName, exportValue as MacroFn);
+    }
+  }
+
+  this.logger.debug(`Module ${moduleName} imported with exports: ${Object.keys(moduleObj).join(', ')}`);
 }
 
 /**
-* Look up a variable in this environment or its parents
-*/
+ * Look up a variable in this environment or its parents
+ */
 lookup(name: string): any {
-// Check for dot notation (module.property access)
-if (name.includes('.')) {
- return this.lookupDotNotation(name);
-}
+  // Check for dot notation (module.property access)
+  if (name.includes('.')) {
+    return this.lookupDotNotation(name);
+  }
 
-// Regular variable lookup
-if (this.variables.has(name)) {
- return this.variables.get(name);
-}
+  // Handle symbol name with dashes by replacing with underscores
+  const sanitizedName = name.replace(/-/g, '_');
+  
+  // Try with sanitized name first
+  if (this.variables.has(sanitizedName)) {
+    this.logger.debug(`Found variable with sanitized name: ${sanitizedName}`);
+    return this.variables.get(sanitizedName);
+  }
+  
+  // Try with original name
+  if (this.variables.has(name)) {
+    this.logger.debug(`Found variable with original name: ${name}`);
+    return this.variables.get(name);
+  }
 
-if (this.parent) {
- return this.parent.lookup(name);
-}
+  if (this.parent) {
+    return this.parent.lookup(name);
+  }
 
-this.logger.debug(`Variable not found: ${name}`);
-throw new Error(`Variable not found: ${name}`);
+  this.logger.debug(`Variable not found: ${name} (or ${sanitizedName})`);
+  throw new Error(`Variable not found: ${name}`);
 }
 
 /**
-* Look up a property via dot notation (module.property)
-*/
+ * Look up a property via dot notation (module.property)
+ */
 private lookupDotNotation(name: string): any {
-const [moduleName, ...propertyParts] = name.split('.');
-const propertyPath = propertyParts.join('.');
+  const [moduleName, ...propertyParts] = name.split('.');
+  const propertyPath = propertyParts.join('.');
 
-// Look up the module
-let moduleValue: any;
+  // Look up the module
+  let moduleValue: any;
 
-try {
- moduleValue = this.lookup(moduleName);
-} catch (error) {
- this.logger.debug(`Module not found for dot notation: ${moduleName}`);
- throw new Error(`Module not found: ${moduleName}`);
-}
+  try {
+    moduleValue = this.lookup(moduleName);
+  } catch (error) {
+    this.logger.debug(`Module not found for dot notation: ${moduleName}`);
+    throw new Error(`Module not found: ${moduleName}`);
+  }
 
-// Navigate the property path
-let current = moduleValue;
+  // Navigate the property path
+  let current = moduleValue;
+  
+  this.logger.debug(`Looking up property path "${propertyPath}" in module "${moduleName}"`);
+  this.logger.debug(`Module value: ${JSON.stringify(current)}`);
 
-for (const part of propertyParts) {
- if (current && typeof current === 'object' && part in current) {
-   current = current[part];
- } else {
-   this.logger.debug(`Property not found in path: ${name}`);
-   throw new Error(`Property not found: ${name}`);
- }
-}
+  // For single property access with no further dots
+  if (propertyParts.length === 1) {
+    const part = propertyParts[0];
+    
+    // Try direct property access
+    if (current && typeof current === 'object') {
+      
+      // Method 1: Try direct property access
+      if (part in current) {
+        this.logger.debug(`Found property "${part}" via direct access`);
+        return current[part];
+      }
+      
+      // Method 2: Try direct property access with object name sanitized (underscores for dashes)
+      const sanitizedPart = part.replace(/-/g, '_');
+      if (sanitizedPart in current) {
+        this.logger.debug(`Found property "${sanitizedPart}" (from "${part}") via sanitized access`);
+        return current[sanitizedPart];
+      }
+      
+      // Method 3: Look for a property that exactly matches the export name
+      for (const key of Object.keys(current)) {
+        if (key === part) {
+          this.logger.debug(`Found exact property match: "${key}"`);
+          return current[key];
+        }
+      }
+      
+      // Method 4: If property is dash-separated, try underscore version as fallback
+      const underscorePart = part.replace(/-/g, '_');
+      if (underscorePart !== part && underscorePart in current) {
+        this.logger.debug(`Found underscore version of property: "${underscorePart}"`);
+        return current[underscorePart];
+      }
+      
+      // Method 5: If nothing else works, try case-insensitive lookup
+      for (const key of Object.keys(current)) {
+        if (key.toLowerCase() === part.toLowerCase()) {
+          this.logger.debug(`Found case-insensitive property match: "${key}"`);
+          return current[key];
+        }
+      }
+      
+      // Debug available properties
+      this.logger.debug(`Available properties in module: ${JSON.stringify(Object.keys(current))}`);
+      
+      this.logger.debug(`Property "${part}" not found in module "${moduleName}"`);
+      throw new Error(`Property "${part}" not found in module "${moduleName}"`);
+    } else {
+      throw new Error(`Cannot access property "${part}" of non-object: ${current}`);
+    }
+  }
+  
+  // For multi-part property paths (a.b.c)
+  for (const part of propertyParts) {
+    if (current && typeof current === 'object' && part in current) {
+      current = current[part];
+    } else {
+      // Try with dashes converted to underscores
+      const underscorePart = part.replace(/-/g, '_');
+      if (current && typeof current === 'object' && underscorePart in current) {
+        current = current[underscorePart];
+      } else {
+        this.logger.debug(`Property not found in path: ${name}`);
+        throw new Error(`Property not found: ${name}`);
+      }
+    }
+  }
 
-return current;
+  return current;
 }
 
 /**

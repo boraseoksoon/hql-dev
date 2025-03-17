@@ -476,65 +476,112 @@ return exprs.map(expr => expandMacro(expr, env, logger, options));
 }
 
 /**
-* Expand macros in a single S-expression
-*/
+ * Post-process a macro expansion result to correctly handle quoted operations
+ * This is critical for macros that expand to operations like (+ x 1)
+ */
+export function postProcessMacroResult(sexp: SExp, env: SEnv, logger: Logger): SExp {
+  // Handle the special case of (list 'op arg1 arg2 ...) -> (op arg1 arg2 ...)
+  if (isList(sexp)) {
+    const list = sexp as SList;
+    
+    // Check for the pattern: (list 'op arg1 arg2 ...)
+    if (list.elements.length >= 3 && 
+        isSymbol(list.elements[0]) && 
+        list.elements[0].name === 'list') {
+      
+      // Check if the first argument is a quoted symbol
+      const firstArg = list.elements[1];
+      if (isList(firstArg) && 
+          firstArg.elements.length === 2 && 
+          isSymbol(firstArg.elements[0]) && 
+          firstArg.elements[0].name === 'quote' && 
+          isSymbol(firstArg.elements[1])) {
+        
+        // Extract the operation name from 'op
+        const opName = (firstArg.elements[1] as SSymbol).name;
+        logger.debug(`Converting list construction to direct operation: ${opName}`);
+        
+        // Create a new list with the operation in first position
+        return createList(
+          createSymbol(opName),
+          ...list.elements.slice(2).map(arg => postProcessMacroResult(arg, env, logger))
+        );
+      }
+    }
+    
+    // Recursively process all elements in the list
+    return createList(
+      ...list.elements.map(elem => postProcessMacroResult(elem, env, logger))
+    );
+  }
+  
+  // For other types, return as is
+  return sexp;
+}
+
+// Modify the expandMacro function to include post-processing
 export function expandMacro(expr: SExp, env: SEnv, logger: Logger, 
                       options: MacroExpanderOptions = {}, 
                       depth: number = 0): SExp {
-const maxDepth = options.maxExpandDepth || 100;
+  const maxDepth = options.maxExpandDepth || 100;
 
-// Check for max recursion depth
-if (depth > maxDepth) {
-throw new Error(`Macro expansion exceeded maximum depth of ${maxDepth}`);
-}
+  // Check for max recursion depth
+  if (depth > maxDepth) {
+    throw new Error(`Macro expansion exceeded maximum depth of ${maxDepth}`);
+  }
 
-// Skip macro definitions (they have already been processed)
-if (isDefMacro(expr)) {
-logger.debug(`Skipping macro definition at depth ${depth}`);
-return createNilLiteral();
-}
+  // Skip macro definitions (they have already been processed)
+  if (isDefMacro(expr)) {
+    logger.debug(`Skipping macro definition at depth ${depth}`);
+    return createNilLiteral();
+  }
 
-// Expand lists (potentially containing macro calls)
-if (isList(expr)) {
-const list = expr as SList;
+  // Expand lists (potentially containing macro calls)
+  if (isList(expr)) {
+    const list = expr as SList;
 
-// Handle empty list
-if (list.elements.length === 0) {
- return list;
-}
+    // Handle empty list
+    if (list.elements.length === 0) {
+      return list;
+    }
 
-const first = list.elements[0];
+    const first = list.elements[0];
 
-// Check if this is a macro call
-if (isSymbol(first) && env.hasMacro(first.name)) {
- const macroFn = env.getMacro(first.name);
- 
- if (macroFn) {
-   logger.debug(`Expanding macro ${first.name} at depth ${depth}`);
-   
-   // Get macro arguments
-   const macroArgs = list.elements.slice(1);
-   
-   try {
-     // Apply the macro
-     const expanded = macroFn(macroArgs, env);
-     
-     // Recursively expand the result
-     return expandMacro(expanded, env, logger, options, depth + 1);
-   } catch (error) {
-     logger.error(`Error expanding macro ${first.name}: ${error.message}`);
-     throw error;
-   }
- }
-}
+    // Check if this is a macro call
+    if (isSymbol(first) && env.hasMacro(first.name)) {
+      const macroFn = env.getMacro(first.name);
+      
+      if (macroFn) {
+        logger.debug(`Expanding macro ${first.name} at depth ${depth}`);
+        
+        // Get macro arguments
+        const macroArgs = list.elements.slice(1);
+        
+        try {
+          // Apply the macro
+          const expanded = macroFn(macroArgs, env);
+          logger.debug(`Macro expansion result: ${sexpToString(expanded)}`);
+          
+          // Post-process to handle quoted operations
+          const processed = postProcessMacroResult(expanded, env, logger);
+          logger.debug(`Post-processed macro result: ${sexpToString(processed)}`);
+          
+          // Recursively expand the result
+          return expandMacro(processed, env, logger, options, depth + 1);
+        } catch (error) {
+          logger.error(`Error expanding macro ${first.name}: ${error.message}`);
+          throw error;
+        }
+      }
+    }
 
-// If not a macro call, expand each element
-logger.debug(`Expanding list elements at depth ${depth}`);
-return createList(
- ...list.elements.map(elem => expandMacro(elem, env, logger, options, depth + 1))
-);
-}
+    // If not a macro call, expand each element
+    logger.debug(`Expanding list elements at depth ${depth}`);
+    return createList(
+      ...list.elements.map(elem => expandMacro(elem, env, logger, options, depth + 1))
+    );
+  }
 
-// Literals and symbols stay the same
-return expr;
+  // Literals and symbols stay the same
+  return expr;
 }

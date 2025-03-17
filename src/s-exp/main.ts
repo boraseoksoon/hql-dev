@@ -1,8 +1,8 @@
 // src/s-exp/main.ts - Main entry point for the S-expression layer
 
-import { SExp, sexpToString } from './types.ts';
+import { sexpToString, isSymbol, isLiteral } from './types.ts';
 import { parse } from './parser.ts';
-import { SEnv, initializeGlobalEnv } from './environment.ts';
+import { initializeGlobalEnv } from './environment.ts';
 import { initializeCoreMacros } from './core-macros.ts';
 import { expandMacros } from './macro.ts';
 import { processImports } from './imports.ts';
@@ -75,11 +75,48 @@ export async function processHql(
     // Step 6: Transform to JavaScript using existing pipeline
     logger.debug('Transforming to JavaScript');
     const baseDir = options.baseDir || Deno.cwd();
-    const jsCode = await transformAST(hqlAst, baseDir, {
+    let jsCode = await transformAST(hqlAst, baseDir, {
       verbose: options.verbose,
       module: options.module || 'esm',
       bundle: false // Don't bundle here, we're just transpiling
     });
+    
+    // Step 7: Ensure proper exports are included (extraction from expanded S-expressions)
+    const exportStatements: Array<{exportName: string, symbolName: string}> = [];
+    
+    for (const expr of sexps) {
+      if (expr.type === 'list' && 
+          expr.elements.length >= 3 &&
+          isSymbol(expr.elements[0]) && 
+          expr.elements[0].name === 'export' &&
+          isLiteral(expr.elements[1]) &&
+          isSymbol(expr.elements[2])) {
+        
+        const exportName = (expr.elements[1] as SLiteral).value as string;
+        const symbolName = (expr.elements[2] as SSymbol).name;
+        
+        // Sanitize symbol name for JavaScript
+        const sanitizedSymbol = symbolName.replace(/-/g, '_');
+        
+        exportStatements.push({
+          exportName,
+          symbolName: sanitizedSymbol
+        });
+      }
+    }
+    
+    logger.debug(`Found ${exportStatements.length} export statements`);
+    
+    // If we have export statements, ensure they're properly included in the JS output
+    if (exportStatements.length > 0) {
+      // Add explicit export statements to the end
+      jsCode += '\n\n// Explicit ES Module exports\n';
+      
+      exportStatements.forEach(({exportName, symbolName}) => {
+        logger.debug(`Adding export for "${exportName}" from symbol "${symbolName}"`);
+        jsCode += `export { ${symbolName} as "${exportName}" };\n`;
+      });
+    }
     
     logger.debug('Processing complete');
     return jsCode;
