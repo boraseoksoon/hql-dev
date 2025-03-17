@@ -1,6 +1,7 @@
 import * as stdPath from "jsr:@std/path@1.0.8";
 import { exists } from "jsr:@std/fs@1.0.13";
-import { Logger } from "../logger.ts"
+import { Logger } from "../logger.ts";
+
 /**
  * Clean up a directory
  */
@@ -38,6 +39,10 @@ export interface Platform {
   getEnv(key: string): string | undefined;
   setEnv(key: string, value: string): void;
   exists(path: string): Promise<boolean>;
+
+  // Appended methods for complete abstraction
+  getArgs(): string[];
+  copyFile(src: string, dest: string): Promise<void>;
 }
 
 /**
@@ -65,6 +70,10 @@ export const DenoPlatform: Platform = {
   getEnv: (key: string): string | undefined => Deno.env.get(key),
   setEnv: (key: string, value: string): void => Deno.env.set(key, value),
   exists: async (path: string): Promise<boolean> => await exists(path),
+
+  // Appended implementations
+  getArgs: () => Deno.args,
+  copyFile: (src: string, dest: string): Promise<void> => Deno.copyFile(src, dest),
 };
 
 /**

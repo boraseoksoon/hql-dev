@@ -1,4 +1,3 @@
-// Modified run.ts with modular architecture and improved readability
 import { resolve, dirname, basename, join } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI, OptimizationOptions } from "../src/bundler.ts";
 import { Logger } from "../src/logger.ts";
@@ -8,6 +7,7 @@ import { transpile } from "../src/transformer.ts";
 import { isImportNode, extractImportPath } from "../src/transpiler/hql_ast.ts";
 import { cleanupDir } from "../src/platform/platform.ts";
 import { isUrl, escapeRegExp } from "../src/utils.ts";
+import { CurrentPlatform as platform } from "../src/platform/platform.ts";
 
 // Track generated files for cleanup
 const generatedTempFiles = new Set<string>();
@@ -23,35 +23,33 @@ function printHelp() {
 }
 
 /**
- * Preprocess HQL imports in a temporary directory
+ * Preprocess HQL imports in a temporary directory.
  */
 async function preprocessHqlImports(entryPath: string, logger: Logger): Promise<string> {
   logger.debug(`Preprocessing HQL imports for entry: ${entryPath}`);
   
-  // Create a temp directory for all operations
-  const tempDir = await Deno.makeTempDir({ prefix: "hql_run_" });
+  // Create a temp directory via platform abstraction (assume makeTempDir accepts a prefix)
+  const tempDir = await platform.makeTempDir("hql_run_");
   logger.debug(`Created temporary workspace: ${tempDir}`);
   
-  // Keep track of all files
   const originalToTempMap = new Map<string, string>();
   const processedFiles = new Set<string>();
   
-  // Copy entry file to temp dir
+  // Copy entry file to temp dir using platform.copyFile
   const entryName = basename(entryPath);
   const tempEntryPath = join(tempDir, entryName);
-  await Deno.copyFile(entryPath, tempEntryPath);
+  await platform.copyFile(entryPath, tempEntryPath);
   logger.debug(`Copied entry file to: ${tempEntryPath}`);
   originalToTempMap.set(entryPath, tempEntryPath);
   
-  // Process the entry file and its imports
-  await processFile(entryPath, tempDir, originalToTempMap, processedFiles, logger, true);
+  await processFile(entryPath, tempDir, originalToTempMap, processedFiles, logger);
   
   logger.debug("Preprocessing complete - all imports handled");
   return tempEntryPath;
 }
 
 /**
- * Main function to process a file and its imports
+ * Process a file and its imports.
  */
 async function processFile(
   originalPath: string, 
@@ -60,32 +58,25 @@ async function processFile(
   processedFiles: Set<string>,
   logger: Logger,
 ): Promise<void> {
-  // Skip if already processed
-  if (processedFiles.has(originalPath)) {
-    return;
-  }
+  if (processedFiles.has(originalPath)) return;
   processedFiles.add(originalPath);
   
-  // Handle URL imports differently
   if (isUrl(originalPath)) {
     logger.debug(`Skipping preprocessing for URL import: ${originalPath}`);
-    return; // Skip preprocessing for URLs, Deno will handle these directly
+    return;
   }
   
-  // Create or retrieve temp path
   const tempPath = await createOrGetTempPath(originalPath, tempDir, originalToTempMap, logger);
   
-  // Process based on file type
   if (originalPath.endsWith('.hql')) {
     await processHqlFile(originalPath, tempPath, tempDir, originalToTempMap, processedFiles, logger);
-  } 
-  else if (originalPath.endsWith('.js')) {
+  } else if (originalPath.endsWith('.js')) {
     await processJsFile(originalPath, tempPath, tempDir, originalToTempMap, processedFiles, logger);
   }
 }
 
 /**
- * Create or get a temporary path for a file
+ * Create or retrieve a temporary path for a file.
  */
 async function createOrGetTempPath(
   originalPath: string,
@@ -93,16 +84,12 @@ async function createOrGetTempPath(
   originalToTempMap: Map<string, string>,
   logger: Logger
 ): Promise<string> {
-  if (originalToTempMap.has(originalPath)) {
-    return originalToTempMap.get(originalPath)!;
-  }
+  if (originalToTempMap.has(originalPath)) return originalToTempMap.get(originalPath)!;
   
-  // Create temp path
   const baseName = basename(originalPath);
   const tempPath = join(tempDir, baseName);
   
-  // Copy file to temp
-  await Deno.copyFile(originalPath, tempPath);
+  await platform.copyFile(originalPath, tempPath);
   logger.debug(`Copied ${originalPath} to ${tempPath}`);
   originalToTempMap.set(originalPath, tempPath);
   
@@ -110,7 +97,7 @@ async function createOrGetTempPath(
 }
 
 /**
- * Process an HQL file - parse imports and transpile to JS
+ * Process an HQL file: handle imports and transpile to JS.
  */
 async function processHqlFile(
   originalPath: string,
@@ -123,23 +110,17 @@ async function processHqlFile(
   const tempJsPath = tempPath.replace(/\.hql$/, '.js');
   
   try {
-    // Read the source (from temp path)
-    const source = await Deno.readTextFile(tempPath);
-    
-    // Process imports in the HQL source
+    const source = await platform.readTextFile(tempPath);
     await processHqlImports(originalPath, tempPath, source, tempDir, originalToTempMap, processedFiles, logger);
     
-    // Transpile HQL to JS
     const transpiled = await transpile(source, tempPath, { 
       bundle: false, 
       verbose: logger.enabled 
     });
     
-    // Write the transpiled JS file
-    await Deno.writeTextFile(tempJsPath, transpiled);
+    await platform.writeTextFile(tempJsPath, transpiled);
     logger.debug(`Transpiled ${tempPath} to ${tempJsPath}`);
     
-    // Track the generated JS file
     generatedTempFiles.add(tempJsPath);
   } catch (e) {
     logger.error(`Error processing HQL file ${tempPath}: ${e.message}`);
@@ -147,7 +128,7 @@ async function processHqlFile(
 }
 
 /**
- * Process imports within an HQL file
+ * Process imports within an HQL file.
  */
 async function processHqlImports(
   originalPath: string,
@@ -164,13 +145,10 @@ async function processHqlImports(
       if (isImportNode(node)) {
         const importPath = extractImportPath(node);
         if (importPath) {
-          // Skip URL imports, they'll be handled by Deno
           if (isUrl(importPath)) {
             logger.debug(`Found URL import: ${importPath} - will be handled by Deno directly`);
             continue;
           }
-          
-          // Get full path of the local import
           const originalImportPath = resolve(dirname(originalPath), importPath);
           await processFile(originalImportPath, tempDir, originalToTempMap, processedFiles, logger);
         }
@@ -182,7 +160,7 @@ async function processHqlImports(
 }
 
 /**
- * Process a JavaScript file - handle HQL imports and update import statements
+ * Process a JavaScript file: handle HQL and JS imports.
  */
 async function processJsFile(
   originalPath: string,
@@ -193,16 +171,10 @@ async function processJsFile(
   logger: Logger
 ): Promise<void> {
   try {
-    // Read the JS file
-    const source = await Deno.readTextFile(tempPath);
-    
-    // Process HQL imports
+    const source = await platform.readTextFile(tempPath);
     const hqlImports = await processHqlImportsInJs(originalPath, tempPath, source, tempDir, originalToTempMap, processedFiles, logger);
-    
-    // Process JS imports
     await processJsImportsInJs(originalPath, source, tempDir, originalToTempMap, processedFiles, logger);
     
-    // Update import paths if needed
     if (hqlImports.length > 0) {
       await updateJsImportPaths(tempPath, source, hqlImports, logger);
     }
@@ -212,7 +184,7 @@ async function processJsFile(
 }
 
 /**
- * Process HQL imports within a JS file
+ * Process HQL imports in a JS file.
  */
 async function processHqlImportsInJs(
   originalPath: string,
@@ -227,21 +199,16 @@ async function processHqlImportsInJs(
   let match;
   const imports: string[] = [];
   
-  // Find all imports and process them
   while ((match = hqlImportRegex.exec(source)) !== null) {
     const importPath = match[1];
     imports.push(importPath);
     
-    // Skip URL imports
     if (isUrl(importPath)) {
       logger.debug(`Found URL import in JS file: ${importPath} - will be handled by Deno directly`);
       continue;
     }
     
-    // Get full path of the import
     const originalImportPath = resolve(dirname(originalPath), importPath);
-    
-    // Process the import - this ensures its JS file is created
     await processFile(originalImportPath, tempDir, originalToTempMap, processedFiles, logger);
   }
   
@@ -249,7 +216,7 @@ async function processHqlImportsInJs(
 }
 
 /**
- * Process JS imports within a JS file
+ * Process JS imports in a JS file.
  */
 async function processJsImportsInJs(
   originalPath: string,
@@ -265,21 +232,18 @@ async function processJsImportsInJs(
   while ((match = jsImportRegex.exec(source)) !== null) {
     const importPath = match[1];
     
-    // Skip URL imports
     if (isUrl(importPath)) {
       logger.debug(`Found URL JS import: ${importPath} - will be handled by Deno directly`);
       continue;
     }
     
     const originalImportPath = resolve(dirname(originalPath), importPath);
-    
-    // Process JS imports too
     await processFile(originalImportPath, tempDir, originalToTempMap, processedFiles, logger);
   }
 }
 
 /**
- * Update import paths in JS file (convert .hql imports to .js)
+ * Update import paths in a JS file (convert .hql to .js).
  */
 async function updateJsImportPaths(
   tempPath: string,
@@ -291,10 +255,8 @@ async function updateJsImportPaths(
   
   logger.debug(`Fixing ${imports.length} HQL imports in JS file: ${tempPath}`);
   
-  // Create a modified version with .js instead of .hql
   let modified = source;
   for (const importPath of imports) {
-    // Only replace extensions for local imports
     if (!isUrl(importPath)) {
       const jsImportPath = importPath.replace(/\.hql$/, '.js');
       modified = modified.replace(
@@ -304,48 +266,46 @@ async function updateJsImportPaths(
     }
   }
   
-  // Update the file in the temp directory
-  await Deno.writeTextFile(tempPath, modified);
+  await platform.writeTextFile(tempPath, modified);
   logger.debug(`Updated imports in ${tempPath}`);
 }
 
+/**
+ * Main module execution.
+ */
 async function runModule(): Promise<void> {
-  // Check if help is requested
-  if (Deno.args.includes("--help") || Deno.args.includes("-h")) {
+  // Use platform abstraction to get command-line arguments
+  const args = platform.getArgs();
+  if (args.includes("--help") || args.includes("-h")) {
     printHelp();
-    Deno.exit(0);
+    platform.exit(0);
   }
 
-  // Parse options
-  const args = Deno.args.filter((arg) => !arg.startsWith("--"));
-  const verbose = Deno.args.includes("--verbose");
-  const performance = Deno.args.includes("--performance");
-  const printOutput = Deno.args.includes("--print");
-  const keepJs = Deno.args.includes("--keep-js");
+  const nonOptionArgs = args.filter(arg => !arg.startsWith("--"));
+  const verbose = args.includes("--verbose");
+  const performance = args.includes("--performance");
+  const printOutput = args.includes("--print");
+  const keepJs = args.includes("--keep-js");
   const logger = new Logger(verbose);
 
-  if (args.length < 1) {
+  if (nonOptionArgs.length < 1) {
     printHelp();
-    Deno.exit(1);
+    platform.exit(1);
   }
 
-  const inputPath = resolve(args[0]);
+  const inputPath = resolve(nonOptionArgs[0]);
   logger.log(`Processing entry: ${inputPath}`);
 
   let tempDir: string | null = null;
   
   try {
-    // Preprocess HQL imports in a temp directory
     const tempEntryPath = await preprocessHqlImports(inputPath, logger);
     tempDir = dirname(tempEntryPath);
     
-    // Create output path for bundled result
     const tempOutput = join(tempDir, "bundled.js");
 
-    // Prepare optimization options
     const optimizationOptions: OptimizationOptions = performance ? { ...MODES.performance } : {};
 
-    // Transpile and bundle using the temp entry
     logger.log(`Bundling entry file: ${tempEntryPath}`);
     const bundledPath = await transpileCLI(tempEntryPath, tempOutput, { 
       verbose, 
@@ -353,19 +313,15 @@ async function runModule(): Promise<void> {
     });
     
     if (printOutput) {
-      // Print the output to console
-      const finalOutput = await Deno.readTextFile(bundledPath);
+      const finalOutput = await platform.readTextFile(bundledPath);
       console.log(finalOutput);
     }
     
     logger.log(`Running bundled output: ${bundledPath}`);
-    
-    // Import and run the bundled module
     await import("file://" + resolve(bundledPath));
     
-    // Clean up temporary directory
     if (!keepJs && tempDir) {
-      await cleanupDir(tempDir, logger);
+      await cleanupDir(tempDir, logger); // cleanupDir already uses platform abstraction internally
       tempDir = null;
     } else if (keepJs) {
       logger.log(`Keeping temporary files in: ${tempDir}`);
@@ -373,7 +329,6 @@ async function runModule(): Promise<void> {
   } catch (error) {
     logger.error(`Error during processing: ${error instanceof Error ? error.message : String(error)}`);
     
-    // Clean up on error
     if (tempDir && !keepJs) {
       await cleanupDir(tempDir, logger);
     }
@@ -385,6 +340,6 @@ async function runModule(): Promise<void> {
 if (import.meta.main) {
   runModule().catch((error) => {
     console.error("Error:", error);
-    Deno.exit(1);
+    platform.exit(1);
   });
 }
