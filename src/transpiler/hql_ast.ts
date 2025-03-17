@@ -1,5 +1,5 @@
 // src/transpiler/hql_ast.ts
-export type HQLNode = LiteralNode | SymbolNode | ListNode | DotNotationReference | ExportReference;
+export type HQLNode = LiteralNode | SymbolNode | ListNode;
 
 export interface LiteralNode {
   type: "literal";
@@ -16,33 +16,6 @@ export interface ListNode {
   elements: HQLNode[];
 }
 
-export interface DotNotationReference {
-  type: "dot-notation-reference";
-  module: string;
-  property: string;
-  args: HQLNode[];
-}
-
-export interface ExportReference {
-  type: "export-reference";
-  name: string;
-  value: any;
-}
-
-/**
- * Check if a node is a dot notation reference
- */
-export function isDotNotationReference(node: HQLNode): node is DotNotationReference {
-  return node && typeof node === "object" && node.type === "dot-notation-reference";
-}
-
-/**
- * Check if a node is an export reference
- */
-export function isExportReference(node: HQLNode): node is ExportReference {
-  return node && typeof node === "object" && node.type === "export-reference";
-}
-
 /**
  * Check if a node is an import statement
  */
@@ -57,7 +30,7 @@ export function isImportNode(node: HQLNode): boolean {
 }
 
 /**
- * Detects if a node is a macro import
+ * Detects if a node is an import statement
  */
 export function isMacroImport(node: HQLNode): boolean {
   return (
@@ -71,50 +44,13 @@ export function isMacroImport(node: HQLNode): boolean {
 /**
  * Helper to extract import path from a node
  */
-export function extractImportPath(node: HQLNode): string | null {
+export function extractImportPath(node: any): string | null {
   if (node.type === "list" && 
       node.elements.length >= 3 && 
       node.elements[0].type === "symbol" && 
-      ((node.elements[0] as SymbolNode).name === "import" || 
-       (node.elements[0] as SymbolNode).name === "js-import") &&
+      node.elements[0].name === "import" &&
       node.elements[2].type === "literal") {
-    return String((node.elements[2] as LiteralNode).value);
+    return node.elements[2].value;
   }
   return null;
-}
-
-/**
- * Check if a node is a macro definition
- */
-export function isMacroDefinition(node: HQLNode): boolean {
-  return (
-    node.type === "list" &&
-    node.elements.length >= 4 &&
-    node.elements[0].type === "symbol" &&
-    (node.elements[0] as SymbolNode).name === "defmacro"
-  );
-}
-
-/**
- * Check if a node is a def definition
- */
-export function isDefDefinition(node: HQLNode): boolean {
-  return (
-    node.type === "list" &&
-    node.elements.length >= 3 &&
-    node.elements[0].type === "symbol" &&
-    (node.elements[0] as SymbolNode).name === "def"
-  );
-}
-
-/**
- * Check if a node is a js-export statement
- */
-export function isJsExport(node: HQLNode): boolean {
-  return (
-    node.type === "list" &&
-    node.elements.length >= 3 &&
-    node.elements[0].type === "symbol" &&
-    (node.elements[0] as SymbolNode).name === "js-export"
-  );
 }

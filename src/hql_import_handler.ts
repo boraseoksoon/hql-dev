@@ -17,45 +17,34 @@ export class HQLImportHandler {
    * Pre-process all HQL imports in the file by transpiling them ahead of time,
    * and creating a mapping of HQL imports to JS imports for later use.
    */
-  // in src/hql_import_handler.ts
-async preprocessImports(source: string, filePath: string): Promise<void> {
-  // Skip preprocessing for bundle mode
-  if (this.options.bundle) {
-    if (this.options.verbose) {
-      console.log("Bundling mode enabled, skipping HQL import preprocessing.");
-    }
-    return;
-  }
-  
-  // Find potential HQL imports
-  const importRegex = /\(import\s+([^\s)]+)\s+['"]([^'"]+)['"]\)/g;
-  let match;
-  
-  const sourceDir = dirname(filePath);
-  
-  while ((match = importRegex.exec(source)) !== null) {
-    const importName = match[1];
-    const importPath = match[2];
-    
-    if (this.options.verbose) {
-      console.log(`Found potential import: ${importName} from "${importPath}"`);
-    }
-    
-    // Skip npm: and external URLs - don't try to copy these
-    if (importPath.startsWith('npm:') || 
-        importPath.startsWith('http:') || 
-        importPath.startsWith('https:') ||
-        importPath.startsWith('jsr:')) {
+  async preprocessImports(source: string, filePath: string): Promise<void> {
+    // When bundling is enabled, skip preprocessing to avoid writing any extra files.
+    if (this.options.bundle) {
       if (this.options.verbose) {
-        console.log(`Skipping external import: ${importPath}`);
+        console.log("Bundling mode enabled, skipping HQL import preprocessing.");
       }
-      continue;
+      return;
     }
     
-    // Process this import
-    await this.processHqlImport(importPath, sourceDir);
+    // Simple regex to find potential HQL imports
+    // This is just a heuristic - actual macro expansion will handle the real work
+    const importRegex = /\(import\s+([^\s)]+)\s+['"]([^'"]+\.hql)['"]\)/g;
+    let match;
+    
+    const sourceDir = dirname(filePath);
+    
+    while ((match = importRegex.exec(source)) !== null) {
+      const importName = match[1];
+      const importPath = match[2];
+      
+      if (this.options.verbose) {
+        console.log(`Found potential HQL import: ${importName} from "${importPath}"`);
+      }
+      
+      // Process this import
+      await this.processHqlImport(importPath, sourceDir);
+    }
   }
-}
   
   /**
    * Processes an HQL import by transpiling the referenced HQL file and recording
