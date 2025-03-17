@@ -1,5 +1,5 @@
-// Modified run.ts with transient file tracking
-import { resolve, dirname } from "https://deno.land/std@0.170.0/path/mod.ts";
+// Modified run.ts with correct hybrid solution
+import { resolve, dirname, basename, join } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI, OptimizationOptions } from "../src/bundler.ts";
 import { Logger } from "../src/logger.ts";
 import { MODES } from "./modes.ts";
@@ -7,91 +7,129 @@ import { parse } from "../src/transpiler/parser.ts";
 import { transpile } from "../src/transformer.ts";
 import { isImportNode } from "../src/transpiler/hql_ast.ts";
 
-// Track generated JS files for cleanup
-const generatedJsFiles = new Set<string>();
+// Track generated files for cleanup
+const generatedTempFiles = new Set<string>();
 
 function printHelp() {
   console.error("Usage: deno run -A cli/run.ts <target.hql|target.js> [options]");
   console.error("\nOptions:");
   console.error("  --verbose         Enable verbose logging");
-  console.error("  --performance     Apply aggressive performance optimizations (minify, drop console/debugger, etc.)");
+  console.error("  --performance     Apply aggressive performance optimizations");
   console.error("  --print           Print final JS output directly in CLI");
   console.error("  --keep-js         Keep intermediate JS files (don't clean up)");
   console.error("  --help, -h        Display this help message");
 }
 
 /**
- * Preprocesses all HQL imports by creating temporary JS files
- * before Deno tries to validate the imports.
+ * Preprocess HQL imports in a temporary directory
  */
-async function preprocessHqlImports(entryPath: string, logger: Logger): Promise<void> {
+async function preprocessHqlImports(entryPath: string, logger: Logger): Promise<string> {
   logger.debug(`Preprocessing HQL imports for entry: ${entryPath}`);
   
-  // Keep track of processed files to avoid infinite recursion
-  const processed = new Set<string>();
+  // Create a temp directory for all operations
+  const tempDir = await Deno.makeTempDir({ prefix: "hql_run_" });
+  logger.debug(`Created temporary workspace: ${tempDir}`);
   
-  // Process a file and its dependencies
-  async function processFile(filePath: string): Promise<void> {
-    if (processed.has(filePath)) {
+  // Keep track of all files
+  const originalToTempMap = new Map<string, string>();
+  const processedFiles = new Set<string>();
+  
+  // Copy entry file to temp dir
+  const entryName = basename(entryPath);
+  const tempEntryPath = join(tempDir, entryName);
+  await Deno.copyFile(entryPath, tempEntryPath);
+  logger.debug(`Copied entry file to: ${tempEntryPath}`);
+  originalToTempMap.set(entryPath, tempEntryPath);
+  
+  // Recursive function to process files and their imports
+  async function processFile(originalPath: string, isEntrypoint: boolean = false): Promise<void> {
+    // Skip if already processed
+    if (processedFiles.has(originalPath)) {
       return;
     }
-    processed.add(filePath);
+    processedFiles.add(originalPath);
     
-    // Check file extension
-    if (filePath.endsWith('.hql')) {
-      // For HQL files: transpile to JS
-      const jsOutputPath = filePath.replace(/\.hql$/, '.js');
-      logger.debug(`Transpiling HQL file: ${filePath} -> ${jsOutputPath}`);
+    // Get or create temp path
+    let tempPath: string;
+    if (originalToTempMap.has(originalPath)) {
+      tempPath = originalToTempMap.get(originalPath)!;
+    } else {
+      // Create temp path
+      const baseName = basename(originalPath);
+      tempPath = join(tempDir, baseName);
+      // Copy file to temp
+      await Deno.copyFile(originalPath, tempPath);
+      logger.debug(`Copied ${originalPath} to ${tempPath}`);
+      originalToTempMap.set(originalPath, tempPath);
+    }
+    
+    // Process based on file type
+    if (originalPath.endsWith('.hql')) {
+      // For HQL files, transpile to JS
+      const tempJsPath = tempPath.replace(/\.hql$/, '.js');
       
       try {
-        const source = await Deno.readTextFile(filePath);
-        const transpiled = await transpile(source, filePath, { bundle: false, verbose: logger.enabled });
-        await Deno.writeTextFile(jsOutputPath, transpiled);
+        // Read the source (from temp path)
+        const source = await Deno.readTextFile(tempPath);
         
-        // Track the generated JS file for cleanup
-        generatedJsFiles.add(jsOutputPath);
-        
-        // Find imports in the HQL file and process them
-        const ast = parse(source);
-        for (const node of ast) {
-          if (isImportNode(node)) {
-            try {
+        // First, find and process imports in the HQL source
+        try {
+          const ast = parse(source);
+          for (const node of ast) {
+            if (isImportNode(node)) {
               const importPath = extractImportPath(node);
               if (importPath) {
-                const importFullPath = resolve(dirname(filePath), importPath);
-                await processFile(importFullPath);
+                // Get full path of the import
+                const originalImportPath = resolve(dirname(originalPath), importPath);
+                await processFile(originalImportPath);
               }
-            } catch (e) {
-              logger.error(`Error processing import in ${filePath}: ${e.message}`);
             }
           }
+        } catch (e) {
+          logger.error(`Error parsing imports in ${tempPath}: ${e.message}`);
         }
+        
+        // Now transpile HQL to JS (after imports are processed)
+        const transpiled = await transpile(source, tempPath, { 
+          bundle: false, 
+          verbose: logger.enabled 
+        });
+        
+        // Write the transpiled JS file
+        await Deno.writeTextFile(tempJsPath, transpiled);
+        logger.debug(`Transpiled ${tempPath} to ${tempJsPath}`);
+        
+        // Track the generated JS file
+        generatedTempFiles.add(tempJsPath);
       } catch (e) {
-        logger.error(`Error transpiling ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
+        logger.error(`Error processing HQL file ${tempPath}: ${e.message}`);
       }
     } 
-    else if (filePath.endsWith('.js')) {
-      // For JS files: find HQL imports and process them
+    else if (originalPath.endsWith('.js')) {
       try {
-        const source = await Deno.readTextFile(filePath);
+        // Read the JS file
+        const source = await Deno.readTextFile(tempPath);
         
         // Find HQL imports
         const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
         let match;
         const imports = [];
         
+        // Find all imports and process them first
         while ((match = hqlImportRegex.exec(source)) !== null) {
           const importPath = match[1];
           imports.push(importPath);
           
-          // Process each imported HQL file
-          const importFullPath = resolve(dirname(filePath), importPath);
-          await processFile(importFullPath);
+          // Get full path of the import
+          const originalImportPath = resolve(dirname(originalPath), importPath);
+          
+          // Process the import - this ensures its JS file is created
+          await processFile(originalImportPath);
         }
         
-        // If we found HQL imports, modify the JS file
+        // Now modify the imports in this JS file
         if (imports.length > 0) {
-          logger.debug(`Found ${imports.length} HQL imports in JS file: ${filePath}`);
+          logger.debug(`Fixing ${imports.length} HQL imports in JS file: ${tempPath}`);
           
           // Create a modified version with .js instead of .hql
           let modified = source;
@@ -103,87 +141,58 @@ async function preprocessHqlImports(entryPath: string, logger: Logger): Promise<
             );
           }
           
-          // Create a backup of the original file
-          const backupPath = `${filePath}.bak`;
-          await Deno.writeTextFile(backupPath, source);
-          logger.debug(`Backup created: ${backupPath}`);
+          // Update the file in the temp directory
+          await Deno.writeTextFile(tempPath, modified);
+          logger.debug(`Updated imports in ${tempPath}`);
+        }
+        
+        // Also find and process JS imports
+        const jsImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.js)['"]/g;
+        while ((match = jsImportRegex.exec(source)) !== null) {
+          const importPath = match[1];
+          const originalImportPath = resolve(dirname(originalPath), importPath);
           
-          // Write the modified file
-          await Deno.writeTextFile(filePath, modified);
-          logger.debug(`Modified JS file saved: ${filePath}`);
+          // Process JS imports too
+          await processFile(originalImportPath);
         }
       } catch (e) {
-        logger.error(`Error processing JS file ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
+        logger.error(`Error processing JS file ${tempPath}: ${e.message}`);
       }
     }
   }
   
-  // Start processing from the entry point
-  await processFile(entryPath);
-  logger.debug("Preprocessing complete");
-}
-
-// Helper to extract import path from a node
-function extractImportPath(node: any): string | null {
-  if (node.type === "list" && 
-      node.elements.length >= 3 && 
-      node.elements[0].type === "symbol" && 
-      node.elements[0].name === "import" &&
-      node.elements[2].type === "literal") {
-    return node.elements[2].value;
-  }
-  return null;
-}
-
-// Helper function to escape special regex characters
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// Helper to restore original JS files after running
-async function restoreOriginalFiles(logger: Logger): Promise<void> {
-  // Find all .bak files in the current directory
-  const workDir = Deno.cwd();
-  for await (const entry of Deno.readDir(workDir)) {
-    if (entry.isFile && entry.name.endsWith('.js.bak')) {
-      const backupPath = resolve(workDir, entry.name);
-      const originalPath = backupPath.slice(0, -4); // Remove .bak
-      
-      try {
-        // Restore original
-        await Deno.copyFile(backupPath, originalPath);
-        await Deno.remove(backupPath);
-        logger.debug(`Restored original file: ${originalPath}`);
-      } catch (e) {
-        logger.error(`Error restoring ${originalPath}: ${e instanceof Error ? e.message : String(e)}`);
-      }
+  // Helper to extract import path from a node
+  function extractImportPath(node: any): string | null {
+    if (node.type === "list" && 
+        node.elements.length >= 3 && 
+        node.elements[0].type === "symbol" && 
+        node.elements[0].name === "import" &&
+        node.elements[2].type === "literal") {
+      return node.elements[2].value;
     }
-  }
-}
-
-// New function to clean up generated JS files
-async function cleanupGeneratedFiles(logger: Logger, keepFiles: boolean = false): Promise<void> {
-  if (keepFiles) {
-    logger.log(`Keeping ${generatedJsFiles.size} intermediate JS files as requested`);
-    return;
+    return null;
   }
   
-  logger.debug(`Cleaning up ${generatedJsFiles.size} generated JS files`);
-  for (const filePath of generatedJsFiles) {
-    try {
-      // Check if file exists before attempting to remove
-      const fileInfo = await Deno.stat(filePath).catch(() => null);
-      if (fileInfo) {
-        await Deno.remove(filePath);
-        logger.debug(`Removed generated file: ${filePath}`);
-      }
-    } catch (e) {
-      logger.error(`Error removing generated file ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
-    }
+  // Helper to escape special regex characters
+  function escapeRegExp(string: string): string {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
   
-  // Clear the set after cleanup
-  generatedJsFiles.clear();
+  // Start processing from the entry file
+  await processFile(entryPath, true);
+  
+  logger.debug("Preprocessing complete - all imports handled");
+  return tempEntryPath;
+}
+
+// Clean up a directory
+async function cleanupDir(dir: string, logger: Logger): Promise<void> {
+  try {
+    await Deno.remove(dir, { recursive: true });
+    logger.debug(`Cleaned up directory: ${dir}`);
+  } catch (e) {
+    logger.error(`Error cleaning up ${dir}: ${e.message}`);
+  }
 }
 
 async function runModule(): Promise<void> {
@@ -193,12 +202,12 @@ async function runModule(): Promise<void> {
     Deno.exit(0);
   }
 
-  // Filter non-option arguments (assume they are file paths)
+  // Parse options
   const args = Deno.args.filter((arg) => !arg.startsWith("--"));
   const verbose = Deno.args.includes("--verbose");
   const performance = Deno.args.includes("--performance");
   const printOutput = Deno.args.includes("--print");
-  const keepJs = Deno.args.includes("--keep-js"); // New flag to keep JS files
+  const keepJs = Deno.args.includes("--keep-js");
   const logger = new Logger(verbose);
 
   if (args.length < 1) {
@@ -209,55 +218,50 @@ async function runModule(): Promise<void> {
   const inputPath = resolve(args[0]);
   logger.log(`Processing entry: ${inputPath}`);
 
+  let tempDir: string | null = null;
+  
   try {
-    // CRITICAL: Preprocess HQL imports before bundling
-    await preprocessHqlImports(inputPath, logger);
+    // Preprocess HQL imports in a temp directory
+    const tempEntryPath = await preprocessHqlImports(inputPath, logger);
+    tempDir = dirname(tempEntryPath);
     
-    // Create a temporary directory so that the output file doesn't conflict with any existing file.
-    const tempDir = await Deno.makeTempDir();
-    const tempOutput = resolve(tempDir, "bundled.js");
+    // Create output path for bundled result
+    const tempOutput = join(tempDir, "bundled.js");
 
-    // Prepare optimization options.
-    let optimizationOptions: OptimizationOptions = {};
-    if (performance) {
-      logger.log("Aggressive performance optimizations enabled.");
-      optimizationOptions = { ...MODES.performance };
-    }
+    // Prepare optimization options
+    const optimizationOptions: OptimizationOptions = performance ? { ...MODES.performance } : {};
 
-    // Transpile and bundle the input file.
-    const bundledPath = await transpileCLI(inputPath, tempOutput, { verbose, ...optimizationOptions });
-
+    // Transpile and bundle using the temp entry
+    logger.log(`Bundling entry file: ${tempEntryPath}`);
+    const bundledPath = await transpileCLI(tempEntryPath, tempOutput, { 
+      verbose, 
+      ...optimizationOptions
+    });
+    
     if (printOutput) {
-      // Print the final JS output directly to the CLI.
+      // Print the output to console
       const finalOutput = await Deno.readTextFile(bundledPath);
       console.log(finalOutput);
     }
     
     logger.log(`Running bundled output: ${bundledPath}`);
-    // Dynamically import the bundled module.
+    
+    // Import and run the bundled module
     await import("file://" + resolve(bundledPath));
-
-    // Clean up the temporary directory.
-    await Deno.remove(tempDir, { recursive: true });
-    logger.log(`Cleaned up temporary directory: ${tempDir}`);
     
-    // Restore original JS files
-    await restoreOriginalFiles(logger);
-    
-    // Clean up generated JS files
-    await cleanupGeneratedFiles(logger, keepJs);
+    // Clean up temporary directory
+    if (!keepJs && tempDir) {
+      await cleanupDir(tempDir, logger);
+      tempDir = null;
+    } else if (keepJs) {
+      logger.log(`Keeping temporary files in: ${tempDir}`);
+    }
   } catch (error) {
     logger.error(`Error during processing: ${error instanceof Error ? error.message : String(error)}`);
     
-    // Ensure cleanup even if an error occurs
-    try {
-      // Restore original JS files
-      await restoreOriginalFiles(logger);
-      
-      // Clean up generated JS files
-      await cleanupGeneratedFiles(logger, keepJs);
-    } catch (cleanupError) {
-      logger.error(`Error during cleanup: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    // Clean up on error
+    if (tempDir && !keepJs) {
+      await cleanupDir(tempDir, logger);
     }
     
     throw error;

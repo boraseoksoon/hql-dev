@@ -1,6 +1,4 @@
-// utils.js
-
-import { minusguys } from "./macro-c.js"
+import { minusguys } from "./macro-c.hql"
 
 export function double(x) {
     return x * 2;
