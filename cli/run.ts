@@ -61,8 +61,9 @@ async function processFile(
   if (processedFiles.has(originalPath)) return;
   processedFiles.add(originalPath);
   
+  // Skip processing for URL imports using the enhanced isUrl function
   if (isUrl(originalPath)) {
-    logger.debug(`Skipping preprocessing for URL import: ${originalPath}`);
+    logger.debug(`Skipping preprocessing for special import path: ${originalPath}`);
     return;
   }
   
@@ -130,6 +131,9 @@ async function processHqlFile(
 /**
  * Process imports within an HQL file.
  */
+/**
+ * Process imports within an HQL file.
+ */
 async function processHqlImports(
   originalPath: string,
   tempPath: string,
@@ -146,9 +150,11 @@ async function processHqlImports(
         const importPath = extractImportPath(node);
         if (importPath) {
           if (isUrl(importPath)) {
-            logger.debug(`Found URL import: ${importPath} - will be handled by Deno directly`);
+            logger.debug(`Found special import path: ${importPath} - will be handled directly`);
             continue;
           }
+          
+          // Process normal file imports
           const originalImportPath = resolve(dirname(originalPath), importPath);
           await processFile(originalImportPath, tempDir, originalToTempMap, processedFiles, logger);
         }
