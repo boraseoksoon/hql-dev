@@ -1,5 +1,17 @@
 import * as stdPath from "jsr:@std/path@1.0.8";
 import { exists } from "jsr:@std/fs@1.0.13";
+import { Logger } from "../logger.ts"
+/**
+ * Clean up a directory
+ */
+export async function cleanupDir(dir: string, logger: Logger): Promise<void> {
+  try {
+    await Deno.remove(dir, { recursive: true });
+    logger.debug(`Cleaned up directory: ${dir}`);
+  } catch (e) {
+    logger.error(`Error cleaning up ${dir}: ${e.message}`);
+  }
+}
 
 /**
  * Platform interface defines all necessary platform-specific operations.

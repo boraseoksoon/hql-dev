@@ -45,3 +45,17 @@ function sanitizeBasicIdentifier(name: string): string {
   
   return sanitized;
 }
+
+/**
+ * Check if a path is a URL
+ */
+export function isUrl(path: string): boolean {
+  return path.startsWith('http://') || path.startsWith('https://');
+}
+
+/**
+ * Helper to escape special regex characters
+ */
+export function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
