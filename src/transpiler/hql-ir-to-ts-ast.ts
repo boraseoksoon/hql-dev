@@ -324,12 +324,6 @@ function convertNewExpression(node: IR.IRNewExpression): ts.NewExpression {
 function convertBinaryExpression(node: IR.IRBinaryExpression): ts.BinaryExpression {
   // Add null checks for left and right operands
   if (!node.left || !node.right) {
-    // Only log this in verbose mode or when specifically enabled
-    if (process.env.DEBUG || process.env.VERBOSE) {
-      console.warn(`Binary expression has null operand: ${JSON.stringify(node)}`);
-    }
-    
-    // Provide fallback operands when they're null
     let left: ts.Expression;
     if (node.left) {
       left = convertIRExpr(node.left);

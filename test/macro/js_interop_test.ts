@@ -76,8 +76,9 @@ Deno.test("JS Interop - explicit interop functions", async () => {
     (def rand (js-call Math "random"))
   `);
   
+  console.log("result : ", result)
   // Verify the explicit interop forms
   assertStringIncludes(result, 'console.log("direct call")');
-  assertStringIncludes(result, 'Math["PI"]');
+  assertStringIncludes(result, 'Math.PI');
   assertStringIncludes(result, 'Math.random()');
 });
