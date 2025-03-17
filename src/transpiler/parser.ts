@@ -1,4 +1,3 @@
-// src/transpiler/parser.ts
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import { ParseError } from "./errors.ts";
 
@@ -11,13 +10,13 @@ function tokenize(input: string): string[] {
   for (let i = 0; i < input.length; i++) {
     const ch = input[i];
     
-    // If we're in a multiline comment, look for the end marker
+    // Handle multiline comments
     if (inMultilineComment) {
       if (ch === '*' && i + 1 < input.length && input[i + 1] === '/') {
         inMultilineComment = false;
         i++; // Skip the '/' character
       }
-      continue; // Skip all chars inside multiline comment
+      continue;
     }
     
     if (inString) {
@@ -33,65 +32,39 @@ function tokenize(input: string): string[] {
       inString = true;
     } else if (ch === '`') {
       if (token !== "") { tokens.push(token); token = ""; }
-      tokens.push("`");
+      tokens.push("`"); // Quasiquote
     } else if (ch === '~') {
       if (token !== "") { tokens.push(token); token = ""; }
       // Check for ~@
       if (i + 1 < input.length && input[i + 1] === '@') {
-        tokens.push("~@");
+        tokens.push("~@"); // Unquote-splicing
         i++; // Skip the @
       } else {
-        tokens.push("~");
+        tokens.push("~"); // Unquote
       }
     } else if (ch === "'") {
       if (token !== "") { tokens.push(token); token = ""; }
-      tokens.push("'");
+      tokens.push("'"); // Quote
     } else if (ch === '/' && i + 1 < input.length) {
-      // Check for C-style comments
+      // Handle comments
       const nextCh = input[i + 1];
-      
       if (nextCh === '/') {
-        // Single-line comment: skip until end of line or end of input
+        // Single-line comment
         if (token !== "") { tokens.push(token); token = ""; }
         i++; // Skip the second '/'
         while (i < input.length && input[i] !== '\n') i++;
       } else if (nextCh === '*') {
-        // Multi-line comment: set flag and skip the '*'
+        // Multi-line comment
         if (token !== "") { tokens.push(token); token = ""; }
         inMultilineComment = true;
         i++; // Skip the '*' character
       } else {
-        // Just a regular '/' character (e.g., division operator)
-        token += ch;
+        token += ch; // Regular division operator
       }
-    } else if (ch === '(' || ch === ')') {
+    } else if (ch === '(' || ch === ')' || ch === '[' || ch === ']' || 
+               ch === '{' || ch === '}' || ch === ':' || ch === ',') {
       if (token !== "") { tokens.push(token); token = ""; }
       tokens.push(ch);
-      
-      // Special handling for dot after closing parenthesis
-      if (ch === ')' && i + 1 < input.length && input[i + 1] === '.') {
-        // Add the dot separately
-        i++; // Skip the dot
-        tokens.push(".");
-      }
-    } else if (ch === '[') {
-      if (token !== "") { tokens.push(token); token = ""; }
-      tokens.push('[');
-    } else if (ch === ']') {
-      if (token !== "") { tokens.push(token); token = ""; }
-      tokens.push(']');
-    } else if (ch === '{') {
-      if (token !== "") { tokens.push(token); token = ""; }
-      tokens.push('{');
-    } else if (ch === '}') {
-      if (token !== "") { tokens.push(token); token = ""; }
-      tokens.push('}');
-    } else if (ch === ':') {
-      if (token !== "") { tokens.push(token); token = ""; }
-      tokens.push(':');
-    } else if (ch === ',') {
-      if (token !== "") { tokens.push(token); token = ""; }
-      tokens.push(',');
     } else if (ch === '#' && i + 1 < input.length && input[i + 1] === '[') {
       if (token !== "") { tokens.push(token); token = ""; }
       tokens.push('#[');
@@ -99,7 +72,7 @@ function tokenize(input: string): string[] {
     } else if (/\s/.test(ch)) {
       if (token !== "") { tokens.push(token); token = ""; }
     } else if (ch === ';') {
-      // Skip comments until end of line or end of input
+      // Skip comments
       if (token !== "") { tokens.push(token); token = ""; }
       while (i < input.length && input[i] !== '\n') i++;
     } else {
@@ -107,7 +80,6 @@ function tokenize(input: string): string[] {
     }
   }
   
-  // Check if we ended with an unclosed multiline comment
   if (inMultilineComment) {
     throw new ParseError("Unclosed multiline comment", { line: 0, column: 0, offset: 0 });
   }
@@ -137,55 +109,36 @@ function parseExpression(): HQLNode {
   
   const token = currentTokens[currentPos++];
   
-  // Handle quote shorthand (')
+  // Handle quote, quasiquote, unquote and unquote-splicing
   if (token === "'") {
-    // Parse the next expression and wrap it in a quote
     const quoted = parseExpression();
     return { 
       type: "list", 
-      elements: [
-        { type: "symbol", name: "quote" },
-        quoted
-      ] 
+      elements: [{ type: "symbol", name: "quote" }, quoted]
     } as ListNode;
   }
   
-  // Handle quasiquote (`)
   if (token === "`") {
-    // Parse the next expression and wrap it in a quasiquote
     const quasiquoted = parseExpression();
     return { 
       type: "list", 
-      elements: [
-        { type: "symbol", name: "quasiquote" },
-        quasiquoted
-      ] 
+      elements: [{ type: "symbol", name: "quasiquote" }, quasiquoted]
     } as ListNode;
   }
   
-  // Handle unquote (~)
   if (token === "~") {
-    // Parse the next expression and wrap it in an unquote
     const unquoted = parseExpression();
     return { 
       type: "list", 
-      elements: [
-        { type: "symbol", name: "unquote" },
-        unquoted
-      ] 
+      elements: [{ type: "symbol", name: "unquote" }, unquoted]
     } as ListNode;
   }
   
-  // Handle unquote-splicing (~@)
   if (token === "~@") {
-    // Parse the next expression and wrap it in an unquote-splicing
     const unquoteSpliced = parseExpression();
     return { 
       type: "list", 
-      elements: [
-        { type: "symbol", name: "unquote-splicing" },
-        unquoteSpliced
-      ] 
+      elements: [{ type: "symbol", name: "unquote-splicing" }, unquoteSpliced]
     } as ListNode;
   }
   
@@ -203,11 +156,8 @@ function parseExpression(): HQLNode {
     throw new ParseError("Unexpected '}'", { line: 0, column: 0, offset: 0 });
   } else if (token === '#[') {
     return parseSet();
-  } else if (token === ':' || token === ',') {
-    throw new ParseError(`Unexpected '${token}'`, { line: 0, column: 0, offset: 0 });
   } else if (token.startsWith('"')) {
-    const str = processStringLiteral(token);
-    return { type: "literal", value: str } as LiteralNode;
+    return { type: "literal", value: processStringLiteral(token) } as LiteralNode;
   } else if (!isNaN(Number(token))) {
     return { type: "literal", value: Number(token) } as LiteralNode;
   } else if (token === "true") {
@@ -216,14 +166,6 @@ function parseExpression(): HQLNode {
     return { type: "literal", value: false } as LiteralNode;
   } else if (token === "nil") {
     return { type: "literal", value: null } as LiteralNode;
-  } else if (token === ".") {
-    // Handle the property access after a parenthesized expression
-    if (currentPos < currentTokens.length) {
-      const nextToken = currentTokens[currentPos++];
-      return { type: "symbol", name: "." + nextToken } as SymbolNode;
-    } else {
-      throw new ParseError("Expected property name after '.'", { line: 0, column: 0, offset: 0 });
-    }
   } else {
     return { type: "symbol", name: token } as SymbolNode;
   }
@@ -232,88 +174,8 @@ function parseExpression(): HQLNode {
 function parseList(): ListNode {
   const elements: HQLNode[] = [];
   
-  // Process the first token to see if it's a dot notation
-  if (currentPos < currentTokens.length && 
-      currentTokens[currentPos] !== ')' &&
-      currentTokens[currentPos].includes('.') &&
-      !currentTokens[currentPos].startsWith('.') &&
-      !currentTokens[currentPos].endsWith('.')) {
-    
-    // This is a dot notation expression - handle it explicitly
-    const dotToken = currentTokens[currentPos++];
-    
-    // Split by dots to handle multi-part property paths
-    const parts = dotToken.split('.');
-    
-    if (parts.length > 2) {
-      // Multi-part property path like "obj.prop1.prop2"
-      const objectName = parts[0];
-      const propPath = parts.slice(1);
-      
-      // Create a nested chain of js-get-invoke expressions
-      let currentExpr: ListNode = {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "js-get-invoke" },
-          { type: "symbol", name: objectName },
-          { type: "literal", value: propPath[0] }
-        ]
-      };
-      
-      // Chain the remaining properties
-      for (let i = 1; i < propPath.length; i++) {
-        currentExpr = {
-          type: "list",
-          elements: [
-            { type: "symbol", name: "js-get-invoke" },
-            currentExpr,
-            { type: "literal", value: propPath[i] }
-          ]
-        };
-      }
-      
-      // If there are arguments, convert the last js-get-invoke to js-call
-      if (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
-        const args: HQLNode[] = [];
-        while (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
-          args.push(parseExpression());
-        }
-        
-        // Replace the outermost expression's js-get-invoke with js-call
-        currentExpr.elements[0] = { type: "symbol", name: "js-call" };
-        // Add the arguments
-        currentExpr.elements.push(...args);
-      }
-      
-      elements.push(currentExpr);
-    } else {
-      // Simple property path like "obj.prop"
-      const objectName = parts[0];
-      const property = parts[1];
-      
-      // If there are no additional arguments, treat it as a property access
-      if (currentPos < currentTokens.length && currentTokens[currentPos] === ')') {
-        // Create a property access node (using js-get-invoke)
-        elements.push({ type: "symbol", name: "js-get-invoke" });
-        elements.push({ type: "symbol", name: objectName });
-        elements.push({ type: "literal", value: property });
-      } else {
-        // Otherwise, it's a method call - create a method call node (using js-call)
-        elements.push({ type: "symbol", name: "js-call" });
-        elements.push({ type: "symbol", name: objectName });
-        elements.push({ type: "literal", value: property });
-        
-        // Parse arguments for the method call
-        while (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
-          elements.push(parseExpression());
-        }
-      }
-    }
-  } else {
-    // Standard list parsing
-    while (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
-      elements.push(parseExpression());
-    }
+  while (currentPos < currentTokens.length && currentTokens[currentPos] !== ')') {
+    elements.push(parseExpression());
   }
   
   if (currentPos >= currentTokens.length) {
@@ -321,33 +183,8 @@ function parseList(): ListNode {
   }
   
   currentPos++; // Skip the closing parenthesis
-  
-  // Check if there's a dot after the list
-  if (currentPos < currentTokens.length && currentTokens[currentPos] === '.') {
-    currentPos++; // Skip the dot
-    
-    if (currentPos >= currentTokens.length) {
-      throw new ParseError("Expected property name after dot", { line: 0, column: 0, offset: 0 });
-    }
-    
-    // Get the property/method name
-    const propName = currentTokens[currentPos++];
-    
-    // Create a new list that represents property access on the original list result
-    return {
-      type: "list",
-      elements: [
-        { type: "symbol", name: "js-get-invoke" },
-        { type: "list", elements }, // Original list becomes the object
-        { type: "literal", value: propName }
-      ]
-    };
-  }
-  
   return { type: "list", elements };
 }
-
-// Updated parser functions in src/transpiler/parser.ts
 
 function parseVector(): ListNode {
   const elements: HQLNode[] = [];
@@ -374,7 +211,7 @@ function parseVector(): ListNode {
       elements: [
         { type: "symbol", name: "empty-array" }
       ] 
-    } as ListNode;
+    };
   }
   
   // For non-empty vector, proceed with vector function
@@ -384,7 +221,7 @@ function parseVector(): ListNode {
       { type: "symbol", name: "vector" },
       ...elements
     ] 
-  } as ListNode;
+  };
 }
 
 function parseMap(): ListNode {
@@ -426,7 +263,7 @@ function parseMap(): ListNode {
       elements: [
         { type: "symbol", name: "empty-map" }
       ] 
-    } as ListNode;
+    };
   }
   
   // For non-empty map, proceed with hash-map function
@@ -436,7 +273,7 @@ function parseMap(): ListNode {
       { type: "symbol", name: "hash-map" },
       ...entries
     ] 
-  } as ListNode;
+  };
 }
 
 function parseSet(): ListNode {
@@ -464,7 +301,7 @@ function parseSet(): ListNode {
       elements: [
         { type: "symbol", name: "empty-set" }
       ] 
-    } as ListNode;
+    };
   }
   
   // For non-empty set, proceed with hash-set function
@@ -474,7 +311,7 @@ function parseSet(): ListNode {
       { type: "symbol", name: "hash-set" },
       ...elements
     ] 
-  } as ListNode;
+  };
 }
 
 function processStringLiteral(token: string): string {
@@ -484,6 +321,49 @@ function processStringLiteral(token: string): string {
   let content = token.slice(1, -1);
   content = content.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
   return content;
+}
+
+// Handle dot notation for method calls
+function processDotNotation(expr: HQLNode, dotPath: string[]): HQLNode {
+  if (dotPath.length === 0) {
+    return expr;
+  }
+  
+  // For a single property access, use js-get-invoke
+  if (dotPath.length === 1) {
+    return {
+      type: "list",
+      elements: [
+        { type: "symbol", name: "js-get-invoke" },
+        expr,
+        { type: "literal", value: dotPath[0] }
+      ]
+    };
+  }
+  
+  // For nested property access, chain js-get-invoke calls
+  let result: HQLNode = {
+    type: "list",
+    elements: [
+      { type: "symbol", name: "js-get-invoke" },
+      expr,
+      { type: "literal", value: dotPath[0] }
+    ]
+  };
+  
+  // Continue for the rest of the dot path
+  for (let i = 1; i < dotPath.length; i++) {
+    result = {
+      type: "list",
+      elements: [
+        { type: "symbol", name: "js-get-invoke" },
+        result,
+        { type: "literal", value: dotPath[i] }
+      ]
+    };
+  }
+  
+  return result;
 }
 
 export function parse(input: string): HQLNode[] {

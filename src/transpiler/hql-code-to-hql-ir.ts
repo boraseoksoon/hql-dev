@@ -101,7 +101,50 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (first.type === "symbol") {
     const op = (first as SymbolNode).name;
     
-    // Case 2: First element is a symbol
+    // Handle export-named-declaration
+    if (op === "export-named-declaration") {
+      if (list.elements.length !== 3) {
+        throw new Error("export-named-declaration requires exactly 2 arguments");
+      }
+      
+      const valueListNode = list.elements[1];
+      const nameNode = list.elements[2];
+      
+      if (valueListNode.type !== "list") {
+        throw new Error("export-named-declaration value must be a list");
+      }
+      
+      // Get the export name
+      let exportName: string;
+      if (nameNode.type === "literal") {
+        exportName = String((nameNode as LiteralNode).value);
+      } else if (nameNode.type === "symbol") {
+        exportName = (nameNode as SymbolNode).name;
+      } else {
+        throw new Error("export name must be a string literal or symbol");
+      }
+      
+      // Get the value
+      const valueExpr = (valueListNode as ListNode).elements[0];
+      const value = transformNode(valueExpr, currentDir);
+      
+      // Create an export declaration
+      return {
+        type: IR.IRNodeType.ExportNamedDeclaration,
+        specifiers: [{
+          type: IR.IRNodeType.ExportSpecifier,
+          local: value.type === IR.IRNodeType.Identifier ? 
+                value as IR.IRIdentifier : 
+                { type: IR.IRNodeType.Identifier, name: exportName } as IR.IRIdentifier,
+          exported: {
+            type: IR.IRNodeType.Identifier,
+            name: exportName
+          } as IR.IRIdentifier
+        }]
+      } as IR.IRExportNamedDeclaration;
+    }
+    
+    // Handle standard import with "import" keyword
     if (op === "import" && list.elements.length === 3) {
       // Extract module name and path
       const nameNode = list.elements[1];
@@ -138,8 +181,6 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     if (KERNEL_PRIMITIVES.has(op)) {
       return transformKernelPrimitive(list, op, currentDir);
     }
-    
-    // console.log(">>>>>> transformList list : ", list)
     
     // Handle JS interop primitives
     const jsInteropResult = transformJsInteropPrimitive(list, op, currentDir);
