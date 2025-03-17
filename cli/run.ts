@@ -26,6 +26,18 @@ async function run(): Promise<void> {
       verbose, 
       baseDir: Deno.cwd() 
     });
+
+    if (verbose) {
+      logger.log("*****************")
+      logger.log("*****************")
+      logger.log("*****************")
+      logger.log("*****************")
+      logger.log(jsCode)
+      logger.log("*****************")
+      logger.log("*****************")
+      logger.log("*****************")
+      logger.log("*****************")
+    }
     
     // Write the transpiled JavaScript to a temporary file.
     const tempFilePath = await Deno.makeTempFile({ suffix: ".js" });

@@ -9,7 +9,6 @@ import { Env } from "./environment.ts";
 import { convertAST } from "./converter.ts"
 import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts"
 
-
 /**
  * Options for code transformation.
  */
