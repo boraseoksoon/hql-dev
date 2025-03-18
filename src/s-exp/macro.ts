@@ -1,5 +1,4 @@
-// src/s-exp/macro.ts - Macro expansion system for S-expressions
-
+// src/s-exp/enhanced-macro.ts
 import { 
   SExp, SSymbol, SList, 
   isSymbol, isList, isLiteral, isDefMacro,
@@ -9,16 +8,16 @@ import { Environment } from '../environment.ts';
 import { Logger } from '../logger.ts';
 
 /**
-* Options for macro expansion
-*/
+ * Options for macro expansion
+ */
 interface MacroExpanderOptions {
   verbose?: boolean;
   maxExpandDepth?: number;
 }
 
 /**
-* Register a macro definition in the environment
-*/
+ * Register a macro definition in the environment
+ */
 export function defineMacro(macroForm: SList, env: Environment, logger: Logger): void {
   // Parse macro definition: (defmacro name [params...] body...)
   if (macroForm.elements.length < 4) {
@@ -67,8 +66,8 @@ export function defineMacro(macroForm: SList, env: Environment, logger: Logger):
 }
 
 /**
-* Process a parameter list, handling rest parameters
-*/
+ * Process a parameter list, handling rest parameters
+ */
 function processParamList(paramsExp: SList, logger: Logger): { params: string[], restParam: string | null } {
   const params: string[] = [];
   let restParam: string | null = null;
@@ -100,14 +99,16 @@ function processParamList(paramsExp: SList, logger: Logger): { params: string[],
   return { params, restParam };
 }
 
-
 /**
-* Create a new environment for macro expansion with parameter bindings
-*/
-function createMacroEnv(parent: Environment, 
-    { params, restParam }: { params: string[], restParam: string | null }, args: SExp[], 
-    logger: Logger): Environment {
-  const env = new Environment(parent, logger); // Using unified environment
+ * Create a new environment for macro expansion with parameter bindings
+ */
+function createMacroEnv(
+  parent: Environment, 
+  { params, restParam }: { params: string[], restParam: string | null }, 
+  args: SExp[], 
+  logger: Logger
+): Environment {
+  const env = parent.extend(); // Create a child environment
 
   // Bind positional parameters
   for (let i = 0; i < params.length; i++) {
@@ -124,8 +125,9 @@ function createMacroEnv(parent: Environment,
 }
 
 /**
-* Evaluate an S-expression for macro expansion
-*/
+ * Evaluate an S-expression for macro expansion
+ * This version can use runtime functions and variables
+ */
 export function evaluateForMacro(expr: SExp, env: Environment, logger: Logger): SExp {
   logger.debug(`Evaluating for macro: ${sexpToString(expr)}`);
 
@@ -230,6 +232,57 @@ export function evaluateForMacro(expr: SExp, env: Environment, logger: Logger): 
         }
       }
       
+      // *** ENHANCEMENT: Look up regular functions defined with defn ***
+      try {
+        // Try to find a regular function with this name
+        const fn = env.lookup(op);
+        
+        if (typeof fn === 'function') {
+          // Evaluate the arguments
+          const evalArgs = expr.elements.slice(1).map(arg => {
+            const evalArg = evaluateForMacro(arg, env, logger);
+            // Convert S-expressions to JS values for function calls
+            if (isLiteral(evalArg)) {
+              return (evalArg as any).value;
+            } else if (isList(evalArg)) {
+              // Convert lists to arrays
+              return (evalArg as SList).elements.map(e => {
+                if (isLiteral(e)) return (e as any).value;
+                return e;
+              });
+            }
+            return evalArg;
+          });
+          
+          // Call the function
+          try {
+            const result = fn(...evalArgs);
+            
+            // Convert result back to S-expression
+            if (result === null || result === undefined) {
+              return createNilLiteral();
+            } else if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') {
+              return createLiteral(result);
+            } else if (Array.isArray(result)) {
+              return createList(...result.map(item => {
+                if (item === null || item === undefined) return createNilLiteral();
+                if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+                  return createLiteral(item);
+                }
+                return createSymbol(String(item));
+              }));
+            } else {
+              return createLiteral(result);
+            }
+          } catch (callError) {
+            logger.warn(`Error calling function ${op} during macro expansion: ${callError.message}`);
+            // Continue with normal expression evaluation
+          }
+        }
+      } catch (lookupError) {
+        // Function not found, continue with normal expansion
+      }
+      
       // Check for dot notation in the operator
       if (op.includes('.') && !op.startsWith('.')) {
         return evaluateDotNotation(expr, env, logger);
@@ -245,8 +298,8 @@ export function evaluateForMacro(expr: SExp, env: Environment, logger: Logger): 
 }
 
 /**
-* Evaluate an if expression
-*/
+ * Evaluate an if expression
+ */
 function evaluateIf(expr: SList, env: Environment, logger: Logger): SExp {
   if (expr.elements.length < 3 || expr.elements.length > 4) {
     throw new Error('if requires 2 or 3 arguments');
@@ -273,8 +326,8 @@ function evaluateIf(expr: SList, env: Environment, logger: Logger): SExp {
 }
 
 /**
-* Evaluate a def expression
-*/
+ * Evaluate a def expression
+ */
 function evaluateDef(expr: SList, env: Environment, logger: Logger): SExp {
   if (expr.elements.length !== 3) {
     throw new Error('def requires exactly 2 arguments');
@@ -291,16 +344,20 @@ function evaluateDef(expr: SList, env: Environment, logger: Logger): SExp {
   // Evaluate the value
   const value = evaluateForMacro(valueExp, env, logger);
 
-  // Define in the environment
-  env.define(name, value);
+  // Define in the environment so it's accessible to other macros
+  if (isLiteral(value)) {
+    env.define(name, value.value);
+  } else {
+    env.define(name, value);
+  }
 
   // Return the value
   return value;
 }
 
 /**
-* Evaluate a cond expression
-*/
+ * Evaluate a cond expression
+ */
 function evaluateCond(expr: SList, env: Environment, logger: Logger): SExp {
   // Format: (cond (test1 expr1) (test2 expr2) ...)
   for (let i = 1; i < expr.elements.length; i++) {
@@ -332,8 +389,8 @@ function evaluateCond(expr: SList, env: Environment, logger: Logger): SExp {
 }
 
 /**
-* Evaluate a do expression
-*/
+ * Evaluate a do expression
+ */
 function evaluateDo(expr: SList, env: Environment, logger: Logger): SExp {
   // (do expr1 expr2 ... exprN)
   let result: SExp = createNilLiteral();
@@ -347,22 +404,52 @@ function evaluateDo(expr: SList, env: Environment, logger: Logger): SExp {
 }
 
 /**
-* Evaluate a dot notation expression (obj.method or obj.property)
-*/
+ * Evaluate a dot notation expression (obj.method or obj.property)
+ */
 function evaluateDotNotation(expr: SList, env: Environment, logger: Logger): SExp {
   const op = (expr.elements[0] as SSymbol).name;
   const [objectName, propName] = op.split('.');
 
-  // Check if this is a method call or a property access
+  // Try to look up the object
+  try {
+    const object = env.lookup(objectName);
+    
+    // If the object exists, access its property
+    if (object !== null && object !== undefined) {
+      if (typeof object === 'object' && propName in object) {
+        const property = object[propName];
+        
+        // If property is a function, call it with arguments
+        if (typeof property === 'function' && expr.elements.length > 1) {
+          const args = expr.elements.slice(1).map(arg => {
+            const evalArg = evaluateForMacro(arg, env, logger);
+            return isLiteral(evalArg) ? evalArg.value : evalArg;
+          });
+          
+          try {
+            const result = property.apply(object, args);
+            return convertJsValueToSExp(result);
+          } catch (error) {
+            logger.warn(`Error calling method ${propName}: ${error.message}`);
+          }
+        }
+        
+        // Otherwise return the property value
+        return convertJsValueToSExp(property);
+      }
+    }
+  } catch (error) {
+    // Object not found, continue with normal expression evaluation
+  }
+
+  // If object lookup or property access failed, create a js-get or js-call expression
   if (expr.elements.length > 1) {
     // Method call: (obj.method arg1 arg2 ...)
-    const args = expr.elements.slice(1).map(arg => evaluateForMacro(arg, env, logger));
-
     return createList(
       createSymbol('js-call'),
       createSymbol(objectName),
       createLiteral(propName),
-      ...args
+      ...expr.elements.slice(1)
     );
   } else {
     // Property access: (obj.property)
@@ -375,8 +462,29 @@ function evaluateDotNotation(expr: SList, env: Environment, logger: Logger): SEx
 }
 
 /**
-* Evaluate a quasiquoted expression
-*/
+ * Helper to convert JavaScript values to S-expressions
+ */
+function convertJsValueToSExp(value: any): SExp {
+  if (value === null || value === undefined) {
+    return createNilLiteral();
+  } else if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return createLiteral(value);
+  } else if (Array.isArray(value)) {
+    return createList(...value.map(convertJsValueToSExp));
+  } else if (typeof value === 'object') {
+    // Return a string representation for now
+    return createLiteral(String(value));
+  } else if (typeof value === 'function') {
+    // Return a string representation of the function
+    return createLiteral(`[Function: ${value.name || 'anonymous'}]`);
+  } else {
+    return createLiteral(String(value));
+  }
+}
+
+/**
+ * Evaluate a quasiquoted expression
+ */
 function evaluateQuasiquote(expr: SExp, env: Environment, logger: Logger): SExp {
   logger.debug(`Evaluating quasiquote: ${sexpToString(expr)}`);
 
@@ -440,52 +548,8 @@ function evaluateQuasiquote(expr: SExp, env: Environment, logger: Logger): SExp 
 }
 
 /**
- * Post-process a macro expansion result to correctly handle quoted operations
- * This is critical for macros that expand to operations like (+ x 1)
+ * Expand all macros in a list of S-expressions
  */
-function postProcessMacroResult(sexp: SExp, env: Environment, logger: Logger): SExp {
-  // Handle the special case of (list 'op arg1 arg2 ...) -> (op arg1 arg2 ...)
-  if (isList(sexp)) {
-    const list = sexp as SList;
-    
-    // Check for the pattern: (list 'op arg1 arg2 ...)
-    if (list.elements.length >= 3 && 
-        isSymbol(list.elements[0]) && 
-        list.elements[0].name === 'list') {
-      
-      // Check if the first argument is a quoted symbol
-      const firstArg = list.elements[1];
-      if (isList(firstArg) && 
-          firstArg.elements.length === 2 && 
-          isSymbol(firstArg.elements[0]) && 
-          firstArg.elements[0].name === 'quote' && 
-          isSymbol(firstArg.elements[1])) {
-        
-        // Extract the operation name from 'op
-        const opName = (firstArg.elements[1] as SSymbol).name;
-        logger.debug(`Converting list construction to direct operation: ${opName}`);
-        
-        // Create a new list with the operation in first position
-        return createList(
-          createSymbol(opName),
-          ...list.elements.slice(2).map(arg => postProcessMacroResult(arg, env, logger))
-        );
-      }
-    }
-    
-    // Recursively process all elements in the list
-    return createList(
-      ...list.elements.map(elem => postProcessMacroResult(elem, env, logger))
-    );
-  }
-  
-  // For other types, return as is
-  return sexp;
-}
-
-/**
-* Expand all macros in a list of S-expressions
-*/
 export function expandMacros(exprs: SExp[], env: Environment, options: MacroExpanderOptions = {}): SExp[] {
   const logger = new Logger(options.verbose || false);
   logger.debug(`Expanding macros in ${exprs.length} expressions`);
@@ -506,8 +570,8 @@ export function expandMacros(exprs: SExp[], env: Environment, options: MacroExpa
 }
 
 /**
-* Expand a single S-expression, including any nested macros
-*/
+ * Expand a single S-expression, including any nested macros
+ */
 export function expandMacro(expr: SExp, env: Environment, logger: Logger, 
                     options: MacroExpanderOptions = {}, depth: number = 0): SExp {
   const maxDepth = options.maxExpandDepth || 100;
@@ -554,30 +618,6 @@ export function expandMacro(expr: SExp, env: Environment, logger: Logger,
             return expandMacro(expanded, env, logger, options, depth + 1);
           } catch (error) {
             logger.error(`Error expanding macro ${macroName}: ${error.message}`);
-            throw error;
-          }
-        }
-      }
-      
-      // Try sanitized name if original not found
-      const sanitizedMacroName = macroName.replace(/-/g, '_');
-      if (sanitizedMacroName !== macroName && env.hasMacro(sanitizedMacroName)) {
-        const macroFn = env.getMacro(sanitizedMacroName);
-        
-        if (macroFn) {
-          logger.debug(`Expanding macro with sanitized name ${sanitizedMacroName} at depth ${depth}`);
-          
-          const macroArgs = list.elements.slice(1);
-          
-          try {
-            // Apply the macro
-            const expanded = macroFn(macroArgs, env);
-            logger.debug(`Macro expansion result: ${sexpToString(expanded)}`);
-            
-            // Recursively expand the result
-            return expandMacro(expanded, env, logger, options, depth + 1);
-          } catch (error) {
-            logger.error(`Error expanding macro ${sanitizedMacroName}: ${error.message}`);
             throw error;
           }
         }

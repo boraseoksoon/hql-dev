@@ -66,38 +66,92 @@ export async function processImports(
     }
   }
   
-  // Process and register all macros defined in the current file
+  // Process any defs in the current file to make them available to macros
   processFileDefinitions(exprs, env, logger);
 }
 
 /**
  * Process macro definitions in the current file
  */
+/**
+ * Process definitions in the current file to make them available to macros
+ */
 function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger): void {
-  logger.debug("Processing file definitions for macros");
+  logger.debug("Processing file definitions for macros and variables");
   
+  // First pass: Process def declarations to register variables
   for (const expr of exprs) {
-    // Skip imports (already processed)
-    if (isImport(expr)) {
-      continue;
-    }
-    
-    // Process macro definitions
     if (expr.type === 'list' && 
         expr.elements.length > 0 &&
-        isSymbol(expr.elements[0]) &&
-        expr.elements[0].name === 'defmacro') {
-      try {
-        // Define the macro in the environment
-        defineMacro(expr as SList, env, logger);
-        
-        // Extract macro name for logging
-        if (expr.elements.length > 1 && isSymbol(expr.elements[1])) {
-          const macroName = expr.elements[1].name;
-          logger.debug(`Processed macro definition for: ${macroName}`);
+        isSymbol(expr.elements[0])) {
+      const op = expr.elements[0].name;
+      
+      if (op === 'def' && expr.elements.length === 3) {
+        try {
+          // Get the name and value
+          if (isSymbol(expr.elements[1])) {
+            const name = expr.elements[1].name;
+            // Evaluate the value for use by macros
+            try {
+              const value = evaluateForMacro(expr.elements[2], env, logger);
+              if (isLiteral(value)) {
+                env.define(name, value.value);
+                logger.debug(`Registered variable for macros: ${name} = ${value.value}`);
+              } else {
+                env.define(name, value);
+                logger.debug(`Registered complex variable for macros: ${name}`);
+              }
+            } catch (evalError) {
+              logger.warn(`Could not evaluate ${name} for macro use: ${evalError.message}`);
+            }
+          }
+        } catch (error) {
+          logger.error(`Error processing def: ${error.message}`);
         }
-      } catch (error) {
-        logger.error(`Error defining macro: ${error.message}`);
+      }
+    }
+  }
+  
+  // Second pass: Process defn declarations to register functions
+  for (const expr of exprs) {
+    if (expr.type === 'list' && 
+        expr.elements.length > 0 &&
+        isSymbol(expr.elements[0])) {
+      const op = expr.elements[0].name;
+      
+      if (op === 'defn' && expr.elements.length >= 4) {
+        try {
+          // Skip if not a proper defn
+          if (!isSymbol(expr.elements[1]) || expr.elements[2].type !== 'list') {
+            continue;
+          }
+          
+          const fnName = expr.elements[1].name;
+          const params = expr.elements[2];
+          const body = expr.elements.slice(3);
+          
+          // Create a JavaScript function that the macro can call
+          // This is a simplified version for demo purposes
+          const fn = (...args: any[]) => {
+            try {
+              // Normally this would call a proper evaluator
+              // For now, just return a placeholder value based on function name
+              return `${fnName}(${args.join(', ')})`;
+            } catch (e) {
+              logger.error(`Error executing function ${fnName}: ${e.message}`);
+              return null;
+            }
+          };
+          
+          // Mark as a function definition (for special handling in macros)
+          Object.defineProperty(fn, 'isDefFunction', { value: true });
+          
+          // Register in the environment
+          env.define(fnName, fn);
+          logger.debug(`Registered function for macros: ${fnName}`);
+        } catch (error) {
+          logger.error(`Error processing defn: ${error.message}`);
+        }
       }
     }
   }
@@ -156,6 +210,7 @@ async function processImport(
     }
   }
 }
+
 
 /**
  * Process an HQL file import with improved macro handling
@@ -220,35 +275,80 @@ async function processHqlImport(
   // Create module object to store exports
   const moduleExports: Record<string, any> = {};
   
-  // Process expressions in the file to populate moduleExports
-  await processFileExpressions(importedExprs, env, moduleExports, resolvedPath, logger);
-  
-  // Debug log the exports
-  logger.debug(`Exports from ${moduleName}:`);
-  for (const [key, value] of Object.entries(moduleExports)) {
-    logger.debug(`  ${key}: ${value}`);
-  }
-  
-  // Special handling for core.hql macros
-  if (isCoreMacros) {
-    logger.debug(`Processing core.hql macros for global availability`);
-    
-    for (const [exportName, exportValue] of Object.entries(moduleExports)) {
-      if (typeof exportValue === 'function' && 'isMacro' in exportValue) {
-        logger.debug(`Registering core macro globally: ${exportName}`);
-        env.defineMacro(exportName, exportValue as any);
-      }
-    }
-  }
+  // Process and extract exports
+  processFileExportsAndDefinitions(importedExprs, env, moduleExports, logger);
   
   // Register the module with its exports
   env.importModule(moduleName, moduleExports);
   
-  logger.debug(`Imported HQL module: ${moduleName} with exports`);
-  
-  // For bidirectional support: Generate a JS file if this HQL is imported from JS
-  await generateJsVersionOfHql(resolvedPath, fileContent, tempDir, importMap, logger);
+  logger.debug(`Imported HQL module: ${moduleName} with exports: ${Object.keys(moduleExports).join(', ')}`);
 }
+
+function processFileExportsAndDefinitions(
+  expressions: SExp[],
+  env: Environment,
+  moduleExports: Record<string, any>,
+  logger: Logger
+): void {
+  // First pass: register all definitions for use by macros
+  processFileDefinitions(expressions, env, logger);
+  
+  // Second pass: process exports
+  for (const expr of expressions) {
+    // Skip non-list expressions
+    if (expr.type !== 'list' || expr.elements.length === 0) continue;
+    
+    const first = expr.elements[0];
+    if (!isSymbol(first)) continue;
+    
+    const op = first.name;
+    
+    // Process export statements: (export "name" value)
+    if (op === 'export' && expr.elements.length === 3 && 
+        isLiteral(expr.elements[1]) && 
+        typeof expr.elements[1].value === 'string') {
+      
+      const exportName = expr.elements[1].value;
+      const exportSymbol = expr.elements[2];
+      
+      logger.debug(`Processing export: "${exportName}"`);
+      
+      // If exporting a symbol, look up its value
+      if (isSymbol(exportSymbol)) {
+        const symbolName = exportSymbol.name;
+        logger.debug(`Export symbol: ${symbolName}`);
+        
+        try {
+          // Look up the value from the environment
+          const value = env.lookup(symbolName);
+          
+          // Store in module exports
+          moduleExports[exportName] = value;
+          logger.debug(`Added export "${exportName}" with value from ${symbolName}`);
+        } catch (error) {
+          logger.warn(`Failed to lookup symbol "${symbolName}" for export "${exportName}"`);
+        }
+      } else {
+        // For non-symbol exports, evaluate the expression
+        try {
+          const value = evaluateForMacro(exportSymbol, env, logger);
+          
+          if (isLiteral(value)) {
+            moduleExports[exportName] = value.value;
+          } else {
+            moduleExports[exportName] = value;
+          }
+          
+          logger.debug(`Added export "${exportName}" with direct value`);
+        } catch (error) {
+          logger.warn(`Failed to evaluate export "${exportName}": ${error.message}`);
+        }
+      }
+    }
+  }
+}
+
+
 
 /**
  * Process all expressions in an HQL file
@@ -527,70 +627,6 @@ async function generateJsVersionOfHql(
   }
 }
 
-// Keep the following functions unchanged
-async function processJsImport(
-  moduleName: string,
-  modulePath: string,
-  baseDir: string,
-  env: Environment,
-  logger: Logger,
-  processedFiles: Set<string>,
-  tempDir: string,
-  importMap: Map<string, string>,
-  keepTemp: boolean = false
-): Promise<void> {
-  try {
-    // Resolve the absolute path
-    const resolvedPath = path.resolve(baseDir, modulePath);
-    
-    // Check for circular imports
-    if (processedFiles.has(resolvedPath)) {
-      logger.debug(`Skipping already processed JS import: ${resolvedPath}`);
-      
-      // If already processed, just register the module
-      if (importMap.has(resolvedPath)) {
-        const processedPath = importMap.get(resolvedPath)!;
-        const moduleUrl = new URL(`file://${processedPath}`);
-        const module = await import(moduleUrl.href);
-        env.importModule(moduleName, module);
-      }
-      
-      return;
-    }
-    
-    // Mark as processed
-    processedFiles.add(resolvedPath);
-    
-    // Read the JS file to analyze imports
-    let jsContent: string;
-    try {
-      jsContent = await Deno.readTextFile(resolvedPath);
-    } catch (error) {
-      throw new Error(`Failed to read JS file: ${resolvedPath} - ${error.message}`);
-    }
-    
-    // Process HQL imports in the JS file
-    await processHqlImportsInJs(resolvedPath, jsContent, env, logger, processedFiles, tempDir, importMap, keepTemp);
-    
-    // Process the processed JS file
-    let processedJsPath = resolvedPath;
-    if (importMap.has(resolvedPath)) {
-      processedJsPath = importMap.get(resolvedPath)!;
-    }
-    
-    // Import the module dynamically
-    const moduleUrl = new URL(`file://${processedJsPath}`);
-    const module = await import(moduleUrl.href);
-    
-    // Register the module
-    env.importModule(moduleName, module);
-    
-    logger.debug(`Imported JS module: ${moduleName} with exports: ${Object.keys(module).join(', ')}`);
-  } catch (error) {
-    throw new Error(`Failed to import JS module: ${modulePath} - ${error.message}`);
-  }
-}
-
 /**
  * Process HQL imports in a JavaScript file
  */
@@ -735,9 +771,43 @@ async function processJsImportsInJs(
   }
 }
 
-/**
- * Process an NPM package import with multiple fallback approaches
- */
+async function processJsImport(
+  moduleName: string,
+  modulePath: string,
+  baseDir: string,
+  env: Environment,
+  logger: Logger,
+  processedFiles: Set<string>,
+  tempDir: string,
+  importMap: Map<string, string>,
+  keepTemp: boolean = false
+): Promise<void> {
+  try {
+    // Resolve the absolute path
+    const resolvedPath = path.resolve(baseDir, modulePath);
+    
+    // Check for circular imports
+    if (processedFiles.has(resolvedPath)) {
+      logger.debug(`Skipping already processed JS import: ${resolvedPath}`);
+      return;
+    }
+    
+    // Mark as processed
+    processedFiles.add(resolvedPath);
+    
+    // Import the module dynamically
+    const moduleUrl = new URL(`file://${resolvedPath}`);
+    const module = await import(moduleUrl.href);
+    
+    // Register the module
+    env.importModule(moduleName, module);
+    
+    logger.debug(`Imported JS module: ${moduleName} with exports: ${Object.keys(module).join(', ')}`);
+  } catch (error) {
+    throw new Error(`Failed to import JS module: ${modulePath} - ${error.message}`);
+  }
+}
+
 async function processNpmImport(
   moduleName: string,
   modulePath: string,
@@ -748,34 +818,19 @@ async function processNpmImport(
     // Extract the package name without the npm: prefix
     const packageName = modulePath.substring(4);
     
+    // Try direct import (for Deno compatibility)
     let module;
-    
-    // First strategy: Try direct import (may work in newer Deno versions)
     try {
-      logger.debug(`Trying direct import for NPM module: ${modulePath}`);
       module = await import(modulePath);
-      logger.debug(`Direct import successful for ${modulePath}`);
-    } catch (directImportError) {
-      // Second strategy: Try ESM.sh CDN
+    } catch (error) {
+      // Fallback to ESM.sh CDN
       try {
         const esmUrl = `https://esm.sh/${packageName}`;
-        logger.debug(`Direct import failed, trying ESM.sh URL: ${esmUrl}`);
         module = await import(esmUrl);
-        logger.debug(`ESM.sh import successful for ${packageName}`);
       } catch (esmError) {
-        // Third strategy: Try Skypack CDN
-        try {
-          const skypackUrl = `https://cdn.skypack.dev/${packageName}`;
-          logger.debug(`ESM.sh import failed, trying Skypack URL: ${skypackUrl}`);
-          module = await import(skypackUrl);
-          logger.debug(`Skypack import successful for ${packageName}`);
-        } catch (skypackError) {
-          // Final strategy: Try JSPM CDN
-          logger.debug(`Skypack import failed, trying JSPM URL for ${packageName}`);
-          const jspmUrl = `https://jspm.dev/${packageName}`;
-          module = await import(jspmUrl);
-          logger.debug(`JSPM import successful for ${packageName}`);
-        }
+        // Fallback to Skypack CDN
+        const skypackUrl = `https://cdn.skypack.dev/${packageName}`;
+        module = await import(skypackUrl);
       }
     }
     
@@ -788,9 +843,6 @@ async function processNpmImport(
   }
 }
 
-/**
- * Process a JSR package import
- */
 async function processJsrImport(
   moduleName: string,
   modulePath: string,
@@ -798,21 +850,14 @@ async function processJsrImport(
   logger: Logger
 ): Promise<void> {
   try {
-    // Import the module dynamically
     const module = await import(modulePath);
-    
-    // Register the module
     env.importModule(moduleName, module);
-    
     logger.debug(`Imported JSR module: ${moduleName} (${modulePath}) with exports: ${Object.keys(module).join(', ')}`);
   } catch (error) {
     throw new Error(`Failed to import JSR module: ${modulePath} - ${error.message}`);
   }
 }
 
-/**
- * Process an HTTP/HTTPS import
- */
 async function processHttpImport(
   moduleName: string,
   modulePath: string,
@@ -820,12 +865,8 @@ async function processHttpImport(
   logger: Logger
 ): Promise<void> {
   try {
-    // Import the module dynamically
     const module = await import(modulePath);
-    
-    // Register the module
     env.importModule(moduleName, module);
-    
     logger.debug(`Imported HTTP module: ${moduleName} (${modulePath}) with exports: ${Object.keys(module).join(', ')}`);
   } catch (error) {
     throw new Error(`Failed to import HTTP module: ${modulePath} - ${error.message}`);
