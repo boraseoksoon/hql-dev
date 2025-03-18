@@ -1,9 +1,8 @@
-// src/s-exp/imports.ts
-// Updated with full bidirectional import support and improved macro handling
+// src/s-exp/imports.ts - Enhanced macro support for imports
 
 import * as path from "https://deno.land/std/path/mod.ts";
 import { SExp, SList, SLiteral, SSymbol, isSymbol, isLiteral, isList, isImport, createList, createSymbol, createLiteral } from './types.ts';
-import { Environment } from '../environment.ts';
+import { Environment } from '../environment.ts'; // UPDATED: Use unified environment
 import { defineMacro, expandMacro, evaluateForMacro } from './macro.ts';
 import { parse } from './parser.ts';
 import { Logger } from '../logger.ts';
@@ -63,15 +62,15 @@ export async function processImports(
         importMap
       });
     } catch (error) {
-      logger.error(`Error processing import: ${error.message}`);
+      logger.error(`Error processing import: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
-  // CRITICAL FIX: Also process and register all macros defined in the current file
+  // IMPORTANT: Also process and register all macros defined in the current file
   processFileDefinitions(exprs, env, logger);
 }
 
-// NEW: Process macro definitions in the current file
+// Process macro definitions in the current file
 function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger): void {
   logger.debug("Processing file definitions for macros");
   
@@ -96,7 +95,7 @@ function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger)
           logger.debug(`Processed macro definition for: ${macroName}`);
         }
       } catch (error) {
-        logger.error(`Error defining macro: ${error.message}`);
+        logger.error(`Error defining macro: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -137,19 +136,22 @@ async function processImport(
   
   logger.debug(`Processing import: ${moduleName} from ${modulePath}`);
   
+  // Special handling for core modules to make macros directly accessible
+  const isCoreModule = moduleName === 'core' || moduleName === 'std' || moduleName === 'lib';
+  
   // Determine import type and process accordingly
   if (modulePath.startsWith('npm:')) {
-    await processNpmImport(moduleName, modulePath, env, logger);
+    await processNpmImport(moduleName, modulePath, env, logger, isCoreModule);
   } else if (modulePath.startsWith('jsr:')) {
-    await processJsrImport(moduleName, modulePath, env, logger);
+    await processJsrImport(moduleName, modulePath, env, logger, isCoreModule);
   } else if (modulePath.startsWith('http:') || modulePath.startsWith('https:')) {
-    await processHttpImport(moduleName, modulePath, env, logger);
+    await processHttpImport(moduleName, modulePath, env, logger, isCoreModule);
   } else {
     // Local file import
     if (modulePath.endsWith('.hql')) {
-      await processHqlImport(moduleName, modulePath, baseDir, env, processedFiles, logger, tempDir, importMap, options.keepTemp);
+      await processHqlImport(moduleName, modulePath, baseDir, env, processedFiles, logger, tempDir, importMap, options.keepTemp, isCoreModule);
     } else if (modulePath.endsWith('.js') || modulePath.endsWith('.mjs') || modulePath.endsWith('.cjs')) {
-      await processJsImport(moduleName, modulePath, baseDir, env, logger, processedFiles, tempDir, importMap, options.keepTemp);
+      await processJsImport(moduleName, modulePath, baseDir, env, logger, processedFiles, tempDir, importMap, options.keepTemp, isCoreModule);
     } else {
       throw new Error(`Unsupported import file type: ${modulePath}`);
     }
@@ -168,7 +170,8 @@ async function processHqlImport(
   logger: Logger,
   tempDir: string,
   importMap: Map<string, string>,
-  keepTemp: boolean = false
+  keepTemp: boolean = false,
+  isCoreModule: boolean = false
 ): Promise<void> {
   // Resolve the absolute path relative to the importing file's directory
   const resolvedPath = path.resolve(baseDir, modulePath);
@@ -191,7 +194,7 @@ async function processHqlImport(
   try {
     fileContent = await Deno.readTextFile(resolvedPath);
   } catch (error) {
-    throw new Error(`Failed to read HQL file: ${resolvedPath} - ${error.message}`);
+    throw new Error(`Failed to read HQL file: ${resolvedPath} - ${error instanceof Error ? error.message : String(error)}`);
   }
   
   // Parse it into S-expressions
@@ -262,10 +265,11 @@ async function processFileExpressions(
           
           if (macroFn) {
             moduleExports[macroName] = macroFn;
+            logger.debug(`Added macro export: ${macroName}`);
           }
         }
       } catch (error) {
-        logger.error(`Error defining macro in ${filePath}: ${error.message}`);
+        logger.error(`Error defining macro in ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     
@@ -304,7 +308,7 @@ async function processFileExpressions(
                   }
                 }
               } catch (error) {
-                logger.error(`Error expanding macro in def: ${error.message}`);
+                logger.error(`Error expanding macro in def: ${error instanceof Error ? error.message : String(error)}`);
               }
             } else {
               // Not a macro call, define as is
@@ -316,7 +320,7 @@ async function processFileExpressions(
           }
         }
       } catch (error) {
-        logger.error(`Error processing def in ${filePath}: ${error.message}`);
+        logger.error(`Error processing def in ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     
@@ -333,7 +337,7 @@ async function processFileExpressions(
           moduleExports[fnName] = expr;
         }
       } catch (error) {
-        logger.error(`Error processing function in ${filePath}: ${error.message}`);
+        logger.error(`Error processing function in ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     
@@ -384,7 +388,7 @@ async function processFileExpressions(
                 }
               }
             } catch (error) {
-              logger.error(`Error resolving export symbol in ${filePath}: ${error.message}`);
+              logger.error(`Error resolving export symbol in ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
             }
           } else {
             // For non-symbols, evaluate the expression directly
@@ -400,12 +404,12 @@ async function processFileExpressions(
                 logger.debug(`Added export "${exportName}" with non-literal value: ${JSON.stringify(moduleExports[exportName])}`);
               }
             } catch (evalError) {
-              logger.error(`Error evaluating export value: ${evalError.message}`);
+              logger.error(`Error evaluating export value: ${evalError instanceof Error ? evalError.message : String(evalError)}`);
             }
           }
         }
       } catch (error) {
-        logger.error(`Error processing export in ${filePath}: ${error.message}`);
+        logger.error(`Error processing export in ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -518,8 +522,10 @@ async function processJsImport(
   processedFiles: Set<string>,
   tempDir: string,
   importMap: Map<string, string>,
-  keepTemp: boolean = false
+  keepTemp: boolean = false,
+  isCoreModule: boolean = false
 ): Promise<void> {
+  // Implementation kept the same, but with isCoreModule parameter added
   try {
     // Resolve the absolute path
     const resolvedPath = path.resolve(baseDir, modulePath);
@@ -547,7 +553,7 @@ async function processJsImport(
     try {
       jsContent = await Deno.readTextFile(resolvedPath);
     } catch (error) {
-      throw new Error(`Failed to read JS file: ${resolvedPath} - ${error.message}`);
+      throw new Error(`Failed to read JS file: ${resolvedPath} - ${error instanceof Error ? error.message : String(error)}`);
     }
     
     // Process HQL imports in the JS file
@@ -568,9 +574,11 @@ async function processJsImport(
     
     logger.debug(`Imported JS module: ${moduleName} with exports: ${Object.keys(module).join(', ')}`);
   } catch (error) {
-    throw new Error(`Failed to import JS module: ${modulePath} - ${error.message}`);
+    throw new Error(`Failed to import JS module: ${modulePath} - ${error instanceof Error ? error.message : String(error)}`);
   }
 }
+
+// Rest of file implementations kept the same...
 
 /**
  * Process HQL imports in a JavaScript file
@@ -616,7 +624,7 @@ async function processHqlImportsInJs(
           keepTemp
         );
       } catch (error) {
-        logger.error(`Error processing HQL import ${importPath} in JS file: ${error.message}`);
+        logger.error(`Error processing HQL import ${importPath} in JS file: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -709,7 +717,7 @@ async function processJsImportsInJs(
           // Mark as processed
           processedFiles.add(absImportPath);
         } catch (error) {
-          logger.error(`Error processing JS import ${importPath} in JS file: ${error.message}`);
+          logger.error(`Error processing JS import ${importPath} in JS file: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     }
@@ -717,8 +725,12 @@ async function processJsImportsInJs(
 }
 
 /**
- * Process an NPM package import
+ * Process an NPM package import with multiple fallback approaches
  */
+// In src/s-exp/imports.ts - Add missing importModule method to environment
+
+// Find the part where you're processing NPM imports and modify:
+
 /**
  * Process an NPM package import with multiple fallback approaches
  */
@@ -726,7 +738,8 @@ async function processNpmImport(
   moduleName: string,
   modulePath: string,
   env: Environment,
-  logger: Logger
+  logger: Logger,
+  isCoreModule: boolean = false
 ): Promise<void> {
   try {
     // Extract the package name without the npm: prefix
@@ -763,12 +776,23 @@ async function processNpmImport(
       }
     }
     
-    // Register the module
-    env.importModule(moduleName, module);
+    // FIXED: Directly define the module in environment instead of using importModule
+    logger.debug(`Registering module: ${moduleName}`);
+    env.define(moduleName, module);
+    
+    // Also make module properties available directly if this is a core module
+    if (isCoreModule && module) {
+      for (const [key, value] of Object.entries(module)) {
+        if (typeof value === 'function' && 'isMacro' in value) {
+          logger.debug(`Registering core macro directly: ${key}`);
+          env.defineMacro(key, value);
+        }
+      }
+    }
     
     logger.debug(`Imported NPM module: ${moduleName} (${packageName}) with exports: ${Object.keys(module).join(', ')}`);
   } catch (error) {
-    throw new Error(`Failed to import NPM module: ${modulePath} - ${error.message}`);
+    throw new Error(`Failed to import NPM module: ${modulePath} - ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -779,7 +803,8 @@ async function processJsrImport(
   moduleName: string,
   modulePath: string,
   env: Environment,
-  logger: Logger
+  logger: Logger,
+  isCoreModule: boolean = false
 ): Promise<void> {
   try {
     // Import the module dynamically
@@ -790,7 +815,7 @@ async function processJsrImport(
     
     logger.debug(`Imported JSR module: ${moduleName} (${modulePath}) with exports: ${Object.keys(module).join(', ')}`);
   } catch (error) {
-    throw new Error(`Failed to import JSR module: ${modulePath} - ${error.message}`);
+    throw new Error(`Failed to import JSR module: ${modulePath} - ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -801,7 +826,8 @@ async function processHttpImport(
   moduleName: string,
   modulePath: string,
   env: Environment,
-  logger: Logger
+  logger: Logger,
+  isCoreModule: boolean = false
 ): Promise<void> {
   try {
     // Import the module dynamically
@@ -812,7 +838,7 @@ async function processHttpImport(
     
     logger.debug(`Imported HTTP module: ${moduleName} (${modulePath}) with exports: ${Object.keys(module).join(', ')}`);
   } catch (error) {
-    throw new Error(`Failed to import HTTP module: ${modulePath} - ${error.message}`);
+    throw new Error(`Failed to import HTTP module: ${modulePath} - ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -838,7 +864,7 @@ export async function cleanupImportTemp(tempDir: string, logger: Logger): Promis
       await Deno.remove(tempDir, { recursive: true });
       logger.debug(`Cleaned up temporary directory: ${tempDir}`);
     } catch (error) {
-      logger.error(`Failed to clean up temporary directory: ${error.message}`);
+      logger.error(`Failed to clean up temporary directory: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }

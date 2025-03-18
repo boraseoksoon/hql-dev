@@ -1,8 +1,8 @@
-// src/s-exp/main.ts - Updated to use unified environment
+// src/s-exp/main.ts - Updated to use the unified environment from environment.ts
 
 import { sexpToString, isSymbol, isLiteral } from './types.ts';
 import { parse } from './parser.ts';
-import { Environment } from '../environment.ts';
+import { Environment } from '../environment.ts'; // Correct import path
 import { initializeCoreMacros } from './core-macros.ts';
 import { expandMacros } from './macro.ts';
 import { processImports } from './imports.ts';
@@ -18,6 +18,8 @@ export interface ProcessOptions {
   baseDir?: string;
   module?: 'esm';
   includeSourceMap?: boolean;
+  tempDir?: string;
+  keepTemp?: boolean;
 }
 
 /**
@@ -43,14 +45,19 @@ export async function processHql(
     
     // Step 2: Initialize the environment using unified Environment
     logger.debug('Initializing environment');
-    const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
+    const env = Environment.getInstance({ verbose: options.verbose });
+    
+    // Still run initializeCoreMacros for additional macros not in core.hql
     initializeCoreMacros(env, logger);
     
-    // Step 3: Process imports
+    // Step 3: Process imports - this must come AFTER environment initialization
+    // to ensure core macros are available when processing imports
     logger.debug('Processing imports');
     await processImports(sexps, env, {
       verbose: options.verbose,
-      baseDir: options.baseDir || Deno.cwd()
+      baseDir: options.baseDir || Deno.cwd(),
+      tempDir: options.tempDir,
+      keepTemp: options.keepTemp
     });
     
     // Step 4: Expand macros
@@ -87,8 +94,8 @@ export async function processHql(
           isLiteral(expr.elements[1]) &&
           isSymbol(expr.elements[2])) {
         
-        const exportName = (expr.elements[1] as SLiteral).value as string;
-        const symbolName = (expr.elements[2] as SSymbol).name;
+        const exportName = (expr.elements[1] as any).value as string;
+        const symbolName = (expr.elements[2] as any).name;
         
         // Sanitize symbol name for JavaScript
         const sanitizedSymbol = symbolName.replace(/-/g, '_');
