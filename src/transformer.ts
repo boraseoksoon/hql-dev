@@ -5,7 +5,7 @@ import { transformToIR } from "./transpiler/hql-code-to-hql-ir.ts";
 import { generateTypeScript } from "./transpiler/ts-ast-to-ts-code.ts";
 import { expandMacros } from "./s-exp/macro.ts";
 import { Logger } from "./logger.ts";
-import { Env } from "./environment.ts";
+import { Environment } from "./environment.ts";
 import { convertAST } from "./converter.ts"
 import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts"
 
@@ -35,7 +35,7 @@ export async function transformAST(
   const logger = new Logger(options.verbose);
   try {
     // Initialize environment
-    const env: Env = await Env.initializeGlobalEnv({ verbose: options.verbose });
+    const env: Environment = await Environment.initializeGlobalEnv({ verbose: options.verbose });
     
     // Expand macros using new macro.ts.
     const macroExpandedAst = await expandMacros(astNodes, env, currentDir, { verbose: options.verbose });

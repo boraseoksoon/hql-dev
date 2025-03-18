@@ -1,7 +1,7 @@
 // src/s-exp/repl.ts - Interactive REPL for the S-expression frontend
 
 import { parse } from "./parser.ts";
-import { SEnv, initializeGlobalEnv } from "./environment.ts";
+import { Environment, initializeGlobalEnv } from "./environment.ts";
 import { initializeCoreMacros } from "./core-macros.ts";
 import { expandMacros } from "./macro.ts";
 import { sexpToString } from "./types.ts";
@@ -163,7 +163,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
  */
 async function processInput(
   input: string,
-  env: SEnv,
+  env: Environment,
   history: string[],
   { logger, baseDir, historySize, showAst, showExpanded, showJs }:
     { logger: Logger; baseDir: string; historySize: number; showAst: boolean; showExpanded: boolean; showJs: boolean }
@@ -232,7 +232,7 @@ async function processInput(
  */
 async function handleCommand(
   command: string,
-  env: SEnv,
+  env: Environment,
   history: string[],
   { logger, baseDir, showAst, showExpanded, showJs, running, setRunning, setVerbose }:
     { logger: Logger; baseDir: string; showAst: boolean; showExpanded: boolean; showJs: boolean;

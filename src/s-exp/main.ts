@@ -1,13 +1,13 @@
-// src/s-exp/main.ts - Main entry point for the S-expression layer
+// src/s-exp/main.ts - Updated to use unified environment
 
 import { sexpToString, isSymbol, isLiteral } from './types.ts';
 import { parse } from './parser.ts';
-import { initializeGlobalEnv } from './environment.ts';
+import { Environment } from '../environment.ts';
 import { initializeCoreMacros } from './core-macros.ts';
 import { expandMacros } from './macro.ts';
 import { processImports } from './imports.ts';
 import { convertToHqlAst } from './connector.ts';
-import { transformAST } from '../transformer.ts'; // Use existing transformer for final output
+import { transformAST } from '../transformer.ts';
 import { Logger } from '../logger.ts';
 
 /**
@@ -16,15 +16,12 @@ import { Logger } from '../logger.ts';
 export interface ProcessOptions {
   verbose?: boolean;
   baseDir?: string;
-  module?: 'esm'; // Only ESM supported for now
+  module?: 'esm';
   includeSourceMap?: boolean;
 }
 
 /**
  * Process HQL source code through the S-expression layer
- * 
- * This is the main entry point for using the new S-expression frontend
- * with the existing HQL transpiler backend
  */
 export async function processHql(
   source: string,
@@ -39,15 +36,14 @@ export async function processHql(
     const sexps = parse(source);
     
     if (options.verbose) {
-      logger.debug(`Parsed ${sexps.length} S-expressions`);
       for (const sexp of sexps) {
         logger.debug(`Parsed: ${sexpToString(sexp)}`);
       }
     }
     
-    // Step 2: Initialize the environment
+    // Step 2: Initialize the environment using unified Environment
     logger.debug('Initializing environment');
-    const env = initializeGlobalEnv({ verbose: options.verbose });
+    const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
     initializeCoreMacros(env, logger);
     
     // Step 3: Process imports
@@ -62,7 +58,6 @@ export async function processHql(
     const expanded = expandMacros(sexps, env, { verbose: options.verbose });
     
     if (options.verbose) {
-      logger.debug(`Expanded to ${expanded.length} S-expressions`);
       for (const sexp of expanded) {
         logger.debug(`Expanded: ${sexpToString(sexp)}`);
       }
@@ -78,10 +73,10 @@ export async function processHql(
     let jsCode = await transformAST(hqlAst, baseDir, {
       verbose: options.verbose,
       module: options.module || 'esm',
-      bundle: false // Don't bundle here, we're just transpiling
+      bundle: false
     });
     
-    // Step 7: Ensure proper exports are included (extraction from expanded S-expressions)
+    // Step 7: Ensure proper exports are included
     const exportStatements: Array<{exportName: string, symbolName: string}> = [];
     
     for (const expr of sexps) {
@@ -125,33 +120,4 @@ export async function processHql(
     logger.error(`Error processing HQL: ${errorMessage}`);
     throw error;
   }
-}
-
-/**
- * A simplified API for quick transpilation
- */
-export async function transpileHql(
-  source: string,
-  baseDir: string = Deno.cwd(),
-  verbose: boolean = false
-): Promise<string> {
-  return processHql(source, { baseDir, verbose });
-}
-
-if (import.meta.main) {
-  console.log("hey");
-  const jsCode = await processHql(
-    `
-      (defn greet [name]
-        (console.log "Hello," name))
-      
-      (greet "World")
-    `,
-    { 
-      verbose: true,
-      baseDir: Deno.cwd()
-    }
-  );
-  
-  console.log(jsCode);
 }

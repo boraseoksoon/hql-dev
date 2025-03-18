@@ -3,7 +3,7 @@
 
 import * as path from "https://deno.land/std/path/mod.ts";
 import { SExp, SList, SLiteral, SSymbol, isSymbol, isLiteral, isList, isImport, createList, createSymbol, createLiteral } from './types.ts';
-import { SEnv } from './environment.ts';
+import { Environment } from '../environment.ts';
 import { defineMacro, expandMacro, evaluateForMacro } from './macro.ts';
 import { parse } from './parser.ts';
 import { Logger } from '../logger.ts';
@@ -26,24 +26,24 @@ export interface ImportProcessorOptions {
  */
 export async function processImports(
   exprs: SExp[], 
-  env: SEnv, 
+  env: Environment, 
   options: ImportProcessorOptions = {}
 ): Promise<void> {
   const logger = new Logger(options.verbose || false);
   const baseDir = options.baseDir || Deno.cwd();
   
-  // Track processed imports to avoid duplicates and circular dependencies
+  // Track processed imports
   const processedFiles = options.processedFiles || new Set<string>();
   const importMap = options.importMap || new Map<string, string>();
   
-  // Create temp directory if needed and not provided
+  // Create temp directory if needed
   let tempDir = options.tempDir;
   if (!tempDir) {
     tempDir = await Deno.makeTempDir({ prefix: "hql_imports_" });
     logger.debug(`Created temporary directory: ${tempDir}`);
   }
   
-  // First pass: collect all import expressions
+  // Collect all import expressions
   const importExprs: SList[] = [];
   
   for (const expr of exprs) {
@@ -52,7 +52,7 @@ export async function processImports(
     }
   }
   
-  // Second pass: process imports in order
+  // Process imports in order
   for (const importExpr of importExprs) {
     try {
       await processImport(importExpr, env, baseDir, {
@@ -66,6 +66,40 @@ export async function processImports(
       logger.error(`Error processing import: ${error.message}`);
     }
   }
+  
+  // CRITICAL FIX: Also process and register all macros defined in the current file
+  processFileDefinitions(exprs, env, logger);
+}
+
+// NEW: Process macro definitions in the current file
+function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger): void {
+  logger.debug("Processing file definitions for macros");
+  
+  for (const expr of exprs) {
+    // Skip imports (already processed)
+    if (isImport(expr)) {
+      continue;
+    }
+    
+    // Process macro definitions
+    if (expr.type === 'list' && 
+        expr.elements.length > 0 &&
+        isSymbol(expr.elements[0]) &&
+        expr.elements[0].name === 'defmacro') {
+      try {
+        // Define the macro in the environment
+        defineMacro(expr as SList, env, logger);
+        
+        // Extract macro name for logging
+        if (expr.elements.length > 1 && isSymbol(expr.elements[1])) {
+          const macroName = expr.elements[1].name;
+          logger.debug(`Processed macro definition for: ${macroName}`);
+        }
+      } catch (error) {
+        logger.error(`Error defining macro: ${error.message}`);
+      }
+    }
+  }
 }
 
 /**
@@ -73,7 +107,7 @@ export async function processImports(
  */
 async function processImport(
   importExpr: SList, 
-  env: SEnv, 
+  env: Environment, 
   baseDir: string, 
   options: ImportProcessorOptions
 ): Promise<void> {
@@ -129,7 +163,7 @@ async function processHqlImport(
   moduleName: string, 
   modulePath: string, 
   baseDir: string, 
-  env: SEnv, 
+  env: Environment, 
   processedFiles: Set<string>,
   logger: Logger,
   tempDir: string,
@@ -163,12 +197,11 @@ async function processHqlImport(
   // Parse it into S-expressions
   const importedExprs = parse(fileContent);
   
-  // Process nested imports first - this is the critical fix
-  // Use the directory of the current file as the new base directory
+  // Process nested imports first
   const importDir = path.dirname(resolvedPath);
   await processImports(importedExprs, env, { 
     verbose: logger.enabled,
-    baseDir: importDir,  // Key fix: Use the directory of the imported file for nested imports
+    baseDir: importDir,
     tempDir,
     keepTemp,
     processedFiles,
@@ -184,7 +217,7 @@ async function processHqlImport(
   // Debug log the exports
   logger.debug(`Exports from ${moduleName}:`);
   for (const [key, value] of Object.entries(moduleExports)) {
-    logger.debug(`  ${key}: ${JSON.stringify(value)}`);
+    logger.debug(`  ${key}: ${value}`);
   }
   
   // Register the module with its exports
@@ -201,7 +234,7 @@ async function processHqlImport(
  */
 async function processFileExpressions(
   expressions: SExp[],
-  env: SEnv,
+  env: Environment,
   moduleExports: Record<string, any>,
   filePath: string,
   logger: Logger
@@ -480,7 +513,7 @@ async function processJsImport(
   moduleName: string,
   modulePath: string,
   baseDir: string,
-  env: SEnv,
+  env: Environment,
   logger: Logger,
   processedFiles: Set<string>,
   tempDir: string,
@@ -545,7 +578,7 @@ async function processJsImport(
 async function processHqlImportsInJs(
   jsPath: string,
   jsContent: string,
-  env: SEnv,
+  env: Environment,
   logger: Logger,
   processedFiles: Set<string>,
   tempDir: string,
@@ -637,7 +670,7 @@ async function processHqlImportsInJs(
 async function processJsImportsInJs(
   jsPath: string,
   jsContent: string,
-  env: SEnv,
+  env: Environment,
   logger: Logger,
   processedFiles: Set<string>,
   tempDir: string,
@@ -692,7 +725,7 @@ async function processJsImportsInJs(
 async function processNpmImport(
   moduleName: string,
   modulePath: string,
-  env: SEnv,
+  env: Environment,
   logger: Logger
 ): Promise<void> {
   try {
@@ -745,7 +778,7 @@ async function processNpmImport(
 async function processJsrImport(
   moduleName: string,
   modulePath: string,
-  env: SEnv,
+  env: Environment,
   logger: Logger
 ): Promise<void> {
   try {
@@ -767,7 +800,7 @@ async function processJsrImport(
 async function processHttpImport(
   moduleName: string,
   modulePath: string,
-  env: SEnv,
+  env: Environment,
   logger: Logger
 ): Promise<void> {
   try {
