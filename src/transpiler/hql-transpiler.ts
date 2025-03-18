@@ -1,13 +1,13 @@
+import * as path from "https://deno.land/std/path/mod.ts";
 import { sexpToString, isSymbol, isLiteral } from '../s-exp/types.ts';
 import { parse } from '../s-exp/parser.ts';
 import { Environment } from '../environment.ts';
 import { initializeCoreMacros } from '../s-exp/core-macros.ts';
 import { expandMacros } from '../s-exp/macro.ts';
 import { processImports } from '../s-exp/imports.ts';
-import { convertToHqlAst } from '../s-exp/connector.ts';
+import { convertToHqlAst } from '../s-exp/front-to-middle-connector.ts';
 import { transformAST } from '../transformer.ts';
 import { Logger } from '../logger.ts';
-import * as path from "https://deno.land/std/path/mod.ts";
 
 // Create a global environment to ensure macros are consistently available
 let globalEnv: Environment | null = null;
@@ -48,8 +48,7 @@ export async function processHql(
     const env = await getGlobalEnv(options);
     
     // Debug: Print registered macros
-    console.log("Available macros before processing:", 
-                Array.from(env.macros.keys()).join(", "));
+    console.log("Available macros before processing:", Array.from(env.macros.keys()).join(", "));
     
     // Step 3: Process imports in the user code
     logger.debug('Processing imports in user code');
@@ -204,13 +203,8 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
  */
 async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
   if (!globalEnv) {
-    // Create and initialize the environment
     globalEnv = await Environment.initializeGlobalEnv({ verbose: options.verbose });
-    
-    // Initialize bootstrap macros
     initializeCoreMacros(globalEnv, new Logger(options.verbose));
-    
-    // CRITICAL: Load core.hql and wait for it to complete
     if (!options.skipCoreHQL) {
       await loadCoreHql(globalEnv, options);
     }

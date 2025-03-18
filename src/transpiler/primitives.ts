@@ -12,17 +12,7 @@ export const KERNEL_PRIMITIVES = new Set([
     "unquote",
     "unquote-splicing"
   ]);
-  
-  /**
-   * Forms implemented as macros.
-   */
-  export const DERIVED_FORMS = new Set(["defmacro"]);
-  
-  /**
-   * Combined set of core language forms.
-   */
-  export const CORE_FORMS = new Set([...KERNEL_PRIMITIVES, ...DERIVED_FORMS]);
-  
+
   /**
    * Primitive operations.
    */

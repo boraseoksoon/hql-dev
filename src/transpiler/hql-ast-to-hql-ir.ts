@@ -20,7 +20,7 @@ export function transformToIR(nodes: HQLNode[], currentDir: string): IR.IRProgra
 /**
  * Transform a single HQL node to its IR representation.
  */
-export function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
+function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
   switch (node.type) {
     case "literal":
       return transformLiteral(node as LiteralNode);
@@ -138,9 +138,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     if (KERNEL_PRIMITIVES.has(op)) {
       return transformKernelPrimitive(list, op, currentDir);
     }
-    
-    // console.log(">>>>>> transformList list : ", list)
-    
+
     // Handle JS interop primitives
     const jsInteropResult = transformJsInteropPrimitive(list, op, currentDir);
     if (jsInteropResult) return jsInteropResult;
@@ -591,7 +589,7 @@ function shouldTransformCollectionAccess(list: ListNode, op: string): boolean {
  * (myList 2) => (get myList 2)
  * (myMap "key") => (get myMap "key")
  */
-export function transformCollectionAccess(list: ListNode, op: string, currentDir: string): IR.IRNode | null {
+function transformCollectionAccess(list: ListNode, op: string, currentDir: string): IR.IRNode | null {
   if (shouldTransformCollectionAccess(list, op)) {
     const collection = transformNode(list.elements[0], currentDir)!;
     const index = transformNode(list.elements[1], currentDir)!;

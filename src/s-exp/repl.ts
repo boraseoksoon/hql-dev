@@ -6,7 +6,7 @@ import { initializeCoreMacros } from "./core-macros.ts";
 import { expandMacros } from "./macro.ts";
 import { sexpToString } from "./types.ts";
 import { Logger } from "../logger.ts";
-import { convertToHqlAst } from "./connector.ts";
+import { convertToHqlAst } from "./front-to-middle-connector.ts";
 import { transformAST } from "../transformer.ts";
 
 /**

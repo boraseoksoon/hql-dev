@@ -1,7 +1,7 @@
 // src/s-exp/imports.ts - Updated for better macro handling
 
 import * as path from "https://deno.land/std/path/mod.ts";
-import { SExp, SList, SLiteral, SSymbol, isSymbol, isLiteral, isList, isImport, createList, createSymbol, createLiteral } from './types.ts';
+import { SExp, SList, SLiteral, SSymbol, isSymbol, isLiteral, isImport } from './types.ts';
 import { Environment } from '../environment.ts';
 import { defineMacro, expandMacro, evaluateForMacro } from './macro.ts';
 import { parse } from './parser.ts';
@@ -11,7 +11,7 @@ import { isUrl, escapeRegExp } from '../utils.ts';
 /**
  * Options for import processing
  */
-export interface ImportProcessorOptions {
+interface ImportProcessorOptions {
   verbose?: boolean;
   baseDir?: string;
   tempDir?: string;

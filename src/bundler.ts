@@ -4,7 +4,6 @@ import { dirname, resolve, writeTextFile, mkdir, exists, basename, join } from "
 import { build, stop } from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import { Logger } from "./logger.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
-import { isUrl } from "./utils.ts";
 
 /**
  * Options for bundling.

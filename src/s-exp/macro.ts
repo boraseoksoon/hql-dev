@@ -1,15 +1,17 @@
 // src/s-exp/macro.ts - Macro expansion system for S-expressions
 
-import { SExp, SSymbol, SList, SLiteral, 
-  isSymbol, isList, isLiteral, isDefMacro, isQuasiquote, isUnquote, isUnquoteSplicing,
-  createSymbol, createList, createLiteral, createNilLiteral, sexpToString, cloneSExp } from './types.ts';
+import { 
+  SExp, SSymbol, SList, 
+  isSymbol, isList, isLiteral, isDefMacro,
+  createSymbol, createList, createLiteral, createNilLiteral, sexpToString 
+} from './types.ts';
 import { Environment } from '../environment.ts';
 import { Logger } from '../logger.ts';
 
 /**
 * Options for macro expansion
 */
-export interface MacroExpanderOptions {
+interface MacroExpanderOptions {
   verbose?: boolean;
   maxExpandDepth?: number;
 }
@@ -63,7 +65,6 @@ export function defineMacro(macroForm: SList, env: Environment, logger: Logger):
   env.defineMacro(macroName, macroFn);
   logger.debug(`Registered macro: ${macroName}`);
 }
-
 
 /**
 * Process a parameter list, handling rest parameters
@@ -442,7 +443,7 @@ function evaluateQuasiquote(expr: SExp, env: Environment, logger: Logger): SExp 
  * Post-process a macro expansion result to correctly handle quoted operations
  * This is critical for macros that expand to operations like (+ x 1)
  */
-export function postProcessMacroResult(sexp: SExp, env: Environment, logger: Logger): SExp {
+function postProcessMacroResult(sexp: SExp, env: Environment, logger: Logger): SExp {
   // Handle the special case of (list 'op arg1 arg2 ...) -> (op arg1 arg2 ...)
   if (isList(sexp)) {
     const list = sexp as SList;

@@ -1,13 +1,13 @@
 // src/s-exp/connector.ts - Connects S-expression layer with existing HQL transpiler
 
-import { SExp, SList, SSymbol, SLiteral, isSymbol, isList, isLiteral,createSymbol, createList, createLiteral } from './types.ts';
+import { SExp, SList, SSymbol, SLiteral, isSymbol, isList, isLiteral } from './types.ts';
 import { HQLNode, ListNode, SymbolNode, LiteralNode } from '../transpiler/hql_ast.ts';
 import { Logger } from '../logger.ts';
 
 /**
 * Options for converting S-expressions to HQL AST
 */
-export interface ConversionOptions {
+interface ConversionOptions {
     verbose?: boolean;
 }
 
@@ -71,7 +71,6 @@ function convertList(list: SList, logger: Logger): ListNode {
         list.elements[0].type === "list" &&
         list.elements[1].type === "symbol" && 
         (list.elements[1] as SSymbol).name.startsWith(".")) {
-            
             // Get the object expression and property name
             const object = convertExpr(list.elements[0], logger);
             const propertyName = (list.elements[1] as SSymbol).name.substring(1); // Remove the dot
@@ -92,35 +91,4 @@ function convertList(list: SList, logger: Logger): ListNode {
             type: 'list',
             elements: list.elements.map(elem => convertExpr(elem, logger))
         };
-    }
-    
-    /**
-    * Convert the legacy HQL AST format back to S-expressions
-    * This is useful for two-way interoperability
-    */
-    export function convertFromHqlAst(nodes: HQLNode[], options: ConversionOptions = {}): SExp[] {
-        const logger = new Logger(options.verbose || false);
-        logger.debug(`Converting ${nodes.length} HQL AST nodes to S-expressions`);
-        
-        return nodes.map(node => convertNode(node, logger));
-    }
-    
-    /**
-    * Convert a single HQL AST node to an S-expression
-    */
-    function convertNode(node: HQLNode, logger: Logger): SExp {
-        switch (node.type) {
-            case 'literal':
-            return createLiteral((node as LiteralNode).value);
-            
-            case 'symbol':
-            return createSymbol((node as SymbolNode).name);
-            
-            case 'list':
-            return createList(...(node as ListNode).elements.map(elem => convertNode(elem, logger)));
-            
-            default:
-            logger.error(`Unknown HQL AST node type: ${JSON.stringify(node)}`);
-            throw new Error(`Unknown HQL AST node type: ${JSON.stringify(node)}`);
-        }
     }

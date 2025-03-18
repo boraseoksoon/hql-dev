@@ -11,7 +11,7 @@ import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts"
 /**
  * Options for code transformation.
  */
-export interface TransformOptions {
+interface TransformOptions {
   verbose?: boolean;
   bundle?: boolean;
   module?: "esm"; // Only ESM supported
