@@ -231,6 +231,12 @@ function parseExpression(): SExp {
     const unquoteSpliced = parseExpression();
     return createList(createSymbol('unquote-splicing'), unquoteSpliced);
   }
+
+  if (token === ",") {
+    // Treat a comma as an alias for unquote.
+    const unquoted = parseExpression();
+    return createList(createSymbol("unquote"), unquoted);
+  }
   
   if (token === '(') {
     return parseList();

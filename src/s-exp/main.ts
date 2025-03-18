@@ -1,4 +1,4 @@
-// src/s-exp/main.ts - S-expression frontend processor
+// src/s-exp/main.ts - S-expression frontend processor with proper async handling
 
 import { sexpToString, isSymbol, isLiteral } from './types.ts';
 import { parse } from './parser.ts';
@@ -9,6 +9,11 @@ import { processImports } from './imports.ts';
 import { convertToHqlAst } from './connector.ts';
 import { transformAST } from '../transformer.ts';
 import { Logger } from '../logger.ts';
+import * as path from "https://deno.land/std/path/mod.ts";
+
+// Create a global environment to ensure macros are consistently available
+let globalEnv: Environment | null = null;
+let coreHqlLoaded = false;
 
 /**
  * Options for processing HQL code through the S-expression layer
@@ -18,6 +23,115 @@ export interface ProcessOptions {
   baseDir?: string;
   module?: 'esm';
   includeSourceMap?: boolean;
+  skipCoreHQL?: boolean; // Optional flag to skip core.hql loading (for testing)
+}
+
+/**
+ * Load and process core.hql to establish the standard library
+ */
+async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<void> {
+  // Skip if already loaded to prevent duplicate loading
+  if (coreHqlLoaded) {
+    return;
+  }
+
+  const logger = new Logger(options.verbose || false);
+  logger.debug('Loading core.hql standard library');
+  
+  try {
+    // Resolve the core.hql path
+    const baseDir = options.baseDir || Deno.cwd();
+    
+    // Try different possible locations for core.hql
+    const possiblePaths = [
+      path.join(baseDir, 'lib/core.hql'),
+      path.join(baseDir, 'core.hql'),
+      path.join(baseDir, '../lib/core.hql')
+    ];
+    
+    let corePath: string | null = null;
+    let coreSource: string | null = null;
+    
+    for (const tryPath of possiblePaths) {
+      try {
+        await Deno.stat(tryPath);
+        corePath = tryPath;
+        coreSource = await Deno.readTextFile(tryPath);
+        logger.debug(`Found core.hql at: ${tryPath}`);
+        break;
+      } catch (e) {
+        // Continue trying other paths
+      }
+    }
+    
+    if (!corePath || !coreSource) {
+      throw new Error('Could not find core.hql in any of the expected locations');
+    }
+    
+    // Parse the core.hql file
+    const coreExps = parse(coreSource);
+    
+    console.log("Core HQL expressions loaded from:", corePath);
+    
+    // Process imports in core.hql
+    await processImports(coreExps, env, {
+      verbose: true, // Force verbose for debugging core
+      baseDir: path.dirname(corePath)
+    });
+    
+    // CRITICAL FIX: Force synchronous registration of each macro in core.hql
+    // to ensure they're available before we process user code
+    const { defineMacro } = await import('./macro.ts');
+    
+    for (const expr of coreExps) {
+      if (expr.type === 'list' && 
+          expr.elements.length > 0 &&
+          expr.elements[0].type === 'symbol' &&
+          expr.elements[0].name === 'defmacro') {
+        try {
+          // Direct macro registration to ensure it's immediately available
+          defineMacro(expr, env, logger);
+          if (expr.elements[1].type === 'symbol') {
+            console.log(`Registered core macro: ${expr.elements[1].name}`);
+          }
+        } catch (error) {
+          logger.error(`Error registering macro: ${error.message}`);
+        }
+      }
+    }
+    
+    // Expand macros to ensure they're processed
+    expandMacros(coreExps, env, { verbose: options.verbose });
+    
+    // Mark core as loaded
+    coreHqlLoaded = true;
+    
+    logger.debug('Core.hql loaded and all macros registered');
+  } catch (error) {
+    logger.error(`Error loading core.hql: ${error.message}`);
+    console.error(error.stack);
+    throw error;
+  }
+}
+
+/**
+ * Initialize the global environment once
+ */
+async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
+  if (!globalEnv) {
+    // Create and initialize the environment
+    globalEnv = await Environment.initializeGlobalEnv({ verbose: options.verbose });
+    
+    // Initialize bootstrap macros
+    initializeCoreMacros(globalEnv, new Logger(options.verbose));
+    
+    // CRITICAL: Load core.hql and wait for it to complete
+    if (!options.skipCoreHQL) {
+      await loadCoreHql(globalEnv, options);
+    }
+  }
+  
+  return globalEnv;
 }
 
 /**
@@ -41,23 +155,24 @@ export async function processHql(
       }
     }
     
-    // Step 2: Initialize the environment using unified Environment
-    logger.debug('Initializing environment');
-    const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
+    // Step 2: Get or initialize the global environment
+    // This ensures core.hql is loaded exactly once and macros are always available
+    logger.debug('Getting global environment with macros');
+    const env = await getGlobalEnv(options);
     
-    // Step 3: Initialize core macros 
-    logger.debug('Initializing core macros');
-    initializeCoreMacros(env, logger);
+    // Debug: Print registered macros
+    console.log("Available macros before processing:", 
+                Array.from(env.macros.keys()).join(", "));
     
-    // Step 4: Process imports
-    logger.debug('Processing imports');
+    // Step 3: Process imports in the user code
+    logger.debug('Processing imports in user code');
     await processImports(sexps, env, {
       verbose: options.verbose,
       baseDir: options.baseDir || Deno.cwd()
     });
     
-    // Step 5: Expand macros
-    logger.debug('Expanding macros');
+    // Step 4: Expand macros in the user code
+    logger.debug('Expanding macros in user code');
     const expanded = expandMacros(sexps, env, { verbose: options.verbose });
     
     if (options.verbose) {
@@ -66,11 +181,11 @@ export async function processHql(
       }
     }
     
-    // Step 6: Convert to HQL AST
+    // Step 5: Convert to HQL AST
     logger.debug('Converting to HQL AST');
     const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
     
-    // Step 7: Transform to JavaScript using existing pipeline
+    // Step 6: Transform to JavaScript using existing pipeline
     logger.debug('Transforming to JavaScript');
     const baseDir = options.baseDir || Deno.cwd();
     let jsCode = await transformAST(hqlAst, baseDir, {
@@ -79,7 +194,7 @@ export async function processHql(
       bundle: false
     });
     
-    // Step 8: Ensure proper exports are included
+    // Step 7: Ensure proper exports are included
     const exportStatements: Array<{exportName: string, symbolName: string}> = [];
     
     for (const expr of sexps) {
@@ -121,6 +236,7 @@ export async function processHql(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`Error processing HQL: ${errorMessage}`);
+    console.error(error.stack);
     throw error;
   }
 }
