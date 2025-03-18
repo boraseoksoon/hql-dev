@@ -1,6 +1,6 @@
 // src/transformer.ts - New unified transformer
 
-import { transformToIR } from "./transpiler/hql-code-to-hql-ir.ts";
+import { transformToIR } from "./transpiler/hql-ast-to-hql-ir.ts";
 import { generateTypeScript } from "./transpiler/ts-ast-to-ts-code.ts";
 import { expandMacros } from "./s-exp/macro.ts";
 import { Logger } from "./logger.ts";

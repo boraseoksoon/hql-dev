@@ -3,7 +3,7 @@
 import { dirname, resolve, writeTextFile, mkdir, exists, basename, join } from "./platform/platform.ts";
 import { build, stop } from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import { Logger } from "./logger.ts";
-import { processHql } from "./s-exp/main.ts";
+import { processHql } from "./transpiler/hql-transpiler.ts";
 import { isUrl } from "./utils.ts";
 
 /**
@@ -211,7 +211,7 @@ function createHqlPlugin(options: { verbose?: boolean, tempDir?: string }): any 
           }
           
           // Transpile the HQL file to JS using processHql
-          const { processHql } = await import("./s-exp/main.ts");
+          const { processHql } = await import("./transpiler/hql-transpiler.ts");
           const jsCode = await processHql(source, {
             baseDir: dirname(args.path),
             verbose: options.verbose

@@ -4,30 +4,7 @@ import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 
-/**
- * Converts HQL IR directly to the official TypeScript AST.
- * This preserves expression semantics while eliminating the proprietary TS AST step.
- */
-export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
-  const statements: ts.Statement[] = [];
-  
-  for (const node of program.body) {
-    const statement = convertIRNode(node);
-    if (Array.isArray(statement)) {
-      statements.push(...statement);
-    } else if (statement) {
-      statements.push(statement);
-    }
-  }
-  
-  return ts.factory.createSourceFile(
-    statements,
-    ts.factory.createToken(ts.SyntaxKind.EndOfFileToken),
-    ts.NodeFlags.None
-  );
-}
-
-function convertIRNode(node: IR.IRNode): ts.Statement | ts.Statement[] | null {
+export function convertIRNode(node: IR.IRNode): ts.Statement | ts.Statement[] | null {
   switch (node.type) {
     case IR.IRNodeType.ObjectExpression:
       return createExpressionStatement(convertObjectExpression(node as IR.IRObjectExpression));

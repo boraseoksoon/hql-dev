@@ -1,10 +1,10 @@
-import { sexpToString, isSymbol, isLiteral } from './types.ts';
-import { parse } from './parser.ts';
+import { sexpToString, isSymbol, isLiteral } from '../s-exp/types.ts';
+import { parse } from '../s-exp/parser.ts';
 import { Environment } from '../environment.ts';
-import { initializeCoreMacros } from './core-macros.ts';
-import { expandMacros } from './macro.ts';
-import { processImports } from './imports.ts';
-import { convertToHqlAst } from './connector.ts';
+import { initializeCoreMacros } from '../s-exp/core-macros.ts';
+import { expandMacros } from '../s-exp/macro.ts';
+import { processImports } from '../s-exp/imports.ts';
+import { convertToHqlAst } from '../s-exp/connector.ts';
 import { transformAST } from '../transformer.ts';
 import { Logger } from '../logger.ts';
 import * as path from "https://deno.land/std/path/mod.ts";
@@ -13,10 +13,7 @@ import * as path from "https://deno.land/std/path/mod.ts";
 let globalEnv: Environment | null = null;
 let coreHqlLoaded = false;
 
-/**
- * Options for processing HQL code through the S-expression layer
- */
-export interface ProcessOptions {
+interface ProcessOptions {
   verbose?: boolean;
   baseDir?: string;
   module?: 'esm';
@@ -170,7 +167,7 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
     });
     
     // Register macros in core.hql
-    const { defineMacro } = await import('./macro.ts');
+    const { defineMacro } = await import('../s-exp/macro.ts');
     
     for (const expr of coreExps) {
       if (expr.type === 'list' && 

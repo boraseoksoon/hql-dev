@@ -470,7 +470,7 @@ async function generateJsVersionOfHql(
   
   try {
     // Import the processHql function from main.ts
-    const { processHql } = await import('./main.ts');
+    const { processHql } = await import('../transpiler/hql-transpiler.ts');
     
     // Parse the HQL content to extract exports
     const sexps = parse(hqlContent);
