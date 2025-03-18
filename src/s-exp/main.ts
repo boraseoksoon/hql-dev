@@ -1,8 +1,8 @@
-// src/s-exp/main.ts - Updated to use the unified environment from environment.ts
+// src/s-exp/main.ts - S-expression frontend processor
 
 import { sexpToString, isSymbol, isLiteral } from './types.ts';
 import { parse } from './parser.ts';
-import { Environment } from '../environment.ts'; // Correct import path
+import { Environment } from '../environment.ts';
 import { initializeCoreMacros } from './core-macros.ts';
 import { expandMacros } from './macro.ts';
 import { processImports } from './imports.ts';
@@ -18,8 +18,6 @@ export interface ProcessOptions {
   baseDir?: string;
   module?: 'esm';
   includeSourceMap?: boolean;
-  tempDir?: string;
-  keepTemp?: boolean;
 }
 
 /**
@@ -45,22 +43,20 @@ export async function processHql(
     
     // Step 2: Initialize the environment using unified Environment
     logger.debug('Initializing environment');
-    const env = Environment.getInstance({ verbose: options.verbose });
+    const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
     
-    // Still run initializeCoreMacros for additional macros not in core.hql
+    // Step 3: Initialize core macros 
+    logger.debug('Initializing core macros');
     initializeCoreMacros(env, logger);
     
-    // Step 3: Process imports - this must come AFTER environment initialization
-    // to ensure core macros are available when processing imports
+    // Step 4: Process imports
     logger.debug('Processing imports');
     await processImports(sexps, env, {
       verbose: options.verbose,
-      baseDir: options.baseDir || Deno.cwd(),
-      tempDir: options.tempDir,
-      keepTemp: options.keepTemp
+      baseDir: options.baseDir || Deno.cwd()
     });
     
-    // Step 4: Expand macros
+    // Step 5: Expand macros
     logger.debug('Expanding macros');
     const expanded = expandMacros(sexps, env, { verbose: options.verbose });
     
@@ -70,11 +66,11 @@ export async function processHql(
       }
     }
     
-    // Step 5: Convert to HQL AST
+    // Step 6: Convert to HQL AST
     logger.debug('Converting to HQL AST');
     const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
     
-    // Step 6: Transform to JavaScript using existing pipeline
+    // Step 7: Transform to JavaScript using existing pipeline
     logger.debug('Transforming to JavaScript');
     const baseDir = options.baseDir || Deno.cwd();
     let jsCode = await transformAST(hqlAst, baseDir, {
@@ -83,7 +79,7 @@ export async function processHql(
       bundle: false
     });
     
-    // Step 7: Ensure proper exports are included
+    // Step 8: Ensure proper exports are included
     const exportStatements: Array<{exportName: string, symbolName: string}> = [];
     
     for (const expr of sexps) {

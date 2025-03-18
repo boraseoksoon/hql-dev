@@ -1,9 +1,8 @@
-// cli/run.ts - Updated to properly initialize environment
+// cli/run.ts - Simplified version focused on just running HQL files
 
 import { resolve, dirname } from "../src/platform/platform.ts";
 import { transpileCLI, BundleOptions } from "../src/bundler.ts";
 import { Logger } from "../src/logger.ts";
-import { Environment } from "../src/environment.ts"; // ADDED: Import unified environment
 
 /**
  * Simple performance optimization preset
@@ -61,9 +60,6 @@ async function runModule(): Promise<void> {
   logger.debug(`Created temporary directory: ${tempDir}`);
   
   try {
-    // ADDED: Initialize global environment with core.hql macros
-    logger.debug("Initializing global environment");
-
     // Set up bundle options
     const optimizationOptions = performance ? PERFORMANCE_MODE : { 
       minify: false,

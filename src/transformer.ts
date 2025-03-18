@@ -35,10 +35,10 @@ export async function transformAST(
   const logger = new Logger(options.verbose);
   try {
     // Initialize environment
-    const env = Environment.getInstance(options);
+    const env: Environment = await Environment.initializeGlobalEnv({ verbose: options.verbose });
     
     // Expand macros using new macro.ts.
-    const macroExpandedAst = await expandMacros(astNodes, env, options);
+    const macroExpandedAst = await expandMacros(astNodes, env, currentDir, { verbose: options.verbose });
     logger.debug("Macro expansion completed", macroExpandedAst);
 
     // Convert the expanded AST (if needed)
