@@ -18,6 +18,51 @@ export class Environment {
   private parent: Environment | null;
   private logger: Logger;
 
+  private static globalEnv: Environment | null = null;
+
+  static async initializeGlobalEnv(options: { verbose?: boolean } = {}): Promise<Environment> {
+    if (Environment.globalEnv) {
+      return Environment.globalEnv;
+    }
+    
+    const env = new Environment(null, new Logger(options.verbose));
+    
+    // Math operations
+    env.define('+', (...args: number[]) => args.reduce((a, b) => a + b, 0));
+    env.define('-', (a: number, b: number) => a - b);
+    env.define('*', (...args: number[]) => args.reduce((a, b) => a * b, 1));
+    env.define('/', (a: number, b: number) => a / b);
+    env.define('%', (a: number, b: number) => a % b);
+    
+    // Comparison operations
+    env.define('=', (a: any, b: any) => a === b);
+    env.define('!=', (a: any, b: any) => a !== b);
+    env.define('<', (a: number, b: number) => a < b);
+    env.define('>', (a: number, b: number) => a > b);
+    env.define('<=', (a: number, b: number) => a <= b);
+    env.define('>=', (a: number, b: number) => a >= b);
+    
+    // Console operations
+    env.define('console.log', console.log);
+    env.define('console.warn', console.warn);
+    env.define('console.error', console.error);
+    
+    // JS Interop
+    env.define('js-get', (obj: any, prop: string) => obj[prop]);
+    env.define('js-call', (obj: any, method: string, ...args: any[]) => obj[method](...args));
+    
+    // List operations
+    env.define('list', (...items: any[]) => items);
+    env.define('first', (list: any[]) => list.length > 0 ? list[0] : null);
+    env.define('rest', (list: any[]) => list.slice(1));
+    env.define('cons', (item: any, list: any[]) => [item, ...list]);
+    env.define('length', (list: any[]) => list.length);
+    
+    env.logger.debug("Global environment initialized");
+    Environment.globalEnv = env;
+    return env;
+  }
+  
   constructor(parent: Environment | null = null, logger?: Logger) {
     this.parent = parent;
     this.logger = logger || new Logger(false);
@@ -280,46 +325,5 @@ export class Environment {
    */
   extend(): Environment {
     return new Environment(this, this.logger);
-  }
-
-  /**
-   * Create a global environment initialized with standard bindings
-   */
-  static async initializeGlobalEnv(options: { verbose?: boolean } = {}): Promise<Environment> {
-    const env = new Environment(null, new Logger(options.verbose));
-    
-    // Math operations
-    env.define('+', (...args: number[]) => args.reduce((a, b) => a + b, 0));
-    env.define('-', (a: number, b: number) => a - b);
-    env.define('*', (...args: number[]) => args.reduce((a, b) => a * b, 1));
-    env.define('/', (a: number, b: number) => a / b);
-    env.define('%', (a: number, b: number) => a % b);
-    
-    // Comparison operations
-    env.define('=', (a: any, b: any) => a === b);
-    env.define('!=', (a: any, b: any) => a !== b);
-    env.define('<', (a: number, b: number) => a < b);
-    env.define('>', (a: number, b: number) => a > b);
-    env.define('<=', (a: number, b: number) => a <= b);
-    env.define('>=', (a: number, b: number) => a >= b);
-    
-    // Console operations
-    env.define('console.log', console.log);
-    env.define('console.warn', console.warn);
-    env.define('console.error', console.error);
-    
-    // JS Interop
-    env.define('js-get', (obj: any, prop: string) => obj[prop]);
-    env.define('js-call', (obj: any, method: string, ...args: any[]) => obj[method](...args));
-    
-    // List operations
-    env.define('list', (...items: any[]) => items);
-    env.define('first', (list: any[]) => list.length > 0 ? list[0] : null);
-    env.define('rest', (list: any[]) => list.slice(1));
-    env.define('cons', (item: any, list: any[]) => [item, ...list]);
-    env.define('length', (list: any[]) => list.length);
-    
-    env.logger.debug("Global environment initialized");
-    return env;
   }
 }

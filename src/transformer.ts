@@ -1,6 +1,5 @@
 // src/transformer.ts - New unified transformer
 
-import { parse } from "./transpiler/parser.ts";
 import { transformToIR } from "./transpiler/hql-code-to-hql-ir.ts";
 import { generateTypeScript } from "./transpiler/ts-ast-to-ts-code.ts";
 import { expandMacros } from "./s-exp/macro.ts";
@@ -64,30 +63,3 @@ export async function transformAST(
     throw error;
   }
 }
-
-
-/**
- * A simplified API for quick transpilation of HQL source.
- */
-export async function transpileHql(
-  source: string,
-  baseDir: string = Deno.cwd(),
-  verbose: boolean = false
-): Promise<string> {
-  const astNodes = parse(source);
-  return transformAST(astNodes, baseDir, { verbose, module: "esm", bundle: false });
-}
-
-if (import.meta.main) {
-  // Test the transformer in standalone mode.
-  const source = `
-    (defn greet [name]
-      (console.log "Hello," name))
-    
-    (greet "World")
-  `;
-  const jsCode = await transpileHql(source, Deno.cwd(), true);
-  console.log(jsCode);
-}
-
-export default transpileHql;

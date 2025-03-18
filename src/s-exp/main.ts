@@ -1,5 +1,3 @@
-// src/s-exp/main.ts - S-expression frontend processor with proper async handling
-
 import { sexpToString, isSymbol, isLiteral } from './types.ts';
 import { parse } from './parser.ts';
 import { Environment } from '../environment.ts';
@@ -24,114 +22,6 @@ export interface ProcessOptions {
   module?: 'esm';
   includeSourceMap?: boolean;
   skipCoreHQL?: boolean; // Optional flag to skip core.hql loading (for testing)
-}
-
-/**
- * Load and process core.hql to establish the standard library
- */
-async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<void> {
-  // Skip if already loaded to prevent duplicate loading
-  if (coreHqlLoaded) {
-    return;
-  }
-
-  const logger = new Logger(options.verbose || false);
-  logger.debug('Loading core.hql standard library');
-  
-  try {
-    // Resolve the core.hql path
-    const baseDir = options.baseDir || Deno.cwd();
-    
-    // Try different possible locations for core.hql
-    const possiblePaths = [
-      path.join(baseDir, 'lib/core.hql'),
-      path.join(baseDir, 'core.hql'),
-      path.join(baseDir, '../lib/core.hql')
-    ];
-    
-    let corePath: string | null = null;
-    let coreSource: string | null = null;
-    
-    for (const tryPath of possiblePaths) {
-      try {
-        await Deno.stat(tryPath);
-        corePath = tryPath;
-        coreSource = await Deno.readTextFile(tryPath);
-        logger.debug(`Found core.hql at: ${tryPath}`);
-        break;
-      } catch (e) {
-        // Continue trying other paths
-      }
-    }
-    
-    if (!corePath || !coreSource) {
-      throw new Error('Could not find core.hql in any of the expected locations');
-    }
-    
-    // Parse the core.hql file
-    const coreExps = parse(coreSource);
-    
-    console.log("Core HQL expressions loaded from:", corePath);
-    
-    // Process imports in core.hql
-    await processImports(coreExps, env, {
-      verbose: true, // Force verbose for debugging core
-      baseDir: path.dirname(corePath)
-    });
-    
-    // CRITICAL FIX: Force synchronous registration of each macro in core.hql
-    // to ensure they're available before we process user code
-    const { defineMacro } = await import('./macro.ts');
-    
-    for (const expr of coreExps) {
-      if (expr.type === 'list' && 
-          expr.elements.length > 0 &&
-          expr.elements[0].type === 'symbol' &&
-          expr.elements[0].name === 'defmacro') {
-        try {
-          // Direct macro registration to ensure it's immediately available
-          defineMacro(expr, env, logger);
-          if (expr.elements[1].type === 'symbol') {
-            console.log(`Registered core macro: ${expr.elements[1].name}`);
-          }
-        } catch (error) {
-          logger.error(`Error registering macro: ${error.message}`);
-        }
-      }
-    }
-    
-    // Expand macros to ensure they're processed
-    expandMacros(coreExps, env, { verbose: options.verbose });
-    
-    // Mark core as loaded
-    coreHqlLoaded = true;
-    
-    logger.debug('Core.hql loaded and all macros registered');
-  } catch (error) {
-    logger.error(`Error loading core.hql: ${error.message}`);
-    console.error(error.stack);
-    throw error;
-  }
-}
-
-/**
- * Initialize the global environment once
- */
-async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
-  if (!globalEnv) {
-    // Create and initialize the environment
-    globalEnv = await Environment.initializeGlobalEnv({ verbose: options.verbose });
-    
-    // Initialize bootstrap macros
-    initializeCoreMacros(globalEnv, new Logger(options.verbose));
-    
-    // CRITICAL: Load core.hql and wait for it to complete
-    if (!options.skipCoreHQL) {
-      await loadCoreHql(globalEnv, options);
-    }
-  }
-  
-  return globalEnv;
 }
 
 /**
@@ -239,4 +129,95 @@ export async function processHql(
     console.error(error.stack);
     throw error;
   }
+}
+
+/**
+ * Load and process core.hql to establish the standard library
+ */
+async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<void> {
+  // Skip if already loaded to prevent duplicate loading
+  if (coreHqlLoaded) {
+    return;
+  }
+
+  const logger = new Logger(options.verbose || false);
+  logger.debug('Loading core.hql standard library');
+  
+  try {
+    // Just look for lib/core.hql from the current directory
+    const cwd = Deno.cwd();
+    const corePath = path.join(cwd, 'lib/core.hql');
+    
+    logger.debug(`Looking for core.hql at: ${corePath}`);
+    
+    let coreSource;
+    try {
+      coreSource = await Deno.readTextFile(corePath);
+      logger.debug(`Found core.hql at: ${corePath}`);
+    } catch (e) {
+      throw new Error(`Could not find lib/core.hql at ${corePath}. Make sure you are running from the project root.`);
+    }
+    
+    // Parse the core.hql file
+    const coreExps = parse(coreSource);
+    
+    console.log("Core HQL expressions loaded from:", corePath);
+    
+    // Process imports in core.hql
+    await processImports(coreExps, env, {
+      verbose: options.verbose || false,
+      baseDir: path.dirname(corePath)
+    });
+    
+    // Register macros in core.hql
+    const { defineMacro } = await import('./macro.ts');
+    
+    for (const expr of coreExps) {
+      if (expr.type === 'list' && 
+          expr.elements.length > 0 &&
+          expr.elements[0].type === 'symbol' &&
+          expr.elements[0].name === 'defmacro') {
+        try {
+          defineMacro(expr, env, logger);
+          if (expr.elements[1].type === 'symbol') {
+            console.log(`Registered core macro: ${expr.elements[1].name}`);
+          }
+        } catch (error) {
+          logger.error(`Error registering macro: ${error.message}`);
+        }
+      }
+    }
+    
+    // Expand macros to ensure they're processed
+    expandMacros(coreExps, env, { verbose: options.verbose });
+    
+    // Mark core as loaded
+    coreHqlLoaded = true;
+    
+    logger.debug('Core.hql loaded and all macros registered');
+  } catch (error) {
+    logger.error(`Error loading core.hql: ${error.message}`);
+    console.error(error.stack);
+    throw error;
+  }
+}
+
+/**
+ * Initialize the global environment once
+ */
+async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
+  if (!globalEnv) {
+    // Create and initialize the environment
+    globalEnv = await Environment.initializeGlobalEnv({ verbose: options.verbose });
+    
+    // Initialize bootstrap macros
+    initializeCoreMacros(globalEnv, new Logger(options.verbose));
+    
+    // CRITICAL: Load core.hql and wait for it to complete
+    if (!options.skipCoreHQL) {
+      await loadCoreHql(globalEnv, options);
+    }
+  }
+  
+  return globalEnv;
 }
