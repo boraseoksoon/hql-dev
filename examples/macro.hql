@@ -67,3 +67,76 @@
 (print "Testing nested cond with (0, -5):" (test-nested-cond 0 -5))
 (print "Testing nested cond with (0, 0):" (test-nested-cond 0 0))
 (print "Testing nested cond with (0, 5):" (test-nested-cond 0 5))
+
+
+;; Test file for HQL macro implementations
+
+;; Test 'when' macro
+(print "\n=== Testing 'when' macro ===")
+
+(defn test-when (value)
+  (print "Testing when with value:" value)
+  (when (> value 0)
+    (print "Value is positive")
+    (print "Result is:" (* value 2))))
+
+(test-when 5)  ;; Should print both messages
+(test-when -3) ;; Should print nothing after the test line
+(test-when 0)  ;; Should print nothing after the test line
+
+;; Test 'let' macro
+(print "\n=== Testing 'let' macro ===")
+
+(defn test-let-simple ()
+  (let (x 10)
+    (print "Simple let test:")
+    (print "x =" x)))
+
+(defn test-let-multiple ()
+  (let (x 10
+        y 20
+        z (+ x y))
+    (print "Multiple bindings test:")
+    (print "x =" x)
+    (print "y =" y)
+    (print "z =" z)
+    (print "x + y + z =" (+ x (+ y z)))))
+
+(defn test-let-nested ()
+  (let (outer 5)
+    (let (inner (+ outer 2))
+      (print "Nested let test:")
+      (print "outer =" outer)
+      (print "inner =" inner)
+      (print "outer * inner =" (* outer inner)))))
+
+(test-let-simple)
+(test-let-multiple)
+(test-let-nested)
+
+;; Test 'if-let' macro
+(print "\n=== Testing 'if-let' macro ===")
+
+(defn test-if-let (value)
+  (print "Testing if-let with value:" value)
+  (if-let (x value)
+    (print "Value is truthy, doubled:" (* x 2))
+    (print "Value is falsy")))
+
+(test-if-let 10)  ;; Should print truthy branch
+(test-if-let 0)   ;; Should print falsy branch
+(test-if-let nil) ;; Should print falsy branch
+
+;; Testing if-let with computed value
+(print "\nTesting if-let with computed value:")
+(if-let (result (if (> 5 3) "yes" nil))
+  (print "Got result:" result)
+  (print "No result"))
+
+;; Run with all three macros together
+(print "\n=== Combined test ===")
+(let (x 100)
+  (when (> x 50)
+    (if-let (result (- x 50))
+      (print "x - 50 =" result)
+      (print "Result was falsy"))))
