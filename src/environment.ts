@@ -1,4 +1,4 @@
-// src/environment.ts - Enhanced for better macro handling
+// src/environment.ts - Refactored
 import { SExp, SList, SSymbol, isSymbol, isList, createSymbol, createList, createLiteral } from './s-exp/types.ts';
 import { Logger } from './logger.ts';
 
@@ -9,7 +9,6 @@ export type MacroFn = (args: SExp[], env: Environment) => SExp;
 
 /**
  * Unified Environment class that combines runtime and macro-expansion environments
- * Enhanced for better macro handling
  */
 export class Environment {
   // Runtime variables store JavaScript values
@@ -21,14 +20,11 @@ export class Environment {
   // Imported modules store module exports
   public moduleExports = new Map<string, Record<string, any>>();
   
-  // Evaluation cache for storing pre-evaluated expressions
-  private evalCache = new Map<string, any>();
-  
   // Parent environment for lexical scoping
   private parent: Environment | null;
   
   // Logger for debugging
-  private logger: Logger;
+  public logger: Logger;
   
   // Global environment singleton
   private static globalEnv: Environment | null = null;
@@ -63,37 +59,82 @@ export class Environment {
    * Initialize built-in functions and operators
    */
   initializeBuiltins(): void {
-    // Math operations
+    // Define built-in functions by category
+    this.defineArithmeticOperators();
+    this.defineComparisonOperators();
+    this.defineListOperations();
+    this.defineTypePredicates();
+    this.defineConsoleOperations();
+    this.defineJsInterop();
+    
+    this.logger.debug("Built-in functions initialized");
+  }
+  
+  /**
+   * Define arithmetic operators
+   */
+  private defineArithmeticOperators(): void {
     this.define('+', (...args: number[]) => args.reduce((a, b) => a + b, 0));
     this.define('-', (a: number, b: number) => a - b);
     this.define('*', (...args: number[]) => args.reduce((a, b) => a * b, 1));
     this.define('/', (a: number, b: number) => a / b);
     this.define('%', (a: number, b: number) => a % b);
-    
-    // Comparison operations
+  }
+  
+  /**
+   * Define comparison operators
+   */
+  private defineComparisonOperators(): void {
     this.define('=', (a: any, b: any) => a === b);
     this.define('!=', (a: any, b: any) => a !== b);
     this.define('<', (a: number, b: number) => a < b);
     this.define('>', (a: number, b: number) => a > b);
     this.define('<=', (a: number, b: number) => a <= b);
     this.define('>=', (a: number, b: number) => a >= b);
-    
-    // List operations
+  }
+  
+  /**
+   * Define list operations
+   */
+  private defineListOperations(): void {
     this.define('list', (...items: any[]) => items);
     this.define('first', (list: any[]) => list.length > 0 ? list[0] : null);
+    this.define('second', (list: any[]) => list.length > 1 ? list[1] : null);
     this.define('rest', (list: any[]) => list.slice(1));
     this.define('length', (list: any[]) => list.length);
-    
-    // Type predicates
+    this.define('get', (coll, key, notFound = null) => {
+      if (coll == null) return notFound;
+      if (Array.isArray(coll)) {
+        return (typeof key === 'number' && key >= 0 && key < coll.length) 
+          ? coll[key] 
+          : notFound;
+      }
+      return (key in coll) ? coll[key] : notFound;
+    });
+    this.define('nth', (coll, index) => this.lookup('get')(coll, index, null));
+  }
+  
+  /**
+   * Define type predicates
+   */
+  private defineTypePredicates(): void {
     this.define('nil?', (x: any) => x === null || x === undefined);
     this.define('list?', (x: any) => Array.isArray(x));
     this.define('map?', (x: any) => x !== null && typeof x === 'object' && !Array.isArray(x));
     this.define('symbol?', (x: any) => typeof x === 'string');
-    
-    // Console operations
+  }
+  
+  /**
+   * Define console operations
+   */
+  private defineConsoleOperations(): void {
     this.define('console.log', console.log);
-    
-    // JS Interop
+  }
+  
+  /**
+   * Define JS interop functions
+   */
+  private defineJsInterop(): void {
     this.define('js-get', (obj: any, prop: string) => obj[prop]);
     this.define('js-call', (obj: any, method: string, ...args: any[]) => obj[method](...args));
     
@@ -101,13 +142,10 @@ export class Environment {
     this.define('throw', (message: string) => {
       throw new Error(message);
     });
-    
-    this.logger.debug("Built-in functions initialized");
   }
 
   /**
    * Define a variable in this environment
-   * Makes it available to both runtime and macros
    */
   define(key: string, value: any): void {
     this.logger.debug(`Defining symbol: ${key}`);
@@ -121,24 +159,23 @@ export class Environment {
   }
 
   /**
-   * Enhanced lookup to handle both original and sanitized names
+   * Look up a variable in the environment chain
    */
   lookup(key: string): any {
-    // Handle dot notation (module.property)
+    // Handle dot notation for module property access
     if (key.includes('.')) {
       return this.lookupDotNotation(key);
     }
 
-    // Handle symbol name with dashes by replacing with underscores
+    // Check with sanitized name (underscores instead of dashes)
     const sanitizedKey = key.replace(/-/g, '_');
     
-    // Try with sanitized name first
     if (this.variables.has(sanitizedKey)) {
       this.logger.debug(`Found variable with sanitized name: ${sanitizedKey}`);
       return this.variables.get(sanitizedKey);
     }
     
-    // Try with original name
+    // Check with original name
     if (this.variables.has(key)) {
       this.logger.debug(`Found variable with original name: ${key}`);
       return this.variables.get(key);
@@ -160,12 +197,12 @@ export class Environment {
     const [moduleName, ...propertyParts] = key.split('.');
     const propertyPath = propertyParts.join('.');
 
-    // Get the module object
+    // First try to get the module object from variables
     let moduleValue: any;
     try {
       moduleValue = this.lookup(moduleName);
     } catch (error) {
-      // Check if it's an imported module
+      // Check if it's a registered module
       if (this.moduleExports.has(moduleName)) {
         moduleValue = this.moduleExports.get(moduleName);
       } else {
@@ -175,52 +212,61 @@ export class Environment {
     }
 
     // Navigate the property path
+    if (propertyParts.length === 0) {
+      return moduleValue;
+    }
+
     let current = moduleValue;
     
-    // For single property access
+    // Handle single property access
     if (propertyParts.length === 1) {
-      const part = propertyParts[0];
+      const prop = propertyParts[0];
       
       if (current && typeof current === 'object') {
         // Try direct property access
+        if (prop in current) {
+          return current[prop];
+        }
+        
+        // Try sanitized property name
+        const sanitizedProp = prop.replace(/-/g, '_');
+        if (sanitizedProp !== prop && sanitizedProp in current) {
+          return current[sanitizedProp];
+        }
+        
+        this.logger.debug(`Property "${prop}" not found in module "${moduleName}"`);
+        throw new Error(`Property "${prop}" not found in module "${moduleName}"`);
+      } else {
+        throw new Error(`Cannot access property "${prop}" of non-object: ${current}`);
+      }
+    }
+    
+    // For multi-part property paths, navigate through each part
+    for (const part of propertyParts) {
+      if (current && typeof current === 'object') {
+        // Try direct property access
         if (part in current) {
-          return current[part];
+          current = current[part];
+          continue;
         }
         
         // Try sanitized property name
         const sanitizedPart = part.replace(/-/g, '_');
         if (sanitizedPart !== part && sanitizedPart in current) {
-          return current[sanitizedPart];
-        }
-        
-        this.logger.debug(`Property "${part}" not found in module "${moduleName}"`);
-        throw new Error(`Property "${part}" not found in module "${moduleName}"`);
-      } else {
-        throw new Error(`Cannot access property "${part}" of non-object: ${current}`);
-      }
-    }
-    
-    // For multi-part property paths
-    for (const part of propertyParts) {
-      if (current && typeof current === 'object' && part in current) {
-        current = current[part];
-      } else {
-        // Try with dashes converted to underscores
-        const underscorePart = part.replace(/-/g, '_');
-        if (current && typeof current === 'object' && underscorePart in current) {
-          current = current[underscorePart];
-        } else {
-          this.logger.debug(`Property not found in path: ${key}`);
-          throw new Error(`Property not found: ${key}`);
+          current = current[sanitizedPart];
+          continue;
         }
       }
+      
+      this.logger.debug(`Property "${part}" not found in path: ${key}`);
+      throw new Error(`Property not found in path: ${key}`);
     }
 
     return current;
   }
 
   /**
-   * Enhanced defineMacro with better name handling
+   * Define a macro in this environment
    */
   defineMacro(key: string, macro: MacroFn): void {
     this.logger.debug(`Defining macro: ${key}`);
@@ -228,7 +274,7 @@ export class Environment {
     
     // Tag the function as a macro for later identification
     Object.defineProperty(macro, 'isMacro', { value: true });
-    // Store the original name
+    // Store the original name for reference
     Object.defineProperty(macro, 'macroName', { value: key });
     
     // Also register with sanitized name if different
@@ -240,10 +286,10 @@ export class Environment {
   }
 
   /**
-   * Enhanced hasMacro with better search strategy
+   * Check if a macro exists in the environment chain
    */
   hasMacro(key: string): boolean {
-    // Check direct macros
+    // Direct lookup
     if (this.macros.has(key)) {
       this.logger.debug(`Found direct macro: ${key}`);
       return true;
@@ -256,28 +302,36 @@ export class Environment {
       return true;
     }
     
-    // Check module exports
+    // Check for qualified macro names (module.macroName)
     if (key.includes('.')) {
       const [moduleName, macroName] = key.split('.');
       
       if (this.moduleExports.has(moduleName)) {
         const moduleExports = this.moduleExports.get(moduleName)!;
-        const hasMacro = typeof moduleExports[macroName] === 'function' && 
-                        'isMacro' in moduleExports[macroName];
+        if (typeof moduleExports[macroName] === 'function' && 
+            'isMacro' in moduleExports[macroName]) {
+          return true;
+        }
         
-        if (hasMacro) return true;
+        // Try with sanitized macro name
+        const sanitizedMacroName = macroName.replace(/-/g, '_');
+        if (sanitizedMacroName !== macroName &&
+            typeof moduleExports[sanitizedMacroName] === 'function' &&
+            'isMacro' in moduleExports[sanitizedMacroName]) {
+          return true;
+        }
       }
     }
     
-    // Try parent environment
+    // Check parent environment
     return this.parent !== null && this.parent.hasMacro(key);
   }
 
   /**
-   * Enhanced getMacro with better lookup strategy
+   * Get a macro from the environment chain
    */
   getMacro(key: string): MacroFn | undefined {
-    // Direct macro lookup
+    // Direct lookup
     if (this.macros.has(key)) {
       return this.macros.get(key);
     }
@@ -288,14 +342,14 @@ export class Environment {
       return this.macros.get(sanitizedKey);
     }
     
-    // Check module exports
+    // Check for qualified macro names
     if (key.includes('.')) {
       const [moduleName, macroName] = key.split('.');
       
       if (this.moduleExports.has(moduleName)) {
         const moduleExports = this.moduleExports.get(moduleName)!;
         
-        // Check for direct macro name
+        // Try direct macro name
         if (typeof moduleExports[macroName] === 'function' && 
             'isMacro' in moduleExports[macroName]) {
           return moduleExports[macroName] as MacroFn;
@@ -316,7 +370,7 @@ export class Environment {
   }
 
   /**
-   * Enhanced import module with better macro registration
+   * Import a module into the environment
    */
   importModule(moduleName: string, exports: Record<string, any>): void {
     this.logger.debug(`Importing module: ${moduleName}`);
@@ -357,180 +411,5 @@ export class Environment {
    */
   extend(): Environment {
     return new Environment(this, this.logger);
-  }
-
-  /**
-   * Evaluate an S-expression for use during macro expansion
-   * Enhanced to handle complex forms better
-   */
-  evaluateForMacro(expr: SExp): any {
-    this.logger.debug(`Evaluating for macro: ${expr}`);
-    
-    // Handle different expression types
-    if (isSymbol(expr)) {
-      // Symbol lookup
-      const name = (expr as SSymbol).name;
-      try {
-        return this.lookup(name);
-      } catch (e) {
-        return expr; // Return symbol as is if not found
-      }
-    } 
-    else if (isList(expr)) {
-      const list = expr as SList;
-      
-      // Empty list
-      if (list.elements.length === 0) {
-        return [];
-      }
-      
-      const first = list.elements[0];
-      
-      // Handle special forms
-      if (isSymbol(first)) {
-        const op = (first as SSymbol).name;
-        
-        // Handle if
-        if (op === 'if') {
-          if (list.elements.length < 3) {
-            throw new Error('if requires at least 2 arguments');
-          }
-          
-          const test = this.evaluateForMacro(list.elements[1]);
-          if (test) {
-            return this.evaluateForMacro(list.elements[2]);
-          } else if (list.elements.length > 3) {
-            return this.evaluateForMacro(list.elements[3]);
-          }
-          return null;
-        }
-        
-        // Handle cond - enhanced to better handle recursive expansion
-        if (op === 'cond') {
-          // Check each clause
-          for (let i = 1; i < list.elements.length; i++) {
-            const clause = list.elements[i];
-            if (!isList(clause)) {
-              throw new Error('cond clauses must be lists');
-            }
-            
-            const clauseList = clause as SList;
-            if (clauseList.elements.length < 2) {
-              throw new Error('cond clauses must have a test and a result');
-            }
-            
-            const test = this.evaluateForMacro(clauseList.elements[0]);
-            if (test) {
-              return this.evaluateForMacro(clauseList.elements[1]);
-            }
-          }
-          return null;
-        }
-        
-        // Handle let - enhanced for proper binding and evaluation
-        if (op === 'let') {
-          if (list.elements.length < 2) {
-            throw new Error('let requires bindings and at least one body form');
-          }
-          
-          const bindings = list.elements[1];
-          if (!isList(bindings)) {
-            throw new Error('let bindings must be a list');
-          }
-          
-          const bindingsList = bindings as SList;
-          if (bindingsList.elements.length % 2 !== 0) {
-            throw new Error('let bindings must have an even number of forms');
-          }
-          
-          // Create a new environment for let bindings
-          const letEnv = this.extend();
-          
-          // Evaluate bindings
-          for (let i = 0; i < bindingsList.elements.length; i += 2) {
-            const name = bindingsList.elements[i];
-            const value = bindingsList.elements[i + 1];
-            
-            if (!isSymbol(name)) {
-              throw new Error('let binding names must be symbols');
-            }
-            
-            const evalValue = this.evaluateForMacro(value);
-            letEnv.define((name as SSymbol).name, evalValue);
-          }
-          
-          // Evaluate body in the new environment
-          let result = null;
-          for (let i = 2; i < list.elements.length; i++) {
-            result = letEnv.evaluateForMacro(list.elements[i]);
-          }
-          return result;
-        }
-        
-        // Handle def (ignored during macro evaluation)
-        if (op === 'def') {
-          return null;
-        }
-        
-        // Handle defn (ignored during macro evaluation)
-        if (op === 'defn') {
-          return null;
-        }
-        
-        // Handle fn - create a JavaScript function
-        if (op === 'fn') {
-          // Not implemented for macro evaluation - just return null
-          return null;
-        }
-        
-        // Handle quote
-        if (op === 'quote') {
-          if (list.elements.length !== 2) {
-            throw new Error('quote requires exactly one argument');
-          }
-          return list.elements[1];
-        }
-        
-        // Handle quasiquote - just return for now, handled in macro expansion
-        if (op === 'quasiquote') {
-          return expr;
-        }
-        
-        // Handle unquote - just return for now, handled in macro expansion
-        if (op === 'unquote') {
-          return expr;
-        }
-        
-        // Handle unquote-splicing - just return for now, handled in macro expansion
-        if (op === 'unquote-splicing') {
-          return expr;
-        }
-        
-        // Function call - lookup the function and call it
-        try {
-          const fn = this.lookup(op);
-          if (typeof fn === 'function') {
-            const args = list.elements.slice(1).map(arg => this.evaluateForMacro(arg));
-            return fn(...args);
-          }
-        } catch (error) {
-          // If lookup fails, continue with normal evaluation
-        }
-      }
-      
-      // For other cases, evaluate as a function call
-      const fnExpr = this.evaluateForMacro(first);
-      if (typeof fnExpr === 'function') {
-        const args = list.elements.slice(1).map(arg => this.evaluateForMacro(arg));
-        return fnExpr(...args);
-      }
-      
-      // Return list as is if not a function call
-      return list.elements.map(elem => this.evaluateForMacro(elem));
-    } 
-    else {
-      // For literals, return the value
-      return (expr as any).value;
-    }
   }
 }

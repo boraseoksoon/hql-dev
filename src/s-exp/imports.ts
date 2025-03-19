@@ -1,4 +1,4 @@
-// src/s-exp/imports.ts - Updated for better macro handling
+// src/s-exp/imports.ts - Refactored
 
 import * as path from "https://deno.land/std/path/mod.ts";
 import { SExp, SList, SLiteral, SSymbol, isSymbol, isLiteral, isImport } from './types.ts';
@@ -31,7 +31,7 @@ export async function processImports(
   const logger = new Logger(options.verbose || false);
   const baseDir = options.baseDir || Deno.cwd();
   
-  // Track processed imports
+  // Track processed imports to avoid duplicates
   const processedFiles = options.processedFiles || new Set<string>();
   const importMap = options.importMap || new Map<string, string>();
   
@@ -66,13 +66,10 @@ export async function processImports(
     }
   }
   
-  // Process any defs in the current file to make them available to macros
+  // Process definitions in the current file to make them available to macros
   processFileDefinitions(exprs, env, logger);
 }
 
-/**
- * Process macro definitions in the current file
- */
 /**
  * Process definitions in the current file to make them available to macros
  */
@@ -130,12 +127,9 @@ function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger)
           const params = expr.elements[2];
           const body = expr.elements.slice(3);
           
-          // Create a JavaScript function that the macro can call
-          // This is a simplified version for demo purposes
+          // Create a simplified function for macro evaluation
           const fn = (...args: any[]) => {
             try {
-              // Normally this would call a proper evaluator
-              // For now, just return a placeholder value based on function name
               return `${fnName}(${args.join(', ')})`;
             } catch (e) {
               logger.error(`Error executing function ${fnName}: ${e.message}`);
@@ -143,7 +137,7 @@ function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger)
             }
           };
           
-          // Mark as a function definition (for special handling in macros)
+          // Mark as a function definition
           Object.defineProperty(fn, 'isDefFunction', { value: true });
           
           // Register in the environment
@@ -211,9 +205,8 @@ async function processImport(
   }
 }
 
-
 /**
- * Process an HQL file import with improved macro handling
+ * Process an HQL file import
  */
 async function processHqlImport(
   moduleName: string, 
@@ -284,6 +277,9 @@ async function processHqlImport(
   logger.debug(`Imported HQL module: ${moduleName} with exports: ${Object.keys(moduleExports).join(', ')}`);
 }
 
+/**
+ * Process exports and definitions in a file
+ */
 function processFileExportsAndDefinitions(
   expressions: SExp[],
   env: Environment,
@@ -348,429 +344,9 @@ function processFileExportsAndDefinitions(
   }
 }
 
-
-
 /**
- * Process all expressions in an HQL file
+ * Process JavaScript imports
  */
-async function processFileExpressions(
-  expressions: SExp[],
-  env: Environment,
-  moduleExports: Record<string, any>,
-  filePath: string,
-  logger: Logger
-): Promise<void> {
-  // Process all expressions
-  for (const expr of expressions) {
-    // Skip imports (already processed)
-    if (isImport(expr)) {
-      continue;
-    }
-    
-    // Process macro definitions
-    if (expr.type === 'list' && 
-        expr.elements.length > 0 &&
-        isSymbol(expr.elements[0]) &&
-        expr.elements[0].name === 'defmacro') {
-      try {
-        // Define the macro in the environment
-        defineMacro(expr as SList, env, logger);
-        
-        // Extract macro name for exports
-        if (expr.elements.length > 1 && isSymbol(expr.elements[1])) {
-          const macroName = expr.elements[1].name;
-          const macroFn = env.getMacro(macroName);
-          
-          if (macroFn) {
-            moduleExports[macroName] = macroFn;
-          }
-        }
-      } catch (error) {
-        logger.error(`Error defining macro in ${filePath}: ${error.message}`);
-      }
-    }
-    
-    // Process direct def statements
-    else if (expr.type === 'list' && 
-             expr.elements.length > 0 &&
-             isSymbol(expr.elements[0]) &&
-             expr.elements[0].name === 'def') {
-      try {
-        // Extract variable name and value expression
-        if (expr.elements.length >= 3 && isSymbol(expr.elements[1])) {
-          const varName = expr.elements[1].name;
-          const valueExpr = expr.elements[2];
-          
-          // If the value expression is a list that starts with a macro name,
-          // expand it and evaluate the result
-          if (valueExpr.type === 'list' && 
-              valueExpr.elements.length > 0 && 
-              isSymbol(valueExpr.elements[0])) {
-            const fnName = valueExpr.elements[0].name;
-            
-            if (env.hasMacro(fnName)) {
-              try {
-                // This is a macro call - expand it
-                const expanded = expandMacro(valueExpr as SList, env, logger);
-                const evaluated = evaluateForMacro(expanded, env, logger);
-                
-                // Define the value in the environment
-                if (evaluated) {
-                  env.define(varName, evaluated);
-                  
-                  // If it's a literal, extract the primitive value
-                  if (isLiteral(evaluated)) {
-                    const literal = evaluated as SLiteral;
-                    env.define(varName, literal.value);
-                  }
-                }
-              } catch (error) {
-                logger.error(`Error expanding macro in def: ${error.message}`);
-              }
-            } else {
-              // Not a macro call, define as is
-              env.define(varName, valueExpr);
-            }
-          } else {
-            // Not a list expression, define as is
-            env.define(varName, valueExpr);
-          }
-        }
-      } catch (error) {
-        logger.error(`Error processing def in ${filePath}: ${error.message}`);
-      }
-    }
-    
-    // Process function definitions
-    else if (expr.type === 'list' && 
-             expr.elements.length > 0 &&
-             isSymbol(expr.elements[0]) &&
-             expr.elements[0].name === 'defn') {
-      try {
-        // Extract function name
-        if (expr.elements.length > 2 && isSymbol(expr.elements[1])) {
-          const fnName = expr.elements[1].name;
-          // Register in exports
-          moduleExports[fnName] = expr;
-        }
-      } catch (error) {
-        logger.error(`Error processing function in ${filePath}: ${error.message}`);
-      }
-    }
-    
-    // Process export statements
-    else if (expr.type === 'list' && 
-             expr.elements.length > 0 &&
-             isSymbol(expr.elements[0]) &&
-             expr.elements[0].name === 'export') {
-      try {
-        // Format: (export "name" value)
-        if (expr.elements.length === 3 && 
-            isLiteral(expr.elements[1]) && 
-            typeof expr.elements[1].value === 'string') {
-          const exportName = expr.elements[1].value;
-          const exportValueExpr = expr.elements[2];
-          
-          logger.debug(`Processing export: "${exportName}"`);
-          
-          // If export value is a symbol, look it up
-          if (isSymbol(exportValueExpr)) {
-            try {
-              const symbolName = exportValueExpr.name;
-              logger.debug(`Export symbol: ${symbolName}`);
-              
-              // Sanitize symbol name (replace dashes with underscores)
-              const sanitizedSymbol = symbolName.replace(/-/g, '_');
-              
-              try {
-                // Try to look up the value in the environment
-                const value = env.lookup(sanitizedSymbol);
-                logger.debug(`Found value for ${sanitizedSymbol}: ${JSON.stringify(value)}`);
-                
-                // Store the value in the module exports
-                moduleExports[exportName] = value;
-                logger.debug(`Added export "${exportName}" with value from symbol "${sanitizedSymbol}": ${JSON.stringify(value)}`);
-              } catch (lookupError) {
-                // Try with original symbol name if sanitized lookup fails
-                try {
-                  const value = env.lookup(symbolName);
-                  logger.debug(`Found value for original symbol ${symbolName}: ${JSON.stringify(value)}`);
-                  
-                  // Store the value in the module exports
-                  moduleExports[exportName] = value;
-                  logger.debug(`Added export "${exportName}" with value from original symbol "${symbolName}": ${JSON.stringify(value)}`);
-                } catch (originalLookupError) {
-                  // If both lookups fail, log warning but don't fail
-                  logger.warn(`Failed to lookup symbol "${symbolName}" or "${sanitizedSymbol}" for export "${exportName}"`);
-                }
-              }
-            } catch (error) {
-              logger.error(`Error resolving export symbol in ${filePath}: ${error.message}`);
-            }
-          } else {
-            // For non-symbols, evaluate the expression directly
-            try {
-              const evaluated = evaluateForMacro(exportValueExpr, env, logger);
-              
-              // If it's a literal, use its primitive value
-              if (isLiteral(evaluated)) {
-                moduleExports[exportName] = (evaluated as SLiteral).value;
-                logger.debug(`Added export "${exportName}" with literal value: ${JSON.stringify(moduleExports[exportName])}`);
-              } else {
-                moduleExports[exportName] = evaluated;
-                logger.debug(`Added export "${exportName}" with non-literal value: ${JSON.stringify(moduleExports[exportName])}`);
-              }
-            } catch (evalError) {
-              logger.error(`Error evaluating export value: ${evalError.message}`);
-            }
-          }
-        }
-      } catch (error) {
-        logger.error(`Error processing export in ${filePath}: ${error.message}`);
-      }
-    }
-  }
-  
-  // Debug log all exports
-  logger.debug(`Module exports after processing: ${Object.keys(moduleExports).join(', ')}`);
-  for (const [key, value] of Object.entries(moduleExports)) {
-    logger.debug(`  ${key}: ${JSON.stringify(value)}`);
-  }
-}
-
-/**
- * Generate a JavaScript version of the HQL file for bidirectional imports
- */
-async function generateJsVersionOfHql(
-  hqlPath: string,
-  hqlContent: string,
-  tempDir: string,
-  importMap: Map<string, string>,
-  logger: Logger
-): Promise<string> {
-  // Create a JS output path in the temp directory
-  const fileName = path.basename(hqlPath).replace(/\.hql$/, '.js');
-  const hashCode = simpleHash(hqlPath).toString();
-  const outputDir = path.join(tempDir, hashCode);
-  const jsOutputPath = path.join(outputDir, fileName);
-  
-  // Check if we already processed this file
-  if (importMap.has(hqlPath)) {
-    return importMap.get(hqlPath)!;
-  }
-  
-  // Make sure the output directory exists
-  try {
-    await Deno.mkdir(outputDir, { recursive: true });
-  } catch (error) {
-    if (!(error instanceof Deno.errors.AlreadyExists)) {
-      throw error;
-    }
-  }
-  
-  try {
-    // Import the processHql function from main.ts
-    const { processHql } = await import('../transpiler/hql-transpiler.ts');
-    
-    // Parse the HQL content to extract exports
-    const sexps = parse(hqlContent);
-    const exportStatements: Array<{name: string, symbol: string}> = [];
-    
-    // Find all export statements
-    for (const expr of sexps) {
-      if (expr.type === 'list' && 
-          expr.elements.length >= 3 &&
-          isSymbol(expr.elements[0]) && 
-          expr.elements[0].name === 'export' &&
-          isLiteral(expr.elements[1]) &&
-          isSymbol(expr.elements[2])) {
-        
-        const exportName = (expr.elements[1] as SLiteral).value as string;
-        const symbolName = (expr.elements[2] as SSymbol).name;
-        
-        exportStatements.push({
-          name: exportName,
-          symbol: symbolName
-        });
-      }
-    }
-    
-    // Process HQL to JS
-    let jsCode = await processHql(hqlContent, {
-      baseDir: path.dirname(hqlPath),
-      verbose: logger.enabled
-    });
-    
-    // Ensure all exports are properly handled in the generated JS
-    // This adds explicit export statements at the end of the file
-    if (exportStatements.length > 0) {
-      jsCode += '\n\n// Added explicit exports\n';
-      
-      exportStatements.forEach(({name, symbol}) => {
-        const sanitizedSymbol = symbol.replace(/-/g, '_');
-        // Add explicit named export statement for ESM
-        jsCode += `export { ${sanitizedSymbol} as "${name}" };\n`;
-      });
-    }
-    
-    // Write the JS file
-    await Deno.writeTextFile(jsOutputPath, jsCode);
-    logger.debug(`Generated JS version of HQL file: ${jsOutputPath}`);
-    
-    // Map the HQL file to its JS version
-    importMap.set(hqlPath, jsOutputPath);
-    
-    return jsOutputPath;
-  } catch (error) {
-    logger.error(`Error generating JS for HQL file ${hqlPath}: ${error instanceof Error ? error.message : String(error)}`);
-    throw error;
-  }
-}
-
-/**
- * Process HQL imports in a JavaScript file
- */
-async function processHqlImportsInJs(
-  jsPath: string,
-  jsContent: string,
-  env: Environment,
-  logger: Logger,
-  processedFiles: Set<string>,
-  tempDir: string,
-  importMap: Map<string, string>,
-  keepTemp: boolean = false
-): Promise<void> {
-  // Find HQL imports using regex
-  const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
-  let match;
-  const hqlImports: string[] = [];
-  
-  while ((match = hqlImportRegex.exec(jsContent)) !== null) {
-    const importPath = match[1];
-    hqlImports.push(importPath);
-    
-    if (!isUrl(importPath)) {
-      // Resolve the import path
-      const absImportPath = path.resolve(path.dirname(jsPath), importPath);
-      logger.debug(`Found HQL import in JS file: ${importPath} -> ${absImportPath}`);
-      
-      try {
-        // Read the HQL file
-        const hqlContent = await Deno.readTextFile(absImportPath);
-        
-        // Process the HQL file
-        await processHqlImport(
-          path.basename(importPath, '.hql'), // Use filename as module name
-          absImportPath,
-          path.dirname(jsPath),
-          env,
-          processedFiles,
-          logger,
-          tempDir,
-          importMap,
-          keepTemp
-        );
-      } catch (error) {
-        logger.error(`Error processing HQL import ${importPath} in JS file: ${error.message}`);
-      }
-    }
-  }
-  
-  // If we found HQL imports, update the JS file to use .js extension
-  if (hqlImports.length > 0) {
-    let modifiedContent = jsContent;
-    
-    for (const importPath of hqlImports) {
-      if (!isUrl(importPath)) {
-        const jsImportPath = importPath.replace(/\.hql$/, '.js');
-        
-        // Replace the import statement
-        modifiedContent = modifiedContent.replace(
-          new RegExp(`(['"])${escapeRegExp(importPath)}(['"])`, 'g'),
-          `$1${jsImportPath}$2`
-        );
-      }
-    }
-    
-    // Create a processed JS file in the temp directory
-    const fileName = path.basename(jsPath);
-    const hashCode = simpleHash(jsPath).toString();
-    const outputDir = path.join(tempDir, hashCode);
-    const processedJsPath = path.join(outputDir, fileName);
-    
-    // Make sure the output directory exists
-    try {
-      await Deno.mkdir(outputDir, { recursive: true });
-    } catch (error) {
-      if (!(error instanceof Deno.errors.AlreadyExists)) {
-        throw error;
-      }
-    }
-    
-    // Write the processed JS file
-    await Deno.writeTextFile(processedJsPath, modifiedContent);
-    logger.debug(`Created processed JS file with updated imports: ${processedJsPath}`);
-    
-    // Map the original JS file to its processed version
-    importMap.set(jsPath, processedJsPath);
-  }
-  
-  // Process nested JS imports as well
-  await processJsImportsInJs(jsPath, jsContent, env, logger, processedFiles, tempDir, importMap, keepTemp);
-}
-
-/**
- * Process JS imports in a JavaScript file
- */
-async function processJsImportsInJs(
-  jsPath: string,
-  jsContent: string,
-  env: Environment,
-  logger: Logger,
-  processedFiles: Set<string>,
-  tempDir: string,
-  importMap: Map<string, string>,
-  keepTemp: boolean = false
-): Promise<void> {
-  // Find JS imports using regex
-  const jsImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.m?js)['"]/g;
-  let match;
-  
-  while ((match = jsImportRegex.exec(jsContent)) !== null) {
-    const importPath = match[1];
-    
-    if (!isUrl(importPath)) {
-      // Resolve the import path
-      const absImportPath = path.resolve(path.dirname(jsPath), importPath);
-      logger.debug(`Found JS import in JS file: ${importPath} -> ${absImportPath}`);
-      
-      if (!processedFiles.has(absImportPath)) {
-        try {
-          // Read the JS file
-          const nestedJsContent = await Deno.readTextFile(absImportPath);
-          
-          // Process the JS file
-          await processHqlImportsInJs(
-            absImportPath,
-            nestedJsContent,
-            env,
-            logger,
-            processedFiles,
-            tempDir,
-            importMap,
-            keepTemp
-          );
-          
-          // Mark as processed
-          processedFiles.add(absImportPath);
-        } catch (error) {
-          logger.error(`Error processing JS import ${importPath} in JS file: ${error.message}`);
-        }
-      }
-    }
-  }
-}
-
 async function processJsImport(
   moduleName: string,
   modulePath: string,
@@ -796,8 +372,8 @@ async function processJsImport(
     processedFiles.add(resolvedPath);
     
     // Import the module dynamically
-    const moduleUrl = new URL(`file://${resolvedPath}`);
-    const module = await import(moduleUrl.href);
+    const moduleUrl = `file://${resolvedPath}`;
+    const module = await import(moduleUrl);
     
     // Register the module
     env.importModule(moduleName, module);
@@ -808,6 +384,9 @@ async function processJsImport(
   }
 }
 
+/**
+ * Process npm: imports
+ */
 async function processNpmImport(
   moduleName: string,
   modulePath: string,
@@ -843,6 +422,9 @@ async function processNpmImport(
   }
 }
 
+/**
+ * Process jsr: imports
+ */
 async function processJsrImport(
   moduleName: string,
   modulePath: string,
@@ -858,6 +440,9 @@ async function processJsrImport(
   }
 }
 
+/**
+ * Process http(s): imports
+ */
 async function processHttpImport(
   moduleName: string,
   modulePath: string,

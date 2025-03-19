@@ -1,4 +1,4 @@
-// src/utils.ts - Enhanced with identifier sanitization
+// src/utils.ts - Refactored
 
 /**
  * Sanitize a string to be a valid JavaScript identifier
