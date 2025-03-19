@@ -140,3 +140,20 @@
     (if-let (result (- x 50))
       (print "x - 50 =" result)
       (print "Result was falsy"))))
+
+;; Test defn macro
+(print "\n=== Testing 'defn' macro ===")
+
+;; Define a function using our defn macro
+(defn multiply (a b)
+  (* a b))
+
+;; Test the function
+(print "multiply(3, 4) =" (multiply 3 4))
+
+;; Test with multiple body forms
+(defn calculate-area (radius)
+  (def square (* radius radius))
+  (* 3.14 square))
+
+(print "Area of circle with radius 5:" (calculate-area 5))

@@ -1,3 +1,6 @@
+(defmacro defn (name params & body)
+  `(def ~name (fn ~params ~@body)))
+  
 (defmacro or (a b)
   `(if ~a ~a ~b))
 

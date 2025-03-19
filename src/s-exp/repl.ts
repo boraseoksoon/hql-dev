@@ -1,9 +1,10 @@
-// src/s-exp/repl.ts - Interactive REPL for the S-expression frontend
+// src/s-exp/repl.ts - Interactive REPL for the S-expression frontend, updated to use core.hql
 
+import * as path from "https://deno.land/std/path/mod.ts";
 import { parse } from "./parser.ts";
-import { Environment, initializeGlobalEnv } from "./environment.ts";
-import { initializeCoreMacros } from "./core-macros.ts";
+import { Environment } from "../environment.ts";
 import { expandMacros } from "./macro.ts";
+import { processImports } from "./imports.ts";
 import { sexpToString } from "./types.ts";
 import { Logger } from "../logger.ts";
 import { convertToHqlAst } from "./front-to-middle-connector.ts";
@@ -53,6 +54,41 @@ function printBanner(): void {
 }
 
 /**
+ * Load macros from core.hql
+ */
+async function loadCoreMacros(env: Environment, logger: Logger): Promise<void> {
+  try {
+    // Find the core.hql file
+    const cwd = Deno.cwd();
+    const corePath = path.join(cwd, 'lib/core.hql');
+    
+    logger.debug(`Loading core.hql from: ${corePath}`);
+    
+    // Read and parse the file
+    const coreSource = await Deno.readTextFile(corePath);
+    const coreExps = parse(coreSource);
+    
+    // Process imports in core.hql
+    await processImports(coreExps, env, {
+      verbose: logger.enabled,
+      baseDir: path.dirname(corePath)
+    });
+    
+    // Expand macros to register them
+    expandMacros(coreExps, env, { 
+      verbose: logger.enabled,
+      maxExpandDepth: 20, // Increased for complex macros
+      maxPasses: 3 // Multiple passes for recursive macros
+    });
+    
+    logger.debug('Core macros loaded successfully');
+  } catch (error) {
+    logger.error(`Error loading core macros: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
  * Start the interactive REPL.
  */
 export async function startRepl(options: ReplOptions = {}): Promise<void> {
@@ -66,10 +102,17 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
   
   printBanner();
 
-  // Initialize environment and macros.
+  // Initialize environment and load core.hql macros
   logger.log("Initializing environment...");
-  const env = initializeGlobalEnv({ verbose: options.verbose });
-  initializeCoreMacros(env, logger);
+  const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
+
+  await loadCoreMacros(env, logger);
+  
+  // Display available macros
+  if (options.verbose) {
+    const macroKeys = Array.from(env.macros.keys());
+    logger.log(`Available macros: ${macroKeys.join(", ")}`);
+  }
   
   const history: string[] = [];
   const encoder = new TextEncoder();
@@ -253,9 +296,19 @@ async function handleCommand(
       break;
     case ":env":
       console.log("Environment bindings: (simplified view)\n");
+      for (const [key, value] of env.variables.entries()) {
+        if (typeof value === 'function') {
+          console.log(`${key}: [Function]`);
+        } else {
+          console.log(`${key}: ${value}`);
+        }
+      }
       break;
     case ":macros":
-      console.log("Defined macros: (simplified view)\n");
+      console.log("Defined macros:\n");
+      for (const key of env.macros.keys()) {
+        console.log(`- ${key}`);
+      }
       break;
     case ":verbose":
       setVerbose(!logger.enabled);

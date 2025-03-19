@@ -2,7 +2,6 @@ import * as path from "https://deno.land/std/path/mod.ts";
 import { sexpToString, isSymbol, isLiteral } from '../s-exp/types.ts';
 import { parse } from '../s-exp/parser.ts';
 import { Environment } from '../environment.ts';
-import { initializeCoreMacros } from '../s-exp/core-macros.ts';
 import { expandMacros } from '../s-exp/macro.ts';
 import { processImports } from '../s-exp/imports.ts';
 import { convertToHqlAst } from '../s-exp/front-to-middle-connector.ts';
@@ -48,7 +47,9 @@ export async function processHql(
     const env = await getGlobalEnv(options);
     
     // Debug: Print registered macros
-    console.log("Available macros before processing:", Array.from(env.macros.keys()).join(", "));
+    if (options.verbose) {
+      logger.debug("Available macros: " + Array.from(env.macros.keys()).join(", "));
+    }
     
     // Step 3: Process imports in the user code
     logger.debug('Processing imports in user code');
@@ -140,7 +141,7 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
   logger.debug('Loading core.hql standard library');
   
   try {
-    // Just look for lib/core.hql from the current directory
+    // Look for lib/core.hql from the current directory
     const cwd = Deno.cwd();
     const corePath = path.join(cwd, 'lib/core.hql');
     
@@ -157,7 +158,9 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
     // Parse the core.hql file
     const coreExps = parse(coreSource);
     
-    console.log("Core HQL expressions loaded from:", corePath);
+    if (options.verbose) {
+      console.log("Core HQL expressions loaded from:", corePath);
+    }
     
     // Process imports in core.hql
     await processImports(coreExps, env, {
@@ -165,27 +168,18 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
       baseDir: path.dirname(corePath)
     });
     
-    // Register macros in core.hql
-    const { defineMacro } = await import('../s-exp/macro.ts');
+    // Register macros defined in core.hql
+    const expanded = expandMacros(coreExps, env, { 
+      verbose: options.verbose,
+      maxExpandDepth: 20, // Increased for complex macros
+      maxPasses: 3 // Multiple passes for recursive macros
+    });
     
-    for (const expr of coreExps) {
-      if (expr.type === 'list' && 
-          expr.elements.length > 0 &&
-          expr.elements[0].type === 'symbol' &&
-          expr.elements[0].name === 'defmacro') {
-        try {
-          defineMacro(expr, env, logger);
-          if (expr.elements[1].type === 'symbol') {
-            console.log(`Registered core macro: ${expr.elements[1].name}`);
-          }
-        } catch (error) {
-          logger.error(`Error registering macro: ${error.message}`);
-        }
-      }
+    // Print registered macros for debugging
+    if (options.verbose) {
+      const macroKeys = Array.from(env.macros.keys());
+      logger.debug(`Registered macros: ${macroKeys.join(", ")}`);
     }
-    
-    // Expand macros to ensure they're processed
-    expandMacros(coreExps, env, { verbose: options.verbose });
     
     // Mark core as loaded
     coreHqlLoaded = true;
@@ -204,7 +198,7 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
 async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
   if (!globalEnv) {
     globalEnv = await Environment.initializeGlobalEnv({ verbose: options.verbose });
-    initializeCoreMacros(globalEnv, new Logger(options.verbose));
+    
     if (!options.skipCoreHQL) {
       await loadCoreHql(globalEnv, options);
     }
