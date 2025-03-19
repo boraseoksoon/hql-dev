@@ -40,3 +40,15 @@
       (if (= (length args) 1)
           `(+ "" ~(first args))
           `(+ ~@args))))
+
+(defmacro do (& body)
+  (if (= (length body) 0)
+      nil
+      `(let (temp (fn () ~@body))
+         (temp))))
+
+(defmacro contains? (coll key)
+  `(js-call ~coll "has" ~key))
+
+(defmacro nth (coll index)
+  `(get ~coll ~index))

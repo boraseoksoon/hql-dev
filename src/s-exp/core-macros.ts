@@ -1,10 +1,6 @@
 // src/s-exp/core-macros.ts - Core macros for the S-expression layer with unified environment
 
-import { 
-  SExp, SList,
-  isSymbol, isList,
-  createSymbol, createList, createLiteral, createNilLiteral
- } from './types.ts';
+import { SExp, SList, isSymbol, isList, createSymbol, createList, createNilLiteral } from './types.ts';
 import { Environment } from '../environment.ts';
 import { Logger } from '../logger.ts';
 
@@ -43,32 +39,6 @@ export function initializeCoreMacros(env: Environment, logger: Logger): void {
   });
   logger.debug('Defined defn macro');
 
-  // do: Execute multiple expressions and return the last one
-  // (do expr1 expr2 expr3...)
-  // Expands to: ((fn [] expr1 expr2 expr3...))
-  env.defineMacro('do', (args: SExp[], env: Environment): SExp => {
-    if (args.length === 0) {
-      return createNilLiteral();
-    }
-
-    if (args.length === 1) {
-      return args[0];
-    }
-
-    return createList(
-      createList(
-        createSymbol('fn'),
-        createList(),
-        ...args
-      )
-    );
-  });
-
-  logger.debug('Defined do macro');
-
-  // cond: Conditional with multiple branches
-  // (cond (test1 result1) (test2 result2) ... (else resultN))
-  // Expands to nested if expressions
   env.defineMacro('cond', (args: SExp[], env: Environment): SExp => {
     if (args.length === 0) {
       return createNilLiteral();
@@ -105,6 +75,7 @@ export function initializeCoreMacros(env: Environment, logger: Logger): void {
       );
     }
   });
+
   logger.debug('Defined cond macro');
 
   // when: Conditional execution when test is true
@@ -244,33 +215,6 @@ export function initializeCoreMacros(env: Environment, logger: Logger): void {
     );
   });
   logger.debug('Defined if-let macro');
-
-  env.defineMacro('nth', (args: SExp[], env: Environment): SExp => {
-    if (args.length !== 2) {
-      throw new Error('nth requires exactly two arguments');
-    }
-
-    return createList(
-      createSymbol('get'),
-      args[0],
-      args[1]
-    );
-  });
-
-  logger.debug('Defined nth macro');
-
-  env.defineMacro('contains?', (args: SExp[], env: Environment): SExp => {
-    if (args.length !== 2) {
-      throw new Error('contains? requires exactly two arguments');
-    }
-
-    return createList(
-      createSymbol('js-call'),
-      args[0],
-      createLiteral('has'),
-      args[1]
-    );
-  });
 
   logger.debug('Core macros initialized');
 }
