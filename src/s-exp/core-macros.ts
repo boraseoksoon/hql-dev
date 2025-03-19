@@ -39,45 +39,6 @@ export function initializeCoreMacros(env: Environment, logger: Logger): void {
   });
   logger.debug('Defined defn macro');
 
-  env.defineMacro('cond', (args: SExp[], env: Environment): SExp => {
-    if (args.length === 0) {
-      return createNilLiteral();
-    }
-
-    if (!isList(args[0])) {
-      throw new Error('cond clauses must be lists');
-    }
-
-    const clause = args[0] as SList;
-
-    if (clause.elements.length !== 2) {
-      throw new Error('cond clauses must have a test and a result');
-    }
-
-    const test = clause.elements[0];
-    const result = clause.elements[1];
-
-    if (args.length === 1) {
-      // Last clause
-      return createList(
-        createSymbol('if'),
-        test,
-        result,
-        createNilLiteral()
-      );
-    } else {
-      // More clauses to process
-      return createList(
-        createSymbol('if'),
-        test,
-        result,
-        createList(createSymbol('cond'), ...args.slice(1))
-      );
-    }
-  });
-
-  logger.debug('Defined cond macro');
-
   // when: Conditional execution when test is true
   // (when test expr1 expr2...)
   // Expands to: (if test (do expr1 expr2...) nil)

@@ -52,3 +52,14 @@
 
 (defmacro nth (coll index)
   `(get ~coll ~index))
+
+(defmacro cond (& clauses)
+  (if (= (length clauses) 0)
+      nil
+      (if (= (length clauses) 1)
+          `(if ~(first (first clauses))
+               ~(second (first clauses))
+               nil)
+          `(if ~(first (first clauses))
+               ~(second (first clauses))
+               (cond ~@(rest clauses))))))
