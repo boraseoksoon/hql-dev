@@ -1,7 +1,7 @@
 // src/s-exp/macro.ts - Refactored version
 import { 
   SExp, SSymbol, SList, 
-  isSymbol, isList, isLiteral, isDefMacro, isUserMacro,
+  isSymbol, isList, isLiteral, isDefMacro,
   createSymbol, createList, createLiteral, createNilLiteral, sexpToString,
   cloneSExp
 } from './types.ts';
@@ -70,70 +70,6 @@ export function defineMacro(macroForm: SList, env: Environment, logger: Logger):
   // Register the macro in the environment
   env.defineMacro(macroName, macroFn);
   logger.debug(`Registered macro: ${macroName}`);
-}
-
-/**
- * Define a user-level macro in the environment
- */
-export function defineUserMacro(macroForm: SList, env: Environment, logger: Logger): void {
-  // Validate macro definition: (macro name [params...] body...)
-  if (macroForm.elements.length < 4) {
-    throw new Error('macro requires a name, parameter list, and body');
-  }
-
-  // Get macro name
-  const macroNameExp = macroForm.elements[1];
-  if (!isSymbol(macroNameExp)) {
-    throw new Error('Macro name must be a symbol');
-  }
-  const macroName = macroNameExp.name;
-
-  // Get parameter list
-  const paramsExp = macroForm.elements[2];
-  if (!isList(paramsExp)) {
-    throw new Error('Macro parameters must be a list');
-  }
-
-  // Process parameter list, handling rest parameters
-  const { params, restParam } = processParamList(paramsExp, logger);
-
-  // Get macro body (all remaining forms)
-  const body = macroForm.elements.slice(3);
-
-  // Create macro function
-  const macroFn = (args: SExp[], callEnv: Environment): SExp => {
-    logger.debug(`Expanding user macro ${macroName} with ${args.length} args`);
-    
-    // Create new environment for macro expansion
-    const macroEnv = createMacroEnv(callEnv, { params, restParam }, args, logger);
-
-    // Evaluate body expressions
-    let result: SExp = createNilLiteral();
-    for (const expr of body) {
-      result = evaluateForMacro(expr, macroEnv, logger);
-    }
-
-    logger.debug(`User macro ${macroName} expanded to: ${sexpToString(result)}`);
-    return result;
-  };
-
-  // Tag as a macro function and a user-level macro
-  Object.defineProperty(macroFn, 'isMacro', { value: true });
-  Object.defineProperty(macroFn, 'isUserMacro', { value: true });
-  Object.defineProperty(macroFn, 'macroName', { value: macroName });
-  
-  // Store the original parameter list and body for serialization
-  Object.defineProperty(macroFn, 'paramList', { 
-    value: cloneSExp(paramsExp)
-  });
-  
-  Object.defineProperty(macroFn, 'bodyList', { 
-    value: body.map(cloneSExp)
-  });
-
-  // Register the macro in the environment
-  env.defineUserMacro(macroName, macroFn);
-  logger.debug(`Registered user-level macro: ${macroName}`);
 }
 
 /**
@@ -654,12 +590,6 @@ export function expandMacros(
       } catch (error) {
         logger.error(`Error defining macro: ${error.message}`);
       }
-    } else if (isUserMacro(expr) && isList(expr)) {
-      try {
-        defineUserMacro(expr as SList, env, logger);
-      } catch (error) {
-        logger.error(`Error defining user-level macro: ${error.message}`);
-      }
     }
   }
 
@@ -676,8 +606,8 @@ export function expandMacros(
     
     // Process each expression, expanding macros at all levels
     currentExprs = currentExprs.map(expr => {
-      // Skip macro definitions in expansion phase
-      if (isDefMacro(expr) || isUserMacro(expr)) {
+      if (isDefMacro(expr)) {
+        // Skip macro definitions in expansion phase
         return expr;
       }
       

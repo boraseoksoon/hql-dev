@@ -115,10 +115,6 @@ export function isLambda(exp: SExp): boolean {
   return isForm(exp, 'fn');
 }
 
-export function isUserMacro(exp: SExp): boolean {
-  return isForm(exp, 'macro');
-}
-
 /**
  * Convert S-expression to a readable string for debugging
  */

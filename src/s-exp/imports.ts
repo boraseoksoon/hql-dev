@@ -1,9 +1,9 @@
 // src/s-exp/imports.ts - Refactored
 
 import * as path from "https://deno.land/std/path/mod.ts";
-import { SExp, SList, SLiteral, SSymbol, isSymbol, isLiteral, isList, isImport, isUserMacro, createList, createSymbol } from './types.ts';
-import { Environment, MacroFn } from '../environment.ts';
-import { evaluateForMacro, defineUserMacro } from './macro.ts';
+import { SExp, SList, SLiteral, SSymbol, isSymbol, isLiteral, isImport } from './types.ts';
+import { Environment } from '../environment.ts';
+import { evaluateForMacro } from './macro.ts';
 import { parse } from './parser.ts';
 import { Logger } from '../logger.ts';
 
@@ -114,17 +114,6 @@ function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger)
         } catch (error) {
           logger.error(`Error processing defn: ${error.message}`);
         }
-      }
-    }
-  }
-  
-  // Third pass: Process user-level macro declarations
-  for (const expr of exprs) {
-    if (isUserMacro(expr) && isList(expr)) {
-      try {
-        defineUserMacro(expr as SList, env, logger);
-      } catch (error) {
-        logger.error(`Error processing user-level macro: ${error.message}`);
       }
     }
   }
@@ -389,43 +378,11 @@ async function importSymbolAs(
   logger: Logger
 ): Promise<void> {
   try {
-    // First check in the moduleExports map
-    if (env.moduleExports.has(moduleName)) {
-      const moduleExports = env.moduleExports.get(moduleName)!;
-      if (symbolName in moduleExports) {
-        const value = moduleExports[symbolName];
-        
-        // Handle user-level macros specially
-        if (value && typeof value === 'object' && value.type === "user-macro") {
-          // Create a copy of the macro data with the new name
-          const aliasedMacroData = {
-            ...value,
-            name: aliasName
-          };
-          
-          // Reconstruct with the new name
-          reconstructUserMacro(aliasName, aliasedMacroData, env, logger);
-          logger.debug(`Reconstructed user-level macro: ${symbolName} as ${aliasName}`);
-          return;
-        }
-        
-        // Otherwise, define as a regular value
-        env.define(aliasName, value);
-        logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
-        return;
-      }
-    }
-    
-    // Fallback to normal import
-    try {
-      const value = env.lookup(`${moduleName}.${symbolName}`);
-      env.define(aliasName, value);
-      logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
-    } catch (error) {
-      logger.warn(`Symbol not found in module: ${symbolName}`);
-    }
+    const value = env.lookup(`${moduleName}.${symbolName}`);
+    env.define(aliasName, value);
+    logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
   } catch (error) {
-    logger.warn(`Error importing symbol ${symbolName}: ${error.message}`);
+    logger.warn(`Symbol not found in module: ${symbolName}`);
   }
 }
 
@@ -439,59 +396,11 @@ async function importSymbolDirectly(
   logger: Logger
 ): Promise<void> {
   try {
-    // First check in the moduleExports map
-    if (env.moduleExports.has(moduleName)) {
-      const moduleExports = env.moduleExports.get(moduleName)!;
-      if (symbolName in moduleExports) {
-        const value = moduleExports[symbolName];
-        
-        // Handle user-level macros specially
-        if (value && typeof value === 'object' && value.type === "user-macro") {
-          reconstructUserMacro(symbolName, value, env, logger);
-          logger.debug(`Reconstructed user-level macro: ${symbolName}`);
-          return;
-        }
-        
-        // Otherwise, define as a regular value
-        env.define(symbolName, value);
-        logger.debug(`Imported symbol: ${symbolName}`);
-        return;
-      }
-    }
-    
-    // Fallback to normal import
-    try {
-      const value = env.lookup(`${moduleName}.${symbolName}`);
-      env.define(symbolName, value);
-      logger.debug(`Imported symbol: ${symbolName}`);
-    } catch (error) {
-      logger.warn(`Symbol not found in module: ${symbolName}`);
-    }
+    const value = env.lookup(`${moduleName}.${symbolName}`);
+    env.define(symbolName, value);
+    logger.debug(`Imported symbol: ${symbolName}`);
   } catch (error) {
-    logger.warn(`Error importing symbol ${symbolName}: ${error.message}`);
-  }
-}
-
-function reconstructUserMacro(
-  macroName: string,
-  macroData: any,
-  env: Environment,
-  logger: Logger
-): void {
-  try {
-    // Construct a macro definition S-expression
-    const macroDefSExp = createList(
-      createSymbol('macro'),
-      createSymbol(macroName),
-      macroData.definition.paramList,
-      ...macroData.definition.bodyList
-    );
-    
-    // Define the macro using the constructed definition
-    defineUserMacro(macroDefSExp as SList, env, logger);
-    logger.debug(`Reconstructed user macro: ${macroName}`);
-  } catch (error) {
-    logger.error(`Failed to reconstruct user macro ${macroName}: ${error.message}`);
+    logger.warn(`Symbol not found in module: ${symbolName}`);
   }
 }
 
@@ -637,35 +546,14 @@ function processVectorExport(
     logger.debug(`Processing export for symbol: ${symbolName}`);
     
     try {
-      // Check if this is a user-level macro
-      if (env.hasMacro(symbolName)) {
-        const macroFn = env.getMacro(symbolName);
-        if (macroFn && 'isUserMacro' in macroFn) {
-          // For user macros, we create a special representation to be exported
-          moduleExports[symbolName] = {
-            type: "user-macro",
-            name: symbolName,
-            // Save the original macro definition elements for reconstruction
-            definition: {
-              paramList: macroFn['paramList'],
-              bodyList: macroFn['bodyList']
-            }
-          };
-          logger.debug(`Added export "${symbolName}" as user-level macro`);
-          continue;
-        }
-      }
+      // Look up the value from the environment
+      const value = env.lookup(symbolName);
       
-      // For regular values, look up in the environment
-      try {
-        const value = env.lookup(symbolName);
-        moduleExports[symbolName] = value;
-        logger.debug(`Added export "${symbolName}" with self-named value`);
-      } catch (error) {
-        logger.warn(`Failed to lookup symbol "${symbolName}" for export`);
-      }
+      // Store in module exports
+      moduleExports[symbolName] = value;
+      logger.debug(`Added export "${symbolName}" with self-named value`);
     } catch (error) {
-      logger.warn(`Error processing export for "${symbolName}": ${error.message}`);
+      logger.warn(`Failed to lookup symbol "${symbolName}" for export`);
     }
   }
 }
