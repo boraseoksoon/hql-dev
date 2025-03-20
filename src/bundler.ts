@@ -24,6 +24,7 @@ export interface BundleOptions {
   define?: Record<string, string>;
   tempDir?: string;
   keepTemp?: boolean;
+  sourceDir?: string; // Added to track the original source directory
 }
 
 /**
@@ -35,19 +36,6 @@ async function ensureDir(dir: string): Promise<void> {
   } catch (error) {
     if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
   }
-}
-
-/**
- * Rebase relative import specifiers in the generated code.
- */
-function rebaseImports(code: string, originalDir: string): string {
-  return code.replace(
-    /(from\s+['"])(\.{1,2}\/[^'"]+)(['"])/g,
-    (_, prefix, relPath, suffix) => {
-      const absPath = resolve(originalDir, relPath);
-      return `${prefix}${absPath}${suffix}`;
-    }
-  );
 }
 
 /**
@@ -70,8 +58,13 @@ async function writeOutput(
 
 /**
  * Create an esbuild plugin to handle HQL imports in JS files
+ * Enhanced to correctly resolve imports when running from a temporary directory
  */
-function createHqlPlugin(options: { verbose?: boolean, tempDir?: string }): any {
+function createHqlPlugin(options: { 
+  verbose?: boolean, 
+  tempDir?: string,
+  sourceDir?: string // Original source directory
+}): any {
   const logger = new Logger(options.verbose);
   const processedHqlFiles = new Set<string>();
   const hqlToJsMap = new Map<string, string>(); // Map to track HQL to JS file mappings
@@ -118,7 +111,22 @@ function createHqlPlugin(options: { verbose?: boolean, tempDir?: string }): any 
           }
         }
         
-        // Strategy 3: Try looking in examples directory specifically
+        // Strategy 3: Try resolving from original source directory
+        if (!resolved && options.sourceDir) {
+          const sourcePath = resolve(options.sourceDir, args.path);
+          logger.debug(`Trying path relative to original source directory: ${sourcePath}`);
+          
+          try {
+            await Deno.stat(sourcePath);
+            fullPath = sourcePath;
+            resolved = true;
+            logger.debug(`Found file relative to source directory: ${fullPath}`);
+          } catch (e) {
+            // File not found via this strategy
+          }
+        }
+        
+        // Strategy 4: Try looking in examples directory
         if (!resolved) {
           const fileName = basename(args.path);
           const examplesPath = resolve(Deno.cwd(), "examples", "dependency-test", fileName);
@@ -129,6 +137,23 @@ function createHqlPlugin(options: { verbose?: boolean, tempDir?: string }): any 
             fullPath = examplesPath;
             resolved = true;
             logger.debug(`Found file in examples directory: ${fullPath}`);
+          } catch (e) {
+            // File not found via this strategy
+          }
+        }
+        
+        // Strategy 5: Try looking in the same directory as the original file
+        if (!resolved && options.sourceDir && args.path.startsWith('./')) {
+          // Get the parent directory of the source file
+          const sourceParentDir = dirname(options.sourceDir);
+          const sourcePath = resolve(sourceParentDir, args.path);
+          logger.debug(`Trying path in original file's parent directory: ${sourcePath}`);
+          
+          try {
+            await Deno.stat(sourcePath);
+            fullPath = sourcePath;
+            resolved = true;
+            logger.debug(`Found file in original file's parent directory: ${fullPath}`);
           } catch (e) {
             // File not found via this strategy
           }
@@ -213,7 +238,8 @@ function createHqlPlugin(options: { verbose?: boolean, tempDir?: string }): any 
           const { processHql } = await import("./transpiler/hql-transpiler.ts");
           const jsCode = await processHql(source, {
             baseDir: dirname(args.path),
-            verbose: options.verbose
+            verbose: options.verbose,
+            sourceDir: options.sourceDir // Pass source directory to processHql
           });
           
           // Write the JS file
@@ -238,33 +264,6 @@ function createHqlPlugin(options: { verbose?: boolean, tempDir?: string }): any 
             errors: [{ text: `Error loading HQL file: ${error instanceof Error ? error.message : String(error)}` }]
           };
         }
-      });
-    }
-  };
-}
-
-/**
- * Simple string hash function
- */
-function simpleHash(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return Math.abs(hash);
-}
-
-/**
- * Create an esbuild plugin to mark npm: and jsr: imports as external
- */
-function createExternalPlugin(): any {
-  return {
-    name: "external-npm-jsr",
-    setup(build: any) {
-      build.onResolve({ filter: /^(npm:|jsr:|https?:)/ }, (args: any) => {
-        return { path: args.path, external: true };
       });
     }
   };
@@ -299,7 +298,8 @@ async function processEntryFile(
       baseDir: dirname(resolvedInputPath),
       verbose: options.verbose,
       tempDir,
-      keepTemp: options.keepTemp
+      keepTemp: options.keepTemp,
+      sourceDir: options.sourceDir // Pass source directory to processHql
     });
     
     // Write the output
@@ -358,7 +358,8 @@ export async function bundleWithEsbuild(
   // Create the HQL plugin with temporary directory for processing
   const hqlPlugin = createHqlPlugin({ 
     verbose: options.verbose,
-    tempDir
+    tempDir,
+    sourceDir: options.sourceDir // Pass the source directory
   });
   
   const externalPlugin = createExternalPlugin();
@@ -469,6 +470,33 @@ function createBuildOptions(
 }
 
 /**
+ * Create an esbuild plugin to mark npm: and jsr: imports as external
+ */
+function createExternalPlugin(): any {
+  return {
+    name: "external-npm-jsr",
+    setup(build: any) {
+      build.onResolve({ filter: /^(npm:|jsr:|https?:)/ }, (args: any) => {
+        return { path: args.path, external: true };
+      });
+    }
+  };
+}
+
+/**
+ * Simple string hash function
+ */
+function simpleHash(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash);
+}
+
+/**
  * Main CLI function for transpilation and bundling with bidirectional import support
  */
 export async function transpileCLI(
@@ -485,17 +513,28 @@ export async function transpileCLI(
       ? resolvedInputPath.replace(/\.hql$/, ".js")
       : resolvedInputPath + ".bundle.js");
 
+  // Store the original source directory to help with module resolution
+  const sourceDir = dirname(resolvedInputPath);
+
   // Process the entry file to get an intermediate JS file
-  const processedPath = await processEntryFile(resolvedInputPath, outPath, options);
+  const processedPath = await processEntryFile(resolvedInputPath, outPath, {
+    ...options,
+    sourceDir // Pass source directory to ensure import resolution works
+  });
   
   // If bundling is enabled, run esbuild on the processed file
   if (options.bundle !== false) {
-    await bundleWithEsbuild(processedPath, outPath, options);
+    // Pass the sourceDir to bundleWithEsbuild
+    await bundleWithEsbuild(processedPath, outPath, {
+      ...options,
+      sourceDir // Pass source directory to bundleWithEsbuild
+    });
   }
   
   logger.log(`Successfully processed output to ${outPath}`);
   return outPath;
 }
+
 
 /**
  * Watch the given file for changes and re-run transpileCLI on modifications
