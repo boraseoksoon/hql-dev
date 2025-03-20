@@ -71,6 +71,13 @@ export function isDefMacro(exp: SExp): boolean {
   return isForm(exp, 'defmacro');
 }
 
+/**
+ * Check if an S-expression is a user-level macro definition
+ */
+export function isUserMacro(exp: SExp): boolean {
+  return isForm(exp, 'macro');
+}
+
 export function isImport(exp: SExp): boolean {
   return isForm(exp, 'import');
 }

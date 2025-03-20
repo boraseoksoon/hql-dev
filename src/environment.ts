@@ -1,4 +1,4 @@
-// src/environment.ts - Refactored
+// src/environment.ts - Refactored with module-level macro support
 import { SExp, SList, SSymbol, isSymbol, isList, createSymbol, createList, createLiteral } from './s-exp/types.ts';
 import { Logger } from './logger.ts';
 
@@ -9,12 +9,13 @@ export type MacroFn = (args: SExp[], env: Environment) => SExp;
 
 /**
  * Unified Environment class that combines runtime and macro-expansion environments
+ * Extended with module-level macro support
  */
 export class Environment {
   // Runtime variables store JavaScript values
   public variables = new Map<string, any>();
   
-  // Macros store macro expansion functions
+  // Macros store macro expansion functions (system-level)
   public macros = new Map<string, MacroFn>();
   
   // Imported modules store module exports
@@ -28,6 +29,18 @@ export class Environment {
   
   // Global environment singleton
   private static globalEnv: Environment | null = null;
+
+  // Module-level macro registry - tracks macros and their source file
+  public moduleMacros = new Map<string, Map<string, MacroFn>>();
+  
+  // Track which macros are exported from each file
+  public exportedMacros = new Map<string, Set<string>>();
+  
+  // Track which macros are imported into each file
+  public importedMacros = new Map<string, Map<string, string>>();
+  
+  // Track the current file being processed
+  private currentFilePath: string | null = null;
 
   /**
    * Initialize a global unified environment
@@ -45,6 +58,13 @@ export class Environment {
     env.logger.debug("Global environment initialized");
     Environment.globalEnv = env;
     return env;
+  }
+  
+  /**
+   * Get the global environment instance
+   */
+  static getGlobalEnv(): Environment | null {
+    return Environment.globalEnv;
   }
   
   /**
@@ -286,38 +306,117 @@ export class Environment {
   }
 
   /**
-   * Check if a macro exists in the environment chain
+   * Set the current file being processed
+   */
+  setCurrentFile(filePath: string | null): void {
+    if (filePath) {
+      this.logger.debug(`Setting current file to: ${filePath}`);
+    } else {
+      this.logger.debug(`Clearing current file`);
+    }
+    this.currentFilePath = filePath;
+  }
+  
+  /**
+   * Get the current file being processed
+   */
+  getCurrentFile(): string | null {
+    return this.currentFilePath;
+  }
+  
+  /**
+   * Define a module-scoped macro
+   */
+  defineModuleMacro(filePath: string, macroName: string, macroFn: MacroFn): void {
+    this.logger.debug(`Defining module macro: ${macroName} in ${filePath}`);
+    
+    // Get or create the file's macro registry
+    if (!this.moduleMacros.has(filePath)) {
+      this.moduleMacros.set(filePath, new Map<string, MacroFn>());
+    }
+    
+    const moduleRegistry = this.moduleMacros.get(filePath)!;
+    moduleRegistry.set(macroName, macroFn);
+    
+    // Tag the function with metadata
+    Object.defineProperty(macroFn, 'isMacro', { value: true });
+    Object.defineProperty(macroFn, 'macroName', { value: macroName });
+    Object.defineProperty(macroFn, 'sourceFile', { value: filePath });
+    Object.defineProperty(macroFn, 'isUserMacro', { value: true });
+  }
+
+  /**
+   * Mark a macro as exported from a file
+   */
+  exportMacro(filePath: string, macroName: string): void {
+    this.logger.debug(`Marking macro ${macroName} as exported from ${filePath}`);
+    
+    // Get or create the file's export registry
+    if (!this.exportedMacros.has(filePath)) {
+      this.exportedMacros.set(filePath, new Set<string>());
+    }
+    
+    // Add the macro to the exports
+    this.exportedMacros.get(filePath)!.add(macroName);
+  }
+  
+  /**
+   * Import a macro from sourceFile into targetFile
+   */
+  importMacro(sourceFile: string, macroName: string, targetFile: string): void {
+    this.logger.debug(`Importing macro ${macroName} from ${sourceFile} into ${targetFile}`);
+    
+    // Check if the source file has this macro
+    const sourceFileMacros = this.moduleMacros.get(sourceFile);
+    if (!sourceFileMacros || !sourceFileMacros.has(macroName)) {
+      this.logger.warn(`Macro ${macroName} not found in ${sourceFile}`);
+      return;
+    }
+    
+    // Check if the macro is exported
+    const exports = this.exportedMacros.get(sourceFile);
+    if (!exports || !exports.has(macroName)) {
+      this.logger.warn(`Macro ${macroName} is not exported from ${sourceFile}`);
+      return;
+    }
+    
+    // Get or create the target file's import registry
+    if (!this.importedMacros.has(targetFile)) {
+      this.importedMacros.set(targetFile, new Map<string, string>());
+    }
+    
+    // Record the import
+    this.importedMacros.get(targetFile)!.set(macroName, sourceFile);
+    
+    this.logger.debug(`Successfully imported macro ${macroName} from ${sourceFile} to ${targetFile}`);
+  }
+  
+  /**
+   * Check if a macro exists in the environment or is visible in the current module
    */
   hasMacro(key: string): boolean {
-    // Direct lookup
+    // Check global macros first
     if (this.macros.has(key)) {
-      this.logger.debug(`Found direct macro: ${key}`);
       return true;
     }
     
-    // Try with sanitized name
-    const sanitizedKey = key.replace(/-/g, '_');
-    if (sanitizedKey !== key && this.macros.has(sanitizedKey)) {
-      this.logger.debug(`Found macro with sanitized name: ${sanitizedKey}`);
-      return true;
-    }
-    
-    // Check for qualified macro names (module.macroName)
-    if (key.includes('.')) {
-      const [moduleName, macroName] = key.split('.');
+    // Check module-scoped macros if we have a current file
+    if (this.currentFilePath) {
+      // Check if defined in current file
+      const currentFileMacros = this.moduleMacros.get(this.currentFilePath);
+      if (currentFileMacros && currentFileMacros.has(key)) {
+        return true;
+      }
       
-      if (this.moduleExports.has(moduleName)) {
-        const moduleExports = this.moduleExports.get(moduleName)!;
-        if (typeof moduleExports[macroName] === 'function' && 
-            'isMacro' in moduleExports[macroName]) {
-          return true;
-        }
+      // Check if imported into current file
+      const imports = this.importedMacros.get(this.currentFilePath);
+      if (imports && imports.has(key)) {
+        const sourceFile = imports.get(key)!;
+        const sourceMacros = this.moduleMacros.get(sourceFile);
         
-        // Try with sanitized macro name
-        const sanitizedMacroName = macroName.replace(/-/g, '_');
-        if (sanitizedMacroName !== macroName &&
-            typeof moduleExports[sanitizedMacroName] === 'function' &&
-            'isMacro' in moduleExports[sanitizedMacroName]) {
+        // Verify it's exported from source file
+        const exports = this.exportedMacros.get(sourceFile);
+        if (exports && exports.has(key) && sourceMacros && sourceMacros.has(key)) {
           return true;
         }
       }
@@ -328,45 +427,79 @@ export class Environment {
   }
 
   /**
-   * Get a macro from the environment chain
+   * Get a macro from the environment if available in the current scope
    */
   getMacro(key: string): MacroFn | undefined {
-    // Direct lookup
+    // Check global macros first
     if (this.macros.has(key)) {
       return this.macros.get(key);
     }
     
-    // Try with sanitized name
-    const sanitizedKey = key.replace(/-/g, '_');
-    if (sanitizedKey !== key && this.macros.has(sanitizedKey)) {
-      return this.macros.get(sanitizedKey);
-    }
-    
-    // Check for qualified macro names
-    if (key.includes('.')) {
-      const [moduleName, macroName] = key.split('.');
+    // Check module-scoped macros if we have a current file
+    if (this.currentFilePath) {
+      // Check if defined in current file
+      const currentFileMacros = this.moduleMacros.get(this.currentFilePath);
+      if (currentFileMacros && currentFileMacros.has(key)) {
+        return currentFileMacros.get(key);
+      }
       
-      if (this.moduleExports.has(moduleName)) {
-        const moduleExports = this.moduleExports.get(moduleName)!;
+      // Check if imported into current file
+      const imports = this.importedMacros.get(this.currentFilePath);
+      if (imports && imports.has(key)) {
+        const sourceFile = imports.get(key)!;
+        const sourceMacros = this.moduleMacros.get(sourceFile);
         
-        // Try direct macro name
-        if (typeof moduleExports[macroName] === 'function' && 
-            'isMacro' in moduleExports[macroName]) {
-          return moduleExports[macroName] as MacroFn;
-        }
-        
-        // Try sanitized macro name
-        const sanitizedMacroName = macroName.replace(/-/g, '_');
-        if (sanitizedMacroName !== macroName && 
-            typeof moduleExports[sanitizedMacroName] === 'function' && 
-            'isMacro' in moduleExports[sanitizedMacroName]) {
-          return moduleExports[sanitizedMacroName] as MacroFn;
+        // Verify it's exported from source file
+        const exports = this.exportedMacros.get(sourceFile);
+        if (exports && exports.has(key) && sourceMacros && sourceMacros.has(key)) {
+          return sourceMacros.get(key);
         }
       }
     }
     
     // Check parent environment
     return this.parent ? this.parent.getMacro(key) : undefined;
+  }
+
+  /**
+   * Check if a symbol name is a user-level macro
+   */
+  isUserLevelMacro(symbolName: string, fromFile: string): boolean {
+    // Check if defined in the specified file
+    const fileMacros = this.moduleMacros.get(fromFile);
+    if (fileMacros && fileMacros.has(symbolName)) {
+      return true;
+    }
+    
+    // Check if imported into the specified file
+    const imports = this.importedMacros.get(fromFile);
+    if (imports && imports.has(symbolName)) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Check if a module has a specified macro
+   */
+  hasModuleMacro(filePath: string, macroName: string): boolean {
+    const moduleRegistry = this.moduleMacros.get(filePath);
+    return moduleRegistry ? moduleRegistry.has(macroName) : false;
+  }
+  
+  /**
+   * Get all macros defined in a module
+   */
+  getModuleMacros(filePath: string): Map<string, MacroFn> | undefined {
+    return this.moduleMacros.get(filePath);
+  }
+  
+  /**
+   * Get all macros exported from a module
+   */
+  getExportedMacros(filePath: string): Set<string> | undefined {
+    return this.exportedMacros.get(filePath);
   }
 
   /**

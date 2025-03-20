@@ -1,5 +1,7 @@
+// src/transpiler/hql-transpiler.ts - Updated with module-level macro support and fixes
+
 import * as path from "https://deno.land/std/path/mod.ts";
-import { sexpToString, isSymbol, isLiteral } from '../s-exp/types.ts';
+import { sexpToString, isSymbol, isLiteral, isUserMacro } from '../s-exp/types.ts';
 import { parse } from '../s-exp/parser.ts';
 import { Environment } from '../environment.ts';
 import { expandMacros } from '../s-exp/macro.ts';
@@ -18,6 +20,8 @@ interface ProcessOptions {
   module?: 'esm';
   includeSourceMap?: boolean;
   skipCoreHQL?: boolean; // Optional flag to skip core.hql loading (for testing)
+  sourceDir?: string; // Original source directory for imports
+  tempDir?: string; // Temporary directory for processing
 }
 
 /**
@@ -48,19 +52,54 @@ export async function processHql(
     
     // Debug: Print registered macros
     if (options.verbose) {
-      logger.debug("Available macros: " + Array.from(env.macros.keys()).join(", "));
+      const macroKeys = Array.from(env.macros.keys());
+      logger.debug("Available system macros: " + macroKeys.join(", "));
+      
+      // FIXED: Check if moduleMacros has any entries before trying to iterate
+      if (env.moduleMacros && env.moduleMacros.size > 0) {
+        let userMacroList: string[] = [];
+        
+        // Iterate over all module macros
+        for (const [filePath, macroMap] of env.moduleMacros.entries()) {
+          if (macroMap && macroMap.size > 0) {
+            for (const macroName of macroMap.keys()) {
+              userMacroList.push(`${macroName} (from ${path.basename(filePath)})`);
+            }
+          }
+        }
+        
+        if (userMacroList.length > 0) {
+          logger.debug("Available user macros: " + userMacroList.join(", "));
+        } else {
+          logger.debug("No user macros defined yet");
+        }
+      } else {
+        logger.debug("No user macros defined yet");
+      }
+    }
+    
+    // Set the current file if baseDir is provided
+    const currentFile = options.baseDir || null;
+    if (currentFile) {
+      env.setCurrentFile(currentFile);
     }
     
     // Step 3: Process imports in the user code
     logger.debug('Processing imports in user code');
     await processImports(sexps, env, {
       verbose: options.verbose,
-      baseDir: options.baseDir || Deno.cwd()
+      baseDir: options.baseDir || Deno.cwd(),
+      tempDir: options.tempDir,
+      currentFile: currentFile,
+      keepTemp: true
     });
     
     // Step 4: Expand macros in the user code
     logger.debug('Expanding macros in user code');
-    const expanded = expandMacros(sexps, env, { verbose: options.verbose });
+    const expanded = expandMacros(sexps, env, currentFile, { 
+      verbose: options.verbose,
+      maxExpandDepth: 20 // Increased for complex macros
+    });
     
     if (options.verbose) {
       for (const sexp of expanded) {
@@ -68,54 +107,32 @@ export async function processHql(
       }
     }
     
-    // Step 5: Convert to HQL AST
-    logger.debug('Converting to HQL AST');
-    const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
+    // Step 5: Post-process expanded expressions 
+    // Filter out macro definitions - they shouldn't be in the output
+    const processedExprs = expanded.filter(expr => {
+      // Skip macro definitions
+      if (isUserMacro(expr)) {
+        logger.debug(`Filtering out user macro: ${sexpToString(expr)}`);
+        return false;
+      }
+      return true;
+    });
     
-    // Step 6: Transform to JavaScript using existing pipeline
+    // Step 6: Convert to HQL AST
+    logger.debug('Converting to HQL AST');
+    const hqlAst = convertToHqlAst(processedExprs, { verbose: options.verbose });
+    
+    // Step 7: Transform to JavaScript using existing pipeline
     logger.debug('Transforming to JavaScript');
-    const baseDir = options.baseDir || Deno.cwd();
-    let jsCode = await transformAST(hqlAst, baseDir, {
+    const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), {
       verbose: options.verbose,
       module: options.module || 'esm',
       bundle: false
     });
     
-    // Step 7: Ensure proper exports are included
-    const exportStatements: Array<{exportName: string, symbolName: string}> = [];
-    
-    for (const expr of sexps) {
-      if (expr.type === 'list' && 
-          expr.elements.length >= 3 &&
-          isSymbol(expr.elements[0]) && 
-          expr.elements[0].name === 'export' &&
-          isLiteral(expr.elements[1]) &&
-          isSymbol(expr.elements[2])) {
-        
-        const exportName = (expr.elements[1] as any).value as string;
-        const symbolName = (expr.elements[2] as any).name;
-        
-        // Sanitize symbol name for JavaScript
-        const sanitizedSymbol = symbolName.replace(/-/g, '_');
-        
-        exportStatements.push({
-          exportName,
-          symbolName: sanitizedSymbol
-        });
-      }
-    }
-    
-    logger.debug(`Found ${exportStatements.length} export statements`);
-    
-    // If we have export statements, ensure they're properly included in the JS output
-    if (exportStatements.length > 0) {
-      // Add explicit export statements to the end
-      jsCode += '\n\n// Explicit ES Module exports\n';
-      
-      exportStatements.forEach(({exportName, symbolName}) => {
-        logger.debug(`Adding export for "${exportName}" from symbol "${symbolName}"`);
-        jsCode += `export { ${symbolName} as "${exportName}" };\n`;
-      });
+    // Clear current file when done
+    if (currentFile) {
+      env.setCurrentFile(null);
     }
     
     logger.debug('Processing complete');
@@ -123,7 +140,9 @@ export async function processHql(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`Error processing HQL: ${errorMessage}`);
-    console.error(error.stack);
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    }
     throw error;
   }
 }
@@ -165,11 +184,12 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
     // Process imports in core.hql
     await processImports(coreExps, env, {
       verbose: options.verbose || false,
-      baseDir: path.dirname(corePath)
+      baseDir: path.dirname(corePath),
+      currentFile: corePath  // Set current file to the core.hql path
     });
     
     // Register macros defined in core.hql
-    const expanded = expandMacros(coreExps, env, { 
+    const expanded = expandMacros(coreExps, env, corePath, { 
       verbose: options.verbose,
       maxExpandDepth: 20, // Increased for complex macros
       maxPasses: 3 // Multiple passes for recursive macros
@@ -177,8 +197,8 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
     
     // Print registered macros for debugging
     if (options.verbose) {
-      const macroKeys = Array.from(env.macros.keys());
-      logger.debug(`Registered macros: ${macroKeys.join(", ")}`);
+      const systemMacroKeys = Array.from(env.macros.keys());
+      logger.debug(`Registered system macros: ${systemMacroKeys.join(", ")}`);
     }
     
     // Mark core as loaded
