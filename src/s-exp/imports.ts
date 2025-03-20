@@ -212,48 +212,66 @@ async function processImport(
       throw new Error(`Unsupported import file type: ${modulePath}`);
     }
     
+    // Get the vector elements, skipping the "vector" symbol if present
+    let vectorElements = symbolsVector.elements;
+    if (vectorElements.length > 0 && 
+        isSymbol(vectorElements[0]) && 
+        vectorElements[0].name === "vector") {
+      vectorElements = vectorElements.slice(1);
+    }
+    
+    // Filter out commas
+    vectorElements = vectorElements.filter(elem => 
+      !(isSymbol(elem) && (elem as SSymbol).name === ',')
+    );
+    
     // Now process each symbol in the vector and import it directly
-    for (const symbolExpr of symbolsVector.elements) {
+    let i = 0;
+    while (i < vectorElements.length) {
       // Handle simple symbol without alias: symbol
-      if (isSymbol(symbolExpr)) {
-        const symbolName = symbolExpr.name;
+      if (isSymbol(vectorElements[i])) {
+        const symbolName = (vectorElements[i] as SSymbol).name;
         
-        try {
-          // Get the value from the temporary module
-          const value = env.lookup(`${tempModuleName}.${symbolName}`);
+        // Check if this is followed by "as" and an alias
+        if (i + 2 < vectorElements.length && 
+            isSymbol(vectorElements[i+1]) && 
+            (vectorElements[i+1] as SSymbol).name === 'as' &&
+            isSymbol(vectorElements[i+2])) {
+            
+          const aliasName = (vectorElements[i+2] as SSymbol).name;
           
-          // Register the symbol directly in the current environment
-          env.define(symbolName, value);
-          logger.debug(`Imported symbol: ${symbolName}`);
-        } catch (error) {
-          logger.warn(`Symbol not found in module: ${symbolName}`);
+          try {
+            // Get the value from the temporary module
+            const value = env.lookup(`${tempModuleName}.${symbolName}`);
+            
+            // Register the symbol with the alias in the current environment
+            env.define(aliasName, value);
+            logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
+            
+            i += 3; // Skip symbol, 'as', and alias
+          } catch (error) {
+            logger.warn(`Symbol not found in module: ${symbolName}`);
+            i += 3; // Still skip all three elements
+          }
+        } else {
+          // Simple symbol without alias
+          try {
+            // Get the value from the temporary module
+            const value = env.lookup(`${tempModuleName}.${symbolName}`);
+            
+            // Register the symbol directly in the current environment
+            env.define(symbolName, value);
+            logger.debug(`Imported symbol: ${symbolName}`);
+            
+            i++; // Move to next element
+          } catch (error) {
+            logger.warn(`Symbol not found in module: ${symbolName}`);
+            i++; // Still move to next element
+          }
         }
-      }
-      // Handle symbol with alias: [symbol as alias]
-      else if (symbolExpr.type === 'list' && 
-               symbolExpr.elements.length === 3 && 
-               isSymbol(symbolExpr.elements[0]) && 
-               isSymbol(symbolExpr.elements[1]) && 
-               symbolExpr.elements[1].name === 'as' && 
-               isSymbol(symbolExpr.elements[2])) {
-        
-        const symbolName = symbolExpr.elements[0].name;
-        const aliasName = symbolExpr.elements[2].name;
-        
-        try {
-          // Get the value from the temporary module
-          const value = env.lookup(`${tempModuleName}.${symbolName}`);
-          
-          // Register the symbol with the alias in the current environment
-          env.define(aliasName, value);
-          logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
-        } catch (error) {
-          logger.warn(`Symbol not found in module: ${symbolName}`);
-        }
-      }
-      // Invalid format
-      else {
-        logger.warn(`Invalid symbol format in import vector: ${sexpToString(symbolExpr)}`);
+      } else {
+        // Skip unrecognized element
+        i++;
       }
     }
     
@@ -379,6 +397,10 @@ async function processHqlImport(
  * Process exports and definitions in a file
  * Updated to handle the new vector-based export syntax
  */
+/**
+ * Process exports and definitions in a file
+ * Updated to correctly handle the new vector-based export syntax
+ */
 function processFileExportsAndDefinitions(
   expressions: SExp[],
   env: Environment,
@@ -406,8 +428,18 @@ function processFileExportsAndDefinitions(
       
       logger.debug(`Processing vector export with ${exportVector.elements.length} symbols`);
       
+      // Get the elements inside the vector, skipping the "vector" keyword if present
+      let elementsToProcess = exportVector.elements;
+      
+      // Skip the first element if it's the "vector" symbol since it's part of syntax, not content
+      if (elementsToProcess.length > 0 && 
+          isSymbol(elementsToProcess[0]) && 
+          elementsToProcess[0].name === "vector") {
+        elementsToProcess = elementsToProcess.slice(1);
+      }
+      
       // Process each symbol in the export vector
-      for (const symbolExpr of exportVector.elements) {
+      for (const symbolExpr of elementsToProcess) {
         // Skip non-symbol elements (like commas)
         if (!isSymbol(symbolExpr)) {
           // Check if it's a comma (which should be ignored)

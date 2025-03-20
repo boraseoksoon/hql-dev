@@ -75,6 +75,10 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
 /**
  * Transform a vector-based export statement to its IR representation
  */
+/**
+ * Transform a vector-based export statement to its IR representation
+ * Properly handles: (export [add, subtract, multiply, divide])
+ */
 function transformVectorExport(list: ListNode, currentDir: string): IR.IRNode | null {
   // Verify this is an export with a vector: (export [symbol1, symbol2])
   if (list.elements.length !== 2) {
@@ -87,25 +91,34 @@ function transformVectorExport(list: ListNode, currentDir: string): IR.IRNode | 
     throw new Error("Export argument must be a vector");
   }
   
-  // Create export statements for each symbol in the vector
-  const statements: IR.IRNode[] = [];
-  const exportElements = (vectorNode as ListNode).elements;
+  // Get the elements of the vector, excluding the "vector" symbol if present
+  let exportElements = (vectorNode as ListNode).elements;
+  
+  // Skip the first element if it's the "vector" symbol
+  if (exportElements.length > 0 && 
+      exportElements[0].type === "symbol" && 
+      (exportElements[0] as SymbolNode).name === "vector") {
+    exportElements = exportElements.slice(1);
+  }
   
   // Filter out comma symbols (they're just for syntax)
   const symbols = exportElements.filter(elem => 
     !(elem.type === "symbol" && (elem as SymbolNode).name === ",")
   );
   
-  // For each symbol, create an export statement
+  // Create a single export named declaration with all specifiers
+  const exportSpecifiers: IR.IRExportSpecifier[] = [];
+  
+  // For each symbol, create an export specifier
   for (const elem of symbols) {
     if (elem.type !== "symbol") {
-      continue; // Skip non-symbols (should be validated earlier)
+      continue; // Skip non-symbols
     }
     
     const symbolName = (elem as SymbolNode).name;
     
     // Create an export specifier for this symbol
-    const exportSpecifier: IR.IRExportSpecifier = {
+    exportSpecifiers.push({
       type: IR.IRNodeType.ExportSpecifier,
       local: { 
         type: IR.IRNodeType.Identifier, 
@@ -115,35 +128,19 @@ function transformVectorExport(list: ListNode, currentDir: string): IR.IRNode | 
         type: IR.IRNodeType.Identifier, 
         name: symbolName 
       } as IR.IRIdentifier
-    };
-    
-    // Create the export declaration
-    const exportDecl: IR.IRExportNamedDeclaration = {
-      type: IR.IRNodeType.ExportNamedDeclaration,
-      specifiers: [exportSpecifier]
-    };
-    
-    statements.push(exportDecl);
+    });
   }
   
-  // If there's only one export, return it directly
-  if (statements.length === 1) {
-    return statements[0];
-  }
-  
-  // Otherwise, create a block statement containing all exports
+  // Create a single export declaration with all specifiers
   return {
-    type: IR.IRNodeType.BlockStatement,
-    body: statements
-  } as IR.IRBlockStatement;
+    type: IR.IRNodeType.ExportNamedDeclaration,
+    specifiers: exportSpecifiers
+  } as IR.IRExportNamedDeclaration;
 }
 
 /**
  * Transform a vector-based import statement to its IR representation
- */
-/**
- * Transform a vector-based import statement to its IR representation
- * Handles the new syntax: (import [symbol1, symbol2 as alias2] from "./path.hql")
+ * Properly handles: (import [symbol1, symbol2 as alias2] from "./path.hql")
  */
 function transformVectorImport(list: ListNode, currentDir: string): IR.IRNode | null {
   // Verify this is an import with a vector and 'from': (import [symbol1, symbol2 as alias2] from "./path.hql")
@@ -161,30 +158,39 @@ function transformVectorImport(list: ListNode, currentDir: string): IR.IRNode | 
   // Get the module path
   const modulePath = (list.elements[3] as LiteralNode).value as string;
   
-  // Create array to hold import specifiers
-  const importSpecifiers: IR.IRImportSpecifier[] = [];
+  // Get the vector elements, excluding the "vector" symbol if present
+  let importElements = vectorNode.elements;
+  
+  // Skip the first element if it's the "vector" symbol
+  if (importElements.length > 0 && 
+      importElements[0].type === "symbol" && 
+      (importElements[0] as SymbolNode).name === "vector") {
+    importElements = importElements.slice(1);
+  }
   
   // Filter out comma symbols
-  const importElements = vectorNode.elements.filter(elem => 
+  importElements = importElements.filter(elem => 
     !(elem.type === "symbol" && (elem as SymbolNode).name === ",")
   );
+  
+  // Create array to hold import specifiers
+  const importSpecifiers: IR.IRImportSpecifier[] = [];
   
   // Process symbols and their aliases
   let i = 0;
   while (i < importElements.length) {
     const elem = importElements[i];
     
-    // Check if element is a symbol
+    // Handle simple symbol without alias: symbol
     if (elem.type === "symbol") {
       const symbolName = (elem as SymbolNode).name;
       
-      // Check if this is followed by "as" and an alias
+      // Check if this is part of an 'as' construct
       if (i + 2 < importElements.length && 
           importElements[i+1].type === "symbol" && 
           (importElements[i+1] as SymbolNode).name === "as" &&
           importElements[i+2].type === "symbol") {
         
-        // This is a symbol with an alias: symbol as alias
         const aliasName = (importElements[i+2] as SymbolNode).name;
         
         // Create an import specifier with alias
@@ -200,7 +206,7 @@ function transformVectorImport(list: ListNode, currentDir: string): IR.IRNode | 
           } as IR.IRIdentifier
         });
         
-        i += 3; // Skip the symbol, 'as', and alias
+        i += 3; // Skip the current symbol, 'as', and alias
       } else {
         // Simple symbol without alias
         importSpecifiers.push({
@@ -234,6 +240,10 @@ function transformVectorImport(list: ListNode, currentDir: string): IR.IRNode | 
 /**
  * Transform a list node to its IR representation.
  */
+/**
+ * Transform a list node to its IR representation.
+ * Handles special cases for import/export with vector syntax.
+ */
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (list.elements.length === 0) {
     return transformEmptyList();
@@ -244,25 +254,6 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (jsGetInvokeResult) return jsGetInvokeResult;
   
   const first = list.elements[0];
-
-  if (first.type === "symbol" && 
-    (first as SymbolNode).name === "export" && 
-    list.elements.length === 2 &&
-    list.elements[1].type === "list") {
-  
-  return transformVectorExport(list, currentDir);
-}
-
-// Check for vector-based import: (import [symbol1, symbol2 as alias2] from "./path.hql")
-if (first.type === "symbol" && 
-    (first as SymbolNode).name === "import" && 
-    list.elements.length === 4 &&
-    list.elements[1].type === "list" &&
-    list.elements[2].type === "symbol" &&
-    (list.elements[2] as SymbolNode).name === "from") {
-  
-  return transformVectorImport(list, currentDir);
-}
 
   // Special case for defmacro - handle it explicitly to avoid runtime errors
   if (first.type === "symbol" && (first as SymbolNode).name === "defmacro") {
@@ -279,7 +270,23 @@ if (first.type === "symbol" &&
   if (first.type === "symbol") {
     const op = (first as SymbolNode).name;
     
-    // Case 2: First element is a symbol
+    // Check for vector-based export: (export [symbol1, symbol2])
+    if (op === "export" && list.elements.length === 2 &&
+        list.elements[1].type === "list") {
+      
+      return transformVectorExport(list, currentDir);
+    }
+    
+    // Check for vector-based import: (import [symbol1, symbol2 as alias2] from "./path.hql")
+    if (op === "import" && list.elements.length === 4 &&
+        list.elements[1].type === "list" &&
+        list.elements[2].type === "symbol" &&
+        (list.elements[2] as SymbolNode).name === "from") {
+      
+      return transformVectorImport(list, currentDir);
+    }
+    
+    // Handle legacy import: (import module "./path.hql")
     if (op === "import" && list.elements.length === 3) {
       // Extract module name and path
       const nameNode = list.elements[1];
