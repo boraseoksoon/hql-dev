@@ -18,6 +18,34 @@ export function transformToIR(nodes: HQLNode[], currentDir: string): IR.IRProgra
 }
 
 /**
+ * Transform a user macro definition to its IR representation 
+ */
+function transformUserMacro(list: ListNode, currentDir: string): IR.IRNode {
+  // Check if this is a user-level macro definition
+  if (list.elements.length < 4 || 
+      list.elements[0].type !== "symbol" ||
+      (list.elements[0] as SymbolNode).name !== "macro") {
+    throw new Error("Invalid user macro definition");
+  }
+
+  // Extract macro name
+  const nameNode = list.elements[1];
+  if (nameNode.type !== "symbol") {
+    throw new Error("Macro name must be a symbol");
+  }
+
+  const macroName = (nameNode as SymbolNode).name;
+  
+  // Create a comment node that explains this is a compile-time construct
+  return {
+    type: IR.IRNodeType.CommentBlock,
+    value: ` User-level macro '${macroName}' defined here.\n` +
+           ` This is a compile-time only construct and doesn't generate runtime code.\n` +
+           ` It can be imported and used in other modules.`
+  } as IR.IRCommentBlock;
+}
+
+/**
  * Transform a single HQL node to its IR representation.
  */
 function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
@@ -401,6 +429,10 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (first.type === "symbol") {
     const op = (first as SymbolNode).name;
     
+    if (op === "macro") {
+      return transformUserMacro(list, currentDir);
+    }
+
     // Check for vector-based export: (export [symbol1, symbol2])
     if (isVectorExport(list)) {
       return transformVectorExport(list, currentDir);

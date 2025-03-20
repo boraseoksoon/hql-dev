@@ -286,6 +286,27 @@ export class Environment {
   }
 
   /**
+   * Define a user-level macro in this environment
+   */
+  defineUserMacro(key: string, macro: MacroFn): void {
+    this.logger.debug(`Defining user-level macro: ${key}`);
+    
+    // Store the macro in the macros map
+    this.macros.set(key, macro);
+    
+    // Tag the function as a user-level macro
+    Object.defineProperty(macro, 'isUserMacro', { value: true });
+    Object.defineProperty(macro, 'macroName', { value: key });
+    
+    // Also register with sanitized name if different
+    const sanitizedKey = key.replace(/-/g, '_');
+    if (sanitizedKey !== key) {
+      this.logger.debug(`Also registering user-level macro with sanitized name: ${sanitizedKey}`);
+      this.macros.set(sanitizedKey, macro);
+    }
+  }  
+
+  /**
    * Check if a macro exists in the environment chain
    */
   hasMacro(key: string): boolean {
@@ -374,35 +395,43 @@ export class Environment {
    */
   importModule(moduleName: string, exports: Record<string, any>): void {
     this.logger.debug(`Importing module: ${moduleName}`);
-
+  
     // Create a module object with all exports
     const moduleObj: Record<string, any> = {...exports};
-
+  
     // Store the module as a variable
     this.define(moduleName, moduleObj);
-
+  
     // Store module exports for qualified access
     this.moduleExports.set(moduleName, exports);
-
-    // Register all macros and functions from the module
+  
+    // Register all exports from the module
     for (const [exportName, exportValue] of Object.entries(exports)) {
-      if (typeof exportValue === 'function') {
-        if ('isMacro' in exportValue) {
-          // Register direct macros with qualified name
-          this.macros.set(`${moduleName}.${exportName}`, exportValue as MacroFn);
-          
-          // For core modules, also register direct macros
-          if (moduleName === 'core' || moduleName === 'lib/core') {
-            this.defineMacro(exportName, exportValue as MacroFn);
-          }
+      // Handle functions that are directly tagged as macros
+      if (typeof exportValue === 'function' && 'isMacro' in exportValue) {
+        // Register with qualified name
+        this.macros.set(`${moduleName}.${exportName}`, exportValue as MacroFn);
+        
+        // For core modules or system macros, also register directly
+        if (moduleName === 'core' || moduleName === 'lib/core' || !('isUserMacro' in exportValue)) {
+          this.defineMacro(exportName, exportValue as MacroFn);
         }
-        // Register functions for macro evaluation
-        else if ('isDefFunction' in exportValue) {
-          this.define(`${moduleName}.${exportName}`, exportValue);
-        }
+      } 
+      // Handle exported user macro definitions
+      else if (typeof exportValue === 'object' && 
+               exportValue !== null && 
+               exportValue.type === "user-macro") {
+        
+        // The actual reconstruction happens during the import process
+        // We just need to ensure it's available in the module exports
+        this.logger.debug(`Module ${moduleName} contains user macro: ${exportName}`);
+      }
+      // Register regular function exports
+      else if (typeof exportValue === 'function' && 'isDefFunction' in exportValue) {
+        this.define(`${moduleName}.${exportName}`, exportValue);
       }
     }
-
+  
     this.logger.debug(`Module ${moduleName} imported with exports in Environment`);
   }
 
