@@ -151,8 +151,10 @@ function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger)
   }
 }
 
+// Modified processImport function in src/s-exp/imports.ts
+
 /**
- * Process a single import expression
+ * Process a single import expression with support for the new vector syntax
  */
 async function processImport(
   importExpr: SList, 
@@ -165,13 +167,109 @@ async function processImport(
   const importMap = options.importMap!;
   const tempDir = options.tempDir!;
   
-  if (importExpr.elements.length !== 3) {
+  // Get the elements of the import expression
+  const elements = importExpr.elements;
+  
+  // Check if this is the new vector-based syntax:
+  // (import [symbol1, symbol2 as alias2] from "./path.hql")
+  if (elements.length >= 4 && 
+      elements[1].type === 'list' && 
+      isSymbol(elements[2]) && 
+      elements[2].name === 'from') {
+    
+    // This is the new syntax
+    logger.debug(`Processing new vector-based import syntax`);
+    
+    // Get the vector of symbols to import
+    const symbolsVector = elements[1] as SList;
+    // Get the module path
+    const modulePathExp = elements[3];
+    
+    // Validate the module path
+    if (!isLiteral(modulePathExp) || typeof modulePathExp.value !== 'string') {
+      throw new Error('Module path must be a string literal');
+    }
+    
+    const modulePath = modulePathExp.value;
+    logger.debug(`Importing symbols from: ${modulePath}`);
+    
+    // Process the module path to load the module
+    // This is similar to the original code but with a temporary module name
+    const tempModuleName = `__temp_module_${Date.now()}`;
+    
+    // Determine file type and process accordingly
+    if (modulePath.endsWith('.hql')) {
+      await processHqlImport(tempModuleName, modulePath, baseDir, env, processedFiles, logger, tempDir, importMap, options.keepTemp);
+    } else if (modulePath.endsWith('.js') || modulePath.endsWith('.mjs') || modulePath.endsWith('.cjs')) {
+      await processJsImport(tempModuleName, modulePath, baseDir, env, logger, processedFiles, tempDir, importMap, options.keepTemp);
+    } else if (modulePath.startsWith('npm:')) {
+      await processNpmImport(tempModuleName, modulePath, env, logger);
+    } else if (modulePath.startsWith('jsr:')) {
+      await processJsrImport(tempModuleName, modulePath, env, logger);
+    } else if (modulePath.startsWith('http:') || modulePath.startsWith('https:')) {
+      await processHttpImport(tempModuleName, modulePath, env, logger);
+    } else {
+      throw new Error(`Unsupported import file type: ${modulePath}`);
+    }
+    
+    // Now process each symbol in the vector and import it directly
+    for (const symbolExpr of symbolsVector.elements) {
+      // Handle simple symbol without alias: symbol
+      if (isSymbol(symbolExpr)) {
+        const symbolName = symbolExpr.name;
+        
+        try {
+          // Get the value from the temporary module
+          const value = env.lookup(`${tempModuleName}.${symbolName}`);
+          
+          // Register the symbol directly in the current environment
+          env.define(symbolName, value);
+          logger.debug(`Imported symbol: ${symbolName}`);
+        } catch (error) {
+          logger.warn(`Symbol not found in module: ${symbolName}`);
+        }
+      }
+      // Handle symbol with alias: [symbol as alias]
+      else if (symbolExpr.type === 'list' && 
+               symbolExpr.elements.length === 3 && 
+               isSymbol(symbolExpr.elements[0]) && 
+               isSymbol(symbolExpr.elements[1]) && 
+               symbolExpr.elements[1].name === 'as' && 
+               isSymbol(symbolExpr.elements[2])) {
+        
+        const symbolName = symbolExpr.elements[0].name;
+        const aliasName = symbolExpr.elements[2].name;
+        
+        try {
+          // Get the value from the temporary module
+          const value = env.lookup(`${tempModuleName}.${symbolName}`);
+          
+          // Register the symbol with the alias in the current environment
+          env.define(aliasName, value);
+          logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
+        } catch (error) {
+          logger.warn(`Symbol not found in module: ${symbolName}`);
+        }
+      }
+      // Invalid format
+      else {
+        logger.warn(`Invalid symbol format in import vector: ${sexpToString(symbolExpr)}`);
+      }
+    }
+    
+    return;
+  }
+  
+  // If we reach here, this is the old syntax: (import moduleName "./path.hql")
+  // Use the original implementation for backward compatibility
+  
+  if (elements.length !== 3) {
     throw new Error('import requires exactly two arguments: module name and path');
   }
   
-  // Extract module name and path
-  const moduleNameExp = importExpr.elements[1];
-  const modulePathExp = importExpr.elements[2];
+  // Extract module name and path (original code)
+  const moduleNameExp = elements[1];
+  const modulePathExp = elements[2];
   
   if (!isSymbol(moduleNameExp)) {
     throw new Error('Module name must be a symbol');
@@ -184,9 +282,9 @@ async function processImport(
   const moduleName = moduleNameExp.name;
   const modulePath = modulePathExp.value;
   
-  logger.debug(`Processing import: ${moduleName} from ${modulePath}`);
+  logger.debug(`Processing legacy import: ${moduleName} from ${modulePath}`);
   
-  // Determine import type and process accordingly
+  // Continue with original implementation...
   if (modulePath.startsWith('npm:')) {
     await processNpmImport(moduleName, modulePath, env, logger);
   } else if (modulePath.startsWith('jsr:')) {
@@ -279,6 +377,7 @@ async function processHqlImport(
 
 /**
  * Process exports and definitions in a file
+ * Updated to handle the new vector-based export syntax
  */
 function processFileExportsAndDefinitions(
   expressions: SExp[],
@@ -299,17 +398,53 @@ function processFileExportsAndDefinitions(
     
     const op = first.name;
     
-    // Process export statements: (export "name" value)
-    if (op === 'export' && expr.elements.length === 3 && 
-        isLiteral(expr.elements[1]) && 
-        typeof expr.elements[1].value === 'string') {
+    // Process new vector-based export syntax: (export [symbol1, symbol2])
+    if (op === 'export' && expr.elements.length === 2 && 
+        expr.elements[1].type === 'list') {
+      
+      const exportVector = expr.elements[1] as SList;
+      
+      logger.debug(`Processing vector export with ${exportVector.elements.length} symbols`);
+      
+      // Process each symbol in the export vector
+      for (const symbolExpr of exportVector.elements) {
+        // Skip non-symbol elements (like commas)
+        if (!isSymbol(symbolExpr)) {
+          // Check if it's a comma (which should be ignored)
+          if (isSymbol(symbolExpr) && symbolExpr.name === ',') {
+            continue;
+          }
+          
+          logger.warn(`Non-symbol found in export vector: ${sexpToString(symbolExpr)}`);
+          continue;
+        }
+        
+        const symbolName = (symbolExpr as SSymbol).name;
+        logger.debug(`Processing export for symbol: ${symbolName}`);
+        
+        try {
+          // Look up the value from the environment
+          const value = env.lookup(symbolName);
+          
+          // Store in module exports with the symbol name as the export name
+          moduleExports[symbolName] = value;
+          logger.debug(`Added export "${symbolName}" with self-named value`);
+        } catch (error) {
+          logger.warn(`Failed to lookup symbol "${symbolName}" for export`);
+        }
+      }
+    }
+    // Process legacy string-based export syntax: (export "name" value)
+    else if (op === 'export' && expr.elements.length === 3 && 
+             isLiteral(expr.elements[1]) && 
+             typeof expr.elements[1].value === 'string') {
       
       const exportName = expr.elements[1].value;
       const exportSymbol = expr.elements[2];
       
-      logger.debug(`Processing export: "${exportName}"`);
+      logger.debug(`Processing legacy export: "${exportName}"`);
       
-      // If exporting a symbol, look up its value
+      // Handle symbol exports
       if (isSymbol(exportSymbol)) {
         const symbolName = exportSymbol.name;
         logger.debug(`Export symbol: ${symbolName}`);

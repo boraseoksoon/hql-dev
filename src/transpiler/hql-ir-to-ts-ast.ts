@@ -495,18 +495,50 @@ function convertBlockStatement(node: IR.IRBlockStatement): ts.Block {
   return ts.factory.createBlock(statements, true);
 }
 
+// Update the convertImportDeclaration function in hql-ir-to-ts-ast.ts 
+// to handle the new ImportSpecifier type
+
 function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclaration {
-  // Create a namespace import (import * as name from 'source')
-  const moduleName = createModuleVariableName(node.source);
+  // If there are no specifiers or only a namespace import, 
+  // create a namespace import (import * as name from 'source')
+  if (!node.specifiers || node.specifiers.length === 0) {
+    const moduleName = createModuleVariableName(node.source);
+    
+    return ts.factory.createImportDeclaration(
+      undefined,
+      ts.factory.createImportClause(
+        false,
+        undefined,
+        ts.factory.createNamespaceImport(
+          ts.factory.createIdentifier(moduleName)
+        )
+      ),
+      ts.factory.createStringLiteral(node.source)
+    );
+  }
   
+  // Create named imports for all specifiers
+  const namedImports = node.specifiers.map(spec => {
+    // Check if we need an alias (if imported and local names differ)
+    const importedName = spec.imported.name;
+    const localName = spec.local.name;
+    
+    return ts.factory.createImportSpecifier(
+      false,
+      importedName !== localName ? 
+        ts.factory.createIdentifier(importedName) : 
+        undefined,
+      ts.factory.createIdentifier(localName)
+    );
+  });
+  
+  // Create the import declaration with named imports
   return ts.factory.createImportDeclaration(
     undefined,
     ts.factory.createImportClause(
       false,
       undefined,
-      ts.factory.createNamespaceImport(
-        ts.factory.createIdentifier(moduleName)
-      )
+      ts.factory.createNamedImports(namedImports)
     ),
     ts.factory.createStringLiteral(node.source)
   );

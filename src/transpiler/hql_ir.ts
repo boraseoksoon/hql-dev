@@ -38,6 +38,7 @@ export enum IRNodeType {
   
   // Import/Export
   ImportDeclaration,
+  ImportSpecifier,
   ExportNamedDeclaration,
   ExportSpecifier,
   ExportVariableDeclaration,
@@ -243,4 +244,17 @@ export interface IRCommentBlock extends IRNode {
 export interface IRRaw extends IRNode {
   type: IRNodeType.Raw;
   code: string;
+}
+
+export interface IRImportSpecifier extends IRNode {
+  type: IRNodeType.ImportSpecifier;
+  imported: IRIdentifier;
+  local: IRIdentifier;
+}
+
+// Update the ImportDeclaration interface to use the new ImportSpecifier
+export interface IRImportDeclaration extends IRNode {
+  type: IRNodeType.ImportDeclaration;
+  source: string;
+  specifiers: IRImportSpecifier[];
 }

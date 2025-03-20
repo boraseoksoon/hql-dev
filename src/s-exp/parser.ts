@@ -1,7 +1,6 @@
 // src/s-exp/parser.ts - Parser for S-expressions
 
-import { SExp, SList, createSymbol, createList, createLiteral, createNilLiteral } from './types.ts';
-
+import { SExp, SList, isSymbol, createSymbol, createList, createLiteral, createNilLiteral } from './types.ts';
 /**
 * Parse HQL source into S-expressions
 */
@@ -413,16 +412,81 @@ function parseList(): SList {
   return createList(...elements);
 }
 
+function parseImportVector(): SList {
+  const elements: SExp[] = [];
+  
+  while (currentPos < currentTokens.length && currentTokens[currentPos] !== ']') {
+    // Parse the symbol (or expression)
+    const expr = parseExpression();
+    elements.push(expr);
+    
+    // Handle the 'as' keyword for aliasing
+    if (currentPos < currentTokens.length && 
+        currentTokens[currentPos] === 'as') {
+      // Add the 'as' keyword as a symbol
+      elements.push(createSymbol('as'));
+      currentPos++; // Skip 'as'
+      
+      // Parse the alias
+      if (currentPos < currentTokens.length && currentTokens[currentPos] !== ',' && currentTokens[currentPos] !== ']') {
+        const alias = parseExpression();
+        elements.push(alias);
+      } else {
+        throw new Error("Expected alias after 'as' keyword");
+      }
+    }
+    
+    // Skip comma if present
+    if (currentPos < currentTokens.length && currentTokens[currentPos] === ',') {
+      currentPos++;
+    }
+  }
+  
+  if (currentPos >= currentTokens.length) {
+    throw new Error("Unclosed vector");
+  }
+  
+  currentPos++; // Skip the closing bracket
+  
+  return createList(...elements);
+}
+
+
 // Vector, Map, and Set parsing functions
 function parseVector(): SList {
   const elements: SExp[] = [];
   
   while (currentPos < currentTokens.length && currentTokens[currentPos] !== ']') {
-    elements.push(parseExpression());
+    // Parse the current element
+    const expr = parseExpression();
+    elements.push(expr);
+    
+    // Check if this might be an 'as' alias construct
+    if (isSymbol(expr) && 
+        currentPos < currentTokens.length && 
+        currentTokens[currentPos] === 'as') {
+      
+      // Add the 'as' symbol
+      elements.push(createSymbol('as'));
+      currentPos++; // Skip the 'as' token
+      
+      // Parse the alias name
+      if (currentPos < currentTokens.length && 
+          currentTokens[currentPos] !== ',' && 
+          currentTokens[currentPos] !== ']') {
+        const alias = parseExpression();
+        elements.push(alias);
+      } else {
+        throw new Error("Expected alias after 'as' keyword");
+      }
+    }
     
     // Skip comma if present
     if (currentPos < currentTokens.length && currentTokens[currentPos] === ',') {
       currentPos++;
+      
+      // We don't add the comma as a symbol to the AST to keep it cleaner
+      // This makes the vector contents a simple list of items (and 'as' constructs)
     }
   }
   
@@ -437,7 +501,7 @@ function parseVector(): SList {
     return createList(createSymbol("empty-array"));
   }
   
-  // For non-empty vector, proceed with vector function
+  // Return a vector with all elements
   return createList(createSymbol("vector"), ...elements);
 }
 
