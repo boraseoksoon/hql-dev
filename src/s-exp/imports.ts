@@ -3,10 +3,9 @@
 import * as path from "https://deno.land/std/path/mod.ts";
 import { SExp, SList, SLiteral, SSymbol, isSymbol, isLiteral, isImport } from './types.ts';
 import { Environment } from '../environment.ts';
-import { defineMacro, expandMacro, evaluateForMacro } from './macro.ts';
+import { evaluateForMacro } from './macro.ts';
 import { parse } from './parser.ts';
 import { Logger } from '../logger.ts';
-import { isUrl, escapeRegExp } from '../utils.ts';
 
 /**
  * Options for import processing
@@ -43,13 +42,7 @@ export async function processImports(
   }
   
   // Collect all import expressions
-  const importExprs: SList[] = [];
-  
-  for (const expr of exprs) {
-    if (isImport(expr) && expr.type === 'list') {
-      importExprs.push(expr as SList);
-    }
-  }
+  const importExprs: SList[] = collectImportExpressions(exprs);
   
   // Process imports in order
   for (const importExpr of importExprs) {
@@ -71,6 +64,21 @@ export async function processImports(
 }
 
 /**
+ * Collect all import expressions from a list of S-expressions
+ */
+function collectImportExpressions(exprs: SExp[]): SList[] {
+  const importExprs: SList[] = [];
+  
+  for (const expr of exprs) {
+    if (isImport(expr) && expr.type === 'list') {
+      importExprs.push(expr as SList);
+    }
+  }
+  
+  return importExprs;
+}
+
+/**
  * Process definitions in the current file to make them available to macros
  */
 function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger): void {
@@ -85,23 +93,7 @@ function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger)
       
       if (op === 'def' && expr.elements.length === 3) {
         try {
-          // Get the name and value
-          if (isSymbol(expr.elements[1])) {
-            const name = expr.elements[1].name;
-            // Evaluate the value for use by macros
-            try {
-              const value = evaluateForMacro(expr.elements[2], env, logger);
-              if (isLiteral(value)) {
-                env.define(name, value.value);
-                logger.debug(`Registered variable for macros: ${name} = ${value.value}`);
-              } else {
-                env.define(name, value);
-                logger.debug(`Registered complex variable for macros: ${name}`);
-              }
-            } catch (evalError) {
-              logger.warn(`Could not evaluate ${name} for macro use: ${evalError.message}`);
-            }
-          }
+          processDefDeclaration(expr, env, logger);
         } catch (error) {
           logger.error(`Error processing def: ${error.message}`);
         }
@@ -118,31 +110,7 @@ function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger)
       
       if (op === 'defn' && expr.elements.length >= 4) {
         try {
-          // Skip if not a proper defn
-          if (!isSymbol(expr.elements[1]) || expr.elements[2].type !== 'list') {
-            continue;
-          }
-          
-          const fnName = expr.elements[1].name;
-          const params = expr.elements[2];
-          const body = expr.elements.slice(3);
-          
-          // Create a simplified function for macro evaluation
-          const fn = (...args: any[]) => {
-            try {
-              return `${fnName}(${args.join(', ')})`;
-            } catch (e) {
-              logger.error(`Error executing function ${fnName}: ${e.message}`);
-              return null;
-            }
-          };
-          
-          // Mark as a function definition
-          Object.defineProperty(fn, 'isDefFunction', { value: true });
-          
-          // Register in the environment
-          env.define(fnName, fn);
-          logger.debug(`Registered function for macros: ${fnName}`);
+          processDefnDeclaration(expr, env, logger);
         } catch (error) {
           logger.error(`Error processing defn: ${error.message}`);
         }
@@ -151,7 +119,57 @@ function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger)
   }
 }
 
-// Modified processImport function in src/s-exp/imports.ts
+/**
+ * Process a def declaration
+ */
+function processDefDeclaration(expr: SList, env: Environment, logger: Logger): void {
+  // Get the name and value
+  if (isSymbol(expr.elements[1])) {
+    const name = expr.elements[1].name;
+    // Evaluate the value for use by macros
+    try {
+      const value = evaluateForMacro(expr.elements[2], env, logger);
+      if (isLiteral(value)) {
+        env.define(name, value.value);
+        logger.debug(`Registered variable for macros: ${name} = ${value.value}`);
+      } else {
+        env.define(name, value);
+        logger.debug(`Registered complex variable for macros: ${name}`);
+      }
+    } catch (error) {
+      logger.warn(`Could not evaluate ${name} for macro use: ${error.message}`);
+    }
+  }
+}
+
+/**
+ * Process a defn declaration
+ */
+function processDefnDeclaration(expr: SList, env: Environment, logger: Logger): void {
+  // Skip if not a proper defn
+  if (!isSymbol(expr.elements[1]) || expr.elements[2].type !== 'list') {
+    return;
+  }
+  
+  const fnName = expr.elements[1].name;
+
+  // Create a simplified function for macro evaluation
+  const fn = (...args: any[]) => {
+    try {
+      return `${fnName}(${args.join(', ')})`;
+    } catch (e) {
+      logger.error(`Error executing function ${fnName}: ${e.message}`);
+      return null;
+    }
+  };
+  
+  // Mark as a function definition
+  Object.defineProperty(fn, 'isDefFunction', { value: true });
+  
+  // Register in the environment
+  env.define(fnName, fn);
+  logger.debug(`Registered function for macros: ${fnName}`);
+}
 
 /**
  * Process a single import expression with support for the new vector syntax
@@ -162,130 +180,111 @@ async function processImport(
   baseDir: string, 
   options: ImportProcessorOptions
 ): Promise<void> {
-  const logger = new Logger(options.verbose);
-  const processedFiles = options.processedFiles!;
-  const importMap = options.importMap!;
-  const tempDir = options.tempDir!;
-  
   // Get the elements of the import expression
   const elements = importExpr.elements;
   
-  // Check if this is the new vector-based syntax:
-  // (import [symbol1, symbol2 as alias2] from "./path.hql")
-  if (elements.length >= 4 && 
+  // Determine the import type based on the syntax
+  if (isVectorBasedImport(elements)) {
+    await processVectorBasedImport(elements, env, baseDir, options);
+  } else if (isLegacyImport(elements)) {
+    await processLegacyImport(elements, env, baseDir, options);
+  } else {
+    throw new Error("Invalid import syntax");
+  }
+}
+
+/**
+ * Check if this is a vector-based import
+ */
+function isVectorBasedImport(elements: SExp[]): boolean {
+  return elements.length >= 4 && 
       elements[1].type === 'list' && 
       isSymbol(elements[2]) && 
-      elements[2].name === 'from') {
-    
-    // This is the new syntax
-    logger.debug(`Processing new vector-based import syntax`);
-    
-    // Get the vector of symbols to import
-    const symbolsVector = elements[1] as SList;
-    // Get the module path
-    const modulePathExp = elements[3];
-    
-    // Validate the module path
-    if (!isLiteral(modulePathExp) || typeof modulePathExp.value !== 'string') {
-      throw new Error('Module path must be a string literal');
-    }
-    
-    const modulePath = modulePathExp.value;
-    logger.debug(`Importing symbols from: ${modulePath}`);
-    
-    // Process the module path to load the module
-    // This is similar to the original code but with a temporary module name
-    const tempModuleName = `__temp_module_${Date.now()}`;
-    
-    // Determine file type and process accordingly
-    if (modulePath.endsWith('.hql')) {
-      await processHqlImport(tempModuleName, modulePath, baseDir, env, processedFiles, logger, tempDir, importMap, options.keepTemp);
-    } else if (modulePath.endsWith('.js') || modulePath.endsWith('.mjs') || modulePath.endsWith('.cjs')) {
-      await processJsImport(tempModuleName, modulePath, baseDir, env, logger, processedFiles, tempDir, importMap, options.keepTemp);
-    } else if (modulePath.startsWith('npm:')) {
-      await processNpmImport(tempModuleName, modulePath, env, logger);
-    } else if (modulePath.startsWith('jsr:')) {
-      await processJsrImport(tempModuleName, modulePath, env, logger);
-    } else if (modulePath.startsWith('http:') || modulePath.startsWith('https:')) {
-      await processHttpImport(tempModuleName, modulePath, env, logger);
-    } else {
-      throw new Error(`Unsupported import file type: ${modulePath}`);
-    }
-    
-    // Get the vector elements, skipping the "vector" symbol if present
-    let vectorElements = symbolsVector.elements;
-    if (vectorElements.length > 0 && 
-        isSymbol(vectorElements[0]) && 
-        vectorElements[0].name === "vector") {
-      vectorElements = vectorElements.slice(1);
-    }
-    
-    // Filter out commas
-    vectorElements = vectorElements.filter(elem => 
-      !(isSymbol(elem) && (elem as SSymbol).name === ',')
-    );
-    
-    // Now process each symbol in the vector and import it directly
-    let i = 0;
-    while (i < vectorElements.length) {
-      // Handle simple symbol without alias: symbol
-      if (isSymbol(vectorElements[i])) {
-        const symbolName = (vectorElements[i] as SSymbol).name;
-        
-        // Check if this is followed by "as" and an alias
-        if (i + 2 < vectorElements.length && 
-            isSymbol(vectorElements[i+1]) && 
-            (vectorElements[i+1] as SSymbol).name === 'as' &&
-            isSymbol(vectorElements[i+2])) {
-            
-          const aliasName = (vectorElements[i+2] as SSymbol).name;
+      elements[2].name === 'from';
+}
+
+/**
+ * Check if this is a legacy import
+ */
+function isLegacyImport(elements: SExp[]): boolean {
+  return elements.length === 3 && 
+      isSymbol(elements[1]) && 
+      isLiteral(elements[2]) && 
+      typeof elements[2].value === 'string';
+}
+
+/**
+ * Process a vector-based import
+ */
+async function processVectorBasedImport(
+  elements: SExp[],
+  env: Environment,
+  baseDir: string,
+  options: ImportProcessorOptions
+): Promise<void> {
+  const logger = new Logger(options.verbose);
+  
+  // Get the vector of symbols to import
+  const symbolsVector = elements[1] as SList;
+  
+  // Get the module path
+  const modulePathExp = elements[3];
+  
+  // Validate the module path
+  if (!isLiteral(modulePathExp) || typeof modulePathExp.value !== 'string') {
+    throw new Error('Module path must be a string literal');
+  }
+  
+  const modulePath = modulePathExp.value;
+  logger.debug(`Importing symbols from: ${modulePath}`);
+  
+  // Create a temporary module name
+  const tempModuleName = `__temp_module_${Date.now()}`;
+  
+  // Load the module based on file type
+  await loadModuleByType(tempModuleName, modulePath, baseDir, env, options);
+  
+  // Process the vector elements
+  const vectorElements = processVectorElements(symbolsVector);
+  
+  // Import each symbol
+  let i = 0;
+  while (i < vectorElements.length) {
+    if (isSymbol(vectorElements[i])) {
+      const symbolName = (vectorElements[i] as SSymbol).name;
+      
+      // Check for alias pattern: symbol as alias
+      const hasAlias = i + 2 < vectorElements.length && 
+                      isSymbol(vectorElements[i+1]) && 
+                      (vectorElements[i+1] as SSymbol).name === 'as' &&
+                      isSymbol(vectorElements[i+2]);
           
-          try {
-            // Get the value from the temporary module
-            const value = env.lookup(`${tempModuleName}.${symbolName}`);
-            
-            // Register the symbol with the alias in the current environment
-            env.define(aliasName, value);
-            logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
-            
-            i += 3; // Skip symbol, 'as', and alias
-          } catch (error) {
-            logger.warn(`Symbol not found in module: ${symbolName}`);
-            i += 3; // Still skip all three elements
-          }
-        } else {
-          // Simple symbol without alias
-          try {
-            // Get the value from the temporary module
-            const value = env.lookup(`${tempModuleName}.${symbolName}`);
-            
-            // Register the symbol directly in the current environment
-            env.define(symbolName, value);
-            logger.debug(`Imported symbol: ${symbolName}`);
-            
-            i++; // Move to next element
-          } catch (error) {
-            logger.warn(`Symbol not found in module: ${symbolName}`);
-            i++; // Still move to next element
-          }
-        }
+      if (hasAlias) {
+        const aliasName = (vectorElements[i+2] as SSymbol).name;
+        await importSymbolAs(tempModuleName, symbolName, aliasName, env, logger);
+        i += 3; // Skip symbol, as, and alias
       } else {
-        // Skip unrecognized element
-        i++;
+        await importSymbolDirectly(tempModuleName, symbolName, env, logger);
+        i++; // Next symbol
       }
+    } else {
+      i++; // Skip non-symbols
     }
-    
-    return;
   }
+}
+
+/**
+ * Process a legacy import
+ */
+async function processLegacyImport(
+  elements: SExp[],
+  env: Environment,
+  baseDir: string,
+  options: ImportProcessorOptions
+): Promise<void> {
+  const logger = new Logger(options.verbose);
   
-  // If we reach here, this is the old syntax: (import moduleName "./path.hql")
-  // Use the original implementation for backward compatibility
-  
-  if (elements.length !== 3) {
-    throw new Error('import requires exactly two arguments: module name and path');
-  }
-  
-  // Extract module name and path (original code)
+  // Extract module name and path
   const moduleNameExp = elements[1];
   const modulePathExp = elements[2];
   
@@ -302,22 +301,106 @@ async function processImport(
   
   logger.debug(`Processing legacy import: ${moduleName} from ${modulePath}`);
   
-  // Continue with original implementation...
+  // Load the module based on file type
+  await loadModuleByType(moduleName, modulePath, baseDir, env, options);
+}
+
+/**
+ * Load a module based on its file type
+ */
+async function loadModuleByType(
+  moduleName: string,
+  modulePath: string,
+  baseDir: string,
+  env: Environment,
+  options: ImportProcessorOptions
+): Promise<void> {
+  const logger = new Logger(options.verbose);
+  
   if (modulePath.startsWith('npm:')) {
     await processNpmImport(moduleName, modulePath, env, logger);
   } else if (modulePath.startsWith('jsr:')) {
     await processJsrImport(moduleName, modulePath, env, logger);
   } else if (modulePath.startsWith('http:') || modulePath.startsWith('https:')) {
     await processHttpImport(moduleName, modulePath, env, logger);
+  } else if (modulePath.endsWith('.hql')) {
+    await processHqlImport(
+      moduleName, 
+      modulePath, 
+      baseDir, 
+      env, 
+      options.processedFiles!, 
+      logger, 
+      options.tempDir!, 
+      options.importMap!, 
+      options.keepTemp
+    );
+  } else if (modulePath.endsWith('.js') || modulePath.endsWith('.mjs') || modulePath.endsWith('.cjs')) {
+    await processJsImport(
+      moduleName, 
+      modulePath, 
+      baseDir, 
+      env, 
+      logger, 
+      options.processedFiles!
+    );
   } else {
-    // Local file import
-    if (modulePath.endsWith('.hql')) {
-      await processHqlImport(moduleName, modulePath, baseDir, env, processedFiles, logger, tempDir, importMap, options.keepTemp);
-    } else if (modulePath.endsWith('.js') || modulePath.endsWith('.mjs') || modulePath.endsWith('.cjs')) {
-      await processJsImport(moduleName, modulePath, baseDir, env, logger, processedFiles, tempDir, importMap, options.keepTemp);
-    } else {
-      throw new Error(`Unsupported import file type: ${modulePath}`);
-    }
+    throw new Error(`Unsupported import file type: ${modulePath}`);
+  }
+}
+
+/**
+ * Process vector elements, removing commas and handling the vector syntax
+ */
+function processVectorElements(vectorList: SList): SExp[] {
+  // Skip the "vector" symbol if present
+  let elements = vectorList.elements;
+  if (elements.length > 0 && 
+      isSymbol(elements[0]) && 
+      elements[0].name === "vector") {
+    elements = elements.slice(1);
+  }
+  
+  // Filter out commas
+  return elements.filter(elem => 
+    !(isSymbol(elem) && (elem as SSymbol).name === ',')
+  );
+}
+
+/**
+ * Import a symbol with an alias
+ */
+async function importSymbolAs(
+  moduleName: string,
+  symbolName: string,
+  aliasName: string,
+  env: Environment,
+  logger: Logger
+): Promise<void> {
+  try {
+    const value = env.lookup(`${moduleName}.${symbolName}`);
+    env.define(aliasName, value);
+    logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
+  } catch (error) {
+    logger.warn(`Symbol not found in module: ${symbolName}`);
+  }
+}
+
+/**
+ * Import a symbol directly (no alias)
+ */
+async function importSymbolDirectly(
+  moduleName: string,
+  symbolName: string,
+  env: Environment,
+  logger: Logger
+): Promise<void> {
+  try {
+    const value = env.lookup(`${moduleName}.${symbolName}`);
+    env.define(symbolName, value);
+    logger.debug(`Imported symbol: ${symbolName}`);
+  } catch (error) {
+    logger.warn(`Symbol not found in module: ${symbolName}`);
   }
 }
 
@@ -336,7 +419,7 @@ async function processHqlImport(
   keepTemp: boolean = false
 ): Promise<void> {
   // Resolve the absolute path relative to the importing file's directory
-  const resolvedPath = path.resolve(baseDir, modulePath);
+  const resolvedPath = resolveImportPath(modulePath, baseDir, logger);
   
   logger.debug(`Resolving import: ${moduleName} from ${modulePath}`);
   logger.debug(`Base directory: ${baseDir}`);
@@ -347,15 +430,7 @@ async function processHqlImport(
     logger.debug(`Skipping already processed import: ${resolvedPath}`);
     return;
   }
-  
-  // Check if this is a core.hql import
-  const isCoreMacros = modulePath.endsWith('/core.hql') || 
-                       modulePath.endsWith('\\core.hql') || 
-                       modulePath === 'core.hql' || 
-                       modulePath === './core.hql' || 
-                       modulePath === 'lib/core.hql' || 
-                       moduleName === 'core';
-  
+
   // Mark as processed
   processedFiles.add(resolvedPath);
   
@@ -394,12 +469,16 @@ async function processHqlImport(
 }
 
 /**
- * Process exports and definitions in a file
- * Updated to handle the new vector-based export syntax
+ * Resolve an import path to an absolute path
  */
+function resolveImportPath(modulePath: string, baseDir: string, logger: Logger): string {
+  // Simple implementation - in a real refactor we'd have fallbacks
+  return path.resolve(baseDir, modulePath);
+}
+
 /**
  * Process exports and definitions in a file
- * Updated to correctly handle the new vector-based export syntax
+ * Updated to handle the new vector-based export syntax
  */
 function processFileExportsAndDefinitions(
   expressions: SExp[],
@@ -416,6 +495,7 @@ function processFileExportsAndDefinitions(
     if (expr.type !== 'list' || expr.elements.length === 0) continue;
     
     const first = expr.elements[0];
+
     if (!isSymbol(first)) continue;
     
     const op = first.name;
@@ -424,89 +504,103 @@ function processFileExportsAndDefinitions(
     if (op === 'export' && expr.elements.length === 2 && 
         expr.elements[1].type === 'list') {
       
-      const exportVector = expr.elements[1] as SList;
+      processVectorExport(expr, env, moduleExports, logger);
       
-      logger.debug(`Processing vector export with ${exportVector.elements.length} symbols`);
-      
-      // Get the elements inside the vector, skipping the "vector" keyword if present
-      let elementsToProcess = exportVector.elements;
-      
-      // Skip the first element if it's the "vector" symbol since it's part of syntax, not content
-      if (elementsToProcess.length > 0 && 
-          isSymbol(elementsToProcess[0]) && 
-          elementsToProcess[0].name === "vector") {
-        elementsToProcess = elementsToProcess.slice(1);
-      }
-      
-      // Process each symbol in the export vector
-      for (const symbolExpr of elementsToProcess) {
-        // Skip non-symbol elements (like commas)
-        if (!isSymbol(symbolExpr)) {
-          // Check if it's a comma (which should be ignored)
-          if (isSymbol(symbolExpr) && symbolExpr.name === ',') {
-            continue;
-          }
-          
-          logger.warn(`Non-symbol found in export vector: ${sexpToString(symbolExpr)}`);
-          continue;
-        }
-        
-        const symbolName = (symbolExpr as SSymbol).name;
-        logger.debug(`Processing export for symbol: ${symbolName}`);
-        
-        try {
-          // Look up the value from the environment
-          const value = env.lookup(symbolName);
-          
-          // Store in module exports with the symbol name as the export name
-          moduleExports[symbolName] = value;
-          logger.debug(`Added export "${symbolName}" with self-named value`);
-        } catch (error) {
-          logger.warn(`Failed to lookup symbol "${symbolName}" for export`);
-        }
-      }
     }
     // Process legacy string-based export syntax: (export "name" value)
     else if (op === 'export' && expr.elements.length === 3 && 
              isLiteral(expr.elements[1]) && 
              typeof expr.elements[1].value === 'string') {
       
-      const exportName = expr.elements[1].value;
-      const exportSymbol = expr.elements[2];
+      processLegacyExport(expr, env, moduleExports, logger);
       
-      logger.debug(`Processing legacy export: "${exportName}"`);
+    }
+  }
+}
+
+/**
+ * Process a vector-based export
+ */
+function processVectorExport(
+  expr: SList,
+  env: Environment,
+  moduleExports: Record<string, any>,
+  logger: Logger
+): void {
+  const exportVector = expr.elements[1] as SList;
+  
+  logger.debug(`Processing vector export with ${exportVector.elements.length} symbols`);
+  
+  // Process the vector elements
+  const elementsToProcess = processVectorElements(exportVector);
+  
+  // Process each symbol in the export vector
+  for (const symbolExpr of elementsToProcess) {
+    // Skip non-symbol elements
+    if (!isSymbol(symbolExpr)) {
+      logger.warn(`Non-symbol found in export vector: ${sexpToString(symbolExpr)}`);
+      continue;
+    }
+    
+    const symbolName = (symbolExpr as SSymbol).name;
+    logger.debug(`Processing export for symbol: ${symbolName}`);
+    
+    try {
+      // Look up the value from the environment
+      const value = env.lookup(symbolName);
       
-      // Handle symbol exports
-      if (isSymbol(exportSymbol)) {
-        const symbolName = exportSymbol.name;
-        logger.debug(`Export symbol: ${symbolName}`);
-        
-        try {
-          // Look up the value from the environment
-          const value = env.lookup(symbolName);
-          
-          // Store in module exports
-          moduleExports[exportName] = value;
-          logger.debug(`Added export "${exportName}" with value from ${symbolName}`);
-        } catch (error) {
-          logger.warn(`Failed to lookup symbol "${symbolName}" for export "${exportName}"`);
-        }
+      // Store in module exports
+      moduleExports[symbolName] = value;
+      logger.debug(`Added export "${symbolName}" with self-named value`);
+    } catch (error) {
+      logger.warn(`Failed to lookup symbol "${symbolName}" for export`);
+    }
+  }
+}
+
+/**
+ * Process a legacy string-based export
+ */
+function processLegacyExport(
+  expr: SList,
+  env: Environment,
+  moduleExports: Record<string, any>,
+  logger: Logger
+): void {
+  const exportName = expr.elements[1].value as string;
+  const exportSymbol = expr.elements[2];
+  
+  logger.debug(`Processing legacy export: "${exportName}"`);
+  
+  // Handle symbol exports
+  if (isSymbol(exportSymbol)) {
+    const symbolName = exportSymbol.name;
+    logger.debug(`Export symbol: ${symbolName}`);
+    
+    try {
+      // Look up the value from the environment
+      const value = env.lookup(symbolName);
+      
+      // Store in module exports
+      moduleExports[exportName] = value;
+      logger.debug(`Added export "${exportName}" with value from ${symbolName}`);
+    } catch (error) {
+      logger.warn(`Failed to lookup symbol "${symbolName}" for export "${exportName}"`);
+    }
+  } else {
+    // For non-symbol exports, evaluate the expression
+    try {
+      const value = evaluateForMacro(exportSymbol, env, logger);
+      
+      if (isLiteral(value)) {
+        moduleExports[exportName] = value.value;
       } else {
-        // For non-symbol exports, evaluate the expression
-        try {
-          const value = evaluateForMacro(exportSymbol, env, logger);
-          
-          if (isLiteral(value)) {
-            moduleExports[exportName] = value.value;
-          } else {
-            moduleExports[exportName] = value;
-          }
-          
-          logger.debug(`Added export "${exportName}" with direct value`);
-        } catch (error) {
-          logger.warn(`Failed to evaluate export "${exportName}": ${error.message}`);
-        }
+        moduleExports[exportName] = value;
       }
+      
+      logger.debug(`Added export "${exportName}" with direct value`);
+    } catch (error) {
+      logger.warn(`Failed to evaluate export "${exportName}": ${error.message}`);
     }
   }
 }
@@ -520,10 +614,7 @@ async function processJsImport(
   baseDir: string,
   env: Environment,
   logger: Logger,
-  processedFiles: Set<string>,
-  tempDir: string,
-  importMap: Map<string, string>,
-  keepTemp: boolean = false
+  processedFiles: Set<string>
 ): Promise<void> {
   try {
     // Resolve the absolute path
@@ -626,28 +717,24 @@ async function processHttpImport(
 }
 
 /**
- * Simple string hash function
+ * Convert an S-expression to a string representation for debugging
  */
-function simpleHash(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return Math.abs(hash);
-}
-
-/**
- * Cleanup temporary files
- */
-export async function cleanupImportTemp(tempDir: string, logger: Logger): Promise<void> {
-  if (tempDir) {
-    try {
-      await Deno.remove(tempDir, { recursive: true });
-      logger.debug(`Cleaned up temporary directory: ${tempDir}`);
-    } catch (error) {
-      logger.error(`Failed to clean up temporary directory: ${error.message}`);
+function sexpToString(expr: SExp): string {
+  if (isSymbol(expr)) {
+    return (expr as SSymbol).name;
+  } else if (isLiteral(expr)) {
+    const lit = expr as SLiteral;
+    if (lit.value === null) {
+      return 'nil';
+    } else if (typeof lit.value === 'string') {
+      return `"${lit.value}"`;
+    } else {
+      return String(lit.value);
     }
+  } else if (expr.type === 'list') {
+    const list = expr as SList;
+    return `(${list.elements.map(sexpToString).join(' ')})`;
+  } else {
+    return String(expr);
   }
 }

@@ -2,7 +2,7 @@
 * Common logger module for unified logging with configurable verbosity
 */
 export class Logger {
-  private enabled: boolean;
+  public enabled: boolean;
   
   /**
   * Create a new logger

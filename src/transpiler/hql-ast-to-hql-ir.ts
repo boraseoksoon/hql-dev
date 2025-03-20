@@ -1,4 +1,4 @@
-// Refactored hql-code-to-hql-ir.ts with modular functions and reduced redundancy
+// Refactored hql-ast-to-hql-ir.ts with modular functions
 
 import * as IR from "./hql_ir.ts";
 import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
@@ -73,11 +73,59 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
 }
 
 /**
- * Transform a vector-based export statement to its IR representation
+ * Check if a list node represents a vector-based export
  */
+function isVectorExport(list: ListNode): boolean {
+  return list.elements.length === 2 &&
+         list.elements[0].type === "symbol" &&
+         (list.elements[0] as SymbolNode).name === "export" &&
+         list.elements[1].type === "list";
+}
+
+/**
+ * Check if a list node represents a vector-based import
+ */
+function isVectorImport(list: ListNode): boolean {
+  return list.elements.length === 4 &&
+         list.elements[0].type === "symbol" &&
+         (list.elements[0] as SymbolNode).name === "import" &&
+         list.elements[1].type === "list" &&
+         list.elements[2].type === "symbol" &&
+         (list.elements[2] as SymbolNode).name === "from" &&
+         list.elements[3].type === "literal";
+}
+
+/**
+ * Check if a list node represents a legacy import
+ */
+function isLegacyImport(list: ListNode): boolean {
+  return list.elements.length === 3 &&
+         list.elements[0].type === "symbol" &&
+         (list.elements[0] as SymbolNode).name === "import" &&
+         list.elements[1].type === "symbol" &&
+         list.elements[2].type === "literal";
+}
+
+/**
+ * Process elements in a vector, handling vector keyword and commas
+ */
+function processVectorElements(elements: HQLNode[]): HQLNode[] {
+  // Skip "vector" symbol if present as first element
+  let startIndex = 0;
+  if (elements.length > 0 && 
+      elements[0].type === "symbol" && 
+      (elements[0] as SymbolNode).name === "vector") {
+    startIndex = 1;
+  }
+  
+  // Filter out comma symbols
+  return elements.slice(startIndex).filter(elem => 
+    !(elem.type === "symbol" && (elem as SymbolNode).name === ",")
+  );
+}
+
 /**
  * Transform a vector-based export statement to its IR representation
- * Properly handles: (export [add, subtract, multiply, divide])
  */
 function transformVectorExport(list: ListNode, currentDir: string): IR.IRNode | null {
   // Verify this is an export with a vector: (export [symbol1, symbol2])
@@ -91,20 +139,8 @@ function transformVectorExport(list: ListNode, currentDir: string): IR.IRNode | 
     throw new Error("Export argument must be a vector");
   }
   
-  // Get the elements of the vector, excluding the "vector" symbol if present
-  let exportElements = (vectorNode as ListNode).elements;
-  
-  // Skip the first element if it's the "vector" symbol
-  if (exportElements.length > 0 && 
-      exportElements[0].type === "symbol" && 
-      (exportElements[0] as SymbolNode).name === "vector") {
-    exportElements = exportElements.slice(1);
-  }
-  
-  // Filter out comma symbols (they're just for syntax)
-  const symbols = exportElements.filter(elem => 
-    !(elem.type === "symbol" && (elem as SymbolNode).name === ",")
-  );
+  // Process vector elements
+  const symbols = processVectorElements((vectorNode as ListNode).elements);
   
   // Create a single export named declaration with all specifiers
   const exportSpecifiers: IR.IRExportSpecifier[] = [];
@@ -139,8 +175,34 @@ function transformVectorExport(list: ListNode, currentDir: string): IR.IRNode | 
 }
 
 /**
+ * Check if a position in a list of nodes has an 'as' alias following it
+ */
+function hasAliasFollowing(elements: HQLNode[], position: number): boolean {
+  return position + 2 < elements.length && 
+         elements[position+1].type === "symbol" && 
+         (elements[position+1] as SymbolNode).name === "as" &&
+         elements[position+2].type === "symbol";
+}
+
+/**
+ * Create an import specifier for the IR
+ */
+function createImportSpecifier(imported: string, local: string): IR.IRImportSpecifier {
+  return {
+    type: IR.IRNodeType.ImportSpecifier,
+    imported: {
+      type: IR.IRNodeType.Identifier,
+      name: imported
+    } as IR.IRIdentifier,
+    local: {
+      type: IR.IRNodeType.Identifier,
+      name: sanitizeIdentifier(local)
+    } as IR.IRIdentifier
+  };
+}
+
+/**
  * Transform a vector-based import statement to its IR representation
- * Properly handles: (import [symbol1, symbol2 as alias2] from "./path.hql")
  */
 function transformVectorImport(list: ListNode, currentDir: string): IR.IRNode | null {
   // Verify this is an import with a vector and 'from': (import [symbol1, symbol2 as alias2] from "./path.hql")
@@ -158,69 +220,31 @@ function transformVectorImport(list: ListNode, currentDir: string): IR.IRNode | 
   // Get the module path
   const modulePath = (list.elements[3] as LiteralNode).value as string;
   
-  // Get the vector elements, excluding the "vector" symbol if present
-  let importElements = vectorNode.elements;
-  
-  // Skip the first element if it's the "vector" symbol
-  if (importElements.length > 0 && 
-      importElements[0].type === "symbol" && 
-      (importElements[0] as SymbolNode).name === "vector") {
-    importElements = importElements.slice(1);
-  }
-  
-  // Filter out comma symbols
-  importElements = importElements.filter(elem => 
-    !(elem.type === "symbol" && (elem as SymbolNode).name === ",")
-  );
+  // Process vector elements
+  const elements = processVectorElements(vectorNode.elements);
   
   // Create array to hold import specifiers
   const importSpecifiers: IR.IRImportSpecifier[] = [];
   
   // Process symbols and their aliases
   let i = 0;
-  while (i < importElements.length) {
-    const elem = importElements[i];
+  while (i < elements.length) {
+    const elem = elements[i];
     
     // Handle simple symbol without alias: symbol
     if (elem.type === "symbol") {
       const symbolName = (elem as SymbolNode).name;
       
       // Check if this is part of an 'as' construct
-      if (i + 2 < importElements.length && 
-          importElements[i+1].type === "symbol" && 
-          (importElements[i+1] as SymbolNode).name === "as" &&
-          importElements[i+2].type === "symbol") {
-        
-        const aliasName = (importElements[i+2] as SymbolNode).name;
+      if (hasAliasFollowing(elements, i)) {
+        const aliasName = (elements[i+2] as SymbolNode).name;
         
         // Create an import specifier with alias
-        importSpecifiers.push({
-          type: IR.IRNodeType.ImportSpecifier,
-          imported: {
-            type: IR.IRNodeType.Identifier,
-            name: symbolName
-          } as IR.IRIdentifier,
-          local: {
-            type: IR.IRNodeType.Identifier,
-            name: sanitizeIdentifier(aliasName)
-          } as IR.IRIdentifier
-        });
-        
+        importSpecifiers.push(createImportSpecifier(symbolName, aliasName));
         i += 3; // Skip the current symbol, 'as', and alias
       } else {
         // Simple symbol without alias
-        importSpecifiers.push({
-          type: IR.IRNodeType.ImportSpecifier,
-          imported: {
-            type: IR.IRNodeType.Identifier,
-            name: symbolName
-          } as IR.IRIdentifier,
-          local: {
-            type: IR.IRNodeType.Identifier,
-            name: sanitizeIdentifier(symbolName)
-          } as IR.IRIdentifier
-        });
-        
+        importSpecifiers.push(createImportSpecifier(symbolName, symbolName));
         i++; // Move to next element
       }
     } else {
@@ -238,11 +262,118 @@ function transformVectorImport(list: ListNode, currentDir: string): IR.IRNode | 
 }
 
 /**
- * Transform a list node to its IR representation.
+ * Transform legacy import syntax to IR
  */
+function transformLegacyImport(list: ListNode, currentDir: string): IR.IRNode | null {
+  // Extract module name and path
+  const nameNode = list.elements[1];
+  const pathNode = list.elements[2];
+  
+  if (nameNode.type !== "symbol") {
+    throw new Error("Import name must be a symbol");
+  }
+  
+  if (pathNode.type !== "literal") {
+    throw new Error("Import path must be a string literal");
+  }
+  
+  const name = (nameNode as SymbolNode).name;
+  const path = String((pathNode as LiteralNode).value);
+  
+  // Create a JsImportReference - same as js-import handling
+  return {
+    type: IR.IRNodeType.JsImportReference,
+    name,
+    source: path
+  } as IR.IRJsImportReference;
+}
+
+/**
+ * Check if a list represents a property access with dot notation
+ */
+function isDotNotation(op: string): boolean {
+  return op.includes('.') && !op.startsWith('js/');
+}
+
+/**
+ * Transform dot notation expressions to IR
+ */
+function transformDotNotation(list: ListNode, op: string, currentDir: string): IR.IRNode | null {
+  const parts = op.split('.');
+  const objectName = parts[0];
+  const property = parts.slice(1).join('.');
+  
+  // Create a proper member expression that preserves the dot notation
+  const objectExpr = {
+    type: IR.IRNodeType.Identifier,
+    name: sanitizeIdentifier(objectName)
+  } as IR.IRIdentifier;
+  
+  // Property access (no arguments)
+  if (list.elements.length === 1) {
+    return {
+      type: IR.IRNodeType.MemberExpression,
+      object: objectExpr,
+      property: { 
+        type: IR.IRNodeType.Identifier, 
+        name: sanitizeIdentifier(property) 
+      } as IR.IRIdentifier,
+      computed: false
+    } as IR.IRMemberExpression;
+  }
+  
+  // Method call (with arguments)
+  const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
+  
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.MemberExpression,
+      object: objectExpr,
+      property: { 
+        type: IR.IRNodeType.Identifier, 
+        name: sanitizeIdentifier(property) 
+      } as IR.IRIdentifier,
+      computed: false
+    } as IR.IRMemberExpression,
+    arguments: args
+  } as IR.IRCallExpression;
+}
+
+/**
+ * Transform empty data structure literals
+ */
+function transformEmptyDataStructure(op: string): IR.IRNode | null {
+  if (op === "empty-array") {
+    return {
+      type: IR.IRNodeType.ArrayExpression,
+      elements: []
+    } as IR.IRArrayExpression;
+  }
+  
+  if (op === "empty-map") {
+    return {
+      type: IR.IRNodeType.ObjectExpression,
+      properties: []
+    } as IR.IRObjectExpression;
+  }
+  
+  if (op === "empty-set") {
+    return {
+      type: IR.IRNodeType.NewExpression,
+      callee: {
+        type: IR.IRNodeType.Identifier,
+        name: "Set"
+      } as IR.IRIdentifier,
+      arguments: []
+    } as IR.IRNewExpression;
+  }
+  
+  return null;
+}
+
 /**
  * Transform a list node to its IR representation.
- * Handles special cases for import/export with vector syntax.
  */
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (list.elements.length === 0) {
@@ -271,49 +402,24 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     const op = (first as SymbolNode).name;
     
     // Check for vector-based export: (export [symbol1, symbol2])
-    if (op === "export" && list.elements.length === 2 &&
-        list.elements[1].type === "list") {
-      
+    if (isVectorExport(list)) {
       return transformVectorExport(list, currentDir);
     }
     
     // Check for vector-based import: (import [symbol1, symbol2 as alias2] from "./path.hql")
-    if (op === "import" && list.elements.length === 4 &&
-        list.elements[1].type === "list" &&
-        list.elements[2].type === "symbol" &&
-        (list.elements[2] as SymbolNode).name === "from") {
-      
+    if (isVectorImport(list)) {
       return transformVectorImport(list, currentDir);
     }
     
     // Handle legacy import: (import module "./path.hql")
-    if (op === "import" && list.elements.length === 3) {
-      // Extract module name and path
-      const nameNode = list.elements[1];
-      const pathNode = list.elements[2];
-      
-      if (nameNode.type !== "symbol") {
-        throw new Error("Import name must be a symbol");
-      }
-      
-      if (pathNode.type !== "literal") {
-        throw new Error("Import path must be a string literal");
-      }
-      
-      const name = (nameNode as SymbolNode).name;
-      const path = String((pathNode as LiteralNode).value);
-      
-      // Create a JsImportReference - same as js-import handling
-      return {
-        type: IR.IRNodeType.JsImportReference,
-        name,
-        source: path
-      } as IR.IRJsImportReference;
+    if (isLegacyImport(list)) {
+      return transformLegacyImport(list, currentDir);
     }
     
     // Handle dot notation
-    const dotNotationResult = transformDotNotation(list, op, currentDir);
-    if (dotNotationResult) return dotNotationResult;
+    if (isDotNotation(op)) {
+      return transformDotNotation(list, op, currentDir);
+    }
     
     // Handle empty data structure literals
     const emptyDataStructureResult = transformEmptyDataStructure(op);
@@ -349,8 +455,9 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     const noArgResult = transformNoArgFunction(list, op);
     if (noArgResult) return noArgResult;
     
-    const sExpressionCollectionAccess = transformCollectionAccess(list, op, currentDir);
-    if (sExpressionCollectionAccess) return sExpressionCollectionAccess;
+    // Handle collection access syntax: (collection index)
+    const collectionAccess = transformCollectionAccess(list, op, currentDir);
+    if (collectionAccess) return collectionAccess;
     
     // Standard function call
     return transformStandardFunctionCall(list, op, currentDir);
@@ -464,88 +571,6 @@ function transformNestedList(list: ListNode, currentDir: string): IR.IRNode {
 }
 
 /**
- * Transform dot notation expressions (e.g., object.property).
- */
-function transformDotNotation(list: ListNode, op: string, currentDir: string): IR.IRNode | null {
-  if (op.includes('.') && !op.startsWith('js/')) {
-    const parts = op.split('.');
-    const objectName = parts[0];
-    const property = parts.slice(1).join('.');
-    
-    // Create a proper member expression that preserves the dot notation
-    const objectExpr = {
-      type: IR.IRNodeType.Identifier,
-      // Important: Don't sanitize the whole op, just the parts
-      name: sanitizeIdentifier(objectName)
-    } as IR.IRIdentifier;
-    
-    // Property access (no arguments)
-    if (list.elements.length === 1) {
-      return {
-        type: IR.IRNodeType.MemberExpression,
-        object: objectExpr,
-        property: { 
-          type: IR.IRNodeType.Identifier, 
-          name: sanitizeIdentifier(property) 
-        } as IR.IRIdentifier,
-        computed: false
-      } as IR.IRMemberExpression;
-    }
-    
-    // Method call (with arguments)
-    const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
-    
-    return {
-      type: IR.IRNodeType.CallExpression,
-      callee: {
-        type: IR.IRNodeType.MemberExpression,
-        object: objectExpr,
-        property: { 
-          type: IR.IRNodeType.Identifier, 
-          name: sanitizeIdentifier(property) 
-        } as IR.IRIdentifier,
-        computed: false
-      } as IR.IRMemberExpression,
-      arguments: args
-    } as IR.IRCallExpression;
-  }
-  
-  return null;
-}
-
-/**
- * Transform empty data structure literals (empty-array, empty-map, empty-set).
- */
-function transformEmptyDataStructure(op: string): IR.IRNode | null {
-  if (op === "empty-array") {
-    return {
-      type: IR.IRNodeType.ArrayExpression,
-      elements: []
-    } as IR.IRArrayExpression;
-  }
-  
-  if (op === "empty-map") {
-    return {
-      type: IR.IRNodeType.ObjectExpression,
-      properties: []
-    } as IR.IRObjectExpression;
-  }
-  
-  if (op === "empty-set") {
-    return {
-      type: IR.IRNodeType.NewExpression,
-      callee: {
-        type: IR.IRNodeType.Identifier,
-        name: "Set"
-      } as IR.IRIdentifier,
-      arguments: []
-    } as IR.IRNewExpression;
-  }
-  
-  return null;
-}
-
-/**
  * Transform kernel primitives (quote, if, fn, def).
  */
 function transformKernelPrimitive(list: ListNode, op: string, currentDir: string): IR.IRNode {
@@ -569,6 +594,9 @@ function transformKernelPrimitive(list: ListNode, op: string, currentDir: string
   }
 }
 
+/**
+ * Transform quasiquoted expressions
+ */
 function transformQuasiquote(list: ListNode, currentDir: string): IR.IRNode {
   if (list.elements.length !== 2) {
     throw new Error("quasiquote requires exactly one argument");
@@ -577,6 +605,9 @@ function transformQuasiquote(list: ListNode, currentDir: string): IR.IRNode {
   return transformNode(list.elements[1], currentDir)!;
 }
 
+/**
+ * Transform unquote expressions
+ */
 function transformUnquote(list: ListNode, currentDir: string): IR.IRNode {
   if (list.elements.length !== 2) {
     throw new Error("unquote requires exactly one argument");
@@ -585,6 +616,9 @@ function transformUnquote(list: ListNode, currentDir: string): IR.IRNode {
   return transformNode(list.elements[1], currentDir)!;
 }
 
+/**
+ * Transform unquote-splicing expressions
+ */
 function transformUnquoteSplicing(list: ListNode, currentDir: string): IR.IRNode {
   if (list.elements.length !== 2) {
     throw new Error("unquote-splicing requires exactly one argument");
@@ -761,6 +795,9 @@ function transformNoArgFunction(list: ListNode, op: string): IR.IRNode | null {
   return null;
 }
 
+/**
+ * Check if a list should be transformed as collection access
+ */
 function shouldTransformCollectionAccess(list: ListNode, op: string): boolean {
   return list.elements.length === 2 &&
          !KERNEL_PRIMITIVES.has(op) &&
@@ -905,117 +942,87 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
     throw new Error("fn parameters must be a list");
   }
   
-  // Process parameters, handling '&' for rest parameters
-  const paramElements = (paramsNode as ListNode).elements;
-  const params: IR.IRIdentifier[] = [];
+  const { params, restParam } = processParamList(paramsNode as ListNode);
   
-  for (let i = 0; i < paramElements.length; i++) {
-    const param = paramElements[i];
-    if (param.type !== "symbol") {
-      throw new Error("fn parameters must be symbols");
-    }
-    
-    // Check for &
-    if ((param as SymbolNode).name === "&") {
-      // Next symbol should be the rest parameter
-      if (i + 1 < paramElements.length && paramElements[i + 1].type === "symbol") {
-        const restParam = paramElements[i + 1] as SymbolNode;
-        const restParamName = sanitizeIdentifier(restParam.name);
-        
-        // Create a rest parameter identifier with the ... prefix
-        params.push({
-          type: IR.IRNodeType.Identifier,
-          name: `...${restParamName}`
-        } as IR.IRIdentifier);
-        
-        // Skip the next parameter since we've handled it
-        i++;
-      } else {
-        throw new Error("& must be followed by a symbol in parameter list");
-      }
-    } else {
-      params.push(transformSymbol(param as SymbolNode) as IR.IRIdentifier);
-    }
-  }
-  
-  const bodyNodes: IR.IRNode[] = [];
-  
-  // Process all but the last expression as statements
-  for (let i = 2; i < list.elements.length - 1; i++) {
-    const expr = transformNode(list.elements[i], currentDir);
-    if (expr) bodyNodes.push(expr);
-  }
-  
-  // Process the last expression as the return value
-  if (list.elements.length > 2) {
-    const lastExpr = transformNode(list.elements[list.elements.length - 1], currentDir);
-    
-    if (lastExpr) {
-      // Special handling for variable declarations in return position
-      if (lastExpr.type === IR.IRNodeType.VariableDeclaration) {
-        // Add the variable declaration as a statement
-        bodyNodes.push(lastExpr);
-        
-        // Then add a return statement that refers to the variable
-        const varDecl = lastExpr as IR.IRVariableDeclaration;
-        if (varDecl.declarations.length > 0 && varDecl.declarations[0].id) {
-          bodyNodes.push({
-            type: IR.IRNodeType.ReturnStatement,
-            argument: {
-              type: IR.IRNodeType.Identifier,
-              name: varDecl.declarations[0].id.name
-            } as IR.IRIdentifier
-          } as IR.IRReturnStatement);
-        } else {
-          // Fallback if we couldn't get the variable name
-          bodyNodes.push({
-            type: IR.IRNodeType.ReturnStatement,
-            argument: { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral
-          } as IR.IRReturnStatement);
-        }
-      } 
-      // Special handling for call expressions with empty arguments (like IIFE from do macro)
-      else if (lastExpr.type === IR.IRNodeType.CallExpression) {
-        const callExpr = lastExpr as IR.IRCallExpression;
-        if (callExpr.arguments.length === 0) {
-          // First add the function call as a statement
-          bodyNodes.push(callExpr);
-          
-          // Then add a return null statement as a fallback
-          bodyNodes.push({
-            type: IR.IRNodeType.ReturnStatement,
-            argument: { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral
-          } as IR.IRReturnStatement);
-        } else {
-          // Normal call expression - return its value
-          bodyNodes.push({
-            type: IR.IRNodeType.ReturnStatement,
-            argument: callExpr
-          } as IR.IRReturnStatement);
-        }
-      }
-      else {
-        // Normal expression - just return it
-        bodyNodes.push({
-          type: IR.IRNodeType.ReturnStatement,
-          argument: lastExpr
-        } as IR.IRReturnStatement);
-      }
-    } else {
-      // If lastExpr is null, add a fallback return null
-      bodyNodes.push({
-        type: IR.IRNodeType.ReturnStatement,
-        argument: { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral
-      } as IR.IRReturnStatement);
-    }
-  }
+  // Process body expressions and return statements
+  const bodyNodes = processFunctionBody(list.elements.slice(2), currentDir);
   
   return {
     type: IR.IRNodeType.FunctionExpression,
     id: null,
-    params,
+    params: [...params, ...(restParam ? [restParam] : [])],
     body: { type: IR.IRNodeType.BlockStatement, body: bodyNodes }
   } as IR.IRFunctionExpression;
+}
+
+/**
+ * Process function parameters, handling rest parameters
+ */
+function processParamList(paramsNode: ListNode): { 
+  params: IR.IRIdentifier[], 
+  restParam: IR.IRIdentifier | null 
+} {
+  const params: IR.IRIdentifier[] = [];
+  let restParam: IR.IRIdentifier | null = null;
+  let restMode = false;
+  
+  for (const param of paramsNode.elements) {
+    if (param.type !== "symbol") {
+      throw new Error("fn parameters must be symbols");
+    }
+    
+    const paramName = (param as SymbolNode).name;
+    
+    if (paramName === '&') {
+      restMode = true;
+      continue;
+    }
+    
+    if (restMode) {
+      if (restParam !== null) {
+        throw new Error("Multiple rest parameters not allowed");
+      }
+      restParam = {
+        type: IR.IRNodeType.Identifier,
+        name: `...${sanitizeIdentifier(paramName)}`
+      } as IR.IRIdentifier;
+    } else {
+      params.push({
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(paramName)
+      } as IR.IRIdentifier);
+    }
+  }
+  
+  return { params, restParam };
+}
+
+/**
+ * Process function body expressions, creating return statements
+ */
+function processFunctionBody(bodyExprs: HQLNode[], currentDir: string): IR.IRNode[] {
+  const bodyNodes: IR.IRNode[] = [];
+  
+  // Process all but the last expression as statements
+  for (let i = 0; i < bodyExprs.length - 1; i++) {
+    const expr = transformNode(bodyExprs[i], currentDir);
+    if (expr) bodyNodes.push(expr);
+  }
+  
+  // Process the last expression as the return value
+  if (bodyExprs.length > 0) {
+    const lastExpr = transformNode(bodyExprs[bodyExprs.length - 1], currentDir);
+    
+    if (lastExpr) {
+      // Add a return statement for the last expression
+      bodyNodes.push({
+        type: IR.IRNodeType.ReturnStatement,
+        argument: lastExpr
+      } as IR.IRReturnStatement);
+    }
+  }
+  
+  return bodyNodes;
 }
 
 /**
@@ -1259,136 +1266,15 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
   const op = (list.elements[0] as SymbolNode).name;
   const args = list.elements.slice(1).map(arg => transformNode(arg, currentDir)!);
 
-  // Essential arithmetic operators
+  // Handle arithmetic operators
   if (op === "+" || op === "-" || op === "*" || op === "/" || op === "%") {
-    if (args.length === 0) {
-      throw new Error(`${op} requires at least one argument`);
-    }
-    
-    // Handle unary +/- (e.g., (+ 5) or (- 3))
-    if (args.length === 1 && (op === "+" || op === "-")) {
-      return {
-        type: IR.IRNodeType.UnaryExpression,
-        operator: op,
-        argument: args[0],
-      } as IR.IRUnaryExpression;
-    }
-    
-    // Handle binary operations
-    let result = args[0];
-    
-    // If we only have one argument, add a default second argument
-    if (args.length === 1) {
-      // Default second argument depends on the operator:
-      // - For +/-, use 0 
-      // - For */%, use 1
-      const defaultValue = (op === "*" || op === "/") ? 1 : 0;
-      
-      return {
-        type: IR.IRNodeType.BinaryExpression,
-        operator: op,
-        left: result,
-        right: {
-          type: IR.IRNodeType.NumericLiteral,
-          value: defaultValue
-        } as IR.IRNumericLiteral
-      } as IR.IRBinaryExpression;
-    }
-    
-    // For multiple arguments, chain them as binary operations
-    for (let i = 1; i < args.length; i++) {
-      // Skip any null arguments (shouldn't happen, but just in case)
-      if (!args[i]) continue;
-      
-      result = {
-        type: IR.IRNodeType.BinaryExpression,
-        operator: op,
-        left: result,
-        right: args[i],
-      } as IR.IRBinaryExpression;
-    }
-    
-    return result;
+    return transformArithmeticOp(op, args);
   }
   
-  // Comparison operators - all of these need special handling
-  
-  // Equal operator (= -> ===)
-  if (op === "=" || op === "eq?") {
-    if (args.length !== 2) {
-      throw new Error(`${op} requires exactly 2 arguments`);
-    }
-    return {
-      type: IR.IRNodeType.BinaryExpression,
-      operator: "===",
-      left: args[0],
-      right: args[1],
-    } as IR.IRBinaryExpression;
-  }
-  
-  // Not equal operator (!= -> !==)
-  if (op === "!=") {
-    if (args.length !== 2) {
-      throw new Error(`${op} requires exactly 2 arguments`);
-    }
-    return {
-      type: IR.IRNodeType.BinaryExpression,
-      operator: "!==",
-      left: args[0],
-      right: args[1],
-    } as IR.IRBinaryExpression;
-  }
-  
-  // Greater than (>)
-  if (op === ">") {
-    if (args.length !== 2) {
-      throw new Error(`${op} requires exactly 2 arguments`);
-    }
-    return {
-      type: IR.IRNodeType.BinaryExpression,
-      operator: ">",
-      left: args[0],
-      right: args[1],
-    } as IR.IRBinaryExpression;
-  }
-  
-  // Less than (<)
-  if (op === "<") {
-    if (args.length !== 2) {
-      throw new Error(`${op} requires exactly 2 arguments`);
-    }
-    return {
-      type: IR.IRNodeType.BinaryExpression,
-      operator: "<",
-      left: args[0],
-      right: args[1],
-    } as IR.IRBinaryExpression;
-  }
-  
-  // Greater than or equal (>=)
-  if (op === ">=") {
-    if (args.length !== 2) {
-      throw new Error(`${op} requires exactly 2 arguments`);
-    }
-    return {
-      type: IR.IRNodeType.BinaryExpression,
-      operator: ">=",
-      left: args[0],
-      right: args[1],
-    } as IR.IRBinaryExpression;
-  }
-  
-  // Less than or equal (<=)
-  if (op === "<=") {
-    if (args.length !== 2) {
-      throw new Error(`${op} requires exactly 2 arguments`);
-    }
-    return {
-      type: IR.IRNodeType.BinaryExpression,
-      operator: "<=",
-      left: args[0],
-      right: args[1],
-    } as IR.IRBinaryExpression;
+  // Handle comparison operators
+  if (op === "=" || op === "eq?" || op === "!=" || 
+      op === ">" || op === "<" || op === ">=" || op === "<=") {
+    return transformComparisonOp(op, args);
   }
   
   // For all other primitive operations, create a function call expression
@@ -1397,4 +1283,88 @@ function transformPrimitiveOp(list: ListNode, currentDir: string): IR.IRNode {
     callee: { type: IR.IRNodeType.Identifier, name: op } as IR.IRIdentifier,
     arguments: args,
   } as IR.IRCallExpression;
+}
+
+/**
+ * Transform arithmetic operations (+, -, *, /, %)
+ */
+function transformArithmeticOp(op: string, args: IR.IRNode[]): IR.IRNode {
+  if (args.length === 0) {
+    throw new Error(`${op} requires at least one argument`);
+  }
+  
+  // Handle unary +/- (e.g., (+ 5) or (- 3))
+  if (args.length === 1 && (op === "+" || op === "-")) {
+    return {
+      type: IR.IRNodeType.UnaryExpression,
+      operator: op,
+      argument: args[0],
+    } as IR.IRUnaryExpression;
+  }
+  
+  // For a single argument with * or /, use a default second operand
+  if (args.length === 1) {
+    // Default second argument for * and / is 1, for + and - it's 0
+    const defaultValue = (op === "*" || op === "/") ? 1 : 0;
+    
+    return {
+      type: IR.IRNodeType.BinaryExpression,
+      operator: op,
+      left: args[0],
+      right: {
+        type: IR.IRNodeType.NumericLiteral,
+        value: defaultValue
+      } as IR.IRNumericLiteral
+    } as IR.IRBinaryExpression;
+  }
+  
+  // For multiple arguments, chain them as binary operations
+  let result = args[0];
+  
+  for (let i = 1; i < args.length; i++) {
+    result = {
+      type: IR.IRNodeType.BinaryExpression,
+      operator: op,
+      left: result,
+      right: args[i],
+    } as IR.IRBinaryExpression;
+  }
+  
+  return result;
+}
+
+/**
+ * Transform comparison operations (=, !=, <, >, <=, >=)
+ */
+function transformComparisonOp(op: string, args: IR.IRNode[]): IR.IRNode {
+  if (args.length !== 2) {
+    throw new Error(`${op} requires exactly 2 arguments`);
+  }
+  
+  // Map HQL operators to JavaScript operators
+  let jsOp: string;
+  switch (op) {
+    case "=":
+    case "eq?":
+      jsOp = "===";
+      break;
+    case "!=":
+      jsOp = "!==";
+      break;
+    case ">":
+    case "<":
+    case ">=":
+    case "<=":
+      jsOp = op;
+      break;
+    default:
+      jsOp = "==="; // Default to equality
+  }
+  
+  return {
+    type: IR.IRNodeType.BinaryExpression,
+    operator: jsOp,
+    left: args[0],
+    right: args[1],
+  } as IR.IRBinaryExpression;
 }
