@@ -1,4 +1,4 @@
-// src/s-exp/imports.ts - Optimized with streamlined user-level macro handling
+// src/s-exp/imports.ts - Enhanced with better error handling
 
 import * as path from "https://deno.land/std/path/mod.ts";
 import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport } from './types.ts';
@@ -6,6 +6,7 @@ import { Environment } from '../environment.ts';
 import { evaluateForMacro, defineUserMacro } from './macro.ts';
 import { parse } from './parser.ts';
 import { Logger } from '../logger.ts';
+import { ImportError, MacroError } from '../transpiler/errors.ts';
 
 /**
  * Options for import processing
@@ -42,17 +43,28 @@ export async function processImports(
     // Set current file in environment if provided
     if (options.currentFile) {
       env.setCurrentFile(options.currentFile);
+      logger.debug(`Processing imports in file: ${options.currentFile}`);
     }
     
     // Create temp directory if needed
     let tempDir = options.tempDir;
     if (!tempDir) {
-      tempDir = await Deno.makeTempDir({ prefix: "hql_imports_" });
-      logger.debug(`Created temporary directory: ${tempDir}`);
+      try {
+        tempDir = await Deno.makeTempDir({ prefix: "hql_imports_" });
+        logger.debug(`Created temporary directory: ${tempDir}`);
+      } catch (error) {
+        throw new ImportError(
+          `Failed to create temporary directory: ${error instanceof Error ? error.message : String(error)}`,
+          "temp_dir", 
+          options.currentFile,
+          error instanceof Error ? error : undefined
+        );
+      }
     }
     
     // Process all import expressions in sequence
     const importExprs = exprs.filter(expr => isImport(expr) && expr.type === 'list') as SList[];
+    
     for (const importExpr of importExprs) {
       try {
         await processImport(importExpr, env, baseDir, {
@@ -64,16 +76,60 @@ export async function processImports(
           currentFile: options.currentFile
         });
       } catch (error) {
-        logger.error(`Error processing import: ${error.message}`);
+        // Propagate ImportError directly, wrap other errors
+        if (error instanceof ImportError) {
+          throw error;
+        }
+        
+        // Extract module path if possible for better error reporting
+        let modulePath = "unknown";
+        try {
+          if (importExpr.elements.length >= 3) {
+            // Handle vector imports: (import [symbols] from "path")
+            if (importExpr.elements.length >= 4 && 
+                importExpr.elements[2].type === "symbol" && 
+                (importExpr.elements[2] as SSymbol).name === "from" &&
+                importExpr.elements[3].type === "literal") {
+              modulePath = String((importExpr.elements[3] as any).value);
+            }
+            // Handle legacy imports: (import name "path")
+            else if (importExpr.elements[2].type === "literal") {
+              modulePath = String((importExpr.elements[2] as any).value);
+            }
+          }
+        } catch (e) {
+          // Ignore errors in extracting the module path
+        }
+        
+        throw new ImportError(
+          `Error processing import: ${error instanceof Error ? error.message : String(error)}`,
+          modulePath,
+          options.currentFile,
+          error instanceof Error ? error : undefined
+        );
       }
     }
     
     // Process definitions and exports
     if (options.currentFile) {
-      // First pass: register definitions for macros
-      processFileDefinitions(exprs, env, logger);
-      // Second pass: handle user-level macros and exports
-      processFileExportsAndDefinitions(exprs, env, {}, options.currentFile, logger);
+      try {
+        // First pass: register definitions for macros
+        processFileDefinitions(exprs, env, logger);
+        
+        // Second pass: handle user-level macros and exports
+        processFileExportsAndDefinitions(exprs, env, {}, options.currentFile, logger);
+      } catch (error) {
+        if (error instanceof MacroError || error instanceof ImportError) {
+          throw error;
+        }
+        
+        throw new ImportError(
+          `Error processing file definitions or exports: ${error instanceof Error ? error.message : String(error)}`,
+          options.currentFile,
+          options.currentFile,
+          error instanceof Error ? error : undefined
+        );
+      }
     }
   } finally {
     // Always restore the previous current file state
@@ -96,13 +152,25 @@ function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger)
       try {
         processDefDeclaration(expr, env, logger);
       } catch (error) {
-        logger.error(`Error processing def: ${error.message}`);
+        const symbolName = isSymbol(expr.elements[1]) ? expr.elements[1].name : "unknown";
+        throw new MacroError(
+          `Error processing def declaration for '${symbolName}': ${error instanceof Error ? error.message : String(error)}`,
+          symbolName,
+          env.getCurrentFile(),
+          error instanceof Error ? error : undefined
+        );
       }
     } else if (op === 'defn' && expr.elements.length >= 4) {
       try {
         processDefnDeclaration(expr, env, logger);
       } catch (error) {
-        logger.error(`Error processing defn: ${error.message}`);
+        const symbolName = isSymbol(expr.elements[1]) ? expr.elements[1].name : "unknown";
+        throw new MacroError(
+          `Error processing defn declaration for '${symbolName}': ${error instanceof Error ? error.message : String(error)}`,
+          symbolName,
+          env.getCurrentFile(),
+          error instanceof Error ? error : undefined
+        );
       }
     }
   }
@@ -125,7 +193,20 @@ function processFileExportsAndDefinitions(
       try {
         defineUserMacro(expr as SList, filePath, env, logger);
       } catch (error) {
-        logger.error(`Error defining user macro: ${error.message}`);
+        if (error instanceof MacroError) {
+          throw error;
+        }
+        
+        const macroName = expr.elements.length > 1 && isSymbol(expr.elements[1]) 
+          ? expr.elements[1].name 
+          : "unknown";
+        
+        throw new MacroError(
+          `Error defining user macro: ${error instanceof Error ? error.message : String(error)}`,
+          macroName,
+          filePath,
+          error instanceof Error ? error : undefined
+        );
       }
     }
   }
@@ -138,12 +219,32 @@ function processFileExportsAndDefinitions(
     
     // Vector-based exports: (export [symbol1, symbol2])
     if (op === 'export' && expr.elements.length === 2 && expr.elements[1].type === 'list') {
-      processVectorExport(expr, env, moduleExports, filePath, logger);
+      try {
+        processVectorExport(expr, env, moduleExports, filePath, logger);
+      } catch (error) {
+        throw new ImportError(
+          `Error processing vector export: ${error instanceof Error ? error.message : String(error)}`,
+          filePath,
+          filePath,
+          error instanceof Error ? error : undefined
+        );
+      }
     }
     // Legacy string-based exports: (export "name" value)
     else if (op === 'export' && expr.elements.length === 3 && 
              isLiteral(expr.elements[1]) && typeof expr.elements[1].value === 'string') {
-      processLegacyExport(expr, env, moduleExports, filePath, logger);
+      try {
+        processLegacyExport(expr, env, moduleExports, filePath, logger);
+      } catch (error) {
+        const exportName = isLiteral(expr.elements[1]) ? String(expr.elements[1].value) : "unknown";
+        
+        throw new ImportError(
+          `Error processing legacy export '${exportName}': ${error instanceof Error ? error.message : String(error)}`,
+          filePath,
+          filePath,
+          error instanceof Error ? error : undefined
+        );
+      }
     }
   }
 }
@@ -164,7 +265,8 @@ function processDefDeclaration(expr: SList, env: Environment, logger: Logger): v
     }
     logger.debug(`Registered variable for macros: ${name}`);
   } catch (error) {
-    logger.warn(`Could not evaluate ${name} for macro use: ${error.message}`);
+    logger.warn(`Could not evaluate ${name} for macro use: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
   }
 }
 
@@ -180,7 +282,7 @@ function processDefnDeclaration(expr: SList, env: Environment, logger: Logger): 
     try {
       return `${fnName}(${args.join(', ')})`;
     } catch (e) {
-      logger.error(`Error executing function ${fnName}: ${e.message}`);
+      logger.error(`Error executing function ${fnName}: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   };
@@ -203,23 +305,67 @@ async function processImport(
   options: ImportProcessorOptions
 ): Promise<void> {
   const elements = importExpr.elements;
+  const logger = new Logger(options.verbose || false);
   
-  // Quickly determine import type and process accordingly
-  if (elements.length >= 4 && elements[1].type === 'list' && 
-      isSymbol(elements[2]) && elements[2].name === 'from') {
-    // Vector-based import
-    await processVectorBasedImport(elements, env, baseDir, options);
-  } else if (elements.length === 3 && isSymbol(elements[1]) && 
-             isLiteral(elements[2]) && typeof elements[2].value === 'string') {
-    // Legacy import
-    await processLegacyImport(elements, env, baseDir, options);
-  } else {
-    throw new Error("Invalid import syntax");
+  try {
+    // Quickly determine import type and process accordingly
+    if (elements.length >= 4 && elements[1].type === 'list' && 
+        isSymbol(elements[2]) && elements[2].name === 'from') {
+      // Vector-based import
+      await processVectorBasedImport(elements, env, baseDir, options);
+    } else if (elements.length === 3 && isSymbol(elements[1]) && 
+              isLiteral(elements[2]) && typeof elements[2].value === 'string') {
+      // Legacy import
+      await processLegacyImport(elements, env, baseDir, options);
+    } else {
+      throw new ImportError(
+        "Invalid import syntax, expected either (import [symbols] from \"path\") or (import name \"path\")",
+        "syntax-error",
+        options.currentFile
+      );
+    }
+  } catch (error) {
+    if (error instanceof ImportError) {
+      throw error;
+    }
+    
+    // Determine module path for better error reporting
+    let modulePath = "unknown";
+    if (elements.length >= 4 && elements[3].type === "literal") {
+      modulePath = String(elements[3].value);
+    } else if (elements.length >= 3 && elements[2].type === "literal") {
+      modulePath = String(elements[2].value);
+    }
+    
+    throw new ImportError(
+      `Failed to process import: ${error instanceof Error ? error.message : String(error)}`,
+      modulePath,
+      options.currentFile,
+      error instanceof Error ? error : undefined
+    );
   }
 }
 
 /**
- * Process a vector-based import
+ * Process elements in a vector, handling vector keyword and commas
+ */
+function processVectorElements(elements: SExp[]): SExp[] {
+  // Skip "vector" symbol if present as first element
+  let startIndex = 0;
+  if (elements.length > 0 && 
+      elements[0].type === "symbol" && 
+      (elements[0] as SSymbol).name === "vector") {
+    startIndex = 1;
+  }
+  
+  // Filter out comma symbols
+  return elements.slice(startIndex).filter(elem => 
+    !(elem.type === "symbol" && (elem as SSymbol).name === ',')
+  );
+}
+
+/**
+ * Process vector-based import
  */
 async function processVectorBasedImport(
   elements: SExp[],
@@ -229,88 +375,137 @@ async function processVectorBasedImport(
 ): Promise<void> {
   const logger = new Logger(options.verbose);
   
-  // Get the vector of symbols to import
-  const symbolsVector = elements[1] as SList;
-  
-  // Get and validate the module path
-  if (!isLiteral(elements[3]) || typeof elements[3].value !== 'string') {
-    throw new Error('Module path must be a string literal');
-  }
-  
-  const modulePath = elements[3].value as string;
-  const resolvedPath = resolveImportPath(modulePath, baseDir, logger);
-  
-  // Create a temporary module name and load the module
-  const tempModuleName = `__temp_module_${Date.now()}`;
-  await loadModuleByType(tempModuleName, modulePath, resolvedPath, baseDir, env, options);
-  
-  // Process the vector elements
-  const vectorElements = processVectorElements(symbolsVector);
-  
-  // Track which symbols were explicitly requested with their aliases
-  const requestedSymbols = new Map<string, string | null>();
-  
-  // Process vector elements to extract names and aliases
-  let i = 0;
-  while (i < vectorElements.length) {
-    if (!isSymbol(vectorElements[i])) {
-      i++;
-      continue;
+  try {
+    // Get the vector of symbols to import
+    if (elements[1].type !== 'list') {
+      throw new ImportError(
+        "Import vector must be a list",
+        "syntax-error",
+        options.currentFile
+      );
     }
     
-    const symbolName = (vectorElements[i] as SSymbol).name;
+    const symbolsVector = elements[1] as SList;
     
-    // Check if this has an alias
-    if (i + 2 < vectorElements.length && 
-        isSymbol(vectorElements[i+1]) && 
-        (vectorElements[i+1] as SSymbol).name === 'as' &&
-        isSymbol(vectorElements[i+2])) {
-      
-      const aliasName = (vectorElements[i+2] as SSymbol).name;
-      requestedSymbols.set(symbolName, aliasName);
-      
-      i += 3; // Skip symbol, 'as', and alias
-    } else {
-      requestedSymbols.set(symbolName, null); // No alias
-      i++;
+    // Get and validate the module path
+    if (!isLiteral(elements[3]) || typeof elements[3].value !== 'string') {
+      throw new ImportError(
+        'Module path must be a string literal',
+        "syntax-error",
+        options.currentFile
+      );
     }
-  }
-  
-  // Process imports if this is an HQL file
-  if (options.currentFile && modulePath.endsWith('.hql')) {
-    // Only import the explicitly requested symbols
-    for (const [symbolName, aliasName] of requestedSymbols.entries()) {
-      // Check if this is a macro and import it with the proper alias
-      if (env.hasModuleMacro(resolvedPath, symbolName)) {
-        const success = env.importMacro(resolvedPath, symbolName, options.currentFile, aliasName || undefined);
-        if (success) {
-          logger.debug(`Imported macro ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+    
+    const modulePath = elements[3].value as string;
+    
+    try {
+      const resolvedPath = resolveImportPath(modulePath, baseDir, logger);
+      
+      // Create a temporary module name and load the module
+      const tempModuleName = `__temp_module_${Date.now()}`;
+      await loadModuleByType(tempModuleName, modulePath, resolvedPath, baseDir, env, options);
+      
+      // Process the vector elements
+      const vectorElements = processVectorElements(symbolsVector.elements);
+      
+      // Track which symbols were explicitly requested with their aliases
+      const requestedSymbols = new Map<string, string | null>();
+      
+      // Process vector elements to extract names and aliases
+      let i = 0;
+      while (i < vectorElements.length) {
+        if (!isSymbol(vectorElements[i])) {
+          i++;
+          continue;
+        }
+        
+        const symbolName = (vectorElements[i] as SSymbol).name;
+        
+        // Check if this has an alias
+        if (i + 2 < vectorElements.length && 
+            isSymbol(vectorElements[i+1]) && 
+            (vectorElements[i+1] as SSymbol).name === 'as' &&
+            isSymbol(vectorElements[i+2])) {
+          
+          const aliasName = (vectorElements[i+2] as SSymbol).name;
+          requestedSymbols.set(symbolName, aliasName);
+          
+          i += 3; // Skip symbol, 'as', and alias
+        } else {
+          requestedSymbols.set(symbolName, null); // No alias
+          i++;
         }
       }
       
-      // Try to import as a regular value
-      try {
-        const value = env.lookup(`${tempModuleName}.${symbolName}`);
-        env.define(aliasName || symbolName, value);
-        logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
-      } catch (error) {
-        // Ignore lookup errors for macros - they're handled separately
-        if (!env.hasModuleMacro(resolvedPath, symbolName)) {
-          logger.debug(`Symbol not found in module: ${symbolName}`);
+      // Process imports if this is an HQL file
+      if (options.currentFile && modulePath.endsWith('.hql')) {
+        // Only import the explicitly requested symbols
+        for (const [symbolName, aliasName] of requestedSymbols.entries()) {
+          // Check if this is a macro and import it with the proper alias
+          if (env.hasModuleMacro(resolvedPath, symbolName)) {
+            const success = env.importMacro(resolvedPath, symbolName, options.currentFile, aliasName || undefined);
+            if (success) {
+              logger.debug(`Imported macro ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+            } else {
+              logger.warn(`Failed to import macro ${symbolName} from ${resolvedPath}`);
+            }
+          }
+          
+          // Try to import as a regular value
+          try {
+            const value = env.lookup(`${tempModuleName}.${symbolName}`);
+            env.define(aliasName || symbolName, value);
+            logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+          } catch (error) {
+            // Ignore lookup errors for macros - they're handled separately
+            if (!env.hasModuleMacro(resolvedPath, symbolName)) {
+              logger.debug(`Symbol not found in module: ${symbolName}`);
+            }
+          }
+        }
+      } else {
+        // For non-HQL files, process regular imports
+        for (const [symbolName, aliasName] of requestedSymbols.entries()) {
+          try {
+            const value = env.lookup(`${tempModuleName}.${symbolName}`);
+            env.define(aliasName || symbolName, value);
+            logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+          } catch (error) {
+            logger.debug(`Symbol not found in module: ${symbolName}`);
+            
+            // Provide more helpful error for missing imports
+            throw new ImportError(
+              `Symbol '${symbolName}' not found in module '${modulePath}'`,
+              modulePath,
+              options.currentFile,
+              error instanceof Error ? error : undefined
+            );
+          }
         }
       }
-    }
-  } else {
-    // For non-HQL files, process regular imports
-    for (const [symbolName, aliasName] of requestedSymbols.entries()) {
-      try {
-        const value = env.lookup(`${tempModuleName}.${symbolName}`);
-        env.define(aliasName || symbolName, value);
-        logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
-      } catch (error) {
-        logger.debug(`Symbol not found in module: ${symbolName}`);
+    } catch (error) {
+      if (error instanceof ImportError) {
+        throw error;
       }
+      
+      throw new ImportError(
+        `Failed to process vector import: ${error instanceof Error ? error.message : String(error)}`,
+        modulePath,
+        options.currentFile,
+        error instanceof Error ? error : undefined
+      );
     }
+  } catch (error) {
+    if (error instanceof ImportError) {
+      throw error;
+    }
+    
+    throw new ImportError(
+      `Invalid vector import: ${error instanceof Error ? error.message : String(error)}`,
+      "syntax-error",
+      options.currentFile,
+      error instanceof Error ? error : undefined
+    );
   }
 }
 
@@ -325,14 +520,44 @@ async function processLegacyImport(
 ): Promise<void> {
   const logger = new Logger(options.verbose);
   
+  if (!isSymbol(elements[1])) {
+    throw new ImportError(
+      "Module name must be a symbol",
+      "syntax-error",
+      options.currentFile
+    );
+  }
+  
   const moduleName = (elements[1] as SSymbol).name;
+  
+  if (!isLiteral(elements[2]) || typeof elements[2].value !== 'string') {
+    throw new ImportError(
+      "Module path must be a string literal",
+      "syntax-error",
+      options.currentFile
+    );
+  }
+  
   const modulePath = (elements[2] as any).value as string;
   
   logger.debug(`Processing legacy import: ${moduleName} from ${modulePath}`);
   
-  // Resolve the path and load the module
-  const resolvedPath = resolveImportPath(modulePath, baseDir, logger);
-  await loadModuleByType(moduleName, modulePath, resolvedPath, baseDir, env, options);
+  try {
+    // Resolve the path and load the module
+    const resolvedPath = resolveImportPath(modulePath, baseDir, logger);
+    await loadModuleByType(moduleName, modulePath, resolvedPath, baseDir, env, options);
+  } catch (error) {
+    if (error instanceof ImportError) {
+      throw error;
+    }
+    
+    throw new ImportError(
+      `Failed to process legacy import: ${error instanceof Error ? error.message : String(error)}`,
+      modulePath,
+      options.currentFile,
+      error instanceof Error ? error : undefined
+    );
+  }
 }
 
 /**
@@ -358,35 +583,42 @@ async function loadModuleByType(
   // Mark as processed early to prevent circular imports
   processedFiles.add(resolvedPath);
   
-  // Determine module type and process accordingly
-  if (modulePath.startsWith('npm:')) {
-    await processNpmImport(moduleName, modulePath, env, logger);
-  } else if (modulePath.startsWith('jsr:')) {
-    await processJsrImport(moduleName, modulePath, env, logger);
-  } else if (modulePath.startsWith('http:') || modulePath.startsWith('https:')) {
-    await processHttpImport(moduleName, modulePath, env, logger);
-  } else if (modulePath.endsWith('.hql')) {
-    await processHqlImport(
-      moduleName, modulePath, resolvedPath, baseDir, env, processedFiles,
-      logger, options.tempDir!, options.importMap!, options
+  try {
+    // Determine module type and process accordingly
+    if (modulePath.startsWith('npm:')) {
+      await processNpmImport(moduleName, modulePath, env, logger);
+    } else if (modulePath.startsWith('jsr:')) {
+      await processJsrImport(moduleName, modulePath, env, logger);
+    } else if (modulePath.startsWith('http:') || modulePath.startsWith('https:')) {
+      await processHttpImport(moduleName, modulePath, env, logger);
+    } else if (modulePath.endsWith('.hql')) {
+      await processHqlImport(
+        moduleName, modulePath, resolvedPath, baseDir, env, processedFiles,
+        logger, options.tempDir!, options.importMap!, options
+      );
+    } else if (modulePath.endsWith('.js') || modulePath.endsWith('.mjs') || modulePath.endsWith('.cjs')) {
+      await processJsImport(
+        moduleName, modulePath, resolvedPath, baseDir, env, logger, processedFiles
+      );
+    } else {
+      throw new ImportError(
+        `Unsupported import file type: ${modulePath}`,
+        modulePath,
+        options.currentFile
+      );
+    }
+  } catch (error) {
+    if (error instanceof ImportError) {
+      throw error;
+    }
+    
+    throw new ImportError(
+      `Failed to load module: ${error instanceof Error ? error.message : String(error)}`,
+      modulePath,
+      options.currentFile,
+      error instanceof Error ? error : undefined
     );
-  } else if (modulePath.endsWith('.js') || modulePath.endsWith('.mjs') || modulePath.endsWith('.cjs')) {
-    await processJsImport(
-      moduleName, modulePath, resolvedPath, baseDir, env, logger, processedFiles
-    );
-  } else {
-    throw new Error(`Unsupported import file type: ${modulePath}`);
   }
-}
-
-/**
- * Process vector elements efficiently, removes commas and handles vector syntax
- */
-function processVectorElements(vectorList: SList): SExp[] {
-  // Convert to array only once and filter in a single pass
-  return vectorList.elements
-    .slice(isSymbol(vectorList.elements[0]) && vectorList.elements[0].name === "vector" ? 1 : 0)
-    .filter(elem => !(isSymbol(elem) && (elem as SSymbol).name === ','));
 }
 
 /**
@@ -408,35 +640,82 @@ async function processHqlImport(
   
   try {
     // Read and parse the file
-    const fileContent = await Deno.readTextFile(resolvedPath);
-    const importedExprs = parse(fileContent);
+    let fileContent: string;
+    try {
+      fileContent = await Deno.readTextFile(resolvedPath);
+    } catch (error) {
+      throw new ImportError(
+        `Failed to read file: ${error instanceof Error ? error.message : String(error)}`,
+        resolvedPath,
+        options.currentFile,
+        error instanceof Error ? error : undefined
+      );
+    }
+    
+    let importedExprs: SExp[];
+    try {
+      importedExprs = parse(fileContent);
+    } catch (error) {
+      throw new ImportError(
+        `Failed to parse file: ${error instanceof Error ? error.message : String(error)}`,
+        resolvedPath,
+        options.currentFile,
+        error instanceof Error ? error : undefined
+      );
+    }
     
     // Set current file to imported file for correct context
     env.setCurrentFile(resolvedPath);
     
     // Process nested imports first
     const importDir = path.dirname(resolvedPath);
-    await processImports(importedExprs, env, { 
-      verbose: logger.enabled,
-      baseDir: importDir,
-      tempDir,
-      keepTemp: options.keepTemp,
-      processedFiles,
-      importMap,
-      currentFile: resolvedPath
-    });
+    try {
+      await processImports(importedExprs, env, { 
+        verbose: logger.enabled,
+        baseDir: importDir,
+        tempDir,
+        keepTemp: options.keepTemp,
+        processedFiles,
+        importMap,
+        currentFile: resolvedPath
+      });
+    } catch (error) {
+      throw new ImportError(
+        `Failed to process nested imports: ${error instanceof Error ? error.message : String(error)}`,
+        resolvedPath,
+        options.currentFile,
+        error instanceof Error ? error : undefined
+      );
+    }
     
     // Process exports
     const moduleExports: Record<string, any> = {};
-    processFileExportsAndDefinitions(importedExprs, env, moduleExports, resolvedPath, logger);
+    try {
+      processFileExportsAndDefinitions(importedExprs, env, moduleExports, resolvedPath, logger);
+    } catch (error) {
+      throw new ImportError(
+        `Failed to process exports: ${error instanceof Error ? error.message : String(error)}`,
+        resolvedPath,
+        options.currentFile,
+        error instanceof Error ? error : undefined
+      );
+    }
     
     // Register the module with its exports
     env.importModule(moduleName, moduleExports);
     
     logger.debug(`Imported HQL module: ${moduleName}`);
   } catch (error) {
-    logger.error(`Failed to process HQL import: ${error.message}`);
-    throw error;
+    if (error instanceof ImportError) {
+      throw error;
+    }
+    
+    throw new ImportError(
+      `Failed to process HQL import: ${error instanceof Error ? error.message : String(error)}`,
+      modulePath,
+      options.currentFile,
+      error instanceof Error ? error : undefined
+    );
   } finally {
     // Restore original file context
     env.setCurrentFile(previousCurrentFile);
@@ -461,7 +740,12 @@ async function processJsImport(
     env.importModule(moduleName, module);
     logger.debug(`Imported JS module: ${moduleName}`);
   } catch (error) {
-    throw new Error(`Failed to import JS module: ${modulePath} - ${error.message}`);
+    throw new ImportError(
+      `Failed to import JS module: ${error instanceof Error ? error.message : String(error)}`,
+      modulePath,
+      env.getCurrentFile(),
+      error instanceof Error ? error : undefined
+    );
   }
 }
 
@@ -481,18 +765,36 @@ async function processNpmImport(
     let module;
     try {
       module = await import(modulePath);
-    } catch {
+    } catch (firstError) {
       try {
         module = await import(`https://esm.sh/${packageName}`);
-      } catch {
-        module = await import(`https://cdn.skypack.dev/${packageName}`);
+      } catch (secondError) {
+        try {
+          module = await import(`https://cdn.skypack.dev/${packageName}`);
+        } catch (thirdError) {
+          throw new ImportError(
+            `Failed to import from all sources (npm, esm.sh, skypack)`,
+            modulePath,
+            env.getCurrentFile(),
+            thirdError instanceof Error ? thirdError : undefined
+          );
+        }
       }
     }
     
     env.importModule(moduleName, module);
     logger.debug(`Imported NPM module: ${moduleName} (${packageName})`);
   } catch (error) {
-    throw new Error(`Failed to import NPM module: ${modulePath} - ${error.message}`);
+    if (error instanceof ImportError) {
+      throw error;
+    }
+    
+    throw new ImportError(
+      `Failed to import NPM module: ${error instanceof Error ? error.message : String(error)}`,
+      modulePath,
+      env.getCurrentFile(),
+      error instanceof Error ? error : undefined
+    );
   }
 }
 
@@ -510,7 +812,12 @@ async function processJsrImport(
     env.importModule(moduleName, module);
     logger.debug(`Imported JSR module: ${moduleName}`);
   } catch (error) {
-    throw new Error(`Failed to import JSR module: ${modulePath} - ${error.message}`);
+    throw new ImportError(
+      `Failed to import JSR module: ${error instanceof Error ? error.message : String(error)}`,
+      modulePath,
+      env.getCurrentFile(),
+      error instanceof Error ? error : undefined
+    );
   }
 }
 
@@ -528,7 +835,12 @@ async function processHttpImport(
     env.importModule(moduleName, module);
     logger.debug(`Imported HTTP module: ${moduleName}`);
   } catch (error) {
-    throw new Error(`Failed to import HTTP module: ${modulePath} - ${error.message}`);
+    throw new ImportError(
+      `Failed to import HTTP module: ${error instanceof Error ? error.message : String(error)}`,
+      modulePath,
+      env.getCurrentFile(),
+      error instanceof Error ? error : undefined
+    );
   }
 }
 
@@ -546,7 +858,9 @@ function resolveImportPath(modulePath: string, baseDir: string, logger: Logger):
   }
   
   // For relative paths, resolve them efficiently
-  return path.resolve(baseDir, modulePath);
+  const resolvedPath = path.resolve(baseDir, modulePath);
+  logger.debug(`Resolved import path: ${modulePath} -> ${resolvedPath}`);
+  return resolvedPath;
 }
 
 /**
@@ -559,14 +873,29 @@ function processVectorExport(
   filePath: string,
   logger: Logger
 ): void {
+  // Validate export structure
+  if (expr.elements.length !== 2 || expr.elements[1].type !== 'list') {
+    throw new ImportError(
+      "Invalid export syntax, expected (export [symbol1, symbol2, ...])",
+      filePath,
+      filePath
+    );
+  }
+  
   const exportVector = expr.elements[1] as SList;
   
   // Process vector elements in one pass
-  const elements = processVectorElements(exportVector);
+  const elements = processVectorElements(exportVector.elements);
   
   // Export each symbol that's not a macro
   for (const element of elements) {
-    if (!isSymbol(element)) continue;
+    if (!isSymbol(element)) {
+      throw new ImportError(
+        `Export vector can only contain symbols, got: ${element.type}`,
+        filePath,
+        filePath
+      );
+    }
     
     const symbolName = (element as SSymbol).name;
     
@@ -584,6 +913,12 @@ function processVectorExport(
       logger.debug(`Added export "${symbolName}" with value`);
     } catch (error) {
       logger.debug(`Failed to lookup symbol "${symbolName}" for export`);
+      throw new ImportError(
+        `Failed to export symbol "${symbolName}": ${error instanceof Error ? error.message : String(error)}`,
+        filePath,
+        filePath,
+        error instanceof Error ? error : undefined
+      );
     }
   }
 }
@@ -598,6 +933,15 @@ function processLegacyExport(
   filePath: string,
   logger: Logger
 ): void {
+  // Validate export structure
+  if (expr.elements.length !== 3 || !isLiteral(expr.elements[1])) {
+    throw new ImportError(
+      "Invalid legacy export syntax, expected (export \"name\" value)",
+      filePath,
+      filePath
+    );
+  }
+  
   const exportName = expr.elements[1].value as string;
   const exportSymbol = expr.elements[2];
   
@@ -618,6 +962,12 @@ function processLegacyExport(
       logger.debug(`Added export "${exportName}" with value from ${symbolName}`);
     } catch (error) {
       logger.warn(`Failed to lookup symbol "${symbolName}" for export "${exportName}"`);
+      throw new ImportError(
+        `Failed to export "${exportName}" from symbol "${symbolName}": ${error instanceof Error ? error.message : String(error)}`,
+        filePath,
+        filePath,
+        error instanceof Error ? error : undefined
+      );
     }
   } else {
     // For non-symbol exports, evaluate the expression
@@ -632,7 +982,13 @@ function processLegacyExport(
       
       logger.debug(`Added export "${exportName}" with direct value`);
     } catch (error) {
-      logger.warn(`Failed to evaluate export "${exportName}": ${error.message}`);
+      logger.warn(`Failed to evaluate export "${exportName}": ${error instanceof Error ? error.message : String(error)}`);
+      throw new ImportError(
+        `Failed to evaluate export "${exportName}": ${error instanceof Error ? error.message : String(error)}`,
+        filePath,
+        filePath,
+        error instanceof Error ? error : undefined
+      );
     }
   }
 }
