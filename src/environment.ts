@@ -1,4 +1,4 @@
-// src/environment.ts - Optimized while preserving existing API
+// src/environment.ts - With macro aliasing support
 import { SExp, SList, SSymbol, isSymbol, isList, createSymbol, createList, createLiteral } from './s-exp/types.ts';
 import { Logger } from './logger.ts';
 
@@ -38,6 +38,9 @@ export class Environment {
   
   // Track which macros are imported into each file
   public importedMacros = new Map<string, Map<string, string>>();
+  
+  // NEW: Track macro aliases - fileUri -> (aliasName -> originalName)
+  public macroAliases = new Map<string, Map<string, string>>();
   
   // Track processed files (needed for core.hql loading)
   private processedFiles = new Set<string>();
@@ -374,39 +377,80 @@ export class Environment {
     this.exportedMacros.get(filePath)!.add(macroName);
   }
   
-  /**
-   * Import a macro from sourceFile into targetFile
-   */
-  importMacro(sourceFile: string, macroName: string, targetFile: string): void {
-    this.logger.debug(`Importing macro ${macroName} from ${sourceFile} into ${targetFile}`);
-    
-    // Check if the source file has this macro
-    const sourceFileMacros = this.moduleMacros.get(sourceFile);
-    if (!sourceFileMacros || !sourceFileMacros.has(macroName)) {
-      this.logger.warn(`Macro ${macroName} not found in ${sourceFile}`);
-      return;
-    }
-    
-    // Check if the macro is exported
-    const exports = this.exportedMacros.get(sourceFile);
-    if (!exports || !exports.has(macroName)) {
-      this.logger.warn(`Macro ${macroName} is not exported from ${sourceFile}`);
-      return;
-    }
-    
-    // Get or create the target file's import registry
-    if (!this.importedMacros.has(targetFile)) {
-      this.importedMacros.set(targetFile, new Map<string, string>());
-    }
-    
-    // Record the import
-    this.importedMacros.get(targetFile)!.set(macroName, sourceFile);
-    
-    this.logger.debug(`Successfully imported macro ${macroName} from ${sourceFile} to ${targetFile}`);
+/**
+ * Import a macro from sourceFile into targetFile with optional alias
+ */
+importMacro(sourceFile: string, macroName: string, targetFile: string, aliasName?: string): boolean {
+  const importName = aliasName || macroName;
+  this.logger.debug(`Importing macro ${macroName}${aliasName ? ` as ${importName}` : ''} from ${sourceFile} into ${targetFile}`);
+  
+  // Check if the source file has this macro
+  const sourceFileMacros = this.moduleMacros.get(sourceFile);
+  if (!sourceFileMacros || !sourceFileMacros.has(macroName)) {
+    this.logger.warn(`Macro ${macroName} not found in ${sourceFile}`);
+    return false;
   }
+  
+  // Check if the macro is exported
+  const exports = this.exportedMacros.get(sourceFile);
+  if (!exports || !exports.has(macroName)) {
+    this.logger.warn(`Macro ${macroName} is not exported from ${sourceFile}`);
+    return false;
+  }
+  
+  // NEW: Check for name shadowing
+  if (this.importedMacros.has(targetFile)) {
+    const existingImports = this.importedMacros.get(targetFile)!;
+    
+    if (existingImports.has(importName)) {
+      const existingSource = existingImports.get(importName)!;
+      
+      // Only warn if importing from a different source
+      if (existingSource !== sourceFile) {
+        // Get original name if it's an alias
+        let existingOriginal = importName;
+        if (this.macroAliases.has(targetFile)) {
+          const aliases = this.macroAliases.get(targetFile)!;
+          if (aliases.has(importName)) {
+            existingOriginal = aliases.get(importName)!;
+          }
+        }
+        
+        this.logger.warn(
+          `WARNING: Name conflict detected: '${importName}' from '${sourceFile}' ` +
+          `shadows previously imported '${existingOriginal}' from '${existingSource}'`
+        );
+        
+        // Option: Uncomment to make this an error instead of just a warning
+        // throw new Error(`Import name conflict: '${importName}' is already imported from '${existingSource}'`);
+      }
+    }
+  }
+  
+  // Get or create the target file's import registry
+  if (!this.importedMacros.has(targetFile)) {
+    this.importedMacros.set(targetFile, new Map<string, string>());
+  }
+  
+  // Record the import (potentially overwriting previous import)
+  this.importedMacros.get(targetFile)!.set(importName, sourceFile);
+  
+  // If an alias is provided, record the mapping from alias to original name
+  if (aliasName && aliasName !== macroName) {
+    if (!this.macroAliases.has(targetFile)) {
+      this.macroAliases.set(targetFile, new Map<string, string>());
+    }
+    this.macroAliases.get(targetFile)!.set(aliasName, macroName);
+    this.logger.debug(`Created alias ${aliasName} -> ${macroName} in ${targetFile}`);
+  }
+  
+  this.logger.debug(`Successfully imported macro ${macroName}${aliasName ? ` as ${importName}` : ''} from ${sourceFile} to ${targetFile}`);
+  return true;
+}
   
   /**
    * Check if a macro exists in the environment or is visible in the current module
+   * UPDATED: Added alias resolution support
    */
   hasMacro(key: string): boolean {
     // Check global macros first
@@ -426,11 +470,21 @@ export class Environment {
       const imports = this.importedMacros.get(this.currentFilePath);
       if (imports && imports.has(key)) {
         const sourceFile = imports.get(key)!;
-        const sourceMacros = this.moduleMacros.get(sourceFile);
         
-        // Verify it's exported from source file
+        // If key is an alias, look up the original name
+        let sourceName = key;
+        if (this.macroAliases.has(this.currentFilePath)) {
+          const aliases = this.macroAliases.get(this.currentFilePath)!;
+          if (aliases.has(key)) {
+            sourceName = aliases.get(key)!;
+          }
+        }
+        
+        // Verify source has the macro and it's exported
+        const sourceMacros = this.moduleMacros.get(sourceFile);
         const exports = this.exportedMacros.get(sourceFile);
-        if (exports && exports.has(key) && sourceMacros && sourceMacros.has(key)) {
+        
+        if (exports && exports.has(sourceName) && sourceMacros && sourceMacros.has(sourceName)) {
           return true;
         }
       }
@@ -442,6 +496,7 @@ export class Environment {
 
   /**
    * Get a macro from the environment if available in the current scope
+   * UPDATED: Added alias resolution support
    */
   getMacro(key: string): MacroFn | undefined {
     // Check global macros first
@@ -461,12 +516,23 @@ export class Environment {
       const imports = this.importedMacros.get(this.currentFilePath);
       if (imports && imports.has(key)) {
         const sourceFile = imports.get(key)!;
-        const sourceMacros = this.moduleMacros.get(sourceFile);
         
-        // Verify it's exported from source file
+        // If key is an alias, look up the original name
+        let sourceName = key;
+        if (this.macroAliases.has(this.currentFilePath)) {
+          const aliases = this.macroAliases.get(this.currentFilePath)!;
+          if (aliases.has(key)) {
+            sourceName = aliases.get(key)!;
+            this.logger.debug(`Resolved alias ${key} -> ${sourceName}`);
+          }
+        }
+        
+        // Verify source has the macro and it's exported
+        const sourceMacros = this.moduleMacros.get(sourceFile);
         const exports = this.exportedMacros.get(sourceFile);
-        if (exports && exports.has(key) && sourceMacros && sourceMacros.has(key)) {
-          return sourceMacros.get(key);
+        
+        if (exports && exports.has(sourceName) && sourceMacros && sourceMacros.has(sourceName)) {
+          return sourceMacros.get(sourceName);
         }
       }
     }

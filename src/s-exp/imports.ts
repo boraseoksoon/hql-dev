@@ -247,44 +247,62 @@ async function processVectorBasedImport(
   // Process the vector elements
   const vectorElements = processVectorElements(symbolsVector);
   
-  // Process macros if applicable
+  // Track which symbols were explicitly requested with their aliases
+  const requestedSymbols = new Map<string, string | null>();
+  
+  // Process vector elements to extract names and aliases
+  let i = 0;
+  while (i < vectorElements.length) {
+    if (!isSymbol(vectorElements[i])) {
+      i++;
+      continue;
+    }
+    
+    const symbolName = (vectorElements[i] as SSymbol).name;
+    
+    // Check if this has an alias
+    if (i + 2 < vectorElements.length && 
+        isSymbol(vectorElements[i+1]) && 
+        (vectorElements[i+1] as SSymbol).name === 'as' &&
+        isSymbol(vectorElements[i+2])) {
+      
+      const aliasName = (vectorElements[i+2] as SSymbol).name;
+      requestedSymbols.set(symbolName, aliasName);
+      
+      i += 3; // Skip symbol, 'as', and alias
+    } else {
+      requestedSymbols.set(symbolName, null); // No alias
+      i++;
+    }
+  }
+  
+  // Process imports if this is an HQL file
   if (options.currentFile && modulePath.endsWith('.hql')) {
-    // Import macros from the source module to the current file
-    for (let i = 0; i < vectorElements.length; i++) {
-      if (!isSymbol(vectorElements[i])) continue;
-      
-      const symbolName = (vectorElements[i] as SSymbol).name;
-      let aliasName: string | null = null;
-      
-      // Check for alias pattern
-      if (i + 2 < vectorElements.length && 
-          isSymbol(vectorElements[i+1]) && (vectorElements[i+1] as SSymbol).name === 'as' &&
-          isSymbol(vectorElements[i+2])) {
-        aliasName = (vectorElements[i+2] as SSymbol).name;
-        i += 2; // Skip 'as' and alias
-      }
-      
-      // Import the macro if it exists in source file
+    // Only import the explicitly requested symbols
+    for (const [symbolName, aliasName] of requestedSymbols.entries()) {
+      // Check if this is a macro and import it with the proper alias
       if (env.hasModuleMacro(resolvedPath, symbolName)) {
-        env.importMacro(resolvedPath, symbolName, options.currentFile);
-        logger.debug(`Imported macro ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+        const success = env.importMacro(resolvedPath, symbolName, options.currentFile, aliasName || undefined);
+        if (success) {
+          logger.debug(`Imported macro ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+        }
       }
       
-      // Import the symbol or alias
+      // Try to import as a regular value
       try {
         const value = env.lookup(`${tempModuleName}.${symbolName}`);
         env.define(aliasName || symbolName, value);
         logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
       } catch (error) {
-        // Ignore lookup errors for macros - they're handled differently
+        // Ignore lookup errors for macros - they're handled separately
         if (!env.hasModuleMacro(resolvedPath, symbolName)) {
           logger.debug(`Symbol not found in module: ${symbolName}`);
         }
       }
     }
   } else {
-    // Process regular symbol imports
-    processVectorSymbols(vectorElements, async (symbolName, aliasName, _index) => {
+    // For non-HQL files, process regular imports
+    for (const [symbolName, aliasName] of requestedSymbols.entries()) {
       try {
         const value = env.lookup(`${tempModuleName}.${symbolName}`);
         env.define(aliasName || symbolName, value);
@@ -292,7 +310,7 @@ async function processVectorBasedImport(
       } catch (error) {
         logger.debug(`Symbol not found in module: ${symbolName}`);
       }
-    });
+    }
   }
 }
 
@@ -372,7 +390,7 @@ function processVectorElements(vectorList: SList): SExp[] {
 }
 
 /**
- * Process an HQL file import
+ * Process HQL file import - REMOVE auto-import of all macros
  */
 async function processHqlImport(
   moduleName: string, 
@@ -415,11 +433,6 @@ async function processHqlImport(
     // Register the module with its exports
     env.importModule(moduleName, moduleExports);
     
-    // Process macro imports if needed
-    if (options.currentFile && options.currentFile !== resolvedPath) {
-      processMacroImports(options.currentFile, resolvedPath, env, logger);
-    }
-    
     logger.debug(`Imported HQL module: ${moduleName}`);
   } catch (error) {
     logger.error(`Failed to process HQL import: ${error.message}`);
@@ -427,27 +440,6 @@ async function processHqlImport(
   } finally {
     // Restore original file context
     env.setCurrentFile(previousCurrentFile);
-  }
-}
-
-/**
- * Process macro imports between files
- */
-function processMacroImports(
-  importingFile: string,
-  exportingFile: string,
-  env: Environment,
-  logger: Logger
-): void {
-  const exportedMacros = env.getExportedMacros(exportingFile);
-  if (!exportedMacros || exportedMacros.size === 0) return;
-  
-  // Import each exported macro
-  for (const macroName of exportedMacros) {
-    if (env.hasModuleMacro(exportingFile, macroName)) {
-      env.importMacro(exportingFile, macroName, importingFile);
-      logger.debug(`Auto-imported macro ${macroName} from ${exportingFile} to ${importingFile}`);
-    }
   }
 }
 

@@ -860,8 +860,10 @@ function expandExpr(
   return createList(...expandedElements);
 }
 
+// src/s-exp/macro.ts - Updates for alias-aware macro expansion
+
 /**
- * Expand a macro call
+ * Expand a macro call, correctly handling aliases
  */
 function expandMacroCall(
   list: SList,
@@ -870,6 +872,8 @@ function expandMacroCall(
   options: MacroExpanderOptions
 ): SExp {
   const op = (list.elements[0] as SSymbol).name;
+  
+  // Get the macro function, correctly resolving aliases
   const macroFn = env.getMacro(op);
   
   if (!macroFn) {
