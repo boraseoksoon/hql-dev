@@ -1,7 +1,6 @@
-// src/transpiler/hql-transpiler.ts - Updated with module-level macro support and fixes
-
+// src/transpiler/hql-transpiler.ts - Optimized with MacroRegistry integration
 import * as path from "https://deno.land/std/path/mod.ts";
-import { sexpToString, isSymbol, isLiteral, isUserMacro } from '../s-exp/types.ts';
+import { sexpToString, isUserMacro } from '../s-exp/types.ts';
 import { parse } from '../s-exp/parser.ts';
 import { Environment } from '../environment.ts';
 import { expandMacros } from '../s-exp/macro.ts';
@@ -10,10 +9,16 @@ import { convertToHqlAst } from '../s-exp/front-to-middle-connector.ts';
 import { transformAST } from '../transformer.ts';
 import { Logger } from '../logger.ts';
 
-// Create a global environment to ensure macros are consistently available
+// Environment singleton for consistent state
 let globalEnv: Environment | null = null;
 let coreHqlLoaded = false;
 
+// Cache for processed files to avoid redundant operations
+const processedFiles = new Set<string>();
+
+/**
+ * Options for processing HQL source code
+ */
 interface ProcessOptions {
   verbose?: boolean;
   baseDir?: string;
@@ -26,6 +31,7 @@ interface ProcessOptions {
 
 /**
  * Process HQL source code through the S-expression layer
+ * Optimized for better performance and reduced redundant operations
  */
 export async function processHql(
   source: string,
@@ -40,42 +46,16 @@ export async function processHql(
     const sexps = parse(source);
     
     if (options.verbose) {
-      for (const sexp of sexps) {
-        logger.debug(`Parsed: ${sexpToString(sexp)}`);
-      }
+      logParsedExpressions(sexps, logger);
     }
     
     // Step 2: Get or initialize the global environment
-    // This ensures core.hql is loaded exactly once and macros are always available
     logger.debug('Getting global environment with macros');
     const env = await getGlobalEnv(options);
     
-    // Debug: Print registered macros
+    // Log available macros in verbose mode
     if (options.verbose) {
-      const macroKeys = Array.from(env.macros.keys());
-      logger.debug("Available system macros: " + macroKeys.join(", "));
-      
-      // FIXED: Check if moduleMacros has any entries before trying to iterate
-      if (env.moduleMacros && env.moduleMacros.size > 0) {
-        let userMacroList: string[] = [];
-        
-        // Iterate over all module macros
-        for (const [filePath, macroMap] of env.moduleMacros.entries()) {
-          if (macroMap && macroMap.size > 0) {
-            for (const macroName of macroMap.keys()) {
-              userMacroList.push(`${macroName} (from ${path.basename(filePath)})`);
-            }
-          }
-        }
-        
-        if (userMacroList.length > 0) {
-          logger.debug("Available user macros: " + userMacroList.join(", "));
-        } else {
-          logger.debug("No user macros defined yet");
-        }
-      } else {
-        logger.debug("No user macros defined yet");
-      }
+      logAvailableMacros(env, logger);
     }
     
     // Set the current file if baseDir is provided
@@ -90,39 +70,25 @@ export async function processHql(
       verbose: options.verbose,
       baseDir: options.baseDir || Deno.cwd(),
       tempDir: options.tempDir,
-      currentFile: currentFile,
-      keepTemp: true
+      currentFile: currentFile
     });
     
     // Step 4: Expand macros in the user code
     logger.debug('Expanding macros in user code');
-    const expanded = expandMacros(sexps, env, currentFile, { 
+    const expanded = expandMacros(sexps, env, { 
       verbose: options.verbose,
-      maxExpandDepth: 20 // Increased for complex macros
+      currentFile: currentFile
     });
     
     if (options.verbose) {
-      for (const sexp of expanded) {
-        logger.debug(`Expanded: ${sexpToString(sexp)}`);
-      }
+      logExpandedExpressions(expanded, logger);
     }
     
-    // Step 5: Post-process expanded expressions 
-    // Filter out macro definitions - they shouldn't be in the output
-    const processedExprs = expanded.filter(expr => {
-      // Skip macro definitions
-      if (isUserMacro(expr)) {
-        logger.debug(`Filtering out user macro: ${sexpToString(expr)}`);
-        return false;
-      }
-      return true;
-    });
-    
-    // Step 6: Convert to HQL AST
+    // Step 5: Convert to HQL AST
     logger.debug('Converting to HQL AST');
-    const hqlAst = convertToHqlAst(processedExprs, { verbose: options.verbose });
+    const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
     
-    // Step 7: Transform to JavaScript using existing pipeline
+    // Step 6: Transform to JavaScript using existing pipeline
     logger.debug('Transforming to JavaScript');
     const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), {
       verbose: options.verbose,
@@ -148,7 +114,58 @@ export async function processHql(
 }
 
 /**
+ * Helper function to log parsed expressions when in verbose mode
+ */
+function logParsedExpressions(sexps: any[], logger: Logger): void {
+  for (const sexp of sexps) {
+    logger.debug(`Parsed: ${sexpToString(sexp)}`);
+  }
+}
+
+/**
+ * Helper function to log expanded expressions when in verbose mode
+ */
+function logExpandedExpressions(expanded: any[], logger: Logger): void {
+  for (const sexp of expanded) {
+    logger.debug(`Expanded: ${sexpToString(sexp)}`);
+  }
+}
+
+/**
+ * Helper function to log available macros when in verbose mode
+ */
+function logAvailableMacros(env: Environment, logger: Logger): void {
+  const systemMacros = Array.from(env.macroRegistry.systemMacros.keys())
+    .filter(name => !name.includes('_')) // Skip sanitized duplicates
+    .sort();
+  
+  logger.debug(`Available system macros: ${systemMacros.join(', ')}`);
+  
+  // Log user macros if any
+  if (env.macroRegistry.moduleMacros.size > 0) {
+    let userMacroList: string[] = [];
+    
+    for (const [filePath, macroMap] of env.macroRegistry.moduleMacros.entries()) {
+      if (macroMap.size > 0) {
+        for (const macroName of macroMap.keys()) {
+          userMacroList.push(`${macroName} (from ${path.basename(filePath)})`);
+        }
+      }
+    }
+    
+    if (userMacroList.length > 0) {
+      logger.debug(`Available user macros: ${userMacroList.join(', ')}`);
+    } else {
+      logger.debug("No user macros defined yet");
+    }
+  } else {
+    logger.debug("No user macros defined yet");
+  }
+}
+
+/**
  * Load and process core.hql to establish the standard library
+ * Optimized to only load once and cache results
  */
 async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<void> {
   // Skip if already loaded to prevent duplicate loading
@@ -181,6 +198,12 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
       console.log("Core HQL expressions loaded from:", corePath);
     }
     
+    // Use the environment's file tracking to avoid redundant processing
+    if (env.hasProcessedFile(corePath)) {
+      logger.debug(`Core.hql already processed, skipping`);
+      return;
+    }
+    
     // Process imports in core.hql
     await processImports(coreExps, env, {
       verbose: options.verbose || false,
@@ -188,21 +211,16 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
       currentFile: corePath  // Set current file to the core.hql path
     });
     
-    // Register macros defined in core.hql
-    const expanded = expandMacros(coreExps, env, corePath, { 
+    // Expand macros defined in core.hql
+    expandMacros(coreExps, env, { 
       verbose: options.verbose,
-      maxExpandDepth: 20, // Increased for complex macros
+      currentFile: corePath,
       maxPasses: 3 // Multiple passes for recursive macros
     });
     
-    // Print registered macros for debugging
-    if (options.verbose) {
-      const systemMacroKeys = Array.from(env.macros.keys());
-      logger.debug(`Registered system macros: ${systemMacroKeys.join(", ")}`);
-    }
-    
-    // Mark core as loaded
+    // Mark core as loaded and processed
     coreHqlLoaded = true;
+    env.markFileProcessed(corePath);
     
     logger.debug('Core.hql loaded and all macros registered');
   } catch (error) {
@@ -214,6 +232,7 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
 
 /**
  * Initialize the global environment once
+ * Uses singleton pattern for consistency
  */
 async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
   if (!globalEnv) {

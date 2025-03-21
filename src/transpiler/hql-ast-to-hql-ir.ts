@@ -7,9 +7,17 @@ import { sanitizeIdentifier } from "../utils.ts";
 import { Environment } from "../environment.ts";
 
 /**
+ * Cache to avoid repeated checks during transform
+ */
+const macroCache = new Map<string, Map<string, boolean>>();
+
+/**
  * Transform an array of HQL AST nodes into an IR program.
  */
 export function transformToIR(nodes: HQLNode[], currentDir: string): IR.IRProgram {
+  // Clear the macro cache for this transformation
+  macroCache.clear();
+  
   const body: IR.IRNode[] = [];
   for (const node of nodes) {
     const ir = transformNode(node, currentDir);
@@ -77,12 +85,30 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
  * Check if a symbol represents a user-level macro
  */
 function isUserLevelMacro(symbolName: string, currentDir: string): boolean {
+  // Use cache if available
+  if (macroCache.has(currentDir)) {
+    const fileCache = macroCache.get(currentDir)!;
+    if (fileCache.has(symbolName)) {
+      return fileCache.get(symbolName)!;
+    }
+  } else {
+    macroCache.set(currentDir, new Map<string, boolean>());
+  }
+  
   // Get the global environment instance
   const env = Environment.getGlobalEnv();
-  if (!env) return false;
+  if (!env) {
+    macroCache.get(currentDir)!.set(symbolName, false);
+    return false;
+  }
   
-  // Call the environment's method to check for user-level macros
-  return env.isUserLevelMacro(symbolName, currentDir);
+  // Check with environment
+  const result = env.isUserLevelMacro(symbolName, currentDir);
+  
+  // Cache the result
+  macroCache.get(currentDir)!.set(symbolName, result);
+  
+  return result;
 }
 
 /**
@@ -141,12 +167,7 @@ function processVectorElements(elements: HQLNode[]): HQLNode[] {
  * Transform a vector-based export statement to its IR representation
  */
 function transformVectorExport(list: ListNode, currentDir: string): IR.IRNode | null {
-  // Verify this is an export with a vector: (export [symbol1, symbol2])
-  if (list.elements.length !== 2) {
-    throw new Error("Vector-based export requires exactly one vector argument");
-  }
-  
-  // Get the vector of symbols to export
+  // Extract the symbols to export
   const vectorNode = list.elements[1];
   if (vectorNode.type !== "list") {
     throw new Error("Export argument must be a vector");
@@ -155,46 +176,46 @@ function transformVectorExport(list: ListNode, currentDir: string): IR.IRNode | 
   // Process vector elements
   const symbols = processVectorElements((vectorNode as ListNode).elements);
   
-  // Create a single export named declaration with all specifiers
+  // Build export specifiers for non-macro symbols
   const exportSpecifiers: IR.IRExportSpecifier[] = [];
   
-  // For each symbol, create an export specifier (if not a macro)
   for (const elem of symbols) {
-    if (elem.type !== "symbol") {
-      continue; // Skip non-symbols
-    }
+    if (elem.type !== "symbol") continue;
     
     const symbolName = (elem as SymbolNode).name;
     
-    // CRITICAL CHANGE: Skip macro exports - don't create JavaScript exports for them
-    if (isUserLevelMacro(symbolName, currentDir)) {
-      continue;
-    }
+    // Skip macros - don't create exports for them
+    if (isUserLevelMacro(symbolName, currentDir)) continue;
     
-    // Create an export specifier for this symbol
-    exportSpecifiers.push({
-      type: IR.IRNodeType.ExportSpecifier,
-      local: { 
-        type: IR.IRNodeType.Identifier, 
-        name: sanitizeIdentifier(symbolName) 
-      } as IR.IRIdentifier,
-      exported: { 
-        type: IR.IRNodeType.Identifier, 
-        name: symbolName 
-      } as IR.IRIdentifier
-    });
+    // Add specifier for regular value
+    exportSpecifiers.push(createExportSpecifier(symbolName));
   }
   
-  // Only create an export declaration if there are non-macro exports
-  if (exportSpecifiers.length === 0) {
-    return null; // No runtime exports needed
-  }
+  // Skip empty exports (where all symbols were macros)
+  if (exportSpecifiers.length === 0) return null;
   
-  // Create a single export declaration with all specifiers
+  // Create the export declaration
   return {
     type: IR.IRNodeType.ExportNamedDeclaration,
     specifiers: exportSpecifiers
   } as IR.IRExportNamedDeclaration;
+}
+
+/**
+ * Create an export specifier
+ */
+function createExportSpecifier(symbolName: string): IR.IRExportSpecifier {
+  return {
+    type: IR.IRNodeType.ExportSpecifier,
+    local: { 
+      type: IR.IRNodeType.Identifier, 
+      name: sanitizeIdentifier(symbolName) 
+    } as IR.IRIdentifier,
+    exported: { 
+      type: IR.IRNodeType.Identifier, 
+      name: symbolName 
+    } as IR.IRIdentifier
+  };
 }
 
 /**
@@ -228,69 +249,52 @@ function createImportSpecifier(imported: string, local: string): IR.IRImportSpec
  * Transform a vector-based import statement to its IR representation
  */
 function transformVectorImport(list: ListNode, currentDir: string): IR.IRNode | null {
-  // Verify this is an import with a vector and 'from': (import [symbol1, symbol2 as alias2] from "./path.hql")
-  if (list.elements.length !== 4 || 
-      list.elements[1].type !== "list" || 
-      list.elements[2].type !== "symbol" || 
-      (list.elements[2] as SymbolNode).name !== "from" ||
-      list.elements[3].type !== "literal") {
-    throw new Error("Vector-based import requires a vector, 'from' keyword, and a path");
-  }
-  
-  // Get the vector of symbols to import
+  // Extract the vector and path
   const vectorNode = list.elements[1] as ListNode;
-  
-  // Get the module path
   const modulePath = (list.elements[3] as LiteralNode).value as string;
   
   // Process vector elements
   const elements = processVectorElements(vectorNode.elements);
   
-  // Create array to hold import specifiers - only for runtime values, not macros
+  // Build import specifiers for non-macro symbols
   const importSpecifiers: IR.IRImportSpecifier[] = [];
   
-  // Process symbols and their aliases
+  // Process the elements
   let i = 0;
   while (i < elements.length) {
     const elem = elements[i];
     
-    // Handle simple symbol without alias: symbol
+    // Only process symbols
     if (elem.type === "symbol") {
       const symbolName = (elem as SymbolNode).name;
       
-      // CRITICAL CHANGE: Skip macros - don't create imports for them
+      // Check for alias pattern
+      const hasAlias = hasAliasFollowing(elements, i);
+      
+      // Skip macros - don't create imports for them
       if (isUserLevelMacro(symbolName, currentDir)) {
-        // Skip the symbol (and its alias if it has one)
-        if (hasAliasFollowing(elements, i)) {
-          i += 3; // Skip symbol, 'as', and alias
-        } else {
-          i++; // Skip just the symbol
-        }
+        i += hasAlias ? 3 : 1; // Skip appropriate number of elements
         continue;
       }
       
-      // Only add runtime values (non-macros) to the importSpecifiers
-      if (hasAliasFollowing(elements, i)) {
+      // Add import specifier
+      if (hasAlias) {
         const aliasName = (elements[i+2] as SymbolNode).name;
         importSpecifiers.push(createImportSpecifier(symbolName, aliasName));
         i += 3; // Skip symbol, 'as', and alias
       } else {
         importSpecifiers.push(createImportSpecifier(symbolName, symbolName));
-        i++; // Move to next element
+        i += 1; // Next symbol
       }
     } else {
-      // Skip non-symbol elements
-      i++;
+      i += 1; // Skip non-symbols
     }
   }
   
-  // Only create an import declaration if there are non-macro imports
-  if (importSpecifiers.length === 0) {
-    // Return null to indicate no runtime imports are needed
-    return null;
-  }
+  // Skip empty imports (where all symbols were macros)
+  if (importSpecifiers.length === 0) return null;
   
-  // Create the import declaration with filtered specifiers (no macros)
+  // Create the import declaration
   return {
     type: IR.IRNodeType.ImportDeclaration,
     source: modulePath,

@@ -1,13 +1,12 @@
-// src/s-exp/macro.ts - Complete updated version with module-level macro support
+// src/s-exp/macro.ts - Optimized with improved performance
 import { 
   SExp, SSymbol, SList, 
   isSymbol, isList, isLiteral, isDefMacro, isUserMacro,
-  createSymbol, createList, createLiteral, createNilLiteral, sexpToString,
-  cloneSExp
+  createList, createLiteral, createNilLiteral, sexpToString
 } from './types.ts';
 import { Environment } from '../environment.ts';
 import { Logger } from '../logger.ts';
-import { gensym } from '../gensym.ts';
+import { MacroFn } from '../environment.ts';
 
 /**
  * Options for macro expansion
@@ -17,6 +16,88 @@ interface MacroExpanderOptions {
   maxExpandDepth?: number;
   maxPasses?: number; // Maximum number of expansion passes
   currentFile?: string; // Track the current file being processed
+}
+
+/**
+ * Define a user-level macro in the module scope
+ */
+export function defineUserMacro(macroForm: SList, filePath: string, env: Environment, logger: Logger): void {
+  // Validate macro definition: (macro name [params...] body...)
+  if (macroForm.elements.length < 4) {
+    throw new Error('macro requires a name, parameter list, and body');
+  }
+
+  // Get macro name
+  const macroNameExp = macroForm.elements[1];
+  if (!isSymbol(macroNameExp)) {
+    throw new Error('Macro name must be a symbol');
+  }
+  const macroName = macroNameExp.name;
+
+  // Skip if already defined (avoid redundant work)
+  if (env.hasModuleMacro(filePath, macroName)) {
+    logger.debug(`Macro ${macroName} already defined in ${filePath}, skipping`);
+    return;
+  }
+
+  // Get parameter list
+  const paramsExp = macroForm.elements[2];
+  if (!isList(paramsExp)) {
+    throw new Error('Macro parameters must be a list');
+  }
+
+  // Process parameter list, handling rest parameters
+  const { params, restParam } = processParamList(paramsExp, logger);
+
+  // Get macro body (all remaining forms)
+  const body = macroForm.elements.slice(3);
+
+  // Create macro function (same as in defineMacro)
+  const macroFn = createMacroFunction(macroName, params, restParam, body, logger, filePath);
+
+  // Register the macro in the module's registry
+  env.defineModuleMacro(filePath, macroName, macroFn);
+}
+
+/**
+ * Helper function to create a macro function with consistent implementation
+ */
+function createMacroFunction(
+  macroName: string,
+  params: string[],
+  restParam: string | null,
+  body: SExp[],
+  logger: Logger,
+  sourceFile?: string
+): MacroFn {
+  const macroFn = (args: SExp[], callEnv: Environment): SExp => {
+    const source = sourceFile ? ` from ${sourceFile}` : '';
+    logger.debug(`Expanding ${sourceFile ? 'module ' : ''}macro ${macroName}${source} with ${args.length} args`);
+    
+    // Create new environment for macro expansion
+    const macroEnv = createMacroEnv(callEnv, params, restParam, args, logger);
+
+    // Evaluate body expressions
+    let result: SExp = createNilLiteral();
+    for (const expr of body) {
+      result = evaluateForMacro(expr, macroEnv, logger);
+    }
+
+    logger.debug(`Macro ${macroName} expanded to: ${sexpToString(result)}`);
+    return result;
+  };
+
+  // Tag the function as a macro
+  Object.defineProperty(macroFn, 'isMacro', { value: true });
+  Object.defineProperty(macroFn, 'macroName', { value: macroName });
+  
+  // Additional metadata for user-level macros
+  if (sourceFile) {
+    Object.defineProperty(macroFn, 'sourceFile', { value: sourceFile });
+    Object.defineProperty(macroFn, 'isUserMacro', { value: true });
+  }
+
+  return macroFn;
 }
 
 /**
@@ -48,86 +129,11 @@ export function defineMacro(macroForm: SList, env: Environment, logger: Logger):
   const body = macroForm.elements.slice(3);
 
   // Create macro function
-  const macroFn = (args: SExp[], callEnv: Environment): SExp => {
-    logger.debug(`Expanding macro ${macroName} with ${args.length} args`);
-    
-    // Create new environment for macro expansion
-    const macroEnv = createMacroEnv(callEnv, { params, restParam }, args, logger);
-
-    // Evaluate body expressions
-    let result: SExp = createNilLiteral();
-    for (const expr of body) {
-      result = evaluateForMacro(expr, macroEnv, logger);
-    }
-
-    logger.debug(`Macro ${macroName} expanded to: ${sexpToString(result)}`);
-    return result;
-  };
-
-  // Tag as a macro function
-  Object.defineProperty(macroFn, 'isMacro', { value: true });
-  Object.defineProperty(macroFn, 'macroName', { value: macroName });
+  const macroFn = createMacroFunction(macroName, params, restParam, body, logger);
 
   // Register the macro in the environment
   env.defineMacro(macroName, macroFn);
   logger.debug(`Registered global macro: ${macroName}`);
-}
-
-/**
- * Define a user-level macro in the module scope
- */
-export function defineUserMacro(macroForm: SList, filePath: string, env: Environment, logger: Logger): void {
-  // Validate macro definition: (macro name [params...] body...)
-  if (macroForm.elements.length < 4) {
-    throw new Error('macro requires a name, parameter list, and body');
-  }
-
-  // Get macro name
-  const macroNameExp = macroForm.elements[1];
-  if (!isSymbol(macroNameExp)) {
-    throw new Error('Macro name must be a symbol');
-  }
-  const macroName = macroNameExp.name;
-
-  // Get parameter list
-  const paramsExp = macroForm.elements[2];
-  if (!isList(paramsExp)) {
-    throw new Error('Macro parameters must be a list');
-  }
-
-  // Process parameter list, handling rest parameters
-  const { params, restParam } = processParamList(paramsExp, logger);
-
-  // Get macro body (all remaining forms)
-  const body = macroForm.elements.slice(3);
-
-  // Create macro function (same as in defineMacro)
-  const macroFn = (args: SExp[], callEnv: Environment): SExp => {
-    logger.debug(`Expanding module macro ${macroName} from ${filePath} with ${args.length} args`);
-    
-    // Create new environment for macro expansion
-    const macroEnv = createMacroEnv(callEnv, { params, restParam }, args, logger);
-
-    // Evaluate body expressions
-    let result: SExp = createNilLiteral();
-    for (const expr of body) {
-      result = evaluateForMacro(expr, macroEnv, logger);
-    }
-
-    logger.debug(`Module macro ${macroName} expanded to: ${sexpToString(result)}`);
-    return result;
-  };
-
-  // Tag the function as a module-level macro
-  Object.defineProperty(macroFn, 'isMacro', { value: true });
-  Object.defineProperty(macroFn, 'macroName', { value: macroName });
-  Object.defineProperty(macroFn, 'sourceFile', { value: filePath });
-  Object.defineProperty(macroFn, 'isUserMacro', { value: true });
-
-  // Register the macro in the module's registry
-  env.defineModuleMacro(filePath, macroName, macroFn);
-  
-  logger.debug(`Registered user-level macro: ${macroName} in ${filePath}`);
 }
 
 /**
@@ -168,7 +174,8 @@ export function processParamList(paramsExp: SList, logger: Logger): { params: st
  */
 function createMacroEnv(
   parent: Environment, 
-  { params, restParam }: { params: string[], restParam: string | null }, 
+  params: string[], 
+  restParam: string | null, 
   args: SExp[], 
   logger: Logger
 ): Environment {
@@ -629,15 +636,16 @@ function processQuasiquotedExpr(expr: SExp, env: Environment, logger: Logger): S
 
 /**
  * Expand all macros in a list of S-expressions
+ * Improved version that avoids redundant processing
  */
 export function expandMacros(
   exprs: SExp[],
   env: Environment,
-  currentFile: string | undefined = undefined,
   options: MacroExpanderOptions = {}
 ): SExp[] {
   const logger = new Logger(options.verbose || false);
   const maxPasses = options.maxPasses || 20; // Reasonable limit to prevent infinite expansion
+  const currentFile = options.currentFile;
   
   logger.debug(`Starting macro expansion on ${exprs.length} expressions`);
 
@@ -647,29 +655,8 @@ export function expandMacros(
     logger.debug(`Setting current file to: ${currentFile}`);
   }
 
-  // First pass: register all global macro definitions
-  for (const expr of exprs) {
-    if (isDefMacro(expr) && isList(expr)) {
-      try {
-        defineMacro(expr as SList, env, logger);
-      } catch (error) {
-        logger.error(`Error defining global macro: ${error.message}`);
-      }
-    }
-  }
-  
-  // If we have a current file, also register module-level macros
-  if (currentFile) {
-    for (const expr of exprs) {
-      if (isUserMacro(expr) && isList(expr)) {
-        try {
-          defineUserMacro(expr as SList, currentFile, env, logger);
-        } catch (error) {
-          logger.error(`Error defining user macro: ${error.message}`);
-        }
-      }
-    }
-  }
+  // First pass: register all global and user-level macro definitions
+  processMacroDefinitions(exprs, env, currentFile, logger);
 
   // Multiple passes: Expand all macros until no more expansions occur
   let currentExprs = [...exprs];
@@ -714,30 +701,71 @@ export function expandMacros(
   logger.debug(`Completed macro expansion after ${passCount} passes`);
   
   // Filter out macro definitions from the final result
-  // They shouldn't be in the output JavaScript
-  currentExprs = currentExprs.filter(expr => {
-    // Remove user-level macro definitions
-    if (isUserMacro(expr)) {
-      logger.debug(`Filtering out user macro definition: ${sexpToString(expr)}`);
+  currentExprs = filterMacroDefinitions(currentExprs, logger);
+  
+  // Clean up environment when done
+  if (currentFile) {
+    env.setCurrentFile(null);
+    logger.debug(`Clearing current file`);
+  }
+  
+  return currentExprs;
+}
+
+/**
+ * Process all macro definitions (both system and user-level)
+ */
+function processMacroDefinitions(
+  exprs: SExp[], 
+  env: Environment, 
+  currentFile: string | undefined,
+  logger: Logger
+): void {
+  // First register all global macro definitions
+  for (const expr of exprs) {
+    if (isDefMacro(expr) && isList(expr)) {
+      try {
+        defineMacro(expr as SList, env, logger);
+      } catch (error) {
+        logger.error(`Error defining global macro: ${error.message}`);
+      }
+    }
+  }
+  
+  // Then register user-level macros if we have a current file
+  if (currentFile) {
+    for (const expr of exprs) {
+      if (isUserMacro(expr) && isList(expr)) {
+        try {
+          defineUserMacro(expr as SList, currentFile, env, logger);
+        } catch (error) {
+          logger.error(`Error defining user macro: ${error.message}`);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Filter out macro definitions (both system and user-level)
+ */
+function filterMacroDefinitions(exprs: SExp[], logger: Logger): SExp[] {
+  return exprs.filter(expr => {
+    // Remove defmacro forms
+    if (isDefMacro(expr)) {
+      logger.debug(`Filtering out system macro definition: ${sexpToString(expr)}`);
       return false;
     }
     
-    // Optionally remove defmacro as well
-    if (isDefMacro(expr)) {
-      logger.debug(`Filtering out system macro definition: ${sexpToString(expr)}`);
+    // Remove user-level macro forms
+    if (isUserMacro(expr)) {
+      logger.debug(`Filtering out user macro definition: ${sexpToString(expr)}`);
       return false;
     }
     
     // Keep everything else
     return true;
   });
-  
-  // Clean up environment when done
-  if (currentFile) {
-    env.setCurrentFile(null);
-  }
-  
-  return currentExprs;
 }
 
 /**
@@ -795,7 +823,9 @@ function expandExpr(
   }
   
   // Not a macro call, expand each element recursively
-  const expandedElements = list.elements.map(elem => expandExpr(elem, env, logger, options, depth + 1));
+  const expandedElements = list.elements.map(elem => 
+    expandExpr(elem, env, logger, options, depth + 1)
+  );
   
   // Create a new list with the expanded elements
   return createList(...expandedElements);
@@ -818,36 +848,21 @@ function expandMacroCall(
   }
   
   try {
-    // Check if this is a user-level macro 
-    const isUserLevel = Object.getOwnPropertyDescriptor(macroFn, 'isUserMacro')?.value === true;
-    const sourceFile = Object.getOwnPropertyDescriptor(macroFn, 'sourceFile')?.value;
-    
-    // Log appropriate information based on macro type
-    if (isUserLevel && sourceFile) {
+    // Check if this is a user-level macro from metadata
+    if (Object.getOwnPropertyDescriptor(macroFn, 'isUserMacro')?.value === true) {
+      const sourceFile = Object.getOwnPropertyDescriptor(macroFn, 'sourceFile')?.value;
       logger.debug(`Expanding user-level macro ${op} from ${sourceFile}`);
     } else {
       logger.debug(`Expanding global macro ${op}`);
     }
     
     // Get the macro arguments (don't expand them yet)
-    const args = list.elements.slice(1)
+    const args = list.elements.slice(1);
     
-    // Apply the macro to get the expanded form
+    // Apply the macro
     return macroFn(args, env);
   } catch (error) {
     logger.error(`Error expanding macro ${op}: ${error.message}`);
     throw error;
   }
-}
-
-/**
- * Expand a single S-expression and all its nested macros
- */
-export function expandMacro(
-  expr: SExp,
-  env: Environment,
-  logger: Logger,
-  options: MacroExpanderOptions = {}
-): SExp {
-  return expandExpr(expr, env, logger, options);
 }
