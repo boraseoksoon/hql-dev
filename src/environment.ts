@@ -416,6 +416,7 @@ importMacro(sourceFile: string, macroName: string, targetFile: string, aliasName
           }
         }
         
+        // error? warning? 
         this.logger.warn(
           `WARNING: Name conflict detected: '${importName}' from '${sourceFile}' ` +
           `shadows previously imported '${existingOriginal}' from '${existingSource}'`

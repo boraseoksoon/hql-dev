@@ -301,7 +301,7 @@ async function processEntryFile(
       keepTemp: options.keepTemp,
       sourceDir: options.sourceDir // Pass source directory to processHql
     });
-    
+
     // Write the output
     await writeOutput(jsCode, outputPath, logger, options.force);
     

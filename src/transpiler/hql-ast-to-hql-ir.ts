@@ -5,6 +5,7 @@ import { HQLNode, LiteralNode, SymbolNode, ListNode } from "./hql_ast.ts";
 import { KERNEL_PRIMITIVES, PRIMITIVE_OPS, PRIMITIVE_DATA_STRUCTURE, PRIMITIVE_CLASS } from "./primitives.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 import { Environment } from "../environment.ts";
+import * as path from "../platform/platform.ts";
 
 /**
  * Cache to avoid repeated checks during transform
@@ -245,6 +246,39 @@ function createImportSpecifier(imported: string, local: string): IR.IRImportSpec
   };
 }
 
+function isSymbolMacroInModule(symbolName: string, modulePath: string, currentDir: string): boolean {
+  const env = Environment.getGlobalEnv();
+  if (!env) return false;
+  
+  // Only check HQL files
+  if (!modulePath.endsWith('.hql')) return false;
+  
+  try {
+    // Resolve the module path
+    let resolvedPath = modulePath;
+    
+    // Handle relative paths
+    if (modulePath.startsWith('./') || modulePath.startsWith('../')) {
+      resolvedPath = path.resolve(currentDir, modulePath);
+    }
+    
+    // Check all modules to handle path normalization differences
+    for (const [filePath, macros] of env.moduleMacros.entries()) {
+      // Check if this file path matches or ends with our module path
+      if ((filePath === resolvedPath || filePath.endsWith(resolvedPath)) && 
+          macros.has(symbolName) && 
+          env.getExportedMacros(filePath)?.has(symbolName)) {
+        return true;
+      }
+    }
+    
+    return false;
+  } catch (e) {
+    console.warn(`Error checking for macro in module: ${e.message}`);
+    return false;
+  }
+}
+
 /**
  * Transform a vector-based import statement to its IR representation
  */
@@ -270,17 +304,21 @@ function transformVectorImport(list: ListNode, currentDir: string): IR.IRNode | 
       
       // Check for alias pattern
       const hasAlias = hasAliasFollowing(elements, i);
+      const aliasName = hasAlias ? (elements[i+2] as SymbolNode).name : null;
       
-      // Skip macros - don't create imports for them
-      if (isUserLevelMacro(symbolName, currentDir)) {
+      // Check if the symbol is a macro - either locally or in source module
+      const isMacro = isUserLevelMacro(symbolName, currentDir) || 
+                      isSymbolMacroInModule(symbolName, modulePath, currentDir);
+      
+      // Skip macros - don't create JS imports for them
+      if (isMacro) {
         i += hasAlias ? 3 : 1; // Skip appropriate number of elements
         continue;
       }
       
-      // Add import specifier
+      // Add import specifier for non-macros
       if (hasAlias) {
-        const aliasName = (elements[i+2] as SymbolNode).name;
-        importSpecifiers.push(createImportSpecifier(symbolName, aliasName));
+        importSpecifiers.push(createImportSpecifier(symbolName, aliasName!));
         i += 3; // Skip symbol, 'as', and alias
       } else {
         importSpecifiers.push(createImportSpecifier(symbolName, symbolName));
