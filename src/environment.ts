@@ -1,7 +1,6 @@
-// src/environment.ts - Refactored with MacroRegistry integration
+// src/environment.ts - Optimized while preserving existing API
 import { SExp, SList, SSymbol, isSymbol, isList, createSymbol, createList, createLiteral } from './s-exp/types.ts';
 import { Logger } from './logger.ts';
-import { MacroRegistry } from './macro-registry.ts';
 
 /**
  * Type definition for macro functions
@@ -10,11 +9,14 @@ export type MacroFn = (args: SExp[], env: Environment) => SExp;
 
 /**
  * Unified Environment class that combines runtime and macro-expansion environments
- * Refactored to use MacroRegistry for better macro management
+ * Extended with module-level macro support
  */
 export class Environment {
   // Runtime variables store JavaScript values
   public variables = new Map<string, any>();
+  
+  // Macros store macro expansion functions (system-level)
+  public macros = new Map<string, MacroFn>();
   
   // Imported modules store module exports
   public moduleExports = new Map<string, Record<string, any>>();
@@ -28,14 +30,20 @@ export class Environment {
   // Global environment singleton
   private static globalEnv: Environment | null = null;
 
-  // Macro registry handles all macro operations
-  public macroRegistry: MacroRegistry;
+  // Module-level macro registry - tracks macros and their source file
+  public moduleMacros = new Map<string, Map<string, MacroFn>>();
+  
+  // Track which macros are exported from each file
+  public exportedMacros = new Map<string, Set<string>>();
+  
+  // Track which macros are imported into each file
+  public importedMacros = new Map<string, Map<string, string>>();
+  
+  // Track processed files (needed for core.hql loading)
+  private processedFiles = new Set<string>();
   
   // Track the current file being processed
   private currentFilePath: string | null = null;
-  
-  // Cache for file processing to avoid redundant work
-  private static processedFiles = new Set<string>();
 
   /**
    * Initialize a global unified environment
@@ -68,7 +76,6 @@ export class Environment {
   constructor(parent: Environment | null = null, logger?: Logger) {
     this.parent = parent;
     this.logger = logger || new Logger(false);
-    this.macroRegistry = new MacroRegistry(this.logger.enabled);
   }
 
   /**
@@ -176,6 +183,7 @@ export class Environment {
 
   /**
    * Look up a variable in the environment chain
+   * Optimized implementation that checks both original and sanitized names
    */
   lookup(key: string): any {
     // Handle dot notation for module property access
@@ -208,84 +216,74 @@ export class Environment {
 
   /**
    * Look up a property using dot notation
+   * Optimized to reduce redundant operations
    */
   private lookupDotNotation(key: string): any {
     const [moduleName, ...propertyParts] = key.split('.');
     const propertyPath = propertyParts.join('.');
 
-    // First try to get the module object from variables
-    let moduleValue: any;
+    // First check if it's a registered module
+    if (this.moduleExports.has(moduleName)) {
+      const moduleObj = this.moduleExports.get(moduleName)!;
+      return this.getPropertyFromPath(moduleObj, propertyPath);
+    }
+
+    // If not in moduleExports, try to get the module from variables
     try {
-      moduleValue = this.lookup(moduleName);
+      const moduleValue = this.lookup(moduleName);
+      return this.getPropertyFromPath(moduleValue, propertyPath);
     } catch (error) {
-      // Check if it's a registered module
-      if (this.moduleExports.has(moduleName)) {
-        moduleValue = this.moduleExports.get(moduleName);
-      } else {
-        this.logger.debug(`Module not found for dot notation: ${moduleName}`);
-        throw new Error(`Module not found: ${moduleName}`);
-      }
+      throw new Error(`Module not found: ${moduleName}`);
     }
+  }
 
-    // Navigate the property path
-    if (propertyParts.length === 0) {
-      return moduleValue;
-    }
-
-    let current = moduleValue;
+  /**
+   * Helper to get a property from an object via a path string
+   */
+  private getPropertyFromPath(obj: any, path: string): any {
+    if (!path) return obj;
     
-    // Handle single property access
-    if (propertyParts.length === 1) {
-      const prop = propertyParts[0];
-      
-      if (current && typeof current === 'object') {
-        // Try direct property access
-        if (prop in current) {
-          return current[prop];
-        }
-        
-        // Try sanitized property name
-        const sanitizedProp = prop.replace(/-/g, '_');
-        if (sanitizedProp !== prop && sanitizedProp in current) {
-          return current[sanitizedProp];
-        }
-        
-        this.logger.debug(`Property "${prop}" not found in module "${moduleName}"`);
-        throw new Error(`Property "${prop}" not found in module "${moduleName}"`);
-      } else {
-        throw new Error(`Cannot access property "${prop}" of non-object: ${current}`);
-      }
-    }
+    const parts = path.split('.');
+    let current = obj;
     
-    // For multi-part property paths, navigate through each part
-    for (const part of propertyParts) {
-      if (current && typeof current === 'object') {
-        // Try direct property access
-        if (part in current) {
-          current = current[part];
-          continue;
-        }
-        
-        // Try sanitized property name
-        const sanitizedPart = part.replace(/-/g, '_');
-        if (sanitizedPart !== part && sanitizedPart in current) {
-          current = current[sanitizedPart];
-          continue;
-        }
+    for (const part of parts) {
+      // Try original property name
+      if (current && typeof current === 'object' && part in current) {
+        current = current[part];
+        continue;
       }
       
-      this.logger.debug(`Property "${part}" not found in path: ${key}`);
-      throw new Error(`Property not found in path: ${key}`);
+      // Try sanitized property name
+      const sanitizedPart = part.replace(/-/g, '_');
+      if (current && typeof current === 'object' && sanitizedPart !== part && sanitizedPart in current) {
+        current = current[sanitizedPart];
+        continue;
+      }
+      
+      throw new Error(`Property not found in path: ${path}`);
     }
-
+    
     return current;
   }
 
   /**
-   * Define a system-wide macro
+   * Define a macro in this environment
    */
   defineMacro(key: string, macro: MacroFn): void {
-    this.macroRegistry.defineSystemMacro(key, macro);
+    this.logger.debug(`Defining macro: ${key}`);
+    this.macros.set(key, macro);
+    
+    // Tag the function as a macro for later identification
+    Object.defineProperty(macro, 'isMacro', { value: true });
+    // Store the original name for reference
+    Object.defineProperty(macro, 'macroName', { value: key });
+    
+    // Also register with sanitized name if different
+    const sanitizedKey = key.replace(/-/g, '_');
+    if (sanitizedKey !== key) {
+      this.logger.debug(`Also registering macro with sanitized name: ${sanitizedKey}`);
+      this.macros.set(sanitizedKey, macro);
+    }
   }
 
   /**
@@ -308,38 +306,154 @@ export class Environment {
   }
   
   /**
+   * Mark a file as processed
+   */
+  markFileProcessed(filePath: string): void {
+    this.processedFiles.add(filePath);
+  }
+  
+  /**
+   * Check if a file has been processed
+   */
+  hasProcessedFile(filePath: string): boolean {
+    return this.processedFiles.has(filePath);
+  }
+  
+  /**
    * Define a module-scoped macro
    */
   defineModuleMacro(filePath: string, macroName: string, macroFn: MacroFn): void {
-    this.macroRegistry.defineModuleMacro(filePath, macroName, macroFn);
+    this.logger.debug(`Defining module macro: ${macroName} in ${filePath}`);
+    
+    // Get or create the file's macro registry
+    if (!this.moduleMacros.has(filePath)) {
+      this.moduleMacros.set(filePath, new Map<string, MacroFn>());
+    }
+    
+    const moduleRegistry = this.moduleMacros.get(filePath)!;
+    moduleRegistry.set(macroName, macroFn);
+    
+    // Tag the function with metadata
+    Object.defineProperty(macroFn, 'isMacro', { value: true });
+    Object.defineProperty(macroFn, 'macroName', { value: macroName });
+    Object.defineProperty(macroFn, 'sourceFile', { value: filePath });
+    Object.defineProperty(macroFn, 'isUserMacro', { value: true });
   }
 
   /**
    * Mark a macro as exported from a file
    */
   exportMacro(filePath: string, macroName: string): void {
-    this.macroRegistry.exportMacro(filePath, macroName);
+    this.logger.debug(`Marking macro ${macroName} as exported from ${filePath}`);
+    
+    // Get or create the file's export registry
+    if (!this.exportedMacros.has(filePath)) {
+      this.exportedMacros.set(filePath, new Set<string>());
+    }
+    
+    // Add the macro to the exports
+    this.exportedMacros.get(filePath)!.add(macroName);
   }
   
   /**
    * Import a macro from sourceFile into targetFile
    */
-  importMacro(sourceFile: string, macroName: string, targetFile: string): boolean {
-    return this.macroRegistry.importMacro(sourceFile, macroName, targetFile);
+  importMacro(sourceFile: string, macroName: string, targetFile: string): void {
+    this.logger.debug(`Importing macro ${macroName} from ${sourceFile} into ${targetFile}`);
+    
+    // Check if the source file has this macro
+    const sourceFileMacros = this.moduleMacros.get(sourceFile);
+    if (!sourceFileMacros || !sourceFileMacros.has(macroName)) {
+      this.logger.warn(`Macro ${macroName} not found in ${sourceFile}`);
+      return;
+    }
+    
+    // Check if the macro is exported
+    const exports = this.exportedMacros.get(sourceFile);
+    if (!exports || !exports.has(macroName)) {
+      this.logger.warn(`Macro ${macroName} is not exported from ${sourceFile}`);
+      return;
+    }
+    
+    // Get or create the target file's import registry
+    if (!this.importedMacros.has(targetFile)) {
+      this.importedMacros.set(targetFile, new Map<string, string>());
+    }
+    
+    // Record the import
+    this.importedMacros.get(targetFile)!.set(macroName, sourceFile);
+    
+    this.logger.debug(`Successfully imported macro ${macroName} from ${sourceFile} to ${targetFile}`);
   }
   
   /**
    * Check if a macro exists in the environment or is visible in the current module
    */
   hasMacro(key: string): boolean {
-    return this.macroRegistry.hasMacro(key, this.currentFilePath);
+    // Check global macros first
+    if (this.macros.has(key)) {
+      return true;
+    }
+    
+    // Check module-scoped macros if we have a current file
+    if (this.currentFilePath) {
+      // Check if defined in current file
+      const currentFileMacros = this.moduleMacros.get(this.currentFilePath);
+      if (currentFileMacros && currentFileMacros.has(key)) {
+        return true;
+      }
+      
+      // Check if imported into current file
+      const imports = this.importedMacros.get(this.currentFilePath);
+      if (imports && imports.has(key)) {
+        const sourceFile = imports.get(key)!;
+        const sourceMacros = this.moduleMacros.get(sourceFile);
+        
+        // Verify it's exported from source file
+        const exports = this.exportedMacros.get(sourceFile);
+        if (exports && exports.has(key) && sourceMacros && sourceMacros.has(key)) {
+          return true;
+        }
+      }
+    }
+    
+    // Check parent environment
+    return this.parent !== null && this.parent.hasMacro(key);
   }
 
   /**
    * Get a macro from the environment if available in the current scope
    */
   getMacro(key: string): MacroFn | undefined {
-    return this.macroRegistry.getMacro(key, this.currentFilePath);
+    // Check global macros first
+    if (this.macros.has(key)) {
+      return this.macros.get(key);
+    }
+    
+    // Check module-scoped macros if we have a current file
+    if (this.currentFilePath) {
+      // Check if defined in current file
+      const currentFileMacros = this.moduleMacros.get(this.currentFilePath);
+      if (currentFileMacros && currentFileMacros.has(key)) {
+        return currentFileMacros.get(key);
+      }
+      
+      // Check if imported into current file
+      const imports = this.importedMacros.get(this.currentFilePath);
+      if (imports && imports.has(key)) {
+        const sourceFile = imports.get(key)!;
+        const sourceMacros = this.moduleMacros.get(sourceFile);
+        
+        // Verify it's exported from source file
+        const exports = this.exportedMacros.get(sourceFile);
+        if (exports && exports.has(key) && sourceMacros && sourceMacros.has(key)) {
+          return sourceMacros.get(key);
+        }
+      }
+    }
+    
+    // Check parent environment
+    return this.parent ? this.parent.getMacro(key) : undefined;
   }
 
   /**
@@ -347,12 +461,14 @@ export class Environment {
    */
   isUserLevelMacro(symbolName: string, fromFile: string): boolean {
     // Check if defined in the specified file
-    if (this.macroRegistry.hasModuleMacro(fromFile, symbolName)) {
+    const fileMacros = this.moduleMacros.get(fromFile);
+    if (fileMacros && fileMacros.has(symbolName)) {
       return true;
     }
     
     // Check if imported into the specified file
-    if (this.macroRegistry.isImported(fromFile, symbolName)) {
+    const imports = this.importedMacros.get(fromFile);
+    if (imports && imports.has(symbolName)) {
       return true;
     }
     
@@ -363,59 +479,22 @@ export class Environment {
    * Check if a module has a specified macro
    */
   hasModuleMacro(filePath: string, macroName: string): boolean {
-    return this.macroRegistry.hasModuleMacro(filePath, macroName);
+    const moduleRegistry = this.moduleMacros.get(filePath);
+    return moduleRegistry ? moduleRegistry.has(macroName) : false;
   }
   
   /**
    * Get all macros defined in a module
    */
   getModuleMacros(filePath: string): Map<string, MacroFn> | undefined {
-    // Create a new map to return (avoid exposing internal structure)
-    const result = new Map<string, MacroFn>();
-    
-    // Get module macros from registry
-    const moduleMacros = this.macroRegistry.moduleMacros?.get(filePath);
-    if (!moduleMacros) return undefined;
-    
-    // Copy all entries to the result map
-    for (const [name, fn] of moduleMacros.entries()) {
-      result.set(name, fn);
-    }
-    
-    return result;
+    return this.moduleMacros.get(filePath);
   }
   
   /**
    * Get all macros exported from a module
    */
   getExportedMacros(filePath: string): Set<string> | undefined {
-    // Create a new set to return (avoid exposing internal structure)
-    const result = new Set<string>();
-    
-    // Get exported macros from registry
-    const exportedMacros = this.macroRegistry.exportedMacros?.get(filePath);
-    if (!exportedMacros) return undefined;
-    
-    // Copy all entries to the result set
-    for (const name of exportedMacros) {
-      result.add(name);
-    }
-    
-    return result;
-  }
-
-  /**
-   * Check if a file has been processed (to avoid redundant processing)
-   */
-  hasProcessedFile(filePath: string): boolean {
-    return Environment.processedFiles.has(filePath);
-  }
-  
-  /**
-   * Mark a file as processed
-   */
-  markFileProcessed(filePath: string): void {
-    Environment.processedFiles.add(filePath);
+    return this.exportedMacros.get(filePath);
   }
 
   /**
@@ -438,11 +517,11 @@ export class Environment {
       if (typeof exportValue === 'function') {
         if ('isMacro' in exportValue) {
           // Register direct macros with qualified name
-          this.macroRegistry.defineSystemMacro(`${moduleName}.${exportName}`, exportValue as MacroFn);
+          this.macros.set(`${moduleName}.${exportName}`, exportValue as MacroFn);
           
           // For core modules, also register direct macros
           if (moduleName === 'core' || moduleName === 'lib/core') {
-            this.macroRegistry.defineSystemMacro(exportName, exportValue as MacroFn);
+            this.defineMacro(exportName, exportValue as MacroFn);
           }
         }
         // Register functions for macro evaluation

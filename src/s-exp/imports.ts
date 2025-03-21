@@ -1,4 +1,4 @@
-// src/s-exp/imports.ts - Updated with handling for user-level macros
+// src/s-exp/imports.ts - Optimized with streamlined user-level macro handling
 
 import * as path from "https://deno.land/std/path/mod.ts";
 import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport, isUserMacro } from './types.ts';
@@ -31,63 +31,54 @@ export async function processImports(
   const logger = new Logger(options.verbose || false);
   const baseDir = options.baseDir || Deno.cwd();
   
+  // Store previous current file for restoration
+  const previousCurrentFile = env.getCurrentFile();
+  
   // Track processed imports to avoid duplicates
   const processedFiles = options.processedFiles || new Set<string>();
   const importMap = options.importMap || new Map<string, string>();
   
-  // Set current file in environment if provided
-  if (options.currentFile) {
-    env.setCurrentFile(options.currentFile);
-  }
-  
-  // Create temp directory if needed
-  let tempDir = options.tempDir;
-  if (!tempDir) {
-    tempDir = await Deno.makeTempDir({ prefix: "hql_imports_" });
-    logger.debug(`Created temporary directory: ${tempDir}`);
-  }
-  
-  // Collect all import expressions
-  const importExprs: SList[] = collectImportExpressions(exprs);
-  
-  // Process imports in order
-  for (const importExpr of importExprs) {
-    try {
-      await processImport(importExpr, env, baseDir, {
-        verbose: options.verbose,
-        tempDir,
-        keepTemp: options.keepTemp,
-        processedFiles,
-        importMap,
-        currentFile: options.currentFile
-      });
-    } catch (error) {
-      logger.error(`Error processing import: ${error.message}`);
+  try {
+    // Set current file in environment if provided
+    if (options.currentFile) {
+      env.setCurrentFile(options.currentFile);
     }
-  }
-  
-  // Process definitions in the current file to make them available to macros
-  processFileDefinitions(exprs, env, logger);
-  
-  // Process user-level macros and exports
-  if (options.currentFile) {
-    processFileExportsAndDefinitions(exprs, env, {}, options.currentFile, logger);
-  }
-}
-
-/**
- * Collect all import expressions from a list of S-expressions
- */
-function collectImportExpressions(exprs: SExp[]): SList[] {
-  const importExprs: SList[] = [];
-  
-  for (const expr of exprs) {
-    if (isImport(expr) && expr.type === 'list') {
-      importExprs.push(expr as SList);
+    
+    // Create temp directory if needed
+    let tempDir = options.tempDir;
+    if (!tempDir) {
+      tempDir = await Deno.makeTempDir({ prefix: "hql_imports_" });
+      logger.debug(`Created temporary directory: ${tempDir}`);
     }
+    
+    // Process all import expressions in sequence
+    const importExprs = exprs.filter(expr => isImport(expr) && expr.type === 'list') as SList[];
+    for (const importExpr of importExprs) {
+      try {
+        await processImport(importExpr, env, baseDir, {
+          verbose: options.verbose,
+          tempDir,
+          keepTemp: options.keepTemp,
+          processedFiles,
+          importMap,
+          currentFile: options.currentFile
+        });
+      } catch (error) {
+        logger.error(`Error processing import: ${error.message}`);
+      }
+    }
+    
+    // Process definitions and exports
+    if (options.currentFile) {
+      // First pass: register definitions for macros
+      processFileDefinitions(exprs, env, logger);
+      // Second pass: handle user-level macros and exports
+      processFileExportsAndDefinitions(exprs, env, {}, options.currentFile, logger);
+    }
+  } finally {
+    // Always restore the previous current file state
+    env.setCurrentFile(previousCurrentFile);
   }
-  
-  return importExprs;
 }
 
 /**
@@ -96,36 +87,22 @@ function collectImportExpressions(exprs: SExp[]): SList[] {
 function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger): void {
   logger.debug("Processing file definitions for macros and variables");
   
-  // First pass: Process def declarations to register variables
+  // Process def and defn declarations
   for (const expr of exprs) {
-    if (expr.type === 'list' && 
-        expr.elements.length > 0 &&
-        isSymbol(expr.elements[0])) {
-      const op = expr.elements[0].name;
-      
-      if (op === 'def' && expr.elements.length === 3) {
-        try {
-          processDefDeclaration(expr, env, logger);
-        } catch (error) {
-          logger.error(`Error processing def: ${error.message}`);
-        }
+    if (expr.type !== 'list' || expr.elements.length === 0 || !isSymbol(expr.elements[0])) continue;
+    
+    const op = expr.elements[0].name;
+    if (op === 'def' && expr.elements.length === 3) {
+      try {
+        processDefDeclaration(expr, env, logger);
+      } catch (error) {
+        logger.error(`Error processing def: ${error.message}`);
       }
-    }
-  }
-  
-  // Second pass: Process defn declarations to register functions
-  for (const expr of exprs) {
-    if (expr.type === 'list' && 
-        expr.elements.length > 0 &&
-        isSymbol(expr.elements[0])) {
-      const op = expr.elements[0].name;
-      
-      if (op === 'defn' && expr.elements.length >= 4) {
-        try {
-          processDefnDeclaration(expr, env, logger);
-        } catch (error) {
-          logger.error(`Error processing defn: ${error.message}`);
-        }
+    } else if (op === 'defn' && expr.elements.length >= 4) {
+      try {
+        processDefnDeclaration(expr, env, logger);
+      } catch (error) {
+        logger.error(`Error processing defn: ${error.message}`);
       }
     }
   }
@@ -143,15 +120,8 @@ function processFileExportsAndDefinitions(
 ): void {
   // First pass: process user-level macros
   for (const expr of expressions) {
-    if (expr.type !== 'list' || expr.elements.length === 0) continue;
-    
-    const first = expr.elements[0];
-    if (!isSymbol(first)) continue;
-    
-    const op = first.name;
-    
-    // Process user-level macros: (macro name ...)
-    if (op === 'macro') {
+    if (expr.type === 'list' && expr.elements.length > 0 && 
+        isSymbol(expr.elements[0]) && expr.elements[0].name === 'macro') {
       try {
         defineUserMacro(expr as SList, filePath, env, logger);
       } catch (error) {
@@ -160,30 +130,19 @@ function processFileExportsAndDefinitions(
     }
   }
   
-  // Second pass: process regular definitions
-  processFileDefinitions(expressions, env, logger);
-  
-  // Third pass: process exports
+  // Second pass: process exports
   for (const expr of expressions) {
-    // Skip non-list expressions
-    if (expr.type !== 'list' || expr.elements.length === 0) continue;
+    if (expr.type !== 'list' || expr.elements.length === 0 || !isSymbol(expr.elements[0])) continue;
     
-    const first = expr.elements[0];
-    if (!isSymbol(first)) continue;
+    const op = expr.elements[0].name;
     
-    const op = first.name;
-    
-    // Process vector-based exports: (export [symbol1, symbol2])
-    if (op === 'export' && expr.elements.length === 2 && 
-        expr.elements[1].type === 'list') {
-      
+    // Vector-based exports: (export [symbol1, symbol2])
+    if (op === 'export' && expr.elements.length === 2 && expr.elements[1].type === 'list') {
       processVectorExport(expr, env, moduleExports, filePath, logger);
     }
-    // Process legacy string-based exports: (export "name" value)
+    // Legacy string-based exports: (export "name" value)
     else if (op === 'export' && expr.elements.length === 3 && 
-             isLiteral(expr.elements[1]) && 
-             typeof expr.elements[1].value === 'string') {
-      
+             isLiteral(expr.elements[1]) && typeof expr.elements[1].value === 'string') {
       processLegacyExport(expr, env, moduleExports, filePath, logger);
     }
   }
@@ -193,22 +152,19 @@ function processFileExportsAndDefinitions(
  * Process a def declaration
  */
 function processDefDeclaration(expr: SList, env: Environment, logger: Logger): void {
-  // Get the name and value
-  if (isSymbol(expr.elements[1])) {
-    const name = expr.elements[1].name;
-    // Evaluate the value for use by macros
-    try {
-      const value = evaluateForMacro(expr.elements[2], env, logger);
-      if (isLiteral(value)) {
-        env.define(name, value.value);
-        logger.debug(`Registered variable for macros: ${name} = ${value.value}`);
-      } else {
-        env.define(name, value);
-        logger.debug(`Registered complex variable for macros: ${name}`);
-      }
-    } catch (error) {
-      logger.warn(`Could not evaluate ${name} for macro use: ${error.message}`);
+  if (!isSymbol(expr.elements[1])) return;
+  
+  const name = expr.elements[1].name;
+  try {
+    const value = evaluateForMacro(expr.elements[2], env, logger);
+    if (isLiteral(value)) {
+      env.define(name, value.value);
+    } else {
+      env.define(name, value);
     }
+    logger.debug(`Registered variable for macros: ${name}`);
+  } catch (error) {
+    logger.warn(`Could not evaluate ${name} for macro use: ${error.message}`);
   }
 }
 
@@ -216,13 +172,9 @@ function processDefDeclaration(expr: SList, env: Environment, logger: Logger): v
  * Process a defn declaration
  */
 function processDefnDeclaration(expr: SList, env: Environment, logger: Logger): void {
-  // Skip if not a proper defn
-  if (!isSymbol(expr.elements[1]) || expr.elements[2].type !== 'list') {
-    return;
-  }
+  if (!isSymbol(expr.elements[1]) || expr.elements[2].type !== 'list') return;
   
   const fnName = expr.elements[1].name;
-
   // Create a simplified function for macro evaluation
   const fn = (...args: any[]) => {
     try {
@@ -250,37 +202,20 @@ async function processImport(
   baseDir: string, 
   options: ImportProcessorOptions
 ): Promise<void> {
-  // Get the elements of the import expression
   const elements = importExpr.elements;
   
-  // Determine the import type based on the syntax
-  if (isVectorBasedImport(elements)) {
+  // Quickly determine import type and process accordingly
+  if (elements.length >= 4 && elements[1].type === 'list' && 
+      isSymbol(elements[2]) && elements[2].name === 'from') {
+    // Vector-based import
     await processVectorBasedImport(elements, env, baseDir, options);
-  } else if (isLegacyImport(elements)) {
+  } else if (elements.length === 3 && isSymbol(elements[1]) && 
+             isLiteral(elements[2]) && typeof elements[2].value === 'string') {
+    // Legacy import
     await processLegacyImport(elements, env, baseDir, options);
   } else {
     throw new Error("Invalid import syntax");
   }
-}
-
-/**
- * Check if this is a vector-based import
- */
-function isVectorBasedImport(elements: SExp[]): boolean {
-  return elements.length >= 4 && 
-      elements[1].type === 'list' && 
-      isSymbol(elements[2]) && 
-      elements[2].name === 'from';
-}
-
-/**
- * Check if this is a legacy import
- */
-function isLegacyImport(elements: SExp[]): boolean {
-  return elements.length === 3 && 
-      isSymbol(elements[1]) && 
-      isLiteral(elements[2]) && 
-      typeof elements[2].value === 'string';
 }
 
 /**
@@ -297,82 +232,68 @@ async function processVectorBasedImport(
   // Get the vector of symbols to import
   const symbolsVector = elements[1] as SList;
   
-  // Get the module path
-  const modulePathExp = elements[3];
-  
-  // Validate the module path
-  if (!isLiteral(modulePathExp) || typeof modulePathExp.value !== 'string') {
+  // Get and validate the module path
+  if (!isLiteral(elements[3]) || typeof elements[3].value !== 'string') {
     throw new Error('Module path must be a string literal');
   }
   
-  const modulePath = modulePathExp.value;
-  logger.debug(`Importing symbols from: ${modulePath}`);
-  
-  // Create a temporary module name
-  const tempModuleName = `__temp_module_${Date.now()}`;
-  
-  // Load the module based on file type
+  const modulePath = elements[3].value as string;
   const resolvedPath = resolveImportPath(modulePath, baseDir, logger);
   
-  // We need this to track module-level macros properly
+  // Create a temporary module name and load the module
+  const tempModuleName = `__temp_module_${Date.now()}`;
   await loadModuleByType(tempModuleName, modulePath, resolvedPath, baseDir, env, options);
   
   // Process the vector elements
   const vectorElements = processVectorElements(symbolsVector);
   
-  // Process all imports, including macros
+  // Process macros if applicable
   if (options.currentFile && modulePath.endsWith('.hql')) {
-    processVectorImportElements(vectorElements, resolvedPath, options.currentFile, env, logger);
-  }
-  
-  // Process regular symbol imports
-  let i = 0;
-  while (i < vectorElements.length) {
-    if (isSymbol(vectorElements[i])) {
+    // Import macros from the source module to the current file
+    for (let i = 0; i < vectorElements.length; i++) {
+      if (!isSymbol(vectorElements[i])) continue;
+      
       const symbolName = (vectorElements[i] as SSymbol).name;
+      let aliasName: string | null = null;
       
-      // Check for alias pattern: symbol as alias
-      const hasAlias = i + 2 < vectorElements.length && 
-                      isSymbol(vectorElements[i+1]) && 
-                      (vectorElements[i+1] as SSymbol).name === 'as' &&
-                      isSymbol(vectorElements[i+2]);
-          
-      if (hasAlias) {
-        const aliasName = (vectorElements[i+2] as SSymbol).name;
-        await importSymbolAs(tempModuleName, symbolName, aliasName, env, logger);
-        i += 3; // Skip symbol, as, and alias
-      } else {
-        await importSymbolDirectly(tempModuleName, symbolName, env, logger);
-        i++; // Next symbol
+      // Check for alias pattern
+      if (i + 2 < vectorElements.length && 
+          isSymbol(vectorElements[i+1]) && (vectorElements[i+1] as SSymbol).name === 'as' &&
+          isSymbol(vectorElements[i+2])) {
+        aliasName = (vectorElements[i+2] as SSymbol).name;
+        i += 2; // Skip 'as' and alias
       }
-    } else {
-      i++; // Skip non-symbols
+      
+      // Import the macro if it exists in source file
+      if (env.hasModuleMacro(resolvedPath, symbolName)) {
+        env.importMacro(resolvedPath, symbolName, options.currentFile);
+        logger.debug(`Imported macro ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+      }
+      
+      // Import the symbol or alias
+      try {
+        const value = env.lookup(`${tempModuleName}.${symbolName}`);
+        env.define(aliasName || symbolName, value);
+        logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+      } catch (error) {
+        // Ignore lookup errors for macros - they're handled differently
+        if (!env.hasModuleMacro(resolvedPath, symbolName)) {
+          logger.debug(`Symbol not found in module: ${symbolName}`);
+        }
+      }
     }
+  } else {
+    // Process regular symbol imports
+    processVectorSymbols(vectorElements, async (symbolName, aliasName, _index) => {
+      try {
+        const value = env.lookup(`${tempModuleName}.${symbolName}`);
+        env.define(aliasName || symbolName, value);
+        logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+      } catch (error) {
+        logger.debug(`Symbol not found in module: ${symbolName}`);
+      }
+    });
   }
-}
-
-/**
- * Process imports for a vector of symbols
- */
-function processVectorImportElements(
-  elements: SExp[],
-  sourceFile: string,
-  targetFile: string,
-  env: Environment,
-  logger: Logger
-): void {
-  // Use the shared helper for vector processing
-  processVectorSymbols(elements, (symbolName, aliasName, _index) => {
-    // Import the macro if it exists in source file
-    if (env.hasModuleMacro(sourceFile, symbolName)) {
-      env.importMacro(sourceFile, symbolName, targetFile);
-      
-      const displayName = aliasName ? 
-        `${symbolName} as ${aliasName}` : symbolName;
-      
-      logger.debug(`Imported macro ${displayName} from ${sourceFile} to ${targetFile}`);
-    }
-  });
 }
 
 /**
@@ -386,27 +307,13 @@ async function processLegacyImport(
 ): Promise<void> {
   const logger = new Logger(options.verbose);
   
-  // Extract module name and path
-  const moduleNameExp = elements[1];
-  const modulePathExp = elements[2];
-  
-  if (!isSymbol(moduleNameExp)) {
-    throw new Error('Module name must be a symbol');
-  }
-  
-  if (!isLiteral(modulePathExp) || typeof modulePathExp.value !== 'string') {
-    throw new Error('Module path must be a string literal');
-  }
-  
-  const moduleName = moduleNameExp.name;
-  const modulePath = modulePathExp.value;
+  const moduleName = (elements[1] as SSymbol).name;
+  const modulePath = (elements[2] as any).value as string;
   
   logger.debug(`Processing legacy import: ${moduleName} from ${modulePath}`);
   
-  // Resolve the path for module tracking
+  // Resolve the path and load the module
   const resolvedPath = resolveImportPath(modulePath, baseDir, logger);
-  
-  // Load the module based on file type
   await loadModuleByType(moduleName, modulePath, resolvedPath, baseDir, env, options);
 }
 
@@ -422,7 +329,18 @@ async function loadModuleByType(
   options: ImportProcessorOptions
 ): Promise<void> {
   const logger = new Logger(options.verbose);
+  const processedFiles = options.processedFiles!;
   
+  // Fast path for already processed files
+  if (processedFiles.has(resolvedPath)) {
+    logger.debug(`Skipping already processed import: ${resolvedPath}`);
+    return;
+  }
+  
+  // Mark as processed early to prevent circular imports
+  processedFiles.add(resolvedPath);
+  
+  // Determine module type and process accordingly
   if (modulePath.startsWith('npm:')) {
     await processNpmImport(moduleName, modulePath, env, logger);
   } else if (modulePath.startsWith('jsr:')) {
@@ -431,26 +349,12 @@ async function loadModuleByType(
     await processHttpImport(moduleName, modulePath, env, logger);
   } else if (modulePath.endsWith('.hql')) {
     await processHqlImport(
-      moduleName, 
-      modulePath, 
-      resolvedPath,
-      baseDir, 
-      env, 
-      options.processedFiles!, 
-      logger, 
-      options.tempDir!, 
-      options.importMap!, 
-      options
+      moduleName, modulePath, resolvedPath, baseDir, env, processedFiles,
+      logger, options.tempDir!, options.importMap!, options
     );
   } else if (modulePath.endsWith('.js') || modulePath.endsWith('.mjs') || modulePath.endsWith('.cjs')) {
     await processJsImport(
-      moduleName, 
-      modulePath, 
-      resolvedPath,
-      baseDir, 
-      env, 
-      logger, 
-      options.processedFiles!
+      moduleName, modulePath, resolvedPath, baseDir, env, logger, processedFiles
     );
   } else {
     throw new Error(`Unsupported import file type: ${modulePath}`);
@@ -458,75 +362,13 @@ async function loadModuleByType(
 }
 
 /**
- * Process vector elements, removing commas and handling the vector syntax
+ * Process vector elements efficiently, removes commas and handles vector syntax
  */
 function processVectorElements(vectorList: SList): SExp[] {
-  // Skip the "vector" symbol if present
-  let elements = vectorList.elements;
-  if (elements.length > 0 && 
-      isSymbol(elements[0]) && 
-      elements[0].name === "vector") {
-    elements = elements.slice(1);
-  }
-  
-  // Filter out commas
-  return elements.filter(elem => 
-    !(isSymbol(elem) && (elem as SSymbol).name === ',')
-  );
-}
-
-// In imports.ts, modify the importSymbolDirectly function:
-
-/**
- * Import a symbol directly (no alias)
- */
-async function importSymbolDirectly(
-  moduleName: string,
-  symbolName: string,
-  env: Environment,
-  logger: Logger
-): Promise<void> {
-  // First check if it's a macro - if so, we don't need to import it as a runtime value
-  const currentFile = env.getCurrentFile();
-  if (currentFile && env.isUserLevelMacro(symbolName, currentFile)) {
-    // It's a macro, already handled separately by processVectorImportElements
-    logger.debug(`Skipping runtime import for macro: ${symbolName}`);
-    return;
-  }
-
-  try {
-    const value = env.lookup(`${moduleName}.${symbolName}`);
-    env.define(symbolName, value);
-    logger.debug(`Imported symbol: ${symbolName}`);
-  } catch (error) {
-    logger.debug(`Symbol not found in module: ${symbolName}`);
-  }
-}
-
-/**
- * Import a symbol with an alias
- */
-async function importSymbolAs(
-  moduleName: string,
-  symbolName: string,
-  aliasName: string,
-  env: Environment,
-  logger: Logger
-): Promise<void> {
-  const currentFile = env.getCurrentFile();
-  if (currentFile && env.isUserLevelMacro(symbolName, currentFile)) {
-    // It's a macro, already handled separately by processVectorImportElements
-    logger.debug(`Skipping runtime import for macro: ${symbolName} as ${aliasName}`);
-    return;
-  }
-
-  try {
-    const value = env.lookup(`${moduleName}.${symbolName}`);
-    env.define(aliasName, value);
-    logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
-  } catch (error) {
-    logger.debug(`Symbol not found in module: ${symbolName}`);
-  }
+  // Convert to array only once and filter in a single pass
+  return vectorList.elements
+    .slice(isSymbol(vectorList.elements[0]) && vectorList.elements[0].name === "vector" ? 1 : 0)
+    .filter(elem => !(isSymbol(elem) && (elem as SSymbol).name === ','));
 }
 
 /**
@@ -544,57 +386,48 @@ async function processHqlImport(
   importMap: Map<string, string>,
   options: ImportProcessorOptions
 ): Promise<void> {
-  logger.debug(`Resolving import: ${moduleName} from ${modulePath}`);
-  logger.debug(`Base directory: ${baseDir}`);
-  logger.debug(`Resolved path: ${resolvedPath}`);
+  const previousCurrentFile = env.getCurrentFile();
   
-  // Check for circular imports
-  if (processedFiles.has(resolvedPath)) {
-    logger.debug(`Skipping already processed import: ${resolvedPath}`);
-    return;
-  }
-
-  // Mark as processed
-  processedFiles.add(resolvedPath);
-  
-  // Read the file
-  let fileContent: string;
   try {
-    fileContent = await Deno.readTextFile(resolvedPath);
+    // Read and parse the file
+    const fileContent = await Deno.readTextFile(resolvedPath);
+    const importedExprs = parse(fileContent);
+    
+    // Set current file to imported file for correct context
+    env.setCurrentFile(resolvedPath);
+    
+    // Process nested imports first
+    const importDir = path.dirname(resolvedPath);
+    await processImports(importedExprs, env, { 
+      verbose: logger.enabled,
+      baseDir: importDir,
+      tempDir,
+      keepTemp: options.keepTemp,
+      processedFiles,
+      importMap,
+      currentFile: resolvedPath
+    });
+    
+    // Process exports
+    const moduleExports: Record<string, any> = {};
+    processFileExportsAndDefinitions(importedExprs, env, moduleExports, resolvedPath, logger);
+    
+    // Register the module with its exports
+    env.importModule(moduleName, moduleExports);
+    
+    // Process macro imports if needed
+    if (options.currentFile && options.currentFile !== resolvedPath) {
+      processMacroImports(options.currentFile, resolvedPath, env, logger);
+    }
+    
+    logger.debug(`Imported HQL module: ${moduleName}`);
   } catch (error) {
-    throw new Error(`Failed to read HQL file: ${resolvedPath} - ${error.message}`);
+    logger.error(`Failed to process HQL import: ${error.message}`);
+    throw error;
+  } finally {
+    // Restore original file context
+    env.setCurrentFile(previousCurrentFile);
   }
-  
-  // Parse it into S-expressions
-  const importedExprs = parse(fileContent);
-  
-  // Process nested imports first
-  const importDir = path.dirname(resolvedPath);
-  await processImports(importedExprs, env, { 
-    verbose: logger.enabled,
-    baseDir: importDir,
-    tempDir,
-    keepTemp: options.keepTemp,
-    processedFiles,
-    importMap,
-    currentFile: resolvedPath  // Pass the imported file as the current file
-  });
-  
-  // Create module object to store exports
-  const moduleExports: Record<string, any> = {};
-  
-  // Process and extract exports
-  processFileExportsAndDefinitions(importedExprs, env, moduleExports, resolvedPath, logger);
-  
-  // Register the module with its exports
-  env.importModule(moduleName, moduleExports);
-  
-  // If we have a current file, process any macro imports
-  if (options.currentFile) {
-    processMacroImports(options.currentFile, resolvedPath, env, logger);
-  }
-  
-  logger.debug(`Imported HQL module: ${moduleName} with exports: ${Object.keys(moduleExports).join(', ')}`);
 }
 
 /**
@@ -606,22 +439,12 @@ function processMacroImports(
   env: Environment,
   logger: Logger
 ): void {
-  // Get the exported macros from the source file
   const exportedMacros = env.getExportedMacros(exportingFile);
-  if (!exportedMacros || exportedMacros.size === 0) {
-    logger.debug(`No exported macros found in ${exportingFile}`);
-    return;
-  }
+  if (!exportedMacros || exportedMacros.size === 0) return;
   
-  logger.debug(`Exported macros found in ${exportingFile}: ${Array.from(exportedMacros).join(', ')}`);
-  
-  // For each exported macro, check if we should import it
+  // Import each exported macro
   for (const macroName of exportedMacros) {
     if (env.hasModuleMacro(exportingFile, macroName)) {
-      // Check if this importing file has explicitly imported this macro
-      // This logic would depend on what imports are tracked
-      
-      // For now, we'll assume all exported macros are visible to importing files
       env.importMacro(exportingFile, macroName, importingFile);
       logger.debug(`Auto-imported macro ${macroName} from ${exportingFile} to ${importingFile}`);
     }
@@ -629,10 +452,108 @@ function processMacroImports(
 }
 
 /**
- * Resolve an import path to an absolute path
+ * Process JavaScript imports
+ */
+async function processJsImport(
+  moduleName: string,
+  modulePath: string,
+  resolvedPath: string,
+  baseDir: string,
+  env: Environment,
+  logger: Logger,
+  processedFiles: Set<string>
+): Promise<void> {
+  try {
+    const moduleUrl = `file://${resolvedPath}`;
+    const module = await import(moduleUrl);
+    env.importModule(moduleName, module);
+    logger.debug(`Imported JS module: ${moduleName}`);
+  } catch (error) {
+    throw new Error(`Failed to import JS module: ${modulePath} - ${error.message}`);
+  }
+}
+
+/**
+ * Process npm: imports
+ */
+async function processNpmImport(
+  moduleName: string,
+  modulePath: string,
+  env: Environment,
+  logger: Logger
+): Promise<void> {
+  try {
+    const packageName = modulePath.substring(4);
+    
+    // Try direct import first, then fall back to CDNs
+    let module;
+    try {
+      module = await import(modulePath);
+    } catch {
+      try {
+        module = await import(`https://esm.sh/${packageName}`);
+      } catch {
+        module = await import(`https://cdn.skypack.dev/${packageName}`);
+      }
+    }
+    
+    env.importModule(moduleName, module);
+    logger.debug(`Imported NPM module: ${moduleName} (${packageName})`);
+  } catch (error) {
+    throw new Error(`Failed to import NPM module: ${modulePath} - ${error.message}`);
+  }
+}
+
+/**
+ * Process jsr: imports
+ */
+async function processJsrImport(
+  moduleName: string,
+  modulePath: string,
+  env: Environment,
+  logger: Logger
+): Promise<void> {
+  try {
+    const module = await import(modulePath);
+    env.importModule(moduleName, module);
+    logger.debug(`Imported JSR module: ${moduleName}`);
+  } catch (error) {
+    throw new Error(`Failed to import JSR module: ${modulePath} - ${error.message}`);
+  }
+}
+
+/**
+ * Process http(s): imports
+ */
+async function processHttpImport(
+  moduleName: string,
+  modulePath: string,
+  env: Environment,
+  logger: Logger
+): Promise<void> {
+  try {
+    const module = await import(modulePath);
+    env.importModule(moduleName, module);
+    logger.debug(`Imported HTTP module: ${moduleName}`);
+  } catch (error) {
+    throw new Error(`Failed to import HTTP module: ${modulePath} - ${error.message}`);
+  }
+}
+
+/**
+ * Resolve an import path to an absolute path efficiently
  */
 function resolveImportPath(modulePath: string, baseDir: string, logger: Logger): string {
-  // Simple implementation - in a real refactor we'd have fallbacks
+  // Fast path for special schemas and absolute paths
+  if (modulePath.startsWith('npm:') || 
+      modulePath.startsWith('jsr:') || 
+      modulePath.startsWith('http:') || 
+      modulePath.startsWith('https:') ||
+      path.isAbsolute(modulePath)) {
+    return modulePath;
+  }
+  
+  // For relative paths, resolve them efficiently
   return path.resolve(baseDir, modulePath);
 }
 
@@ -647,21 +568,31 @@ function processVectorExport(
   logger: Logger
 ): void {
   const exportVector = expr.elements[1] as SList;
-  logger.debug(`Processing vector export with ${exportVector.elements.length} elements`);
   
-  // Filter and process the vector elements
-  const elements = filterVectorElements(exportVector.elements);
+  // Process vector elements in one pass
+  const elements = processVectorElements(exportVector);
   
-  // Process each symbol in the export vector
+  // Export each symbol that's not a macro
   for (const element of elements) {
-    if (!isSymbol(element)) {
-      logger.debug(`Skipping non-symbol export: ${element}`);
+    if (!isSymbol(element)) continue;
+    
+    const symbolName = (element as SSymbol).name;
+    
+    // Check if it's a macro first
+    if (env.hasModuleMacro(filePath, symbolName)) {
+      env.exportMacro(filePath, symbolName);
+      logger.debug(`Marked macro ${symbolName} as exported from ${filePath}`);
       continue;
     }
     
-    const symbolName = (element as SSymbol).name;
-    // Use the shared helper for export handling
-    handleExport(symbolName, env, moduleExports, filePath, logger);
+    // Export regular values
+    try {
+      const value = env.lookup(symbolName);
+      moduleExports[symbolName] = value;
+      logger.debug(`Added export "${symbolName}" with value`);
+    } catch (error) {
+      logger.debug(`Failed to lookup symbol "${symbolName}" for export`);
+    }
   }
 }
 
@@ -678,16 +609,12 @@ function processLegacyExport(
   const exportName = expr.elements[1].value as string;
   const exportSymbol = expr.elements[2];
   
-  logger.debug(`Processing legacy export: "${exportName}"`);
-  
   // Handle symbol exports
   if (isSymbol(exportSymbol)) {
     const symbolName = exportSymbol.name;
-    logger.debug(`Export symbol: ${symbolName}`);
     
     // Check if this is a macro first
     if (env.hasModuleMacro(filePath, symbolName)) {
-      // Mark the macro as exported
       env.exportMacro(filePath, symbolName);
       logger.debug(`Marked macro ${symbolName} as exported from ${filePath} with name ${exportName}`);
       return;
@@ -695,11 +622,7 @@ function processLegacyExport(
     
     // Regular value export
     try {
-      // Look up the value from the environment
-      const value = env.lookup(symbolName);
-      
-      // Store in module exports
-      moduleExports[exportName] = value;
+      moduleExports[exportName] = env.lookup(symbolName);
       logger.debug(`Added export "${exportName}" with value from ${symbolName}`);
     } catch (error) {
       logger.warn(`Failed to lookup symbol "${symbolName}" for export "${exportName}"`);
@@ -723,210 +646,42 @@ function processLegacyExport(
 }
 
 /**
- * Process JavaScript imports
- */
-async function processJsImport(
-  moduleName: string,
-  modulePath: string,
-  resolvedPath: string,
-  baseDir: string,
-  env: Environment,
-  logger: Logger,
-  processedFiles: Set<string>
-): Promise<void> {
-  try {
-    // Check for circular imports
-    if (processedFiles.has(resolvedPath)) {
-      logger.debug(`Skipping already processed JS import: ${resolvedPath}`);
-      return;
-    }
-    
-    // Mark as processed
-    processedFiles.add(resolvedPath);
-    
-    // Import the module dynamically
-    const moduleUrl = `file://${resolvedPath}`;
-    const module = await import(moduleUrl);
-    
-    // Register the module
-    env.importModule(moduleName, module);
-    
-    logger.debug(`Imported JS module: ${moduleName} with exports: ${Object.keys(module).join(', ')}`);
-  } catch (error) {
-    throw new Error(`Failed to import JS module: ${modulePath} - ${error.message}`);
-  }
-}
-
-/**
- * Process npm: imports
- */
-async function processNpmImport(
-  moduleName: string,
-  modulePath: string,
-  env: Environment,
-  logger: Logger
-): Promise<void> {
-  try {
-    // Extract the package name without the npm: prefix
-    const packageName = modulePath.substring(4);
-    
-    // Try direct import (for Deno compatibility)
-    let module;
-    try {
-      module = await import(modulePath);
-    } catch (error) {
-      // Fallback to ESM.sh CDN
-      try {
-        const esmUrl = `https://esm.sh/${packageName}`;
-        module = await import(esmUrl);
-      } catch (esmError) {
-        // Fallback to Skypack CDN
-        const skypackUrl = `https://cdn.skypack.dev/${packageName}`;
-        module = await import(skypackUrl);
-      }
-    }
-    
-    // Register the module
-    env.importModule(moduleName, module);
-    
-    logger.debug(`Imported NPM module: ${moduleName} (${packageName}) with exports: ${Object.keys(module).join(', ')}`);
-  } catch (error) {
-    throw new Error(`Failed to import NPM module: ${modulePath} - ${error.message}`);
-  }
-}
-
-/**
- * Process jsr: imports
- */
-async function processJsrImport(
-  moduleName: string,
-  modulePath: string,
-  env: Environment,
-  logger: Logger
-): Promise<void> {
-  try {
-    const module = await import(modulePath);
-    env.importModule(moduleName, module);
-    logger.debug(`Imported JSR module: ${moduleName} (${modulePath}) with exports: ${Object.keys(module).join(', ')}`);
-  } catch (error) {
-    throw new Error(`Failed to import JSR module: ${modulePath} - ${error.message}`);
-  }
-}
-
-/**
- * Process http(s): imports
- */
-async function processHttpImport(
-  moduleName: string,
-  modulePath: string,
-  env: Environment,
-  logger: Logger
-): Promise<void> {
-  try {
-    const module = await import(modulePath);
-    env.importModule(moduleName, module);
-    logger.debug(`Imported HTTP module: ${moduleName} (${modulePath}) with exports: ${Object.keys(module).join(', ')}`);
-  } catch (error) {
-    throw new Error(`Failed to import HTTP module: ${modulePath} - ${error.message}`);
-  }
-}
-
-export function isMacroSymbol(
-  symbolName: string, 
-  env: Environment, 
-  filePath: string | null = null
-): boolean {
-  // Check global macros
-  if (env.hasMacro(symbolName)) {
-    return true;
-  }
-  
-  // Check user-level macros if file path is provided
-  if (filePath && env.isUserLevelMacro(symbolName, filePath)) {
-    return true;
-  }
-  
-  return false;
-}
-
-/**
- * Process a vector of symbols (with potential aliases)
- * This generalizes vector processing for both imports and exports
+ * Process a vector of symbols with potential aliases
  */
 function processVectorSymbols(
   vectorElements: SExp[],
   callback: (symbolName: string, aliasName: string | null, index: number) => void
 ): void {
-  let i = 0;
-  while (i < vectorElements.length) {
-    if (isSymbol(vectorElements[i])) {
-      const symbolName = (vectorElements[i] as SSymbol).name;
+  for (let i = 0; i < vectorElements.length; i++) {
+    if (!isSymbol(vectorElements[i])) continue;
+    
+    const symbolName = (vectorElements[i] as SSymbol).name;
+    
+    // Check for alias pattern: symbol as alias
+    if (i + 2 < vectorElements.length && 
+        isSymbol(vectorElements[i+1]) && (vectorElements[i+1] as SSymbol).name === 'as' &&
+        isSymbol(vectorElements[i+2])) {
       
-      // Check for alias pattern: symbol as alias
-      const hasAlias = i + 2 < vectorElements.length && 
-                      isSymbol(vectorElements[i+1]) && 
-                      (vectorElements[i+1] as SSymbol).name === 'as' &&
-                      isSymbol(vectorElements[i+2]);
-      
-      if (hasAlias) {
-        const aliasName = (vectorElements[i+2] as SSymbol).name;
-        callback(symbolName, aliasName, i);
-        i += 3; // Skip symbol, 'as', and alias
-      } else {
-        callback(symbolName, null, i);
-        i++; // Next symbol
-      }
+      const aliasName = (vectorElements[i+2] as SSymbol).name;
+      callback(symbolName, aliasName, i);
+      i += 2; // Skip 'as' and alias
     } else {
-      i++; // Skip non-symbols
+      callback(symbolName, null, i);
     }
   }
 }
 
 /**
- * Helper to handle exporting a symbol, checking if it's a macro or regular value
+ * Check if a symbol is a macro in the environment
  */
-function handleExport(
+export function isMacroSymbol(
   symbolName: string, 
   env: Environment, 
-  moduleExports: Record<string, any>,
-  filePath: string,
-  logger: Logger
-): void {
-  // Check if this is a macro first
-  if (env.hasModuleMacro(filePath, symbolName)) {
-    // Mark the macro as exported
-    env.exportMacro(filePath, symbolName);
-    logger.debug(`Marked macro ${symbolName} as exported from ${filePath}`);
-    return; // Skip value export for macros
-  }
+  filePath: string | null = null
+): boolean {
+  // Check global macros first (faster than isUserLevelMacro)
+  if (env.hasMacro(symbolName)) return true;
   
-  // Export regular values
-  try {
-    // Look up the value from the environment
-    const value = env.lookup(symbolName);
-    
-    // Store in module exports
-    moduleExports[symbolName] = value;
-    logger.debug(`Added export "${symbolName}" with value`);
-  } catch (error) {
-    logger.debug(`Failed to lookup symbol "${symbolName}" for export`);
-  }
-}
-
-/**
- * Helper to filter vector elements, handling commas and vector keyword
- */
-function filterVectorElements(elements: SExp[]): SExp[] {
-  // Skip "vector" symbol if present as first element
-  let result = elements;
-  if (elements.length > 0 && 
-      isSymbol(elements[0]) && 
-      elements[0].name === "vector") {
-    result = elements.slice(1);
-  }
-  
-  // Filter out comma symbols
-  return result.filter(elem => 
-    !(isSymbol(elem) && (elem as SSymbol).name === ',')
-  );
+  // Then check user-level macros
+  return filePath !== null && env.isUserLevelMacro(symbolName, filePath);
 }
