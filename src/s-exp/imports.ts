@@ -1,7 +1,7 @@
 // src/s-exp/imports.ts - Optimized with streamlined user-level macro handling
 
 import * as path from "https://deno.land/std/path/mod.ts";
-import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport, isUserMacro } from './types.ts';
+import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport } from './types.ts';
 import { Environment } from '../environment.ts';
 import { evaluateForMacro, defineUserMacro } from './macro.ts';
 import { parse } from './parser.ts';
@@ -633,32 +633,6 @@ function processLegacyExport(
       logger.debug(`Added export "${exportName}" with direct value`);
     } catch (error) {
       logger.warn(`Failed to evaluate export "${exportName}": ${error.message}`);
-    }
-  }
-}
-
-/**
- * Process a vector of symbols with potential aliases
- */
-function processVectorSymbols(
-  vectorElements: SExp[],
-  callback: (symbolName: string, aliasName: string | null, index: number) => void
-): void {
-  for (let i = 0; i < vectorElements.length; i++) {
-    if (!isSymbol(vectorElements[i])) continue;
-    
-    const symbolName = (vectorElements[i] as SSymbol).name;
-    
-    // Check for alias pattern: symbol as alias
-    if (i + 2 < vectorElements.length && 
-        isSymbol(vectorElements[i+1]) && (vectorElements[i+1] as SSymbol).name === 'as' &&
-        isSymbol(vectorElements[i+2])) {
-      
-      const aliasName = (vectorElements[i+2] as SSymbol).name;
-      callback(symbolName, aliasName, i);
-      i += 2; // Skip 'as' and alias
-    } else {
-      callback(symbolName, null, i);
     }
   }
 }

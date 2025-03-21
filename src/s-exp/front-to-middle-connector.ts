@@ -44,7 +44,7 @@ function convertExpr(sexp: SExp, logger: Logger): HQLNode {
 /**
 * Convert an S-expression literal to an HQL AST literal
 */
-function convertLiteral(literal: SLiteral, logger: Logger): LiteralNode {
+function convertLiteral(literal: SLiteral, __logger: Logger): LiteralNode {
     return {
         type: 'literal',
         value: literal.value
@@ -54,7 +54,7 @@ function convertLiteral(literal: SLiteral, logger: Logger): LiteralNode {
 /**
 * Convert an S-expression symbol to an HQL AST symbol
 */
-function convertSymbol(symbol: SSymbol, logger: Logger): SymbolNode {
+function convertSymbol(symbol: SSymbol, _logger: Logger): SymbolNode {
     return {
         type: 'symbol',
         name: symbol.name

@@ -21,6 +21,9 @@ export class MacroRegistry {
   // Track which macros are imported into each file
   private importedMacros = new Map<string, Map<string, string>>();
   
+  // Track macro aliases for improved import handling
+  private macroAliases = new Map<string, Map<string, string>>();
+  
   // Cache to track which files have been processed to avoid duplication
   private processedFiles = new Set<string>();
   
@@ -102,10 +105,10 @@ export class MacroRegistry {
   }
   
   /**
-   * Import a macro from one module to another
+   * Import a macro from one module to another with optional aliasing
    */
-  importMacro(fromFile: string, macroName: string, toFile: string): boolean {
-    // Check if source and target files are the same
+  importMacro(fromFile: string, macroName: string, toFile: string, aliasName?: string): boolean {
+    // Skip if source and target files are the same to avoid self-import
     if (fromFile === toFile) {
       this.logger.debug(`Skipping self-import of ${macroName} (same file)`);
       return true;
@@ -123,13 +126,17 @@ export class MacroRegistry {
       return false;
     }
     
-    // Skip if already imported to avoid redundancy
-    if (this.isImported(toFile, macroName)) {
-      this.logger.debug(`Macro ${macroName} already imported into ${toFile}, skipping duplicate`);
-      return true;
-    }
+    // The name that will be used in the target file (original or alias)
+    const importName = aliasName || macroName;
     
-    this.logger.debug(`Importing macro ${macroName} from ${fromFile} into ${toFile}`);
+    // Record the alias if provided
+    if (aliasName && aliasName !== macroName) {
+      if (!this.macroAliases.has(toFile)) {
+        this.macroAliases.set(toFile, new Map<string, string>());
+      }
+      this.macroAliases.get(toFile)!.set(aliasName, macroName);
+      this.logger.debug(`Created alias ${aliasName} -> ${macroName} in ${toFile}`);
+    }
     
     // Get or create the import registry for the target file
     if (!this.importedMacros.has(toFile)) {
@@ -137,7 +144,7 @@ export class MacroRegistry {
     }
     
     // Record the import
-    this.importedMacros.get(toFile)!.set(macroName, fromFile);
+    this.importedMacros.get(toFile)!.set(importName, fromFile);
     return true;
   }
   
@@ -188,6 +195,14 @@ export class MacroRegistry {
   }
   
   /**
+   * Resolve a macro name to its original name if it's an alias
+   */
+  resolveAlias(filePath: string, name: string): string {
+    const aliases = this.macroAliases.get(filePath);
+    return aliases?.get(name) || name;
+  }
+  
+  /**
    * Get a system macro by name
    */
   getSystemMacro(name: string): MacroFn | undefined {
@@ -224,9 +239,10 @@ export class MacroRegistry {
     // Check if imported into current file
     if (this.isImported(currentFile, name)) {
       const sourceFile = this.getImportSource(currentFile, name)!;
+      const originalName = this.resolveAlias(currentFile, name);
       // Verify it exists and is exported from source
-      return this.hasModuleMacro(sourceFile, name) && 
-             this.isExported(sourceFile, name);
+      return this.hasModuleMacro(sourceFile, originalName) && 
+             this.isExported(sourceFile, originalName);
     }
     
     return false;
@@ -254,10 +270,11 @@ export class MacroRegistry {
     // Check if imported into current file
     if (this.isImported(currentFile, name)) {
       const sourceFile = this.getImportSource(currentFile, name)!;
+      const originalName = this.resolveAlias(currentFile, name);
       // Verify it exists and is exported from source
-      if (this.hasModuleMacro(sourceFile, name) && 
-          this.isExported(sourceFile, name)) {
-        return this.getModuleMacro(sourceFile, name);
+      if (this.hasModuleMacro(sourceFile, originalName) && 
+          this.isExported(sourceFile, originalName)) {
+        return this.getModuleMacro(sourceFile, originalName);
       }
     }
     
@@ -295,9 +312,10 @@ export class MacroRegistry {
     const imports = this.importedMacros.get(currentFile);
     if (imports) {
       for (const [name, sourceFile] of imports.entries()) {
+        const originalName = this.resolveAlias(currentFile, name);
         // Verify macro still exists and is exported
-        if (this.hasModuleMacro(sourceFile, name) && 
-            this.isExported(sourceFile, name)) {
+        if (this.hasModuleMacro(sourceFile, originalName) && 
+            this.isExported(sourceFile, originalName)) {
           names.add(name);
         }
       }

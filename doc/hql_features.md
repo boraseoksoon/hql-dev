@@ -327,6 +327,16 @@ A single JavaScript file that you can execute on Deno.
 Putting It All Together
 The overall pipeline looks like this:
 
+(new) 
+
+HQL Transpiler Pipeline (new)
+┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐
+│ HQL    │→ │ S-expr │→ │ Macro  │→ │ HQL    │→ │ HQL    │→ │ TS     │→ │JavaScript│
+│ Source │  │ Parse  │  │ Expand │  │ AST    │  │ IR     │  │ AST    │  │ Output  │
+└────────┘  └────────┘  └────────┘  └────────┘  └────────┘  └────────┘  └────────┘
+
+(legacy)
+
 HQL raw code 
     ↓ (Parsing)
 HQL AST 
@@ -338,4 +348,5 @@ HQL IR
 TypeScript AST 
     ↓ (Code Generation)
 TypeScript raw code (Final bundled JS file)
+
 At each stage, every construct is maintained as an expression. Macro expansion is performed right after parsing so that higher‑level constructs (like defn, import, export, JS interop forms) are transformed into the minimal core forms. This guarantees uniformity and ensures that the final output is a fully self-contained JS file ready for execution on Deno.

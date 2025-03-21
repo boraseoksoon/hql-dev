@@ -7,7 +7,14 @@ This document outlines the architecture of the HQL (Higher Query Language) trans
 HQL transpiles S-expression syntax to JavaScript/TypeScript using a pipeline of transformations that preserves the expression-oriented nature of the language.
 
 ```
-HQL Code → HQL AST → Macro Expansion → HQL IR → TypeScript AST → TypeScript Code
+HQL Code → HQL AST → Macro Expansion → HQL IR → TypeScript AST → TypeScript Code (legacy) => X
+
+
+HQL Transpiler Pipeline (new)
+┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐
+│ HQL    │→ │ S-expr │→ │ Macro  │→ │ HQL    │→ │ HQL    │→ │ TS     │→ │JavaScript│
+│ Source │  │ Parse  │  │ Expand │  │ AST    │  │ IR     │  │ AST    │  │ Output  │
+└────────┘  └────────┘  └────────┘  └────────┘  └────────┘  └────────┘  └────────┘
 ```
 
 ## Streamlined Pipeline

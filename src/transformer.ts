@@ -5,8 +5,8 @@ import { generateTypeScript } from "./transpiler/ts-ast-to-ts-code.ts";
 import { expandMacros } from "./s-exp/macro.ts";
 import { Logger } from "./logger.ts";
 import { Environment } from "./environment.ts";
-import { convertAST } from "./converter.ts"
-import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts"
+import { convertAST } from "./converter.ts";
+import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts";
 
 /**
  * Options for code transformation.
@@ -21,8 +21,8 @@ interface TransformOptions {
  * Transforms HQL AST nodes through the new pipeline.
  *
  * Steps:
- * 1. Initialize the environment.
- * 2. Expand macros using the new unified expansion.
+ * 1. Get the global environment (avoids redundant initialization).
+ * 2. Expand macros using the unified expansion.
  * 3. Transform the expanded AST into an IR.
  * 4. Generate TypeScript code.
  */
@@ -33,26 +33,30 @@ export async function transformAST(
 ): Promise<string> {
   const logger = new Logger(options.verbose);
   try {
-    // Initialize environment
-    const env: Environment = await Environment.initializeGlobalEnv({ verbose: options.verbose });
+    // Get the global environment (reusing existing instance)
+    const env: Environment = Environment.getGlobalEnv() || 
+                            await Environment.initializeGlobalEnv({ verbose: options.verbose });
     
-    // Expand macros using new macro.ts.
-    const macroExpandedAst = await expandMacros(astNodes, env, currentDir, { verbose: options.verbose });
-    logger.debug("Macro expansion completed", macroExpandedAst);
+    // Expand macros using new macro.ts
+    const macroExpandedAst = await expandMacros(astNodes, env, { 
+      verbose: options.verbose,
+      currentFile: currentDir
+    });
+    logger.debug("Macro expansion completed");
 
     // Convert the expanded AST (if needed)
     const convertedAst = convertAST(macroExpandedAst);
-    logger.debug("AST conversion completed", convertedAst);
+    logger.debug("AST conversion completed");
 
-    // Transform the converted AST into IR.
+    // Transform the converted AST into IR
     const ir = transformToIR(convertedAst, currentDir);
-    logger.debug("Transformed to IR", ir);
+    logger.debug("Transformed to IR");
 
-    // Generate TypeScript code from IR.
+    // Generate TypeScript code from IR
     const tsCode = generateTypeScript(ir);
     logger.debug("Generated TypeScript code");
 
-    // Prepend the runtime functions to the generated code.
+    // Prepend the runtime functions to the generated code
     const finalCode = `${RUNTIME_FUNCTIONS}\n\n${tsCode}`;
     logger.debug("Final code assembled");
 
