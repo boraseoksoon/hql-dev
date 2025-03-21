@@ -1,5 +1,5 @@
 ;; b.hql
 
-(import [hello] from "./a.hql")
+(import [hello as hello2] from "./a.hql")
 
-(hello "hql")
+(hello2 "hql")

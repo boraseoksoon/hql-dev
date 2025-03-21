@@ -8,6 +8,10 @@ import { Environment } from '../environment.ts';
 import { Logger } from '../logger.ts';
 import { MacroFn } from '../environment.ts';
 
+// Caching system for macro expansion
+const macroExpansionCache = new Map<string, SExp>();
+const maxCacheSize = 5000; // Prevent unbounded growth
+
 /**
  * Options for macro expansion
  */
@@ -16,6 +20,7 @@ interface MacroExpanderOptions {
   maxExpandDepth?: number;
   maxPasses?: number; // Maximum number of expansion passes
   currentFile?: string; // Track the current file being processed
+  useCache?: boolean; // Toggle caching for testing or special cases
 }
 
 /**
@@ -646,6 +651,7 @@ export function expandMacros(
   const logger = new Logger(options.verbose || false);
   const maxPasses = options.maxPasses || 20; // Reasonable limit to prevent infinite expansion
   const currentFile = options.currentFile;
+  const useCache = options.useCache !== false; // Default to using cache
   
   logger.debug(`Starting macro expansion on ${exprs.length} expressions`);
 
@@ -677,12 +683,35 @@ export function expandMacros(
       }
       
       try {
+        // Check cache for this expression if caching is enabled
+        if (useCache) {
+          const exprStr = sexpToString(expr);
+          if (macroExpansionCache.has(exprStr)) {
+            return macroExpansionCache.get(exprStr)!;
+          }
+        }
+        
         const expanded = expandExpr(expr, env, logger, options);
         
         // Check if expansion occurred
         if (sexpToString(expanded) !== sexpToString(expr)) {
           logger.debug(`Expanded: ${sexpToString(expr)} => ${sexpToString(expanded)}`);
           expansionOccurred = true;
+          
+          // Cache the result if caching is enabled
+          if (useCache) {
+            const exprStr = sexpToString(expr);
+            macroExpansionCache.set(exprStr, expanded);
+            
+            // Prevent unbounded growth of the cache
+            if (macroExpansionCache.size > maxCacheSize) {
+              // Simple strategy: clear half the cache when it gets too large
+              const keys = [...macroExpansionCache.keys()];
+              for (let i = 0; i < keys.length / 2; i++) {
+                macroExpansionCache.delete(keys[i]);
+              }
+            }
+          }
         }
         
         return expanded;

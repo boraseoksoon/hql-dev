@@ -45,6 +45,9 @@ export class Environment {
   // Track the current file being processed
   private currentFilePath: string | null = null;
 
+  // Variable lookup cache for performance
+  private lookupCache = new Map<string, any>();
+
   /**
    * Initialize a global unified environment
    */
@@ -174,6 +177,10 @@ export class Environment {
     this.logger.debug(`Defining symbol: ${key}`);
     this.variables.set(key, value);
     
+    // Clear lookup cache for this key
+    this.lookupCache.delete(key);
+    this.lookupCache.delete(key.replace(/-/g, '_'));
+    
     // For functions, also register them with a metadata property
     // to indicate they can be used during macro expansion
     if (typeof value === 'function') {
@@ -183,31 +190,43 @@ export class Environment {
 
   /**
    * Look up a variable in the environment chain
-   * Optimized implementation that checks both original and sanitized names
+   * Optimized implementation with caching
    */
   lookup(key: string): any {
+    // Check cache first for performance
+    if (this.lookupCache.has(key)) {
+      return this.lookupCache.get(key);
+    }
+
     // Handle dot notation for module property access
     if (key.includes('.')) {
-      return this.lookupDotNotation(key);
+      const result = this.lookupDotNotation(key);
+      this.lookupCache.set(key, result);
+      return result;
     }
 
     // Check with sanitized name (underscores instead of dashes)
     const sanitizedKey = key.replace(/-/g, '_');
     
     if (this.variables.has(sanitizedKey)) {
-      this.logger.debug(`Found variable with sanitized name: ${sanitizedKey}`);
-      return this.variables.get(sanitizedKey);
+      const value = this.variables.get(sanitizedKey);
+      this.lookupCache.set(key, value);
+      this.lookupCache.set(sanitizedKey, value);
+      return value;
     }
     
     // Check with original name
     if (this.variables.has(key)) {
-      this.logger.debug(`Found variable with original name: ${key}`);
-      return this.variables.get(key);
+      const value = this.variables.get(key);
+      this.lookupCache.set(key, value);
+      return value;
     }
 
     // Try parent environment
     if (this.parent) {
-      return this.parent.lookup(key);
+      const value = this.parent.lookup(key);
+      this.lookupCache.set(key, value);
+      return value;
     }
 
     this.logger.debug(`Symbol not found: ${key}`);
@@ -539,5 +558,12 @@ export class Environment {
    */
   extend(): Environment {
     return new Environment(this, this.logger);
+  }
+  
+  /**
+   * Clear the lookup cache - useful for testing
+   */
+  clearCache(): void {
+    this.lookupCache.clear();
   }
 }

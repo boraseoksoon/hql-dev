@@ -1,6 +1,6 @@
 // src/transpiler/hql-transpiler.ts - Optimized with MacroRegistry integration
 import * as path from "https://deno.land/std/path/mod.ts";
-import { sexpToString, isUserMacro } from '../s-exp/types.ts';
+import { sexpToString } from '../s-exp/types.ts';
 import { parse } from '../s-exp/parser.ts';
 import { Environment } from '../environment.ts';
 import { expandMacros } from '../s-exp/macro.ts';
@@ -13,8 +13,8 @@ import { Logger } from '../logger.ts';
 let globalEnv: Environment | null = null;
 let coreHqlLoaded = false;
 
-// Cache for processed files to avoid redundant operations
-const processedFiles = new Set<string>();
+// Cache for parsed core.hql to avoid re-parsing
+let cachedCoreExpressions: any[] | null = null;
 
 /**
  * Options for processing HQL source code
@@ -27,6 +27,7 @@ interface ProcessOptions {
   skipCoreHQL?: boolean; // Optional flag to skip core.hql loading (for testing)
   sourceDir?: string; // Original source directory for imports
   tempDir?: string; // Temporary directory for processing
+  keepTemp?: boolean; // Whether to keep temporary files
 }
 
 /**
@@ -43,7 +44,10 @@ export async function processHql(
   try {
     // Step 1: Parse the source into S-expressions
     logger.debug('Parsing HQL source');
+    const startParseTime = performance.now();
     const sexps = parse(source);
+    const parseTime = performance.now() - startParseTime;
+    logger.debug(`Parsing completed in ${parseTime.toFixed(2)}ms`);
     
     if (options.verbose) {
       logParsedExpressions(sexps, logger);
@@ -51,12 +55,10 @@ export async function processHql(
     
     // Step 2: Get or initialize the global environment
     logger.debug('Getting global environment with macros');
+    const startEnvTime = performance.now();
     const env = await getGlobalEnv(options);
-    
-    // Log available macros in verbose mode
-    if (options.verbose) {
-      logAvailableMacros(env, logger);
-    }
+    const envTime = performance.now() - startEnvTime;
+    logger.debug(`Environment initialization completed in ${envTime.toFixed(2)}ms`);
     
     // Set the current file if baseDir is provided
     const currentFile = options.baseDir || null;
@@ -66,19 +68,26 @@ export async function processHql(
     
     // Step 3: Process imports in the user code
     logger.debug('Processing imports in user code');
+    const startImportTime = performance.now();
     await processImports(sexps, env, {
       verbose: options.verbose,
       baseDir: options.baseDir || Deno.cwd(),
       tempDir: options.tempDir,
       currentFile: currentFile
     });
+    const importTime = performance.now() - startImportTime;
+    logger.debug(`Import processing completed in ${importTime.toFixed(2)}ms`);
     
     // Step 4: Expand macros in the user code
     logger.debug('Expanding macros in user code');
+    const startMacroTime = performance.now();
     const expanded = expandMacros(sexps, env, { 
       verbose: options.verbose,
-      currentFile: currentFile
+      currentFile: currentFile,
+      useCache: true // Use macro expansion cache
     });
+    const macroTime = performance.now() - startMacroTime;
+    logger.debug(`Macro expansion completed in ${macroTime.toFixed(2)}ms`);
     
     if (options.verbose) {
       logExpandedExpressions(expanded, logger);
@@ -86,28 +95,48 @@ export async function processHql(
     
     // Step 5: Convert to HQL AST
     logger.debug('Converting to HQL AST');
+    const startAstTime = performance.now();
     const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
+    const astTime = performance.now() - startAstTime;
+    logger.debug(`AST conversion completed in ${astTime.toFixed(2)}ms`);
     
     // Step 6: Transform to JavaScript using existing pipeline
     logger.debug('Transforming to JavaScript');
+    const startTransformTime = performance.now();
     const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), {
       verbose: options.verbose,
       module: options.module || 'esm',
       bundle: false
     });
+    const transformTime = performance.now() - startTransformTime;
+    logger.debug(`JavaScript transformation completed in ${transformTime.toFixed(2)}ms`);
     
     // Clear current file when done
     if (currentFile) {
       env.setCurrentFile(null);
     }
     
-    logger.debug('Processing complete');
+    const totalTime = parseTime + envTime + importTime + macroTime + astTime + transformTime;
+    logger.debug(`Processing complete in ${totalTime.toFixed(2)}ms`);
+    
+    // Log performance metrics
+    if (options.verbose) {
+      console.log("Performance metrics:");
+      console.log(`  Parsing:             ${parseTime.toFixed(2)}ms (${(parseTime/totalTime*100).toFixed(1)}%)`);
+      console.log(`  Environment setup:   ${envTime.toFixed(2)}ms (${(envTime/totalTime*100).toFixed(1)}%)`);
+      console.log(`  Import processing:   ${importTime.toFixed(2)}ms (${(importTime/totalTime*100).toFixed(1)}%)`);
+      console.log(`  Macro expansion:     ${macroTime.toFixed(2)}ms (${(macroTime/totalTime*100).toFixed(1)}%)`);
+      console.log(`  AST conversion:      ${astTime.toFixed(2)}ms (${(astTime/totalTime*100).toFixed(1)}%)`);
+      console.log(`  JS transformation:   ${transformTime.toFixed(2)}ms (${(transformTime/totalTime*100).toFixed(1)}%)`);
+      console.log(`  Total:               ${totalTime.toFixed(2)}ms`);
+    }
+    
     return jsCode;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`Error processing HQL: ${errorMessage}`);
     if (error instanceof Error && error.stack) {
-      console.error(error.stack);
+      logger.error(error.stack);
     }
     throw error;
   }
@@ -117,8 +146,16 @@ export async function processHql(
  * Helper function to log parsed expressions when in verbose mode
  */
 function logParsedExpressions(sexps: any[], logger: Logger): void {
-  for (const sexp of sexps) {
-    logger.debug(`Parsed: ${sexpToString(sexp)}`);
+  logger.debug(`Parsed ${sexps.length} expressions`);
+  
+  // Only log the first few expressions to avoid overwhelming output
+  const MAX_EXPRESSIONS_TO_LOG = 5;
+  for (let i = 0; i < Math.min(sexps.length, MAX_EXPRESSIONS_TO_LOG); i++) {
+    logger.debug(`Expression ${i+1}: ${sexpToString(sexps[i])}`);
+  }
+  
+  if (sexps.length > MAX_EXPRESSIONS_TO_LOG) {
+    logger.debug(`...and ${sexps.length - MAX_EXPRESSIONS_TO_LOG} more expressions`);
   }
 }
 
@@ -126,40 +163,16 @@ function logParsedExpressions(sexps: any[], logger: Logger): void {
  * Helper function to log expanded expressions when in verbose mode
  */
 function logExpandedExpressions(expanded: any[], logger: Logger): void {
-  for (const sexp of expanded) {
-    logger.debug(`Expanded: ${sexpToString(sexp)}`);
+  logger.debug(`Expanded to ${expanded.length} expressions`);
+  
+  // Only log the first few expressions to avoid overwhelming output
+  const MAX_EXPRESSIONS_TO_LOG = 5;
+  for (let i = 0; i < Math.min(expanded.length, MAX_EXPRESSIONS_TO_LOG); i++) {
+    logger.debug(`Expanded ${i+1}: ${sexpToString(expanded[i])}`);
   }
-}
-
-/**
- * Helper function to log available macros when in verbose mode
- */
-function logAvailableMacros(env: Environment, logger: Logger): void {
-  const systemMacros = Array.from(env.macroRegistry.systemMacros.keys())
-    .filter(name => !name.includes('_')) // Skip sanitized duplicates
-    .sort();
   
-  logger.debug(`Available system macros: ${systemMacros.join(', ')}`);
-  
-  // Log user macros if any
-  if (env.macroRegistry.moduleMacros.size > 0) {
-    let userMacroList: string[] = [];
-    
-    for (const [filePath, macroMap] of env.macroRegistry.moduleMacros.entries()) {
-      if (macroMap.size > 0) {
-        for (const macroName of macroMap.keys()) {
-          userMacroList.push(`${macroName} (from ${path.basename(filePath)})`);
-        }
-      }
-    }
-    
-    if (userMacroList.length > 0) {
-      logger.debug(`Available user macros: ${userMacroList.join(', ')}`);
-    } else {
-      logger.debug("No user macros defined yet");
-    }
-  } else {
-    logger.debug("No user macros defined yet");
+  if (expanded.length > MAX_EXPRESSIONS_TO_LOG) {
+    logger.debug(`...and ${expanded.length - MAX_EXPRESSIONS_TO_LOG} more expressions`);
   }
 }
 
@@ -183,24 +196,30 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
     
     logger.debug(`Looking for core.hql at: ${corePath}`);
     
-    let coreSource;
-    try {
-      coreSource = await Deno.readTextFile(corePath);
-      logger.debug(`Found core.hql at: ${corePath}`);
-    } catch (e) {
-      throw new Error(`Could not find lib/core.hql at ${corePath}. Make sure you are running from the project root.`);
-    }
-    
-    // Parse the core.hql file
-    const coreExps = parse(coreSource);
-    
-    if (options.verbose) {
-      console.log("Core HQL expressions loaded from:", corePath);
+    // Check if we need to parse core.hql or if we can use cached expressions
+    let coreExps;
+    if (cachedCoreExpressions) {
+      logger.debug('Using cached core.hql expressions');
+      coreExps = cachedCoreExpressions;
+    } else {
+      let coreSource;
+      try {
+        coreSource = await Deno.readTextFile(corePath);
+        logger.debug(`Found core.hql at: ${corePath}`);
+      } catch (e) {
+        throw new Error(`Could not find lib/core.hql at ${corePath}. Make sure you are running from the project root.`);
+      }
+      
+      // Parse the core.hql file
+      coreExps = parse(coreSource);
+      cachedCoreExpressions = coreExps; // Cache for future use
+      logger.debug('Parsed core.hql and cached expressions');
     }
     
     // Use the environment's file tracking to avoid redundant processing
     if (env.hasProcessedFile(corePath)) {
       logger.debug(`Core.hql already processed, skipping`);
+      coreHqlLoaded = true;
       return;
     }
     
@@ -225,7 +244,6 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
     logger.debug('Core.hql loaded and all macros registered');
   } catch (error) {
     logger.error(`Error loading core.hql: ${error.message}`);
-    console.error(error.stack);
     throw error;
   }
 }
@@ -236,10 +254,19 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
  */
 async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
   if (!globalEnv) {
+    // Performance: measure environment initialization time
+    const startTime = performance.now();
+    
     globalEnv = await Environment.initializeGlobalEnv({ verbose: options.verbose });
     
+    // Load core.hql if not explicitly skipped
     if (!options.skipCoreHQL) {
       await loadCoreHql(globalEnv, options);
+    }
+    
+    const endTime = performance.now();
+    if (options.verbose) {
+      console.log(`Environment initialization took ${(endTime - startTime).toFixed(2)}ms`);
     }
   }
   

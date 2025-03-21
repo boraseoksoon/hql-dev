@@ -1,3 +1,5 @@
+;; a.hql
+
 (macro greeting (name)
   `(console.log (+ "Hello, " ~name "!")))
 
