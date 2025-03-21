@@ -361,39 +361,18 @@ function processVectorImportElements(
   env: Environment,
   logger: Logger
 ): void {
-  // Process each element in import vector
-  let i = 0;
-  while (i < elements.length) {
-    if (isSymbol(elements[i])) {
-      const symbolName = (elements[i] as SSymbol).name;
+  // Use the shared helper for vector processing
+  processVectorSymbols(elements, (symbolName, aliasName, _index) => {
+    // Import the macro if it exists in source file
+    if (env.hasModuleMacro(sourceFile, symbolName)) {
+      env.importMacro(sourceFile, symbolName, targetFile);
       
-      // Check for alias pattern
-      const hasAlias = i + 2 < elements.length && 
-                      isSymbol(elements[i+1]) && 
-                      (elements[i+1] as SSymbol).name === 'as' &&
-                      isSymbol(elements[i+2]);
+      const displayName = aliasName ? 
+        `${symbolName} as ${aliasName}` : symbolName;
       
-      if (hasAlias) {
-        const aliasName = (elements[i+2] as SSymbol).name;
-        
-        // Import the symbol/macro
-        if (env.hasModuleMacro(sourceFile, symbolName)) {
-          env.importMacro(sourceFile, symbolName, targetFile);
-          logger.debug(`Imported macro ${symbolName} as ${aliasName} from ${sourceFile} to ${targetFile}`);
-        }
-        i += 3; // Skip symbol, 'as', and alias
-      } else {
-        // Import without alias
-        if (env.hasModuleMacro(sourceFile, symbolName)) {
-          env.importMacro(sourceFile, symbolName, targetFile);
-          logger.debug(`Imported macro ${symbolName} from ${sourceFile} to ${targetFile}`);
-        }
-        i++; // Next symbol
-      }
-    } else {
-      i++; // Skip non-symbols
+      logger.debug(`Imported macro ${displayName} from ${sourceFile} to ${targetFile}`);
     }
-  }
+  });
 }
 
 /**
@@ -496,24 +475,7 @@ function processVectorElements(vectorList: SList): SExp[] {
   );
 }
 
-/**
- * Import a symbol with an alias
- */
-async function importSymbolAs(
-  moduleName: string,
-  symbolName: string,
-  aliasName: string,
-  env: Environment,
-  logger: Logger
-): Promise<void> {
-  try {
-    const value = env.lookup(`${moduleName}.${symbolName}`);
-    env.define(aliasName, value);
-    logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
-  } catch (error) {
-    logger.warn(`Symbol not found in module: ${symbolName}`);
-  }
-}
+// In imports.ts, modify the importSymbolDirectly function:
 
 /**
  * Import a symbol directly (no alias)
@@ -524,12 +486,46 @@ async function importSymbolDirectly(
   env: Environment,
   logger: Logger
 ): Promise<void> {
+  // First check if it's a macro - if so, we don't need to import it as a runtime value
+  const currentFile = env.getCurrentFile();
+  if (currentFile && env.isUserLevelMacro(symbolName, currentFile)) {
+    // It's a macro, already handled separately by processVectorImportElements
+    logger.debug(`Skipping runtime import for macro: ${symbolName}`);
+    return;
+  }
+
   try {
     const value = env.lookup(`${moduleName}.${symbolName}`);
     env.define(symbolName, value);
     logger.debug(`Imported symbol: ${symbolName}`);
   } catch (error) {
-    logger.warn(`Symbol not found in module: ${symbolName}`);
+    logger.debug(`Symbol not found in module: ${symbolName}`);
+  }
+}
+
+/**
+ * Import a symbol with an alias
+ */
+async function importSymbolAs(
+  moduleName: string,
+  symbolName: string,
+  aliasName: string,
+  env: Environment,
+  logger: Logger
+): Promise<void> {
+  const currentFile = env.getCurrentFile();
+  if (currentFile && env.isUserLevelMacro(symbolName, currentFile)) {
+    // It's a macro, already handled separately by processVectorImportElements
+    logger.debug(`Skipping runtime import for macro: ${symbolName} as ${aliasName}`);
+    return;
+  }
+
+  try {
+    const value = env.lookup(`${moduleName}.${symbolName}`);
+    env.define(aliasName, value);
+    logger.debug(`Imported symbol: ${symbolName} as ${aliasName}`);
+  } catch (error) {
+    logger.debug(`Symbol not found in module: ${symbolName}`);
   }
 }
 
@@ -651,42 +647,21 @@ function processVectorExport(
   logger: Logger
 ): void {
   const exportVector = expr.elements[1] as SList;
+  logger.debug(`Processing vector export with ${exportVector.elements.length} elements`);
   
-  logger.debug(`Processing vector export with ${exportVector.elements.length} symbols`);
-  
-  // Process the vector elements
-  const elementsToProcess = processVectorElements(exportVector);
+  // Filter and process the vector elements
+  const elements = filterVectorElements(exportVector.elements);
   
   // Process each symbol in the export vector
-  for (const symbolExpr of elementsToProcess) {
-    // Skip non-symbol elements
-    if (!isSymbol(symbolExpr)) {
-      logger.warn(`Non-symbol found in export vector: ${symbolExpr}`);
+  for (const element of elements) {
+    if (!isSymbol(element)) {
+      logger.debug(`Skipping non-symbol export: ${element}`);
       continue;
     }
     
-    const symbolName = (symbolExpr as SSymbol).name;
-    logger.debug(`Processing export for symbol: ${symbolName}`);
-    
-    // Check if this is a user-level macro
-    if (env.hasModuleMacro(filePath, symbolName)) {
-      // Mark the macro as exported
-      env.exportMacro(filePath, symbolName);
-      logger.debug(`Marked macro ${symbolName} as exported from ${filePath}`);
-      continue;
-    }
-    
-    // If not a macro, process as a regular value export
-    try {
-      // Look up the value from the environment
-      const value = env.lookup(symbolName);
-      
-      // Store in module exports
-      moduleExports[symbolName] = value;
-      logger.debug(`Added export "${symbolName}" with self-named value`);
-    } catch (error) {
-      logger.warn(`Failed to lookup symbol "${symbolName}" for export`);
-    }
+    const symbolName = (element as SSymbol).name;
+    // Use the shared helper for export handling
+    handleExport(symbolName, env, moduleExports, filePath, logger);
   }
 }
 
@@ -854,4 +829,104 @@ async function processHttpImport(
   } catch (error) {
     throw new Error(`Failed to import HTTP module: ${modulePath} - ${error.message}`);
   }
+}
+
+export function isMacroSymbol(
+  symbolName: string, 
+  env: Environment, 
+  filePath: string | null = null
+): boolean {
+  // Check global macros
+  if (env.hasMacro(symbolName)) {
+    return true;
+  }
+  
+  // Check user-level macros if file path is provided
+  if (filePath && env.isUserLevelMacro(symbolName, filePath)) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Process a vector of symbols (with potential aliases)
+ * This generalizes vector processing for both imports and exports
+ */
+function processVectorSymbols(
+  vectorElements: SExp[],
+  callback: (symbolName: string, aliasName: string | null, index: number) => void
+): void {
+  let i = 0;
+  while (i < vectorElements.length) {
+    if (isSymbol(vectorElements[i])) {
+      const symbolName = (vectorElements[i] as SSymbol).name;
+      
+      // Check for alias pattern: symbol as alias
+      const hasAlias = i + 2 < vectorElements.length && 
+                      isSymbol(vectorElements[i+1]) && 
+                      (vectorElements[i+1] as SSymbol).name === 'as' &&
+                      isSymbol(vectorElements[i+2]);
+      
+      if (hasAlias) {
+        const aliasName = (vectorElements[i+2] as SSymbol).name;
+        callback(symbolName, aliasName, i);
+        i += 3; // Skip symbol, 'as', and alias
+      } else {
+        callback(symbolName, null, i);
+        i++; // Next symbol
+      }
+    } else {
+      i++; // Skip non-symbols
+    }
+  }
+}
+
+/**
+ * Helper to handle exporting a symbol, checking if it's a macro or regular value
+ */
+function handleExport(
+  symbolName: string, 
+  env: Environment, 
+  moduleExports: Record<string, any>,
+  filePath: string,
+  logger: Logger
+): void {
+  // Check if this is a macro first
+  if (env.hasModuleMacro(filePath, symbolName)) {
+    // Mark the macro as exported
+    env.exportMacro(filePath, symbolName);
+    logger.debug(`Marked macro ${symbolName} as exported from ${filePath}`);
+    return; // Skip value export for macros
+  }
+  
+  // Export regular values
+  try {
+    // Look up the value from the environment
+    const value = env.lookup(symbolName);
+    
+    // Store in module exports
+    moduleExports[symbolName] = value;
+    logger.debug(`Added export "${symbolName}" with value`);
+  } catch (error) {
+    logger.debug(`Failed to lookup symbol "${symbolName}" for export`);
+  }
+}
+
+/**
+ * Helper to filter vector elements, handling commas and vector keyword
+ */
+function filterVectorElements(elements: SExp[]): SExp[] {
+  // Skip "vector" symbol if present as first element
+  let result = elements;
+  if (elements.length > 0 && 
+      isSymbol(elements[0]) && 
+      elements[0].name === "vector") {
+    result = elements.slice(1);
+  }
+  
+  // Filter out comma symbols
+  return result.filter(elem => 
+    !(isSymbol(elem) && (elem as SSymbol).name === ',')
+  );
 }
