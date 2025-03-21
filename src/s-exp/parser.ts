@@ -1,9 +1,37 @@
-// src/s-exp/parser.ts - Parser for S-expressions with enhanced error handling
-
-import { SExp, SList, isSymbol, createSymbol, createList, createLiteral, createNilLiteral } from './types.ts';
+// src/s-exp/parser.ts - Refactored with regex-driven approach
+import { SExp, SList, isSymbol, createSymbol, createList, createLiteral, createNilLiteral, sexpToString } from './types.ts';
 import { ParseError } from '../transpiler/errors.ts';
+import { perform } from '../transpiler/error-utils.ts';
 
-// Track line and column information during parsing
+// Token interface for cleaner type handling
+interface Token {
+  type: TokenType;
+  value: string;
+  position: SourcePosition;
+}
+
+// Token types for better categorization
+enum TokenType {
+  LeftParen,
+  RightParen,
+  LeftBracket,
+  RightBracket,
+  LeftBrace,
+  RightBrace,
+  HashLeftBracket,
+  String,
+  Number,
+  Symbol,
+  Quote,
+  Backtick,
+  Unquote,
+  UnquoteSplicing,
+  Dot,
+  Colon,
+  Comma
+}
+
+// Position tracking for error reporting
 interface SourcePosition {
   line: number;
   column: number;
@@ -11,463 +39,262 @@ interface SourcePosition {
 }
 
 /**
-* Parse HQL source into S-expressions with error location context
-*/
+ * Parse HQL source into S-expressions with error location context
+ */
 export function parse(input: string): SExp[] {
-  try {
+  return perform(() => {
     const tokens = tokenize(input);
     return parseTokens(tokens, input);
-  } catch (error) {
-    // If it's already a ParseError, just pass it through
-    if (error instanceof ParseError) throw error;
+  }, "Failed to parse input", ParseError, [{ line: 1, column: 1, offset: 0 }, input]);
+}
+
+/**
+ * Tokenize the input string using regex patterns.
+ * This is a major improvement over character-by-character processing.
+ */
+function tokenize(input: string): Token[] {
+  return perform(() => {
+    const tokens: Token[] = [];
     
-    // Otherwise, convert to a ParseError with position info if possible
-    let position: SourcePosition = { line: 1, column: 1, offset: 0 };
-    if ('position' in error) {
-      position = error.position;
+    // Combined regex pattern for all token types
+    // This handles all special cases in a declarative way
+    const tokenPattern = /(#\[|\(|\)|\[|\]|\{|\}|"(?:\\.|[^\\"])*"|\.|:|,|'|`|~@|~|;.*|\/\/.*|\/\*[\s\S]*?\*\/|\s+|[^\s\(\)\[\]\{\}"'`,;]+)/g;
+    
+    let line = 1;
+    let column = 1;
+    let match: RegExpExecArray | null;
+    
+    while ((match = tokenPattern.exec(input)) !== null) {
+      const value = match[0];
+      const position: SourcePosition = { 
+        line, 
+        column, 
+        offset: match.index 
+      };
+      
+      // Skip comments and whitespace
+      if (value.startsWith(';') || value.startsWith('//') || value.startsWith('/*') || /^\s+$/.test(value)) {
+        // Update line and column tracking
+        updatePositionInfo(value, position);
+        continue;
+      }
+      
+      // Determine token type and add to tokens list
+      const type = getTokenType(value);
+      tokens.push({ type, value, position });
+      
+      // Update line and column tracking
+      updatePositionInfo(value, position);
     }
     
-    throw new ParseError(
-      `Parse error: ${error instanceof Error ? error.message : String(error)}`,
-      position,
-      input
-    );
+    return tokens;
+  }, "Failed to tokenize input");
+}
+
+/**
+ * Update line and column information as we process tokens
+ */
+function updatePositionInfo(value: string, position: SourcePosition): void {
+  for (const char of value) {
+    if (char === '\n') {
+      position.line++;
+      position.column = 1;
+    } else {
+      position.column++;
+    }
   }
 }
 
 /**
-* Tokenize HQL source code into tokens with position tracking
-*/
-function tokenize(input: string): { token: string, position: SourcePosition }[] {
-  const tokens: { token: string, position: SourcePosition }[] = [];
-  let current = '';
-  let inString = false;
-  let inComment = false;
-  let inMultilineComment = false;
-  let line = 1;
-  let column = 1;
-  let offset = 0;
-
-  for (let i = 0; i < input.length; i++) {
-    const char = input[i];
-    offset = i;
-
-    // Handle newlines for line/column tracking
-    if (char === '\n') {
-      line++;
-      column = 1;
-      
-      // Handle comments ending at newlines
-      if (inComment) {
-        inComment = false;
+ * Determine token type from the token value
+ */
+function getTokenType(value: string): TokenType {
+  switch (value) {
+    case '(': return TokenType.LeftParen;
+    case ')': return TokenType.RightParen;
+    case '[': return TokenType.LeftBracket;
+    case ']': return TokenType.RightBracket;
+    case '{': return TokenType.LeftBrace;
+    case '}': return TokenType.RightBrace;
+    case '#[': return TokenType.HashLeftBracket;
+    case '.': return TokenType.Dot;
+    case ':': return TokenType.Colon;
+    case ',': return TokenType.Comma;
+    case "'": return TokenType.Quote;
+    case '`': return TokenType.Backtick;
+    case '~': return TokenType.Unquote;
+    case '~@': return TokenType.UnquoteSplicing;
+    default:
+      if (value.startsWith('"')) {
+        return TokenType.String;
       }
-      
-      if (!inString && !inMultilineComment) {
-        if (current !== '') {
-          tokens.push({ 
-            token: current, 
-            position: { line, column: column - current.length, offset: i - current.length } 
-          });
-          current = '';
-        }
-        continue;
+      if (!isNaN(Number(value))) {
+        return TokenType.Number;
       }
-    } else {
-      column++;
-    }
-
-    // Handle comments
-    if (inComment) {
-      continue;
-    }
-
-    if (inMultilineComment) {
-      if (char === '*' && i + 1 < input.length && input[i + 1] === '/') {
-        inMultilineComment = false;
-        i++; // Skip the closing '/'
-        column++;
-      }
-      continue;
-    }
-
-    if (!inString && char === ';') {
-      if (current !== '') {
-        tokens.push({ 
-          token: current, 
-          position: { line, column: column - current.length, offset: i - current.length } 
-        });
-        current = '';
-      }
-      inComment = true;
-      continue;
-    }
-
-    if (!inString && char === '/' && i + 1 < input.length) {
-      if (input[i + 1] === '/') {
-        if (current !== '') {
-          tokens.push({ 
-            token: current, 
-            position: { line, column: column - current.length, offset: i - current.length } 
-          });
-          current = '';
-        }
-        inComment = true;
-        i++; // Skip the second '/'
-        column++;
-        continue;
-      } else if (input[i + 1] === '*') {
-        if (current !== '') {
-          tokens.push({ 
-            token: current, 
-            position: { line, column: column - current.length, offset: i - current.length } 
-          });
-          current = '';
-        }
-        inMultilineComment = true;
-        i++; // Skip the '*'
-        column++;
-        continue;
-      }
-    }
-
-    // Handle strings
-    if (inString) {
-      current += char;
-      if (char === '"' && input[i - 1] !== '\\') {
-        inString = false;
-        tokens.push({ 
-          token: current, 
-          position: { line, column: column - current.length, offset: i - current.length + 1 } 
-        });
-        current = '';
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      if (current !== '') {
-        tokens.push({ 
-          token: current, 
-          position: { line, column: column - current.length, offset: i - current.length } 
-        });
-        current = '';
-      }
-      current = '"';
-      inString = true;
-      continue;
-    }
-
-    // Handle special tokens
-    if (char === '(' || char === ')' || 
-       char === '[' || char === ']' || 
-       char === '{' || char === '}') {
-      if (current !== '') {
-        tokens.push({ 
-          token: current, 
-          position: { line, column: column - current.length, offset: i - current.length } 
-        });
-        current = '';
-      }
-      tokens.push({ 
-        token: char, 
-        position: { line, column: column - 1, offset: i } 
-      });
-      continue;
-    }
-
-    // Handle whitespace
-    if (/\s/.test(char)) {
-      if (current !== '') {
-        tokens.push({ 
-          token: current, 
-          position: { line, column: column - current.length, offset: i - current.length } 
-        });
-        current = '';
-      }
-      continue;
-    }
-
-    // Handle special characters
-    if (char === ':') {
-      if (current !== '') {
-        tokens.push({ 
-          token: current, 
-          position: { line, column: column - current.length, offset: i - current.length } 
-        });
-        current = '';
-      }
-      tokens.push({ 
-        token: ':', 
-        position: { line, column: column - 1, offset: i } 
-      });
-      continue;
-    }
-
-    if (char === ',') {
-      if (current !== '') {
-        tokens.push({ 
-          token: current, 
-          position: { line, column: column - current.length, offset: i - current.length } 
-        });
-        current = '';
-      }
-      tokens.push({ 
-        token: ',', 
-        position: { line, column: column - 1, offset: i } 
-      });
-      continue;
-    }
-
-    // Handle quote, backtick, and unquote shortcuts
-    if (char === '\'' || char === '`') {
-      if (current !== '') {
-        tokens.push({ 
-          token: current, 
-          position: { line, column: column - current.length, offset: i - current.length } 
-        });
-        current = '';
-      }
-      tokens.push({ 
-        token: char, 
-        position: { line, column: column - 1, offset: i } 
-      });
-      continue;
-    }
-
-    if (char === '~') {
-      if (current !== '') {
-        tokens.push({ 
-          token: current, 
-          position: { line, column: column - current.length, offset: i - current.length } 
-        });
-        current = '';
-      }
-      
-      // Handle unquote-splicing (~@)
-      if (i + 1 < input.length && input[i + 1] === '@') {
-        tokens.push({ 
-          token: '~@', 
-          position: { line, column: column - 1, offset: i } 
-        });
-        i++; // Skip the '@'
-        column++;
-      } else {
-        tokens.push({ 
-          token: '~', 
-          position: { line, column: column - 1, offset: i } 
-        });
-      }
-      continue;
-    }
-
-    // Handle hash set (#[)
-    if (char === '#' && i + 1 < input.length && input[i + 1] === '[') {
-      if (current !== '') {
-        tokens.push({ 
-          token: current, 
-          position: { line, column: column - current.length, offset: i - current.length } 
-        });
-        current = '';
-      }
-      tokens.push({ 
-        token: '#[', 
-        position: { line, column: column - 1, offset: i } 
-      });
-      i++; // Skip the '['
-      column++;
-      continue;
-    }
-
-    // Accumulate characters
-    current += char;
+      return TokenType.Symbol;
   }
-
-  if (current !== '') {
-    tokens.push({ 
-      token: current, 
-      position: { line, column: column - current.length, offset: input.length - current.length } 
-    });
-  }
-
-  return tokens;
 }
 
-// Parse state for error tracking
-interface ParseState {
-  tokens: { token: string, position: SourcePosition }[];
+/**
+ * Parser state interface for clean encapsulation of parse state
+ */
+interface ParserState {
+  tokens: Token[];
   currentPos: number;
   input: string;
 }
 
-let state: ParseState = {
-  tokens: [],
-  currentPos: 0,
-  input: ''
-};
-
 /**
-* Parse tokens into S-expressions
-*/
-function parseTokens(tokens: { token: string, position: SourcePosition }[], input: string): SExp[] {
-  state = {
+ * Parse the tokens into S-expressions
+ */
+function parseTokens(tokens: Token[], input: string): SExp[] {
+  const state: ParserState = {
     tokens,
     currentPos: 0,
     input
   };
   
   const nodes: SExp[] = [];
+  
   while (state.currentPos < state.tokens.length) {
-    nodes.push(parseExpression());
+    nodes.push(parseExpression(state));
   }
+  
   return nodes;
 }
 
 /**
-* Parse a single expression with error handling
-*/
-function parseExpression(): SExp {
-  if (state.currentPos >= state.tokens.length) {
-    const lastPos = state.tokens.length > 0 
-      ? state.tokens[state.tokens.length - 1].position 
-      : { line: 1, column: 1, offset: 0 };
-    
-    throw new ParseError(
-      "Unexpected end of input",
-      lastPos,
-      state.input
-    );
-  }
-  
-  const { token, position } = state.tokens[state.currentPos++];
-  
-  try {
-    return parseExpressionContent(token, position);
-  } catch (error) {
-    if (error instanceof ParseError) {
-      throw error;
-    }
-    
-    throw new ParseError(
-      `Error parsing token "${token}": ${error instanceof Error ? error.message : String(error)}`,
-      position,
-      state.input
-    );
-  }
-}
-
-/**
-* Parse the content of an expression token
-*/
-function parseExpressionContent(token: string, position: SourcePosition): SExp {
-  // Handle quote shorthand (')
-  if (token === "'") {
-    // Parse the next expression and wrap it in a quote
-    const quoted = parseExpression();
-    return createList(createSymbol('quote'), quoted);
-  }
-  
-  // Handle quasiquote (`)
-  if (token === "`") {
-    // Parse the next expression and wrap it in a quasiquote
-    const quasiquoted = parseExpression();
-    return createList(createSymbol('quasiquote'), quasiquoted);
-  }
-  
-  // Handle unquote (~)
-  if (token === "~") {
-    // Parse the next expression and wrap it in an unquote
-    const unquoted = parseExpression();
-    return createList(createSymbol('unquote'), unquoted);
-  }
-  
-  // Handle unquote-splicing (~@)
-  if (token === "~@") {
-    // Parse the next expression and wrap it in an unquote-splicing
-    const unquoteSpliced = parseExpression();
-    return createList(createSymbol('unquote-splicing'), unquoteSpliced);
-  }
-
-  if (token === ",") {
-    // Treat a comma as an alias for unquote.
-    const unquoted = parseExpression();
-    return createList(createSymbol("unquote"), unquoted);
-  }
-  
-  if (token === '(') {
-    return parseList();
-  } else if (token === ')') {
-    throw new ParseError("Unexpected ')'", position, state.input);
-  } else if (token === '[') {
-    return parseVector();
-  } else if (token === ']') {
-    throw new ParseError("Unexpected ']'", position, state.input);
-  } else if (token === '{') {
-    return parseMap();
-  } else if (token === '}') {
-    throw new ParseError("Unexpected '}'", position, state.input);
-  } else if (token === '#[') {
-    return parseSet();
-  } else if (token === ':' || token === ',') {
-    throw new ParseError(`Unexpected '${token}'`, position, state.input);
-  } else if (token.startsWith('"')) {
-    const str = token.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-    return createLiteral(str);
-  } else if (!isNaN(Number(token))) {
-    return createLiteral(Number(token));
-  } else if (token === "true") {
-    return createLiteral(true);
-  } else if (token === "false") {
-    return createLiteral(false);
-  } else if (token === "nil") {
-    return createNilLiteral();
-  } else if (token === ".") {
-    // Handle the property access after a parenthesized expression
-    if (state.currentPos < state.tokens.length) {
-      const nextToken = state.tokens[state.currentPos++].token;
-      return createSymbol("." + nextToken);
-    } else {
-      throw new ParseError("Expected property name after '.'", position, state.input);
-    }
-  } else {
-    // Handle dot notation with dashed properties
-    if (token.includes('.') && !token.startsWith('.') && !token.endsWith('.')) {
-      const parts = token.split('.');
-      const objectName = parts[0];
-      const propertyPath = parts.slice(1).join('.');
+ * Parse a single expression from the token stream
+ */
+function parseExpression(state: ParserState): SExp {
+  return perform(() => {
+    if (state.currentPos >= state.tokens.length) {
+      const lastPos = state.tokens.length > 0 
+        ? state.tokens[state.tokens.length - 1].position 
+        : { line: 1, column: 1, offset: 0 };
       
-      // If property contains dashes, transform to a get call
-      if (propertyPath.includes('-')) {
-        // Return a list that represents (get objectName "propertyPath")
-        return createList(
-          createSymbol("get"),
-          createSymbol(objectName),
-          createLiteral(propertyPath)
-        );
-      }
+      throw new ParseError(
+        "Unexpected end of input",
+        lastPos,
+        state.input
+      );
     }
     
-    return createSymbol(token);
-  }
+    const token = state.tokens[state.currentPos++];
+    
+    return parseExpressionByTokenType(token, state);
+  }, "Error parsing expression");
 }
 
 /**
-* Parse a list with proper error handling
-*/
-function parseList(): SList {
-  const listStartPos = state.currentPos > 0 ? state.tokens[state.currentPos - 1].position : { line: 1, column: 1, offset: 0 };
-  
-  try {
+ * Parse an expression based on the token type
+ */
+function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
+  return perform(() => {
+    switch (token.type) {
+      case TokenType.LeftParen:
+        return parseList(state);
+      
+      case TokenType.RightParen:
+        throw new ParseError("Unexpected ')'", token.position, state.input);
+      
+      case TokenType.LeftBracket:
+        return parseVector(state);
+      
+      case TokenType.RightBracket:
+        throw new ParseError("Unexpected ']'", token.position, state.input);
+      
+      case TokenType.LeftBrace:
+        return parseMap(state);
+      
+      case TokenType.RightBrace:
+        throw new ParseError("Unexpected '}'", token.position, state.input);
+      
+      case TokenType.HashLeftBracket:
+        return parseSet(state);
+      
+      case TokenType.Quote:
+        return createList(createSymbol('quote'), parseExpression(state));
+      
+      case TokenType.Backtick:
+        return createList(createSymbol('quasiquote'), parseExpression(state));
+      
+      case TokenType.Unquote:
+        return createList(createSymbol('unquote'), parseExpression(state));
+      
+      case TokenType.UnquoteSplicing:
+        return createList(createSymbol('unquote-splicing'), parseExpression(state));
+      
+      case TokenType.Comma:
+        return createList(createSymbol('unquote'), parseExpression(state));
+      
+      case TokenType.Dot:
+        // Handle property access after a parenthesized expression
+        if (state.currentPos < state.tokens.length) {
+          const nextToken = state.tokens[state.currentPos++];
+          return createSymbol("." + nextToken.value);
+        } else {
+          throw new ParseError("Expected property name after '.'", token.position, state.input);
+        }
+      
+      case TokenType.String:
+        const str = token.value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        return createLiteral(str);
+      
+      case TokenType.Number:
+        return createLiteral(Number(token.value));
+      
+      case TokenType.Symbol:
+        if (token.value === "true") {
+          return createLiteral(true);
+        } else if (token.value === "false") {
+          return createLiteral(false);
+        } else if (token.value === "nil") {
+          return createNilLiteral();
+        } else {
+          // Handle dot notation with dashed properties
+          if (token.value.includes('.') && !token.value.startsWith('.') && !token.value.endsWith('.')) {
+            const parts = token.value.split('.');
+            const objectName = parts[0];
+            const propertyPath = parts.slice(1).join('.');
+            
+            // If property contains dashes, transform to a get call
+            if (propertyPath.includes('-')) {
+              // Return a list that represents (get objectName "propertyPath")
+              return createList(
+                createSymbol("get"),
+                createSymbol(objectName),
+                createLiteral(propertyPath)
+              );
+            }
+          }
+          
+          return createSymbol(token.value);
+        }
+      
+      default:
+        throw new ParseError(`Unexpected token type: ${token.type}`, token.position, state.input);
+    }
+  }, `Error parsing ${TokenType[token.type]}`, ParseError, [token.position, state.input]);
+}
+
+/**
+ * Parse a list expression: (element1 element2 ...)
+ */
+function parseList(state: ParserState): SList {
+  return perform(() => {
+    const listStartPos = state.tokens[state.currentPos - 1].position;
     const elements: SExp[] = [];
     
     // Process the first token to see if it's a dot notation
     if (state.currentPos < state.tokens.length && 
-        state.tokens[state.currentPos].token !== ')' &&
-        state.tokens[state.currentPos].token.includes('.') &&
-        !state.tokens[state.currentPos].token.startsWith('.') &&
-        !state.tokens[state.currentPos].token.endsWith('.')) {
+        state.tokens[state.currentPos].type !== TokenType.RightParen &&
+        state.tokens[state.currentPos].value.includes('.') &&
+        !state.tokens[state.currentPos].value.startsWith('.') &&
+        !state.tokens[state.currentPos].value.endsWith('.')) {
       
       // This is a dot notation expression - handle it explicitly
-      const dotToken = state.tokens[state.currentPos++].token;
+      const dotToken = state.tokens[state.currentPos++].value;
       
       // Split by dots to handle multi-part property paths
       const parts = dotToken.split('.');
@@ -500,10 +327,10 @@ function parseList(): SList {
         }
         
         // If there are arguments, convert the last js-get-invoke to js-call
-        if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token !== ')') {
+        if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightParen) {
           const args: SExp[] = [];
-          while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token !== ')') {
-            args.push(parseExpression());
+          while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightParen) {
+            args.push(parseExpression(state));
           }
           
           // Replace the outermost expression's js-get-invoke with js-call
@@ -519,7 +346,7 @@ function parseList(): SList {
         const property = parts[1];
         
         // If there are no additional arguments, treat it as a property access
-        if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token === ')') {
+        if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type === TokenType.RightParen) {
           // Create a property access node (using js-get-invoke)
           elements.push(createSymbol("js-get-invoke"));
           elements.push(createSymbol(objectName));
@@ -531,15 +358,15 @@ function parseList(): SList {
           elements.push(createLiteral(property));
           
           // Parse arguments for the method call
-          while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token !== ')') {
-            elements.push(parseExpression());
+          while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightParen) {
+            elements.push(parseExpression(state));
           }
         }
       }
     } else {
       // Standard list parsing
-      while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token !== ')') {
-        elements.push(parseExpression());
+      while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightParen) {
+        elements.push(parseExpression(state));
       }
     }
     
@@ -554,7 +381,7 @@ function parseList(): SList {
     state.currentPos++; // Skip the closing parenthesis
     
     // Check if there's a dot after the list
-    if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token === '.') {
+    if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type === TokenType.Dot) {
       state.currentPos++; // Skip the dot
       
       if (state.currentPos >= state.tokens.length) {
@@ -566,7 +393,7 @@ function parseList(): SList {
       }
       
       // Get the property/method name
-      const propName = state.tokens[state.currentPos++].token;
+      const propName = state.tokens[state.currentPos++].value;
       
       // Create a new list that represents property access on the original list result
       return createList(
@@ -577,100 +404,26 @@ function parseList(): SList {
     }
     
     return createList(...elements);
-  } catch (error) {
-    if (error instanceof ParseError) {
-      throw error;
-    }
-    
-    throw new ParseError(
-      `Error parsing list: ${error instanceof Error ? error.message : String(error)}`,
-      listStartPos,
-      state.input
-    );
-  }
+  }, "Error parsing list", ParseError, [state.tokens[state.currentPos - 1].position, state.input]);
 }
 
-function parseImportVector(): SList {
-  const startPos = state.currentPos > 0 ? state.tokens[state.currentPos - 1].position : { line: 1, column: 1, offset: 0 };
-  
-  try {
+/**
+ * Parse a vector: [element1, element2, ...]
+ */
+function parseVector(state: ParserState): SList {
+  return perform(() => {
+    const startPos = state.tokens[state.currentPos - 1].position;
     const elements: SExp[] = [];
     
-    while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token !== ']') {
-      // Parse the symbol (or expression)
-      const expr = parseExpression();
-      elements.push(expr);
-      
-      // Handle the 'as' keyword for aliasing
-      if (state.currentPos < state.tokens.length && 
-          state.tokens[state.currentPos].token === 'as') {
-        // Add the 'as' keyword as a symbol
-        elements.push(createSymbol('as'));
-        state.currentPos++; // Skip 'as'
-        
-        // Parse the alias
-        if (state.currentPos < state.tokens.length && 
-            state.tokens[state.currentPos].token !== ',' && 
-            state.tokens[state.currentPos].token !== ']') {
-          const alias = parseExpression();
-          elements.push(alias);
-        } else {
-          const errorPos = state.currentPos < state.tokens.length 
-            ? state.tokens[state.currentPos].position 
-            : startPos;
-          throw new ParseError(
-            "Expected alias after 'as' keyword",
-            errorPos,
-            state.input
-          );
-        }
-      }
-      
-      // Skip comma if present
-      if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token === ',') {
-        state.currentPos++;
-      }
-    }
-    
-    if (state.currentPos >= state.tokens.length) {
-      throw new ParseError(
-        "Unclosed vector",
-        startPos,
-        state.input
-      );
-    }
-    
-    state.currentPos++; // Skip the closing bracket
-    
-    return createList(...elements);
-  } catch (error) {
-    if (error instanceof ParseError) {
-      throw error;
-    }
-    
-    throw new ParseError(
-      `Error parsing import vector: ${error instanceof Error ? error.message : String(error)}`,
-      startPos,
-      state.input
-    );
-  }
-}
-
-function parseVector(): SList {
-  const startPos = state.currentPos > 0 ? state.tokens[state.currentPos - 1].position : { line: 1, column: 1, offset: 0 };
-  
-  try {
-    const elements: SExp[] = [];
-    
-    while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token !== ']') {
+    while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightBracket) {
       // Parse the current element
-      const expr = parseExpression();
+      const expr = parseExpression(state);
       elements.push(expr);
       
       // Check if this might be an 'as' alias construct
       if (isSymbol(expr) && 
           state.currentPos < state.tokens.length && 
-          state.tokens[state.currentPos].token === 'as') {
+          state.tokens[state.currentPos].value === 'as') {
         
         // Add the 'as' symbol
         elements.push(createSymbol('as'));
@@ -678,9 +431,9 @@ function parseVector(): SList {
         
         // Parse the alias name
         if (state.currentPos < state.tokens.length && 
-            state.tokens[state.currentPos].token !== ',' && 
-            state.tokens[state.currentPos].token !== ']') {
-          const alias = parseExpression();
+            state.tokens[state.currentPos].type !== TokenType.Comma && 
+            state.tokens[state.currentPos].type !== TokenType.RightBracket) {
+          const alias = parseExpression(state);
           elements.push(alias);
         } else {
           const errorPos = state.currentPos < state.tokens.length 
@@ -695,7 +448,7 @@ function parseVector(): SList {
       }
       
       // Skip comma if present
-      if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token === ',') {
+      if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type === TokenType.Comma) {
         state.currentPos++;
       }
     }
@@ -717,31 +470,23 @@ function parseVector(): SList {
     
     // Return a vector with all elements
     return createList(createSymbol("vector"), ...elements);
-  } catch (error) {
-    if (error instanceof ParseError) {
-      throw error;
-    }
-    
-    throw new ParseError(
-      `Error parsing vector: ${error instanceof Error ? error.message : String(error)}`,
-      startPos,
-      state.input
-    );
-  }
+  }, "Error parsing vector", ParseError, [state.tokens[state.currentPos - 1].position, state.input]);
 }
 
-function parseMap(): SList {
-  const startPos = state.currentPos > 0 ? state.tokens[state.currentPos - 1].position : { line: 1, column: 1, offset: 0 };
-  
-  try {
+/**
+ * Parse a map: {key1: value1, key2: value2, ...}
+ */
+function parseMap(state: ParserState): SList {
+  return perform(() => {
+    const startPos = state.tokens[state.currentPos - 1].position;
     const entries: SExp[] = [];
     
-    while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token !== '}') {
+    while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightBrace) {
       // Parse key
-      const key = parseExpression();
+      const key = parseExpression(state);
       
       // Expect colon
-      if (state.currentPos >= state.tokens.length || state.tokens[state.currentPos].token !== ':') {
+      if (state.currentPos >= state.tokens.length || state.tokens[state.currentPos].type !== TokenType.Colon) {
         const errorPos = state.currentPos < state.tokens.length 
           ? state.tokens[state.currentPos].position 
           : startPos;
@@ -754,14 +499,14 @@ function parseMap(): SList {
       state.currentPos++; // Skip colon
       
       // Parse value
-      const value = parseExpression();
+      const value = parseExpression(state);
       
       // Add key-value pair
       entries.push(key);
       entries.push(value);
       
       // Skip comma if present
-      if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token === ',') {
+      if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type === TokenType.Comma) {
         state.currentPos++;
       }
     }
@@ -783,30 +528,22 @@ function parseMap(): SList {
     
     // For non-empty map, proceed with hash-map function
     return createList(createSymbol("hash-map"), ...entries);
-  } catch (error) {
-    if (error instanceof ParseError) {
-      throw error;
-    }
-    
-    throw new ParseError(
-      `Error parsing map: ${error instanceof Error ? error.message : String(error)}`,
-      startPos,
-      state.input
-    );
-  }
+  }, "Error parsing map", ParseError, [state.tokens[state.currentPos - 1].position, state.input]);
 }
 
-function parseSet(): SList {
-  const startPos = state.currentPos > 0 ? state.tokens[state.currentPos - 1].position : { line: 1, column: 1, offset: 0 };
-  
-  try {
+/**
+ * Parse a set: #[element1, element2, ...]
+ */
+function parseSet(state: ParserState): SList {
+  return perform(() => {
+    const startPos = state.tokens[state.currentPos - 1].position;
     const elements: SExp[] = [];
     
-    while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token !== ']') {
-      elements.push(parseExpression());
+    while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightBracket) {
+      elements.push(parseExpression(state));
       
       // Skip comma if present
-      if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].token === ',') {
+      if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type === TokenType.Comma) {
         state.currentPos++;
       }
     }
@@ -828,15 +565,5 @@ function parseSet(): SList {
     
     // For non-empty set, proceed with hash-set function
     return createList(createSymbol("hash-set"), ...elements);
-  } catch (error) {
-    if (error instanceof ParseError) {
-      throw error;
-    }
-    
-    throw new ParseError(
-      `Error parsing set: ${error instanceof Error ? error.message : String(error)}`,
-      startPos,
-      state.input
-    );
-  }
+  }, "Error parsing set", ParseError, [state.tokens[state.currentPos - 1].position, state.input]);
 }
