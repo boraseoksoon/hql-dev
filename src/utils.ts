@@ -28,15 +28,7 @@ export function sanitizeIdentifier(name: string): string {
  */
 function sanitizeBasicIdentifier(name: string): string {
   let sanitized = name;
-  
-  // Handle question mark suffixes (common in predicate functions)
-  if (sanitized.endsWith('?')) {
-    sanitized = sanitized.slice(0, -1) + '_pred';
-  }
-  
-  // Handle question marks in other positions
-  sanitized = sanitized.replace(/\?/g, '_pred_');
-  
+
   // Replace hyphens with underscores
   sanitized = sanitized.replace(/-/g, '_');
   

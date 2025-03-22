@@ -388,11 +388,6 @@
 (def lst '(1 2 3))
 (def mp {"name" : "John"})
 
-(symbol? symb)  ;; => true
-(list? lst)     ;; => true
-(map? mp)       ;; => true
-(nil? nil)      ;; => true
-
 ;; Sequence operation examples
 (def list-numbers '(1 2 3 4 5))
 
@@ -400,8 +395,6 @@
 (rest list-numbers)      ;; => (2 3 4 5)
 (next list-numbers)      ;; => (2 3 4 5) or nil if less than 2 elements
 (seq list-numbers)       ;; => (1 2 3 4 5) or nil if empty
-(empty? '())        ;; => true
-(empty? list-numbers)    ;; => false
 
 ;; Collection manipulation examples
 (def xs '(1 2 3))

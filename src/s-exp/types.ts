@@ -157,3 +157,25 @@ export function cloneSExp(exp: SExp): SExp {
     throw new Error(`Unknown expression type: ${JSON.stringify(exp)}`);
   }
 }
+
+
+
+/**
+ * Check if an import is vector-based
+ */
+export function isSExpVectorImport(elements: SExp[]): boolean {
+  return elements.length >= 4 && 
+         elements[1].type === 'list' && 
+         isSymbol(elements[2]) && 
+         elements[2].name === 'from';
+}
+
+/**
+ * Check if an import is legacy-style
+ */
+export function isSExpLegacyImport(elements: SExp[]): boolean {
+  return elements.length === 3 && 
+         isSymbol(elements[1]) && 
+         isLiteral(elements[2]) && 
+         typeof elements[2].value === 'string';
+}

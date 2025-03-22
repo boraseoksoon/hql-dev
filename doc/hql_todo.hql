@@ -1,7 +1,6 @@
 by end of 03/23
 
 HQL
-0. refactoring 
 1. lazy everywhere 
 2. range, 
 3. for loop

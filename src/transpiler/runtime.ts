@@ -43,52 +43,6 @@ function get(obj, key, notFound = null) {
   return (propKey in obj) ? obj[propKey] : notFound;
 }
 
-// ==== Type Predicates ====
-
-/**
- * Check if value is a symbol (string in JS representation)
- * In HQL: (symbol? value)
- */
-function symbol_pred(value) {
-  return typeof value === 'string';
-}
-
-/**
- * Check if value is a list (array in JS representation)
- * In HQL: (list? value)
- */
-function list_pred(value) {
-  return Array.isArray(value);
-}
-
-/**
- * Check if value is a map (object in JS representation)
- * In HQL: (map? value)
- */
-function map_pred(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Set);
-}
-
-/**
- * Check if value is null
- * In HQL: (nil? value)
- */
-function nil_pred(value) {
-  return value === null || value === undefined;
-}
-
-/**
- * Check if collection is empty
- * In HQL: (empty? coll)
- */
-function empty_pred(coll) {
-  if (coll == null) return true;
-  if (Array.isArray(coll)) return coll.length === 0;
-  if (coll instanceof Set) return coll.size === 0;
-  if (typeof coll === 'object') return Object.keys(coll).length === 0;
-  return false;
-}
-
 // ==== Sequence Operations ====
 
 /**

@@ -1,7 +1,7 @@
 // src/s-exp/imports.ts - Refactored with better modularity and error handling
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport } from './types.ts';
+import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport, isSExpVectorImport, isSExpLegacyImport } from './types.ts';
 import { Environment } from '../environment.ts';
 import { evaluateForMacro, defineUserMacro } from './macro.ts';
 import { parse } from './parser.ts';
@@ -319,10 +319,10 @@ async function processImport(
   
   return performAsync(async () => {
     // Quickly determine import type and process accordingly
-    if (isVectorImport(elements)) {
+    if (isSExpVectorImport(elements)) {
       // Vector-based import
       await processVectorBasedImport(elements, env, baseDir, options);
-    } else if (isLegacyImport(elements)) {
+    } else if (isSExpLegacyImport(elements)) {
       // Legacy import
       await processLegacyImport(elements, env, baseDir, options);
     } else {
@@ -333,26 +333,6 @@ async function processImport(
       );
     }
   }, "Processing import expression", ImportError, [getModulePathFromImport(importExpr), options.currentFile]);
-}
-
-/**
- * Check if an import is vector-based
- */
-function isVectorImport(elements: SExp[]): boolean {
-  return elements.length >= 4 && 
-         elements[1].type === 'list' && 
-         isSymbol(elements[2]) && 
-         elements[2].name === 'from';
-}
-
-/**
- * Check if an import is legacy-style
- */
-function isLegacyImport(elements: SExp[]): boolean {
-  return elements.length === 3 && 
-         isSymbol(elements[1]) && 
-         isLiteral(elements[2]) && 
-         typeof elements[2].value === 'string';
 }
 
 /**
@@ -918,13 +898,8 @@ async function processNpmImport(
     
     // Try all possible sources in parallel
     const importResults = await Promise.allSettled([
-      // Strategy 1: Direct import
       import(modulePath),
-      
-      // Strategy 2: ESM.sh fallback
       import(`https://esm.sh/${packageName}`),
-      
-      // Strategy 3: Skypack fallback
       import(`https://cdn.skypack.dev/${packageName}`)
     ]);
     
@@ -1349,19 +1324,4 @@ function processLegacyExport(
       }
     }
   }, "Processing legacy export", ImportError, [filePath, filePath]);
-}
-
-/**
- * Check if a symbol is a macro in the environment
- */
-export function isMacroSymbol(
-  symbolName: string, 
-  env: Environment, 
-  filePath: string | null = null
-): boolean {
-  // Check global macros first (faster than isUserLevelMacro)
-  if (env.hasMacro(symbolName)) return true;
-  
-  // Then check user-level macros
-  return filePath !== null && env.isUserLevelMacro(symbolName, filePath);
 }
