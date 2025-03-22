@@ -75,11 +75,7 @@ async function loadCoreMacros(env: Environment, logger: Logger): Promise<void> {
     });
     
     // Expand macros to register them
-    expandMacros(coreExps, env, { 
-      verbose: logger.enabled,
-      maxExpandDepth: 20, // Increased for complex macros
-      maxPasses: 3 // Multiple passes for recursive macros
-    });
+    expandMacros(coreExps, env);
     
     logger.debug('Core macros loaded successfully');
   } catch (error) {

@@ -379,7 +379,6 @@ async function loadCoreHql(env: Environment, options: ProcessOptions): Promise<v
       expandMacros(coreExps, env, { 
         verbose: options.verbose,
         currentFile: corePath,
-        maxPasses: 3 // Multiple passes for recursive macros
       });
     } catch (error) {
       if (error instanceof MacroError) {

@@ -36,7 +36,7 @@ async function loadCoreMacros(env: Environment, logger: Logger): Promise<void> {
 /**
  * Run a single execution.
  */
-async function runSingleExecution(
+async function run(
   inputPath: string, 
   tempDir: string,
   options: any,
@@ -126,7 +126,7 @@ async function runModule(): Promise<void> {
     };
     
     // Process the entry file, now passing the environment with core.hql macros loaded.
-    await runSingleExecution(inputPath, tempDir, bundleOptions, printOutput, logger, env);
+    await run(inputPath, tempDir, bundleOptions, printOutput, logger, env);
   } catch (error) {
     logger.error(`Error during processing: ${error instanceof Error ? error.message : String(error)}`);
   } finally {

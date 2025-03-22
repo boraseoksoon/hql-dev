@@ -56,6 +56,10 @@ export class Environment {
   // Centralized macro registry
   private macroRegistry: MacroRegistry;
 
+  private currentMacroContext: string | null = null;
+  
+  private currentFile: string | null = null;
+
   /**
    * Initialize a global unified environment
    */
@@ -580,6 +584,14 @@ export class Environment {
    */
   getCurrentFile(): string | null {
     return this.currentFilePath;
+  }
+
+  getCurrentMacroContext(): string | null {
+    return this.currentMacroContext;
+  }
+  
+  setCurrentMacroContext(context: string | null): void {
+    this.currentMacroContext = context;
   }
   
   /**
