@@ -12,7 +12,7 @@ export async function getNextVersionInDir(
 ): Promise<string> {
   console.log(`\n📝 Determining version for "${outDir}"...`);
   
-  await ensureDir(outDir, { recursive: true });
+  await ensureDir(outDir);
   const versionFile = join(outDir, "VERSION");
   
   // If version is explicitly provided, use it

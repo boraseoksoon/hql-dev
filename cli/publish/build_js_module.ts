@@ -2,7 +2,7 @@
 
 import { transpileCLI } from "../../src/bundler.ts";
 import { join, resolve, dirname, basename } from "../../src/platform/platform.ts";
-import { exists, emptyDir, copy, ensureDir } from "jsr:@std/fs@1.0.13";
+import { exists, emptyDir, ensureDir } from "jsr:@std/fs@1.0.13";
 
 /**
  * Build a JavaScript module from an HQL file.
@@ -78,16 +78,16 @@ export async function buildJsModule(inputPath: string): Promise<string> {
   // Create the npm directory for the final output
   const npmDir = join(baseDir, "npm");
   console.log(`\n📂 Creating package structure in: "${npmDir}"`);
-  await ensureDir(npmDir, { recursive: true });
+  await ensureDir(npmDir);
   
   // Create the esm directory structure inside npm
   const esmDir = join(npmDir, "esm");
-  await ensureDir(esmDir, { recursive: true });
+  await ensureDir(esmDir);
   console.log(`  → Created ESM directory: "${esmDir}"`);
   
   // Create the types directory structure inside npm
   const typesDir = join(npmDir, "types");
-  await ensureDir(typesDir, { recursive: true });
+  await ensureDir(typesDir);
   console.log(`  → Created types directory: "${typesDir}"`);
   
   // Create entry files

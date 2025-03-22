@@ -54,16 +54,26 @@ function runCLI(): void {
     .then(async (bundledPath) => {
       if (printOutput) {
         // Read and print the bundled file content to stdout.
-        const finalOutput = await Deno.readTextFile(bundledPath);
-        console.log(finalOutput);
+        try {
+          const finalOutput = await Deno.readTextFile(bundledPath);
+          console.log(finalOutput);
+        } catch (error) {
+          console.error(`Error reading output file: ${error instanceof Error ? error.message : String(error)}`);
+          Deno.exit(1);
+        }
       } else if (runAfter) {
         console.log(`Running bundled output: ${bundledPath}`);
-        await import("file://" + resolve(bundledPath));
+        try {
+          await import("file://" + resolve(bundledPath));
+        } catch (error) {
+          console.error(`Error running bundled output: ${error instanceof Error ? error.message : String(error)}`);
+          Deno.exit(1);
+        }
       }
     })
     .catch((error) => {
       console.error("Error during transpilation:", error.message || error);
-      Deno.exit(1);
+      Deno.exit(1); // Ensure we exit with error code
     });
 }
 

@@ -1,6 +1,6 @@
 // src/bundler.ts - Enhanced with parallel processing and better error handling
 
-import { dirname, resolve, writeTextFile, mkdir, exists, basename, join } from "./platform/platform.ts";
+import { dirname, resolve, writeTextFile, exists, basename, join, ensureDir } from "./platform/platform.ts";
 import { build, stop } from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import { Logger } from "./logger.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
@@ -30,30 +30,6 @@ export interface BundleOptions {
 }
 
 /**
- * Ensure a directory exists.
- * Enhanced with better error handling using utility functions.
- */
-async function ensureDir(dir: string, logger: Logger): Promise<void> {
-  return performAsync(
-    async () => {
-      try {
-        await mkdir(dir, { recursive: true });
-        logger.debug(`Ensured directory exists: ${dir}`);
-      } catch (error) {
-        if (error instanceof Deno.errors.AlreadyExists) {
-          // Directory already exists is not an error
-          logger.debug(`Directory already exists: ${dir}`);
-          return;
-        }
-        throw error; // Re-throw to be caught by performAsync
-      }
-    },
-    `Failed to create directory ${dir}`,
-    TranspilerError
-  );
-}
-
-/**
  * Write the output code to a file.
  * Enhanced with better error handling using utility functions.
  */
@@ -68,7 +44,7 @@ async function writeOutput(
       const outputDir = dirname(outputPath);
       
       // Ensure output directory exists
-      await ensureDir(outputDir, logger);
+      await ensureDir(outputDir);
       
       // Check if file exists and warn if overwriting
       if (!force && await exists(outputPath)) {
@@ -196,6 +172,7 @@ async function processEntryFile(
 /**
  * Bundles the code using esbuild with our plugins and optimization options
  * Enhanced with parallel processing and better error handling
+ * Fixed to handle concurrent esbuild instances properly
  */
 export async function bundleWithEsbuild(
   entryPath: string,
@@ -245,6 +222,10 @@ export async function bundleWithEsbuild(
     const tempDir = tempDirResult.tempDir;
     const cleanupTemp = tempDirResult.created;
     
+    // Import esbuild dynamically for each bundling operation
+    // This ensures we get a fresh service for each process
+    const esbuild = await import("https://deno.land/x/esbuild@v0.17.19/mod.js");
+    
     try {
       // Create the HQL plugin with temporary directory for processing
       const hqlPlugin = createHqlPlugin({ 
@@ -264,41 +245,75 @@ export async function bundleWithEsbuild(
       const entryDir = dirname(entryPath);
       logger.debug(`Entry directory: ${entryDir}`);
       
-      // Run the build
-      const result = await performAsync(
-        () => build(buildOptions),
-        "Running esbuild",
-        TranspilerError
-      );
+      // Run the build with retry logic
+      const MAX_RETRIES = 3;
+      let lastError = null;
       
-      // Log any warnings
-      if (result.warnings.length > 0) {
-        logger.warn(`esbuild warnings: ${JSON.stringify(result.warnings, null, 2)}`);
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          // Run the build
+          const result = await performAsync(
+            () => esbuild.build(buildOptions),
+            "Running esbuild",
+            TranspilerError
+          );
+          
+          // Log any warnings
+          if (result.warnings.length > 0) {
+            logger.warn(`esbuild warnings: ${JSON.stringify(result.warnings, null, 2)}`);
+          }
+          
+          // Stop the service on success
+          await esbuild.stop();
+          
+          if (options.minify) {
+            logger.log(`Successfully bundled and minified output to ${outputPath}`);
+          } else {
+            logger.log(`Successfully bundled output to ${outputPath}`);
+          }
+          
+          return outputPath;
+        } catch (error) {
+          lastError = error;
+          
+          // Only retry if it's a service-related error
+          if (error instanceof Error && 
+              error.message.includes("service was stopped") && 
+              attempt < MAX_RETRIES) {
+            logger.warn(`esbuild service error on attempt ${attempt}, retrying...`);
+            
+            // Wait a bit before retrying to allow other processes to finish
+            await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+            
+            // Try to stop the service before retrying
+            try {
+              await esbuild.stop();
+            } catch (e) {
+              // Ignore errors when stopping
+            }
+            
+            continue;
+          }
+          
+          // If it's not a service error or we've exhausted retries, fail
+          break;
+        }
       }
       
-      stop();
-      
-      if (options.minify) {
-        logger.log(`Successfully bundled and minified output to ${outputPath}`);
-      } else {
-        logger.log(`Successfully bundled output to ${outputPath}`);
-      }
-      
-      return outputPath;
-    } catch (error) {
-      // Create detailed error report for esbuild failures
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(`esbuild error: ${errorMsg}`);
+      // If we get here, all retries failed
+      const errorMsg = lastError instanceof Error ? lastError.message : String(lastError);
+      logger.error(`esbuild error after ${MAX_RETRIES} attempts: ${errorMsg}`);
       
       // Create detailed error report
       const errorReport = createErrorReport(
-        error instanceof Error ? error : new Error(errorMsg),
+        lastError instanceof Error ? lastError : new Error(errorMsg),
         "esbuild bundling",
         {
           entryPath,
           outputPath,
           buildOptions: { /* Don't stringify plugins */ },
-          tempDir
+          tempDir,
+          attempts: MAX_RETRIES
         }
       );
       
@@ -307,7 +322,27 @@ export async function bundleWithEsbuild(
         console.error(errorReport);
       }
       
+      // Try to stop the service in case it's still running
+      try {
+        await esbuild.stop();
+      } catch (e) {
+        // Ignore errors when stopping
+      }
+      
       throw new TranspilerError(`esbuild failed: ${errorMsg}`);
+    } catch (error) {
+      // Try to stop the service before re-throwing
+      try {
+        await esbuild.stop();
+      } catch (e) {
+        // Ignore errors when stopping
+      }
+      
+      if (error instanceof TranspilerError) {
+        throw error; // Re-throw our own errors directly
+      }
+      
+      throw new TranspilerError(`esbuild failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       // Clean up temporary directory if created here and not keeping
       // Do this as fire-and-forget to not block the main flow
@@ -315,6 +350,13 @@ export async function bundleWithEsbuild(
         Deno.remove(tempDir, { recursive: true })
           .then(() => logger.debug(`Cleaned up temporary directory: ${tempDir}`))
           .catch(error => logger.warn(`Failed to clean up temporary directory: ${error instanceof Error ? error.message : String(error)}`));
+      }
+      
+      // Make sure the service is stopped
+      try {
+        await esbuild.stop();
+      } catch (e) {
+        // Ignore errors when stopping
       }
     }
   }, `Bundling failed for ${entryPath}`, TranspilerError);
@@ -543,7 +585,7 @@ function createHqlPlugin(options: {
           // Run directory creation and HQL processing in parallel
           const [, jsCode] = await Promise.all([
             // Task 1: Ensure the output directory exists
-            ensureDir(outputDir, logger),
+            ensureDir(outputDir),
             
             // Task 2: Transpile the HQL file to JS
             performAsync(
