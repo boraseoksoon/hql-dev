@@ -1,16 +1,17 @@
-// src/transpiler/ts-ast-to-ts-code.ts - Enhanced with better error handling and diagnostics
+// src/transpiler/ts-ast-to-ts-code.ts - Refactored with perform and performAsync utilities
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
 import { convertIRNode } from "./hql-ir-to-ts-ast.ts";
 import { CodeGenError, createErrorReport } from "./errors.ts";
 import { Logger } from "../logger.ts";
+import { perform, performAsync } from "./error-utils.ts";
 
 // Initialize logger
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 /**
  * Generate TypeScript code from HQL IR using the TypeScript Compiler API.
- * Enhanced with better error handling and diagnostics.
+ * Enhanced with better error handling and diagnostics using perform utility.
  */
 export function generateTypeScript(ir: IR.IRProgram): string {
   try {
@@ -29,27 +30,20 @@ export function generateTypeScript(ir: IR.IRProgram): string {
     logger.debug("Converting HQL IR to TypeScript AST");
     const startTime = performance.now();
     
-    let tsAST;
-    try {
-      tsAST = convertHqlIRToTypeScript(ir);
-      const conversionTime = performance.now() - startTime;
-      logger.debug(`IR to TS AST conversion completed in ${conversionTime.toFixed(2)}ms`);
-    } catch (error) {
-      if (error instanceof CodeGenError) {
-        throw error;
-      }
-      throw new CodeGenError(
-        `IR to TS AST conversion failed: ${error instanceof Error ? error.message : String(error)}`,
-        "IR to TS AST conversion",
-        ir
-      );
-    }
+    const tsAST = perform(
+      () => convertHqlIRToTypeScript(ir),
+      "IR to TS AST conversion",
+      CodeGenError,
+      [ir]
+    );
+    
+    const conversionTime = performance.now() - startTime;
+    logger.debug(`IR to TS AST conversion completed in ${conversionTime.toFixed(2)}ms`);
     
     // Create a printer with formatting options
     const printer = ts.createPrinter({
       newLine: ts.NewLineKind.LineFeed,
       removeComments: false,
-      // Add more formatting options for prettier output
       omitTrailingSemicolon: false,
       noEmitHelpers: true,
     });
@@ -57,29 +51,28 @@ export function generateTypeScript(ir: IR.IRProgram): string {
     logger.debug("Printing TypeScript AST to code string");
     const printStartTime = performance.now();
     
-    try {
-      // Create an empty source file for printing
-      const resultFile = ts.createSourceFile(
-        "output.ts", 
-        "", 
-        ts.ScriptTarget.Latest, 
-        false
-      );
-      
-      // Generate the code
-      const code = printer.printNode(ts.EmitHint.Unspecified, tsAST, resultFile);
-      
-      const printTime = performance.now() - printStartTime;
-      logger.debug(`TS AST printing completed in ${printTime.toFixed(2)}ms with ${code.length} characters`);
-      
-      return code;
-    } catch (error) {
-      throw new CodeGenError(
-        `TypeScript code printing failed: ${error instanceof Error ? error.message : String(error)}`,
-        "TS AST printing",
-        tsAST
-      );
-    }
+    const code = perform(
+      () => {
+        // Create an empty source file for printing
+        const resultFile = ts.createSourceFile(
+          "output.ts", 
+          "", 
+          ts.ScriptTarget.Latest, 
+          false
+        );
+        
+        // Generate the code
+        return printer.printNode(ts.EmitHint.Unspecified, tsAST, resultFile);
+      },
+      "TS AST printing",
+      CodeGenError,
+      [tsAST]
+    );
+    
+    const printTime = performance.now() - printStartTime;
+    logger.debug(`TS AST printing completed in ${printTime.toFixed(2)}ms with ${code.length} characters`);
+    
+    return code;
   } catch (error) {
     // Create a comprehensive error report
     const errorReport = createErrorReport(
@@ -112,10 +105,10 @@ export function generateTypeScript(ir: IR.IRProgram): string {
 
 /**
  * Converts HQL IR directly to the official TypeScript AST.
- * Enhanced with better error handling and diagnostics.
+ * Enhanced with better error handling and diagnostics using perform utility.
  */
 export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
-  try {
+  return perform(() => {
     // Validate program input
     if (!program || program.type !== IR.IRNodeType.Program) {
       throw new CodeGenError(
@@ -144,13 +137,17 @@ export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
     for (let i = 0; i < program.body.length; i++) {
       const node = program.body[i];
       
+      if (!node) {
+        logger.warn(`Skipping null or undefined node at index ${i}`);
+        continue;
+      }
+      
       try {
-        if (!node) {
-          logger.warn(`Skipping null or undefined node at index ${i}`);
-          continue;
-        }
-        
-        const statement = convertIRNode(node);
+        const statement = perform(
+          () => convertIRNode(node),
+          `Converting node ${i} (${IR.IRNodeType[node.type] || 'unknown type'})`,
+          null // We'll handle errors manually for node conversion
+        );
         
         if (Array.isArray(statement)) {
           if (statement.length > 0) {
@@ -192,31 +189,19 @@ export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
     }
     
     // Create the source file using the factory
-    try {
-      logger.debug(`Creating source file with ${statements.length} statements`);
-      
-      return ts.factory.createSourceFile(
-        statements,
-        ts.factory.createToken(ts.SyntaxKind.EndOfFileToken),
-        ts.NodeFlags.None
-      );
-    } catch (error) {
-      throw new CodeGenError(
-        `Failed to create TypeScript source file: ${error instanceof Error ? error.message : String(error)}`,
-        "source file creation",
-        statements
-      );
-    }
-  } catch (error) {
-    // Re-throw CodeGenError, otherwise wrap in CodeGenError
-    if (error instanceof CodeGenError) {
-      throw error;
-    } else {
-      throw new CodeGenError(
-        `Failed to convert IR to TypeScript AST: ${error instanceof Error ? error.message : String(error)}`,
-        "IR to TS conversion",
-        program
-      );
-    }
-  }
+    return perform(
+      () => {
+        logger.debug(`Creating source file with ${statements.length} statements`);
+        
+        return ts.factory.createSourceFile(
+          statements,
+          ts.factory.createToken(ts.SyntaxKind.EndOfFileToken),
+          ts.NodeFlags.None
+        );
+      },
+      "source file creation",
+      CodeGenError,
+      [statements]
+    );
+  }, "IR to TS conversion", CodeGenError, [program]);
 }

@@ -44,7 +44,7 @@ export async function processHql(
   logger.debug('Processing HQL source with S-expression layer');
   
   const startTotalTime = performance.now();
-  let sourceFilename = options.baseDir ? path.basename(options.baseDir) : "unknown";
+  const sourceFilename = options.baseDir ? path.basename(options.baseDir) : "unknown";
   
   try {
     // Step 1: Parse the source into S-expressions
@@ -90,7 +90,7 @@ export async function processHql(
     logger.debug(`Environment initialization completed in ${envTime.toFixed(2)}ms`);
     
     // Set the current file if baseDir is provided
-    const currentFile = options.baseDir || null;
+    const currentFile = options.baseDir
     if (currentFile) {
       logger.debug(`Setting current file to: ${currentFile}`);
       env.setCurrentFile(currentFile);
