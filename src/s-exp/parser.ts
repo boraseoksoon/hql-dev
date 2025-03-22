@@ -1,14 +1,8 @@
-// src/s-exp/parser.ts - Refactored with regex-driven approach
-import { SExp, SList, isSymbol, createSymbol, createList, createLiteral, createNilLiteral, sexpToString } from './types.ts';
+// src/s-exp/parser.ts - Refactored with better modularity and error handling
+
+import { SExp, SList, isSymbol, createSymbol, createList, createLiteral, createNilLiteral } from './types.ts';
 import { ParseError } from '../transpiler/errors.ts';
 import { perform } from '../transpiler/error-utils.ts';
-
-// Token interface for cleaner type handling
-interface Token {
-  type: TokenType;
-  value: string;
-  position: SourcePosition;
-}
 
 // Token types for better categorization
 enum TokenType {
@@ -28,7 +22,16 @@ enum TokenType {
   UnquoteSplicing,
   Dot,
   Colon,
-  Comma
+  Comma,
+  Comment,
+  Whitespace
+}
+
+// Token interface for cleaner type handling
+interface Token {
+  type: TokenType;
+  value: string;
+  position: SourcePosition;
 }
 
 // Position tracking for error reporting
@@ -37,6 +40,27 @@ interface SourcePosition {
   column: number;
   offset: number;
 }
+
+// Parser state interface for clean encapsulation of parse state
+interface ParserState {
+  tokens: Token[];
+  currentPos: number;
+  input: string;
+}
+
+// Regular expressions for tokenization
+const TOKEN_PATTERNS = {
+  // Special tokens
+  SPECIAL_TOKENS: /^(#\[|\(|\)|\[|\]|\{|\}|\.|\:|,|'|`|~@|~)/,
+  // String literals with escape handling
+  STRING: /^"(?:\\.|[^\\"])*"/,
+  // Comments (single line and multi-line)
+  COMMENT: /^(;.*|\/\/.*|\/\*[\s\S]*?\*\/)/,
+  // Whitespace
+  WHITESPACE: /^\s+/,
+  // Symbols and other tokens
+  SYMBOL: /^[^\s\(\)\[\]\{\}"'`,;]+/
+};
 
 /**
  * Parse HQL source into S-expressions with error location context
@@ -55,60 +79,110 @@ export function parse(input: string): SExp[] {
 function tokenize(input: string): Token[] {
   return perform(() => {
     const tokens: Token[] = [];
-    
-    // Combined regex pattern for all token types
-    // This handles all special cases in a declarative way
-    const tokenPattern = /(#\[|\(|\)|\[|\]|\{|\}|"(?:\\.|[^\\"])*"|\.|:|,|'|`|~@|~|;.*|\/\/.*|\/\*[\s\S]*?\*\/|\s+|[^\s\(\)\[\]\{\}"'`,;]+)/g;
-    
+    let remaining = input;
     let line = 1;
     let column = 1;
-    let match: RegExpExecArray | null;
+    let offset = 0;
     
-    while ((match = tokenPattern.exec(input)) !== null) {
-      const value = match[0];
-      const position: SourcePosition = { 
-        line, 
-        column, 
-        offset: match.index 
-      };
+    while (remaining.length > 0) {
+      const token = matchNextToken(remaining, line, column, offset);
       
       // Skip comments and whitespace
-      if (value.startsWith(';') || value.startsWith('//') || value.startsWith('/*') || /^\s+$/.test(value)) {
-        // Update line and column tracking
-        updatePositionInfo(value, position);
-        continue;
+      if (token.type === TokenType.Comment || token.type === TokenType.Whitespace) {
+        // Update tracking info
+        updatePositionInfo(token.value, token.position);
+      } else {
+        tokens.push(token);
       }
       
-      // Determine token type and add to tokens list
-      const type = getTokenType(value);
-      tokens.push({ type, value, position });
-      
-      // Update line and column tracking
-      updatePositionInfo(value, position);
+      // Update position tracking and remaining input
+      offset += token.value.length;
+      remaining = remaining.substring(token.value.length);
+      line = token.position.line;
+      column = token.position.column + token.value.length;
     }
     
     return tokens;
-  }, "Failed to tokenize input");
+  }, "Failed to tokenize input", ParseError, [{ line: 1, column: 1, offset: 0 }, input]);
 }
 
 /**
- * Update line and column information as we process tokens
+ * Match the next token in the input string
  */
-function updatePositionInfo(value: string, position: SourcePosition): void {
-  for (const char of value) {
-    if (char === '\n') {
-      position.line++;
-      position.column = 1;
-    } else {
-      position.column++;
-    }
+function matchNextToken(input: string, line: number, column: number, offset: number): Token {
+  const position = { line, column, offset };
+  
+  // Try to match special tokens first
+  let match = input.match(TOKEN_PATTERNS.SPECIAL_TOKENS);
+  if (match) {
+    return {
+      type: getTokenTypeForSpecial(match[0]),
+      value: match[0],
+      position
+    };
   }
+  
+  // Try to match string literals
+  match = input.match(TOKEN_PATTERNS.STRING);
+  if (match) {
+    return {
+      type: TokenType.String,
+      value: match[0],
+      position
+    };
+  }
+  
+  // Try to match comments
+  match = input.match(TOKEN_PATTERNS.COMMENT);
+  if (match) {
+    return {
+      type: TokenType.Comment,
+      value: match[0],
+      position
+    };
+  }
+  
+  // Try to match whitespace
+  match = input.match(TOKEN_PATTERNS.WHITESPACE);
+  if (match) {
+    return {
+      type: TokenType.Whitespace,
+      value: match[0],
+      position
+    };
+  }
+  
+  // Try to match symbols and other tokens
+  match = input.match(TOKEN_PATTERNS.SYMBOL);
+  if (match) {
+    const value = match[0];
+    // Determine if it's a number
+    if (!isNaN(Number(value))) {
+      return {
+        type: TokenType.Number,
+        value,
+        position
+      };
+    }
+    return {
+      type: TokenType.Symbol,
+      value,
+      position
+    };
+  }
+  
+  // If we get here, we have an unexpected character
+  throw new ParseError(
+    `Unexpected character: ${input[0]}`,
+    position,
+    input
+  );
 }
 
 /**
- * Determine token type from the token value
+ * Get token type for special tokens
  */
-function getTokenType(value: string): TokenType {
+function getTokenTypeForSpecial(value: string): TokenType {
   switch (value) {
     case '(': return TokenType.LeftParen;
     case ')': return TokenType.RightParen;
@@ -124,24 +198,22 @@ function getTokenType(value: string): TokenType {
     case '`': return TokenType.Backtick;
     case '~': return TokenType.Unquote;
     case '~@': return TokenType.UnquoteSplicing;
-    default:
-      if (value.startsWith('"')) {
-        return TokenType.String;
-      }
-      if (!isNaN(Number(value))) {
-        return TokenType.Number;
-      }
-      return TokenType.Symbol;
+    default: return TokenType.Symbol; // Should never happen
   }
 }
 
 /**
- * Parser state interface for clean encapsulation of parse state
+ * Update line and column information as we process tokens
  */
-interface ParserState {
-  tokens: Token[];
-  currentPos: number;
-  input: string;
+function updatePositionInfo(value: string, position: SourcePosition): void {
+  for (const char of value) {
+    if (char === '\n') {
+      position.line++;
+      position.column = 1;
+    } else {
+      position.column++;
+    }
+  }
 }
 
 /**
@@ -183,7 +255,12 @@ function parseExpression(state: ParserState): SExp {
     const token = state.tokens[state.currentPos++];
     
     return parseExpressionByTokenType(token, state);
-  }, "Error parsing expression");
+  }, "Error parsing expression", ParseError, [
+    state.currentPos < state.tokens.length 
+      ? state.tokens[state.currentPos].position 
+      : { line: 1, column: 1, offset: 0 },
+    state.input
+  ]);
 }
 
 /**
@@ -226,56 +303,86 @@ function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
         return createList(createSymbol('unquote-splicing'), parseExpression(state));
       
       case TokenType.Comma:
-        return createList(createSymbol('unquote'), parseExpression(state));
+        return createSymbol(',');
       
       case TokenType.Dot:
-        // Handle property access after a parenthesized expression
-        if (state.currentPos < state.tokens.length) {
-          const nextToken = state.tokens[state.currentPos++];
-          return createSymbol("." + nextToken.value);
-        } else {
-          throw new ParseError("Expected property name after '.'", token.position, state.input);
-        }
+        return parseDotAccess(state, token);
       
       case TokenType.String:
-        const str = token.value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-        return createLiteral(str);
+        return parseStringLiteral(token.value);
       
       case TokenType.Number:
         return createLiteral(Number(token.value));
       
       case TokenType.Symbol:
-        if (token.value === "true") {
-          return createLiteral(true);
-        } else if (token.value === "false") {
-          return createLiteral(false);
-        } else if (token.value === "nil") {
-          return createNilLiteral();
-        } else {
-          // Handle dot notation with dashed properties
-          if (token.value.includes('.') && !token.value.startsWith('.') && !token.value.endsWith('.')) {
-            const parts = token.value.split('.');
-            const objectName = parts[0];
-            const propertyPath = parts.slice(1).join('.');
-            
-            // If property contains dashes, transform to a get call
-            if (propertyPath.includes('-')) {
-              // Return a list that represents (get objectName "propertyPath")
-              return createList(
-                createSymbol("get"),
-                createSymbol(objectName),
-                createLiteral(propertyPath)
-              );
-            }
-          }
-          
-          return createSymbol(token.value);
-        }
+        return parseSymbol(token.value);
       
       default:
         throw new ParseError(`Unexpected token type: ${token.type}`, token.position, state.input);
     }
   }, `Error parsing ${TokenType[token.type]}`, ParseError, [token.position, state.input]);
+}
+
+/**
+ * Parse a dot access expression
+ */
+function parseDotAccess(state: ParserState, dotToken: Token): SExp {
+  // Handle property access after a parenthesized expression
+  if (state.currentPos < state.tokens.length) {
+    const nextToken = state.tokens[state.currentPos++];
+    return createSymbol("." + nextToken.value);
+  } else {
+    throw new ParseError("Expected property name after '.'", dotToken.position, state.input);
+  }
+}
+
+/**
+ * Parse a string literal
+ */
+function parseStringLiteral(tokenValue: string): SExp {
+  const str = tokenValue.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+  return createLiteral(str);
+}
+
+/**
+ * Parse a symbol
+ */
+function parseSymbol(tokenValue: string): SExp {
+  if (tokenValue === "true") {
+    return createLiteral(true);
+  } else if (tokenValue === "false") {
+    return createLiteral(false);
+  } else if (tokenValue === "nil") {
+    return createNilLiteral();
+  } else {
+    // Handle dot notation with dashed properties
+    if (tokenValue.includes('.') && !tokenValue.startsWith('.') && !tokenValue.endsWith('.')) {
+      return parseDotNotation(tokenValue);
+    }
+    
+    return createSymbol(tokenValue);
+  }
+}
+
+/**
+ * Parse dot notation in symbols
+ */
+function parseDotNotation(tokenValue: string): SExp {
+  const parts = tokenValue.split('.');
+  const objectName = parts[0];
+  const propertyPath = parts.slice(1).join('.');
+  
+  // If property contains dashes, transform to a get call
+  if (propertyPath.includes('-')) {
+    // Return a list that represents (get objectName "propertyPath")
+    return createList(
+      createSymbol("get"),
+      createSymbol(objectName),
+      createLiteral(propertyPath)
+    );
+  }
+  
+  return createSymbol(tokenValue);
 }
 
 /**
@@ -289,122 +396,176 @@ function parseList(state: ParserState): SList {
     // Process the first token to see if it's a dot notation
     if (state.currentPos < state.tokens.length && 
         state.tokens[state.currentPos].type !== TokenType.RightParen &&
-        state.tokens[state.currentPos].value.includes('.') &&
-        !state.tokens[state.currentPos].value.startsWith('.') &&
-        !state.tokens[state.currentPos].value.endsWith('.')) {
+        isDotNotation(state.tokens[state.currentPos].value)) {
       
-      // This is a dot notation expression - handle it explicitly
-      const dotToken = state.tokens[state.currentPos++].value;
-      
-      // Split by dots to handle multi-part property paths
-      const parts = dotToken.split('.');
-      
-      if (parts.length > 2) {
-        // Multi-part property path like "obj.prop1.prop2"
-        const objectName = parts[0];
-        const propPath = parts.slice(1);
-        
-        // Create a nested chain of js-get-invoke expressions
-        let currentExpr: any = {
-          type: "list",
-          elements: [
-            createSymbol("js-get-invoke"),
-            createSymbol(objectName),
-            createLiteral(propPath[0])
-          ]
-        };
-        
-        // Chain the remaining properties
-        for (let i = 1; i < propPath.length; i++) {
-          currentExpr = {
-            type: "list",
-            elements: [
-              createSymbol("js-get-invoke"),
-              currentExpr,
-              createLiteral(propPath[i])
-            ]
-          };
-        }
-        
-        // If there are arguments, convert the last js-get-invoke to js-call
-        if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightParen) {
-          const args: SExp[] = [];
-          while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightParen) {
-            args.push(parseExpression(state));
-          }
-          
-          // Replace the outermost expression's js-get-invoke with js-call
-          currentExpr.elements[0] = createSymbol("js-call");
-          // Add the arguments
-          currentExpr.elements.push(...args);
-        }
-        
-        elements.push(currentExpr);
-      } else {
-        // Simple property path like "obj.prop"
-        const objectName = parts[0];
-        const property = parts[1];
-        
-        // If there are no additional arguments, treat it as a property access
-        if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type === TokenType.RightParen) {
-          // Create a property access node (using js-get-invoke)
-          elements.push(createSymbol("js-get-invoke"));
-          elements.push(createSymbol(objectName));
-          elements.push(createLiteral(property));
-        } else {
-          // Otherwise, it's a method call - create a method call node (using js-call)
-          elements.push(createSymbol("js-call"));
-          elements.push(createSymbol(objectName));
-          elements.push(createLiteral(property));
-          
-          // Parse arguments for the method call
-          while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightParen) {
-            elements.push(parseExpression(state));
-          }
-        }
-      }
+      const dotElements = parseDotNotationCall(state);
+      elements.push(...dotElements);
     } else {
       // Standard list parsing
-      while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightParen) {
-        elements.push(parseExpression(state));
-      }
+      parseStandardList(state, elements);
     }
     
-    if (state.currentPos >= state.tokens.length) {
-      throw new ParseError(
-        "Unclosed list",
-        listStartPos,
-        state.input
-      );
-    }
-    
-    state.currentPos++; // Skip the closing parenthesis
+    ensureClosingParenthesis(state, listStartPos);
     
     // Check if there's a dot after the list
-    if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type === TokenType.Dot) {
-      state.currentPos++; // Skip the dot
-      
-      if (state.currentPos >= state.tokens.length) {
-        throw new ParseError(
-          "Expected property name after dot",
-          state.tokens[state.currentPos - 1].position,
-          state.input
-        );
-      }
-      
-      // Get the property/method name
-      const propName = state.tokens[state.currentPos++].value;
-      
-      // Create a new list that represents property access on the original list result
-      return createList(
-        createSymbol("js-get-invoke"),
-        createList(...elements), // Original list becomes the object
-        createLiteral(propName)
-      );
+    if (hasDotAccess(state)) {
+      return parsePropertyAccessOnList(state, elements);
     }
     
     return createList(...elements);
   }, "Error parsing list", ParseError, [state.tokens[state.currentPos - 1].position, state.input]);
+}
+
+/**
+ * Check if token value is dot notation
+ */
+function isDotNotation(value: string): boolean {
+  return value.includes('.') && !value.startsWith('.') && !value.endsWith('.');
+}
+
+/**
+ * Parse dot notation call
+ */
+function parseDotNotationCall(state: ParserState): SExp[] {
+  // This is a dot notation expression - handle it explicitly
+  const dotToken = state.tokens[state.currentPos++].value;
+  
+  // Split by dots to handle multi-part property paths
+  const parts = dotToken.split('.');
+  
+  if (parts.length > 2) {
+    // Multi-part property path like "obj.prop1.prop2"
+    return parseMultiPartPropertyPath(parts, state);
+  } else {
+    // Simple property path like "obj.prop"
+    return parseSimplePropertyPath(parts, state);
+  }
+}
+
+/**
+ * Parse multi-part property path
+ */
+function parseMultiPartPropertyPath(parts: string[], state: ParserState): SExp[] {
+  const objectName = parts[0];
+  const propPath = parts.slice(1);
+  const elements: SExp[] = [];
+  
+  // Create expression based on whether it has arguments
+  if (hasArguments(state)) {
+    // Set up base elements for js-call
+    elements.push(createSymbol("js-call"));
+    elements.push(createSymbol(objectName));
+    elements.push(createLiteral(propPath.join('.')));
+    
+    // Parse arguments
+    while (state.currentPos < state.tokens.length && 
+           state.tokens[state.currentPos].type !== TokenType.RightParen) {
+      elements.push(parseExpression(state));
+    }
+  } else {
+    // Property access without arguments
+    elements.push(createSymbol("js-get-invoke"));
+    elements.push(createSymbol(objectName));
+    elements.push(createLiteral(propPath.join('.')));
+  }
+  
+  return elements;
+}
+
+/**
+ * Parse simple property path
+ */
+function parseSimplePropertyPath(parts: string[], state: ParserState): SExp[] {
+  const objectName = parts[0];
+  const property = parts[1];
+  const elements: SExp[] = [];
+  
+  // If there are no additional arguments, treat it as a property access
+  if (!hasArguments(state)) {
+    // Create a property access node (using js-get-invoke)
+    elements.push(createSymbol("js-get-invoke"));
+    elements.push(createSymbol(objectName));
+    elements.push(createLiteral(property));
+  } else {
+    // Otherwise, it's a method call - create a method call node (using js-call)
+    elements.push(createSymbol("js-call"));
+    elements.push(createSymbol(objectName));
+    elements.push(createLiteral(property));
+    
+    // Parse arguments for the method call
+    while (state.currentPos < state.tokens.length && 
+           state.tokens[state.currentPos].type !== TokenType.RightParen) {
+      elements.push(parseExpression(state));
+    }
+  }
+  
+  return elements;
+}
+
+/**
+ * Check if there are arguments in the list
+ */
+function hasArguments(state: ParserState): boolean {
+  return state.currentPos < state.tokens.length && 
+         state.tokens[state.currentPos].type !== TokenType.RightParen;
+}
+
+/**
+ * Parse standard list elements
+ */
+function parseStandardList(state: ParserState, elements: SExp[]): void {
+  while (state.currentPos < state.tokens.length && 
+         state.tokens[state.currentPos].type !== TokenType.RightParen) {
+    elements.push(parseExpression(state));
+  }
+}
+
+/**
+ * Ensure closing parenthesis for a list
+ */
+function ensureClosingParenthesis(state: ParserState, listStartPos: SourcePosition): void {
+  if (state.currentPos >= state.tokens.length) {
+    throw new ParseError(
+      "Unclosed list",
+      listStartPos,
+      state.input
+    );
+  }
+  
+  state.currentPos++; // Skip the closing parenthesis
+}
+
+/**
+ * Check if there's a dot access after a list
+ */
+function hasDotAccess(state: ParserState): boolean {
+  return state.currentPos < state.tokens.length && 
+         state.tokens[state.currentPos].type === TokenType.Dot;
+}
+
+/**
+ * Parse property access on a list result
+ */
+function parsePropertyAccessOnList(state: ParserState, elements: SExp[]): SList {
+  state.currentPos++; // Skip the dot
+  
+  if (state.currentPos >= state.tokens.length) {
+    throw new ParseError(
+      "Expected property name after dot",
+      state.tokens[state.currentPos - 1].position,
+      state.input
+    );
+  }
+  
+  // Get the property/method name
+  const propName = state.tokens[state.currentPos++].value;
+  
+  // Create a new list that represents property access on the original list result
+  return createList(
+    createSymbol("js-get-invoke"),
+    createList(...elements), // Original list becomes the object
+    createLiteral(propName)
+  );
 }
 
 /**
@@ -415,44 +576,10 @@ function parseVector(state: ParserState): SList {
     const startPos = state.tokens[state.currentPos - 1].position;
     const elements: SExp[] = [];
     
-    while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightBracket) {
-      // Parse the current element
-      const expr = parseExpression(state);
-      elements.push(expr);
-      
-      // Check if this might be an 'as' alias construct
-      if (isSymbol(expr) && 
-          state.currentPos < state.tokens.length && 
-          state.tokens[state.currentPos].value === 'as') {
-        
-        // Add the 'as' symbol
-        elements.push(createSymbol('as'));
-        state.currentPos++; // Skip the 'as' token
-        
-        // Parse the alias name
-        if (state.currentPos < state.tokens.length && 
-            state.tokens[state.currentPos].type !== TokenType.Comma && 
-            state.tokens[state.currentPos].type !== TokenType.RightBracket) {
-          const alias = parseExpression(state);
-          elements.push(alias);
-        } else {
-          const errorPos = state.currentPos < state.tokens.length 
-            ? state.tokens[state.currentPos].position 
-            : startPos;
-          throw new ParseError(
-            "Expected alias after 'as' keyword",
-            errorPos,
-            state.input
-          );
-        }
-      }
-      
-      // Skip comma if present
-      if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type === TokenType.Comma) {
-        state.currentPos++;
-      }
-    }
+    // Parse vector elements, handling 'as' aliases
+    parseVectorElements(state, elements);
     
+    // Ensure closing bracket
     if (state.currentPos >= state.tokens.length) {
       throw new ParseError(
         "Unclosed vector",
@@ -474,6 +601,71 @@ function parseVector(state: ParserState): SList {
 }
 
 /**
+ * Parse vector elements, handling 'as' aliases
+ */
+function parseVectorElements(state: ParserState, elements: SExp[]): void {
+  while (state.currentPos < state.tokens.length && 
+         state.tokens[state.currentPos].type !== TokenType.RightBracket) {
+    // Parse the current element
+    const expr = parseExpression(state);
+    elements.push(expr);
+    
+    // Check if this might be an 'as' alias construct
+    if (isAsAliasConstruct(expr, state)) {
+      parseAsAliasConstruct(state, elements);
+    }
+    
+    // Skip comma if present
+    skipComma(state);
+  }
+}
+
+/**
+ * Check if this is an 'as' alias construct
+ */
+function isAsAliasConstruct(expr: SExp, state: ParserState): boolean {
+  return isSymbol(expr) && 
+         state.currentPos < state.tokens.length && 
+         state.tokens[state.currentPos].value === 'as';
+}
+
+/**
+ * Parse an 'as' alias construct
+ */
+function parseAsAliasConstruct(state: ParserState, elements: SExp[]): void {
+  // Add the 'as' symbol
+  elements.push(createSymbol('as'));
+  state.currentPos++; // Skip the 'as' token
+  
+  // Parse the alias name
+  if (state.currentPos < state.tokens.length && 
+      state.tokens[state.currentPos].type !== TokenType.Comma && 
+      state.tokens[state.currentPos].type !== TokenType.RightBracket) {
+    const alias = parseExpression(state);
+    elements.push(alias);
+  } else {
+    const errorPos = state.currentPos < state.tokens.length 
+      ? state.tokens[state.currentPos].position 
+      : state.tokens[state.currentPos - 1].position;
+    throw new ParseError(
+      "Expected alias after 'as' keyword",
+      errorPos,
+      state.input
+    );
+  }
+}
+
+/**
+ * Skip a comma token if present
+ */
+function skipComma(state: ParserState): void {
+  if (state.currentPos < state.tokens.length && 
+      state.tokens[state.currentPos].type === TokenType.Comma) {
+    state.currentPos++;
+  }
+}
+
+/**
  * Parse a map: {key1: value1, key2: value2, ...}
  */
 function parseMap(state: ParserState): SList {
@@ -481,36 +673,10 @@ function parseMap(state: ParserState): SList {
     const startPos = state.tokens[state.currentPos - 1].position;
     const entries: SExp[] = [];
     
-    while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightBrace) {
-      // Parse key
-      const key = parseExpression(state);
-      
-      // Expect colon
-      if (state.currentPos >= state.tokens.length || state.tokens[state.currentPos].type !== TokenType.Colon) {
-        const errorPos = state.currentPos < state.tokens.length 
-          ? state.tokens[state.currentPos].position 
-          : startPos;
-        throw new ParseError(
-          "Expected ':' in map literal",
-          errorPos,
-          state.input
-        );
-      }
-      state.currentPos++; // Skip colon
-      
-      // Parse value
-      const value = parseExpression(state);
-      
-      // Add key-value pair
-      entries.push(key);
-      entries.push(value);
-      
-      // Skip comma if present
-      if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type === TokenType.Comma) {
-        state.currentPos++;
-      }
-    }
+    // Parse key-value pairs
+    parseMapEntries(state, entries, startPos);
     
+    // Ensure closing brace
     if (state.currentPos >= state.tokens.length) {
       throw new ParseError(
         "Unclosed map",
@@ -532,6 +698,41 @@ function parseMap(state: ParserState): SList {
 }
 
 /**
+ * Parse map entries (key-value pairs)
+ */
+function parseMapEntries(state: ParserState, entries: SExp[], startPos: SourcePosition): void {
+  while (state.currentPos < state.tokens.length && 
+         state.tokens[state.currentPos].type !== TokenType.RightBrace) {
+    // Parse key
+    const key = parseExpression(state);
+    
+    // Expect colon
+    if (state.currentPos >= state.tokens.length || 
+        state.tokens[state.currentPos].type !== TokenType.Colon) {
+      const errorPos = state.currentPos < state.tokens.length 
+        ? state.tokens[state.currentPos].position 
+        : startPos;
+      throw new ParseError(
+        "Expected ':' in map literal",
+        errorPos,
+        state.input
+      );
+    }
+    state.currentPos++; // Skip colon
+    
+    // Parse value
+    const value = parseExpression(state);
+    
+    // Add key-value pair
+    entries.push(key);
+    entries.push(value);
+    
+    // Skip comma if present
+    skipComma(state);
+  }
+}
+
+/**
  * Parse a set: #[element1, element2, ...]
  */
 function parseSet(state: ParserState): SList {
@@ -539,15 +740,10 @@ function parseSet(state: ParserState): SList {
     const startPos = state.tokens[state.currentPos - 1].position;
     const elements: SExp[] = [];
     
-    while (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type !== TokenType.RightBracket) {
-      elements.push(parseExpression(state));
-      
-      // Skip comma if present
-      if (state.currentPos < state.tokens.length && state.tokens[state.currentPos].type === TokenType.Comma) {
-        state.currentPos++;
-      }
-    }
+    // Parse set elements
+    parseSetElements(state, elements);
     
+    // Ensure closing bracket
     if (state.currentPos >= state.tokens.length) {
       throw new ParseError(
         "Unclosed set",
@@ -566,4 +762,17 @@ function parseSet(state: ParserState): SList {
     // For non-empty set, proceed with hash-set function
     return createList(createSymbol("hash-set"), ...elements);
   }, "Error parsing set", ParseError, [state.tokens[state.currentPos - 1].position, state.input]);
+}
+
+/**
+ * Parse set elements
+ */
+function parseSetElements(state: ParserState, elements: SExp[]): void {
+  while (state.currentPos < state.tokens.length && 
+         state.tokens[state.currentPos].type !== TokenType.RightBracket) {
+    elements.push(parseExpression(state));
+    
+    // Skip comma if present
+    skipComma(state);
+  }
 }

@@ -1,4 +1,4 @@
-// src/s-exp/imports.ts - Fixed to balance parallel processing with correctness
+// src/s-exp/imports.ts - Refactored with better modularity and error handling
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport } from './types.ts';
@@ -8,6 +8,13 @@ import { parse } from './parser.ts';
 import { Logger } from '../logger.ts';
 import { ImportError, MacroError } from '../transpiler/errors.ts';
 import { perform, performAsync } from '../transpiler/error-utils.ts';
+import { 
+  isRemoteModule, 
+  isJavaScriptModule, 
+  isSpecialOrAbsolutePath, 
+  isRemotePath, 
+  isRelativePath 
+} from '../utils.ts'
 
 /**
  * Options for import processing
@@ -45,165 +52,34 @@ export async function processImports(
   
   return performAsync(async () => {
     try {
-      // Set current file in environment if provided
-      if (options.currentFile) {
-        env.setCurrentFile(options.currentFile);
-        logger.debug(`Processing imports in file: ${options.currentFile}`);
-        
-        // Add current file to in-progress set
-        if (options.currentFile) {
-          inProgressFiles.add(options.currentFile);
-        }
-      }
+      setupEnvironmentAndTracking(env, options, inProgressFiles, logger);
       
-      // Create temp directory if needed - can do this in parallel with other initialization
-      const tempDir = !options.tempDir ? 
-        await performAsync(
-          () => Deno.makeTempDir({ prefix: "hql_imports_" }),
-          "Creating temporary directory",
-          ImportError,
-          ["temp_dir", options.currentFile]
-        ) : 
-        options.tempDir;
+      // Create temp directory in parallel with import analysis
+      const [tempDir, importExprs] = await Promise.all([
+        createTempDirIfNeeded(options, logger),
+        analyzeImports(exprs, logger)
+      ]);
       
-      logger.debug(options.tempDir ? `Using existing temp directory: ${tempDir}` : `Created temporary directory: ${tempDir}`);
-      
-      // Identify all import expressions
-      const importExprs = exprs.filter(expr => isImport(expr) && expr.type === 'list') as SList[];
-      logger.debug(`Found ${importExprs.length} import expressions to process`);
-      
-      // Group imports by type for optimized processing:
-      // 1. Remote imports (npm:, jsr:, http:) can be processed in parallel
-      // 2. Local imports need more careful handling for dependencies
-      const remoteImports: SList[] = [];
-      const localImports: SList[] = [];
-      
-      for (const importExpr of importExprs) {
-        let modulePath = "unknown";
-        
-        try {
-          if (importExpr.elements.length >= 4 && 
-              importExpr.elements[2].type === "symbol" && 
-              (importExpr.elements[2] as SSymbol).name === "from" &&
-              importExpr.elements[3].type === "literal") {
-            // Vector import
-            modulePath = String((importExpr.elements[3] as any).value);
-          } else if (importExpr.elements.length === 3 && 
-                     importExpr.elements[2].type === "literal") {
-            // Legacy import
-            modulePath = String((importExpr.elements[2] as any).value);
-          }
-          
-          if (modulePath.startsWith('npm:') || 
-              modulePath.startsWith('jsr:') || 
-              modulePath.startsWith('http:') || 
-              modulePath.startsWith('https:')) {
-            remoteImports.push(importExpr);
-          } else {
-            localImports.push(importExpr);
-          }
-        } catch (e) {
-          // If we can't determine the type, treat it as local for safety
-          localImports.push(importExpr);
-        }
-      }
+      // Separate remote and local imports
+      const { remoteImports, localImports } = categorizeImports(importExprs, logger);
       
       // Process remote imports in parallel - these don't have local dependencies
       if (remoteImports.length > 0) {
-        logger.debug(`Processing ${remoteImports.length} remote imports in parallel`);
-        await Promise.all(remoteImports.map(async (importExpr) => {
-          try {
-            await processImport(importExpr, env, baseDir, {
-              verbose: options.verbose,
-              tempDir,
-              keepTemp: options.keepTemp,
-              processedFiles,
-              inProgressFiles,
-              importMap,
-              currentFile: options.currentFile
-            });
-          } catch (error) {
-            // Extract module path for better error reporting
-            let modulePath = "unknown";
-            try {
-              if (importExpr.elements.length >= 3) {
-                if (importExpr.elements.length >= 4 && 
-                    importExpr.elements[2].type === "symbol" && 
-                    (importExpr.elements[2] as SSymbol).name === "from" &&
-                    importExpr.elements[3].type === "literal") {
-                  modulePath = String((importExpr.elements[3] as any).value);
-                } else if (importExpr.elements[2].type === "literal") {
-                  modulePath = String((importExpr.elements[2] as any).value);
-                }
-              }
-            } catch (e) {
-              // Ignore errors in extracting the module path
-            }
-            
-            // Re-throw ImportError directly, wrap other errors
-            if (error instanceof ImportError) {
-              throw error;
-            } else {
-              throw new ImportError(
-                `Error processing import: ${error instanceof Error ? error.message : String(error)}`,
-                modulePath,
-                options.currentFile,
-                error instanceof Error ? error : undefined
-              );
-            }
-          }
-        }));
+        await processRemoteImportsInParallel(remoteImports, env, baseDir, options, tempDir, processedFiles, inProgressFiles, importMap, logger);
       }
       
       // Process local imports sequentially to respect dependencies
       if (localImports.length > 0) {
-        logger.debug(`Processing ${localImports.length} local imports sequentially`);
-        
-        for (const importExpr of localImports) {
-          await performAsync(
-            async () => {
-              await processImport(importExpr, env, baseDir, {
-                verbose: options.verbose,
-                tempDir,
-                keepTemp: options.keepTemp,
-                processedFiles,
-                inProgressFiles,
-                importMap,
-                currentFile: options.currentFile
-              });
-            },
-            "Processing local import", 
-            ImportError,
-            [getModulePathFromImport(importExpr), options.currentFile]
-          );
-        }
+        await processLocalImportsSequentially(localImports, env, baseDir, options, tempDir, processedFiles, inProgressFiles, importMap, logger);
       }
       
       // Process definitions and exports
       if (options.currentFile) {
-        // Process file definitions for macros
-        await performAsync(
-          async () => processFileDefinitions(exprs, env, logger),
-          "Processing file definitions",
-          MacroError,
-          [options.currentFile, options.currentFile]
-        );
-        
-        // Handle user-level macros and exports
-        await performAsync(
-          async () => processFileExportsAndDefinitions(exprs, env, {}, options.currentFile!, logger),
-          "Processing file exports and definitions",
-          ImportError,
-          [options.currentFile, options.currentFile]
-        );
+        await processFileDefinitionsAndExports(exprs, env, options, logger);
       }
       
       // Mark current file as fully processed (not just in progress)
-      if (options.currentFile) {
-        inProgressFiles.delete(options.currentFile);
-        processedFiles.add(options.currentFile);
-        logger.debug(`Completed processing imports for: ${options.currentFile}`);
-      }
+      finalizeFileProcessing(options.currentFile, inProgressFiles, processedFiles, logger);
     } finally {
       // Always restore the previous current file state
       env.setCurrentFile(previousCurrentFile);
@@ -211,7 +87,207 @@ export async function processImports(
   }, "Processing imports", ImportError, ["imports", options.currentFile]);
 }
 
-// Helper function to extract module path from import expression
+/**
+ * Set up environment with current file and add file to tracking
+ */
+function setupEnvironmentAndTracking(
+  env: Environment, 
+  options: ImportProcessorOptions, 
+  inProgressFiles: Set<string>,
+  logger: Logger
+): void {
+  // Set current file in environment if provided
+  if (options.currentFile) {
+    env.setCurrentFile(options.currentFile);
+    logger.debug(`Processing imports in file: ${options.currentFile}`);
+    
+    // Add current file to in-progress set
+    inProgressFiles.add(options.currentFile);
+  }
+}
+
+/**
+ * Create a temporary directory if needed
+ */
+async function createTempDirIfNeeded(
+  options: ImportProcessorOptions,
+  logger: Logger
+): Promise<string> {
+  if (!options.tempDir) {
+    const tempDir = await performAsync(
+      () => Deno.makeTempDir({ prefix: "hql_imports_" }),
+      "Creating temporary directory",
+      ImportError,
+      ["temp_dir", options.currentFile]
+    );
+    logger.debug(`Created temporary directory: ${tempDir}`);
+    return tempDir;
+  } 
+  
+  logger.debug(`Using existing temp directory: ${options.tempDir}`);
+  return options.tempDir;
+}
+
+/**
+ * Analyze and identify import expressions
+ */
+function analyzeImports(exprs: SExp[], logger: Logger): SList[] {
+  // Identify all import expressions
+  const importExprs = exprs.filter(expr => isImport(expr) && expr.type === 'list') as SList[];
+  logger.debug(`Found ${importExprs.length} import expressions to process`);
+  return importExprs;
+}
+
+/**
+ * Categorize imports into remote and local
+ */
+function categorizeImports(importExprs: SList[], logger: Logger): { 
+  remoteImports: SList[], 
+  localImports: SList[] 
+} {
+  const remoteImports: SList[] = [];
+  const localImports: SList[] = [];
+  
+  for (const importExpr of importExprs) {
+    const modulePath = getModulePathFromImport(importExpr);
+    
+    if (isRemotePath(modulePath)) {
+      remoteImports.push(importExpr);
+    } else {
+      localImports.push(importExpr);
+    }
+  }
+  
+  logger.debug(`Categorized imports: ${remoteImports.length} remote, ${localImports.length} local`);
+  return { remoteImports, localImports };
+}
+
+/**
+ * Process remote imports in parallel
+ */
+async function processRemoteImportsInParallel(
+  remoteImports: SList[],
+  env: Environment,
+  baseDir: string,
+  options: ImportProcessorOptions,
+  tempDir: string,
+  processedFiles: Set<string>,
+  inProgressFiles: Set<string>,
+  importMap: Map<string, string>,
+  logger: Logger
+): Promise<void> {
+  logger.debug(`Processing ${remoteImports.length} remote imports in parallel`);
+  await Promise.all(remoteImports.map(async (importExpr) => {
+    try {
+      await processImport(importExpr, env, baseDir, {
+        verbose: options.verbose,
+        tempDir,
+        keepTemp: options.keepTemp,
+        processedFiles,
+        inProgressFiles,
+        importMap,
+        currentFile: options.currentFile
+      });
+    } catch (error) {
+      // Extract module path for better error reporting
+      const modulePath = getModulePathFromImport(importExpr);
+      
+      // Re-throw ImportError directly, wrap other errors
+      if (error instanceof ImportError) {
+        throw error;
+      } else {
+        throw new ImportError(
+          `Error processing import: ${error instanceof Error ? error.message : String(error)}`,
+          modulePath,
+          options.currentFile,
+          error instanceof Error ? error : undefined
+        );
+      }
+    }
+  }));
+}
+
+/**
+ * Process local imports sequentially to handle dependencies
+ */
+async function processLocalImportsSequentially(
+  localImports: SList[],
+  env: Environment,
+  baseDir: string,
+  options: ImportProcessorOptions,
+  tempDir: string,
+  processedFiles: Set<string>,
+  inProgressFiles: Set<string>,
+  importMap: Map<string, string>,
+  logger: Logger
+): Promise<void> {
+  logger.debug(`Processing ${localImports.length} local imports sequentially`);
+  
+  for (const importExpr of localImports) {
+    await performAsync(
+      async () => {
+        await processImport(importExpr, env, baseDir, {
+          verbose: options.verbose,
+          tempDir,
+          keepTemp: options.keepTemp,
+          processedFiles,
+          inProgressFiles,
+          importMap,
+          currentFile: options.currentFile
+        });
+      },
+      "Processing local import", 
+      ImportError,
+      [getModulePathFromImport(importExpr), options.currentFile]
+    );
+  }
+}
+
+/**
+ * Process file definitions and exports
+ */
+async function processFileDefinitionsAndExports(
+  exprs: SExp[],
+  env: Environment,
+  options: ImportProcessorOptions,
+  logger: Logger
+): Promise<void> {
+  // Process file definitions for macros
+  await performAsync(
+    async () => processFileDefinitions(exprs, env, logger),
+    "Processing file definitions",
+    MacroError,
+    [options.currentFile, options.currentFile]
+  );
+  
+  // Handle user-level macros and exports
+  await performAsync(
+    async () => processFileExportsAndDefinitions(exprs, env, {}, options.currentFile!, logger),
+    "Processing file exports and definitions",
+    ImportError,
+    [options.currentFile, options.currentFile]
+  );
+}
+
+/**
+ * Finalize file processing by marking complete and removing from in-progress
+ */
+function finalizeFileProcessing(
+  currentFile: string | undefined,
+  inProgressFiles: Set<string>,
+  processedFiles: Set<string>,
+  logger: Logger
+): void {
+  if (currentFile) {
+    inProgressFiles.delete(currentFile);
+    processedFiles.add(currentFile);
+    logger.debug(`Completed processing imports for: ${currentFile}`);
+  }
+}
+
+/**
+ * Extract the module path from an import expression
+ */
 function getModulePathFromImport(importExpr: SList): string {
   try {
     if (importExpr.elements.length >= 4 && 
@@ -243,12 +319,10 @@ async function processImport(
   
   return performAsync(async () => {
     // Quickly determine import type and process accordingly
-    if (elements.length >= 4 && elements[1].type === 'list' && 
-        isSymbol(elements[2]) && elements[2].name === 'from') {
+    if (isVectorImport(elements)) {
       // Vector-based import
       await processVectorBasedImport(elements, env, baseDir, options);
-    } else if (elements.length === 3 && isSymbol(elements[1]) && 
-              isLiteral(elements[2]) && typeof elements[2].value === 'string') {
+    } else if (isLegacyImport(elements)) {
       // Legacy import
       await processLegacyImport(elements, env, baseDir, options);
     } else {
@@ -259,6 +333,26 @@ async function processImport(
       );
     }
   }, "Processing import expression", ImportError, [getModulePathFromImport(importExpr), options.currentFile]);
+}
+
+/**
+ * Check if an import is vector-based
+ */
+function isVectorImport(elements: SExp[]): boolean {
+  return elements.length >= 4 && 
+         elements[1].type === 'list' && 
+         isSymbol(elements[2]) && 
+         elements[2].name === 'from';
+}
+
+/**
+ * Check if an import is legacy-style
+ */
+function isLegacyImport(elements: SExp[]): boolean {
+  return elements.length === 3 && 
+         isSymbol(elements[1]) && 
+         isLiteral(elements[2]) && 
+         typeof elements[2].value === 'string';
 }
 
 /**
@@ -328,93 +422,170 @@ async function processVectorBasedImport(
     // Process the vector elements
     const vectorElements = processVectorElements(symbolsVector.elements);
     
-    // Track which symbols were explicitly requested with their aliases
-    const requestedSymbols = new Map<string, string | null>();
-    
-    // Process vector elements to extract names and aliases
-    let i = 0;
-    while (i < vectorElements.length) {
-      if (!isSymbol(vectorElements[i])) {
-        i++;
-        continue;
-      }
-      
-      const symbolName = (vectorElements[i] as SSymbol).name;
-      
-      // Check if this has an alias
-      if (i + 2 < vectorElements.length && 
-          isSymbol(vectorElements[i+1]) && 
-          (vectorElements[i+1] as SSymbol).name === 'as' &&
-          isSymbol(vectorElements[i+2])) {
-        
-        const aliasName = (vectorElements[i+2] as SSymbol).name;
-        requestedSymbols.set(symbolName, aliasName);
-        
-        i += 3; // Skip symbol, 'as', and alias
-      } else {
-        requestedSymbols.set(symbolName, null); // No alias
-        i++;
-      }
-    }
+    // Extract symbols and aliases
+    const requestedSymbols = extractSymbolsAndAliases(vectorElements);
     
     // Process imports with HQL-specific handling
-    if (options.currentFile && modulePath.endsWith('.hql')) {
-      // Only import the explicitly requested symbols
-      for (const [symbolName, aliasName] of requestedSymbols.entries()) {
-        // Check if this is a macro and import it with the proper alias
-        const isMacro = env.hasModuleMacro(resolvedPath, symbolName);
-        if (isMacro) {
-          const success = env.importMacro(resolvedPath, symbolName, options.currentFile, aliasName || undefined);
-          if (success) {
-            logger.debug(`Imported macro ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
-          } else {
-            logger.warn(`Failed to import macro ${symbolName} from ${resolvedPath}`);
-          }
-        }
-        
-        // Try to import as a regular value
-        try {
-          const moduleLookupKey = `${tempModuleName}.${symbolName}`;
-          const value = env.lookup(moduleLookupKey);
-          env.define(aliasName || symbolName, value);
-          logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
-        } catch (error) {
-          // Ignore lookup errors only for confirmed macros
-          if (!isMacro) {
-            logger.debug(`Symbol not found in module: ${symbolName}`);
-            
-            // Only throw for non-macro symbols that weren't found
-            throw new ImportError(
-              `Symbol '${symbolName}' not found in module '${modulePath}'`,
-              modulePath,
-              options.currentFile,
-              error instanceof Error ? error : undefined
-            );
-          }
-        }
-      }
+    await processImportedSymbols(
+      requestedSymbols, 
+      modulePath, 
+      resolvedPath, 
+      tempModuleName, 
+      env, 
+      options.currentFile, 
+      logger
+    );
+  }, "Processing vector import", ImportError, [elements[3]?.type === "literal" ? String(elements[3].value) : "unknown", options.currentFile]);
+}
+
+/**
+ * Extract symbols and their aliases from vector elements
+ */
+function extractSymbolsAndAliases(
+  vectorElements: SExp[]
+): Map<string, string | null> {
+  const requestedSymbols = new Map<string, string | null>();
+  
+  // Process vector elements to extract names and aliases
+  let i = 0;
+  while (i < vectorElements.length) {
+    if (!isSymbol(vectorElements[i])) {
+      i++;
+      continue;
+    }
+    
+    const symbolName = (vectorElements[i] as SSymbol).name;
+    
+    // Check if this has an alias
+    if (i + 2 < vectorElements.length && 
+        isSymbol(vectorElements[i+1]) && 
+        (vectorElements[i+1] as SSymbol).name === 'as' &&
+        isSymbol(vectorElements[i+2])) {
+      
+      const aliasName = (vectorElements[i+2] as SSymbol).name;
+      requestedSymbols.set(symbolName, aliasName);
+      
+      i += 3; // Skip symbol, 'as', and alias
     } else {
-      // For non-HQL files, process regular imports
-      for (const [symbolName, aliasName] of requestedSymbols.entries()) {
-        try {
-          const moduleLookupKey = `${tempModuleName}.${symbolName}`;
-          const value = env.lookup(moduleLookupKey);
-          env.define(aliasName || symbolName, value);
-          logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
-        } catch (error) {
-          logger.debug(`Symbol not found in module: ${symbolName}`);
-          
-          // Provide more helpful error for missing imports
-          throw new ImportError(
-            `Symbol '${symbolName}' not found in module '${modulePath}'`,
-            modulePath,
-            options.currentFile,
-            error instanceof Error ? error : undefined
-          );
-        }
+      requestedSymbols.set(symbolName, null); // No alias
+      i++;
+    }
+  }
+  
+  return requestedSymbols;
+}
+
+/**
+ * Process and import the requested symbols
+ */
+async function processImportedSymbols(
+  requestedSymbols: Map<string, string | null>,
+  modulePath: string,
+  resolvedPath: string,
+  tempModuleName: string,
+  env: Environment,
+  currentFile: string | undefined,
+  logger: Logger
+): Promise<void> {
+  // Process imports with HQL-specific handling
+  if (currentFile && modulePath.endsWith('.hql')) {
+    await processMacrosAndValuesFromHQL(
+      requestedSymbols, 
+      resolvedPath, 
+      tempModuleName, 
+      env, 
+      currentFile, 
+      logger
+    );
+  } else {
+    // For non-HQL files, process regular imports
+    await processRegularImports(
+      requestedSymbols, 
+      modulePath, 
+      tempModuleName, 
+      env, 
+      currentFile, 
+      logger
+    );
+  }
+}
+
+/**
+ * Process macros and values imported from an HQL file
+ */
+async function processMacrosAndValuesFromHQL(
+  requestedSymbols: Map<string, string | null>,
+  resolvedPath: string,
+  tempModuleName: string,
+  env: Environment,
+  currentFile: string,
+  logger: Logger
+): Promise<void> {
+  // Only import the explicitly requested symbols
+  for (const [symbolName, aliasName] of requestedSymbols.entries()) {
+    // Check if this is a macro and import it with the proper alias
+    const isMacro = env.hasModuleMacro(resolvedPath, symbolName);
+    if (isMacro) {
+      const success = env.importMacro(resolvedPath, symbolName, currentFile, aliasName || undefined);
+      if (success) {
+        logger.debug(`Imported macro ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+      } else {
+        logger.warn(`Failed to import macro ${symbolName} from ${resolvedPath}`);
       }
     }
-  }, "Processing vector import", ImportError, [elements[3]?.type === "literal" ? String(elements[3].value) : "unknown", options.currentFile]);
+    
+    // Try to import as a regular value
+    try {
+      const moduleLookupKey = `${tempModuleName}.${symbolName}`;
+      const value = env.lookup(moduleLookupKey);
+      env.define(aliasName || symbolName, value);
+      logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+    } catch (error) {
+      // Ignore lookup errors only for confirmed macros
+      if (!isMacro) {
+        logger.debug(`Symbol not found in module: ${symbolName}`);
+        
+        // Only throw for non-macro symbols that weren't found
+        throw new ImportError(
+          `Symbol '${symbolName}' not found in module '${resolvedPath}'`,
+          resolvedPath,
+          currentFile,
+          error instanceof Error ? error : undefined
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Process regular imports from non-HQL files
+ */
+async function processRegularImports(
+  requestedSymbols: Map<string, string | null>,
+  modulePath: string,
+  tempModuleName: string,
+  env: Environment,
+  currentFile: string | undefined,
+  logger: Logger
+): Promise<void> {
+  for (const [symbolName, aliasName] of requestedSymbols.entries()) {
+    try {
+      const moduleLookupKey = `${tempModuleName}.${symbolName}`;
+      const value = env.lookup(moduleLookupKey);
+      env.define(aliasName || symbolName, value);
+      logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ''}`);
+    } catch (error) {
+      logger.debug(`Symbol not found in module: ${symbolName}`);
+      
+      // Provide more helpful error for missing imports
+      throw new ImportError(
+        `Symbol '${symbolName}' not found in module '${modulePath}'`,
+        modulePath,
+        currentFile,
+        error instanceof Error ? error : undefined
+      );
+    }
+  }
 }
 
 /**
@@ -489,27 +660,28 @@ async function loadModuleByType(
     }
     
     // Determine module type and process accordingly
-    if (modulePath.startsWith('npm:')) {
-      await processNpmImport(moduleName, modulePath, env, logger);
-    } else if (modulePath.startsWith('jsr:')) {
-      await processJsrImport(moduleName, modulePath, env, logger);
-    } else if (modulePath.startsWith('http:') || modulePath.startsWith('https:')) {
-      await processHttpImport(moduleName, modulePath, env, logger);
+    if (isRemoteModule(modulePath)) {
+      await loadRemoteModule(moduleName, modulePath, env, logger);
     } else if (modulePath.endsWith('.hql')) {
-      // Mark file as in-progress before processing
-      inProgressFiles.add(resolvedPath);
-      
-      await processHqlImport(
-        moduleName, modulePath, resolvedPath, baseDir, env, processedFiles, inProgressFiles,
-        logger, options.tempDir!, options.importMap!, options
+      await loadHqlModule(
+        moduleName, 
+        modulePath, 
+        resolvedPath, 
+        baseDir, 
+        env, 
+        processedFiles, 
+        inProgressFiles, 
+        logger, 
+        options
       );
-      
-      // Mark as fully processed after completion
-      inProgressFiles.delete(resolvedPath);
-      processedFiles.add(resolvedPath);
-    } else if (modulePath.endsWith('.js') || modulePath.endsWith('.mjs') || modulePath.endsWith('.cjs')) {
-      await processJsImport(
-        moduleName, modulePath, resolvedPath, baseDir, env, logger, processedFiles
+    } else if (isJavaScriptModule(modulePath)) {
+      await loadJavaScriptModule(
+        moduleName, 
+        modulePath, 
+        resolvedPath, 
+        env, 
+        logger, 
+        processedFiles
       );
     } else {
       throw new ImportError(
@@ -518,7 +690,83 @@ async function loadModuleByType(
         options.currentFile
       );
     }
+    
   }, `Loading module ${moduleName} from ${modulePath}`, ImportError, [modulePath, options.currentFile]);
+}
+
+/**
+ * Load a remote module (npm:, jsr:, http:)
+ */
+async function loadRemoteModule(
+  moduleName: string,
+  modulePath: string,
+  env: Environment,
+  logger: Logger
+): Promise<void> {
+  if (modulePath.startsWith('npm:')) {
+    await processNpmImport(moduleName, modulePath, env, logger);
+  } else if (modulePath.startsWith('jsr:')) {
+    await processJsrImport(moduleName, modulePath, env, logger);
+  } else {
+    await processHttpImport(moduleName, modulePath, env, logger);
+  }
+}
+
+/**
+ * Load an HQL module
+ */
+async function loadHqlModule(
+  moduleName: string, 
+  modulePath: string,
+  resolvedPath: string,
+  baseDir: string, 
+  env: Environment, 
+  processedFiles: Set<string>,
+  inProgressFiles: Set<string>,
+  logger: Logger,
+  options: ImportProcessorOptions
+): Promise<void> {
+  // Mark file as in-progress before processing
+  inProgressFiles.add(resolvedPath);
+  
+  await processHqlImport(
+    moduleName, 
+    modulePath, 
+    resolvedPath, 
+    baseDir, 
+    env, 
+    processedFiles, 
+    inProgressFiles,
+    logger, 
+    options.tempDir!, 
+    options.importMap!, 
+    options
+  );
+  
+  // Mark as fully processed after completion
+  inProgressFiles.delete(resolvedPath);
+  processedFiles.add(resolvedPath);
+}
+
+/**
+ * Load a JavaScript module
+ */
+async function loadJavaScriptModule(
+  moduleName: string,
+  modulePath: string,
+  resolvedPath: string,
+  env: Environment,
+  logger: Logger,
+  processedFiles: Set<string>
+): Promise<void> {
+  await processJsImport(
+    moduleName, 
+    modulePath, 
+    resolvedPath, 
+    env, 
+    logger, 
+    processedFiles
+  );
 }
 
 /**
@@ -542,19 +790,8 @@ async function processHqlImport(
   return performAsync(async () => {
     try {
       // Read and parse the file
-      const fileContent = await performAsync(
-        async () => await Deno.readTextFile(resolvedPath),
-        `Reading file ${resolvedPath}`,
-        ImportError,
-        [resolvedPath, options.currentFile]
-      );
-      
-      const importedExprs = perform(
-        () => parse(fileContent),
-        `Parsing file ${resolvedPath}`,
-        ImportError,
-        [resolvedPath, options.currentFile]
-      );
+      const fileContent = await readFile(resolvedPath, options.currentFile);
+      const importedExprs = parseHqlContent(fileContent, resolvedPath, options.currentFile);
       
       // Set current file to imported file for correct context
       env.setCurrentFile(resolvedPath);
@@ -563,23 +800,10 @@ async function processHqlImport(
       processFileDefinitions(importedExprs, env, logger);
       
       // Process nested imports
-      const importDir = path.dirname(resolvedPath);
-      await processImports(importedExprs, env, { 
-        verbose: logger.enabled,
-        baseDir: importDir,
-        tempDir,
-        keepTemp: options.keepTemp,
-        processedFiles,
-        inProgressFiles,
-        importMap,
-        currentFile: resolvedPath
-      });
+      await processNestedImports(importedExprs, env, resolvedPath, tempDir, options, processedFiles, inProgressFiles, importMap);
       
       // Process exports
-      const moduleExports: Record<string, any> = {};
-      
-      // Process exports and add them to moduleExports
-      processFileExportsAndDefinitions(importedExprs, env, moduleExports, resolvedPath, logger);
+      const moduleExports = processExports(importedExprs, env, resolvedPath, logger);
       
       // Register the module with its exports
       env.importModule(moduleName, moduleExports);
@@ -593,13 +817,80 @@ async function processHqlImport(
 }
 
 /**
+ * Read a file with error handling
+ */
+async function readFile(filePath: string, currentFile: string | undefined): Promise<string> {
+  return await performAsync(
+    async () => await Deno.readTextFile(filePath),
+    `Reading file ${filePath}`,
+    ImportError,
+    [filePath, currentFile]
+  );
+}
+
+/**
+ * Parse HQL content
+ */
+function parseHqlContent(content: string, filePath: string, currentFile: string | undefined): SExp[] {
+  return perform(
+    () => parse(content),
+    `Parsing file ${filePath}`,
+    ImportError,
+    [filePath, currentFile]
+  );
+}
+
+/**
+ * Process nested imports
+ */
+async function processNestedImports(
+  importedExprs: SExp[],
+  env: Environment,
+  importDir: string,
+  tempDir: string,
+  options: ImportProcessorOptions,
+  processedFiles: Set<string>,
+  inProgressFiles: Set<string>,
+  importMap: Map<string, string>
+): Promise<void> {
+  // Process nested imports
+  await processImports(importedExprs, env, { 
+    verbose: options.verbose,
+    baseDir: path.dirname(importDir),
+    tempDir,
+    keepTemp: options.keepTemp,
+    processedFiles,
+    inProgressFiles,
+    importMap,
+    currentFile: importDir
+  });
+}
+
+/**
+ * Process exports and create module exports object
+ */
+function processExports(
+  importedExprs: SExp[],
+  env: Environment,
+  resolvedPath: string,
+  logger: Logger
+): Record<string, any> {
+  // Process exports
+  const moduleExports: Record<string, any> = {};
+  
+  // Process exports and add them to moduleExports
+  processFileExportsAndDefinitions(importedExprs, env, moduleExports, resolvedPath, logger);
+  
+  return moduleExports;
+}
+
+/**
  * Process JavaScript imports
  */
 async function processJsImport(
   moduleName: string,
   modulePath: string,
   resolvedPath: string,
-  baseDir: string,
   env: Environment,
   logger: Logger,
   processedFiles: Set<string>
@@ -704,40 +995,13 @@ async function resolveImportPath(
 ): Promise<string> {
   return performAsync(async () => {
     // Fast path for special schemas and absolute paths
-    if (modulePath.startsWith('npm:') || 
-        modulePath.startsWith('jsr:') || 
-        modulePath.startsWith('http:') || 
-        modulePath.startsWith('https:') ||
-        path.isAbsolute(modulePath)) {
+    if (isSpecialOrAbsolutePath(modulePath)) {
       return modulePath;
     }
     
     // For relative paths, check multiple possible locations in parallel
-    if (modulePath.startsWith('./') || modulePath.startsWith('../')) {
-      try {
-        const resolvedPath = path.resolve(baseDir, modulePath);
-        await Deno.stat(resolvedPath);
-        logger.debug(`Resolved import path: ${modulePath} -> ${resolvedPath}`);
-        return resolvedPath;
-      } catch (_) {
-        // Try other locations if the file doesn't exist at the primary location
-        const alternateLocations = [
-          Deno.cwd(),
-          path.join(Deno.cwd(), 'src'),
-          path.join(Deno.cwd(), 'lib')
-        ];
-        
-        for (const location of alternateLocations) {
-          try {
-            const resolvedPath = path.resolve(location, modulePath);
-            await Deno.stat(resolvedPath);
-            logger.debug(`Resolved import path: ${modulePath} -> ${resolvedPath}`);
-            return resolvedPath;
-          } catch (_) {
-            // Continue to the next location
-          }
-        }
-      }
+    if (isRelativePath(modulePath)) {
+      return await resolveRelativePath(modulePath, baseDir, logger);
     }
     
     // Default resolution if all checks fail
@@ -745,6 +1009,48 @@ async function resolveImportPath(
     logger.debug(`Resolved import path: ${modulePath} -> ${resolvedPath}`);
     return resolvedPath;
   }, `Resolving import path: ${modulePath}`, ImportError, [modulePath, baseDir]);
+}
+
+/**
+ * Resolve a relative path by checking multiple locations
+ */
+async function resolveRelativePath(
+  modulePath: string, 
+  baseDir: string,
+  logger: Logger
+): Promise<string> {
+  // Try primary location first
+  try {
+    const resolvedPath = path.resolve(baseDir, modulePath);
+    await Deno.stat(resolvedPath);
+    logger.debug(`Resolved import path: ${modulePath} -> ${resolvedPath}`);
+    return resolvedPath;
+  } catch (_) {
+    // Continue to alternative locations
+  }
+  
+  // Try alternative locations
+  const alternateLocations = [
+    Deno.cwd(),
+    path.join(Deno.cwd(), 'src'),
+    path.join(Deno.cwd(), 'lib')
+  ];
+  
+  for (const location of alternateLocations) {
+    try {
+      const resolvedPath = path.resolve(location, modulePath);
+      await Deno.stat(resolvedPath);
+      logger.debug(`Resolved import path: ${modulePath} -> ${resolvedPath}`);
+      return resolvedPath;
+    } catch (_) {
+      // Continue to the next location
+    }
+  }
+  
+  // Default resolution if all checks fail
+  const resolvedPath = path.resolve(baseDir, modulePath);
+  logger.debug(`No match found, default resolved import path: ${modulePath} -> ${resolvedPath}`);
+  return resolvedPath;
 }
 
 /**

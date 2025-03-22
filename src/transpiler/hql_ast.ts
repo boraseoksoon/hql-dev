@@ -54,3 +54,43 @@ export function extractImportPath(node: any): string | null {
   }
   return null;
 }
+
+/**
+ * Check if a list node represents a vector-based export
+ */
+export function isVectorExport(list: ListNode): boolean {
+  return (
+    list.elements.length === 2 &&
+    list.elements[0].type === "symbol" &&
+    (list.elements[0] as SymbolNode).name === "export" &&
+    list.elements[1].type === "list"
+  );
+}
+
+/**
+ * Check if a list node represents a vector-based import
+ */
+export function isVectorImport(list: ListNode): boolean {
+  return (
+    list.elements.length === 4 &&
+    list.elements[0].type === "symbol" &&
+    (list.elements[0] as SymbolNode).name === "import" &&
+    list.elements[1].type === "list" &&
+    list.elements[2].type === "symbol" &&
+    (list.elements[2] as SymbolNode).name === "from" &&
+    list.elements[3].type === "literal"
+  );
+}
+
+/**
+ * Check if a list node represents a legacy import
+ */
+export function isLegacyImport(list: ListNode): boolean {
+  return (
+    list.elements.length === 3 &&
+    list.elements[0].type === "symbol" &&
+    (list.elements[0] as SymbolNode).name === "import" &&
+    list.elements[1].type === "symbol" &&
+    list.elements[2].type === "literal"
+  );
+}

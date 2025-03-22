@@ -43,7 +43,6 @@
 (p.age)                ;; => 31
 (p.celebrateBirthday 31)
 
-
 ;;;;;;;;;;; For Loop Examples
 
 ;; Imperative loop:
