@@ -5,7 +5,7 @@ import { parse } from '../s-exp/parser.ts';
 import { Environment } from '../environment.ts';
 import { expandMacros } from '../s-exp/macro.ts';
 import { processImports } from '../s-exp/imports.ts';
-import { convertToHqlAst } from '../s-exp/front-to-middle-connector.ts';
+import { convertToHqlAst } from '../s-exp/macro-reader.ts';
 import { transformAST } from '../transformer.ts';
 import { Logger } from '../logger.ts';
 import { TranspilerError, ParseError, MacroError, ImportError, createErrorReport } from './errors.ts';

@@ -179,7 +179,7 @@ export async function transformAST(
  */
 
 function convertAST(rawAst: any[]): any[] {
-  // Example conversion: map through each node and transform export forms.
+  // Map through each node and transform export forms into standard HQL node types
   return rawAst.map(node => {
     if (
       node.type === "list" &&
@@ -190,19 +190,52 @@ function convertAST(rawAst: any[]): any[] {
       const exportNameNode = node.elements[1];
       const localNode = node.elements[2];
       if (exportNameNode.type === "literal" && typeof exportNameNode.value === "string") {
+        // Instead of creating an ExportNamedDeclaration node type, create a js-export list
+        // which is already handled by the transformation pipeline
         return {
-          type: "ExportNamedDeclaration",
-          specifiers: [
-            {
-              type: "ExportSpecifier",
-              local: localNode,
-              exported: { type: "symbol", name: exportNameNode.value }
-            }
+          type: "list",
+          elements: [
+            { type: "symbol", name: "js-export" },
+            exportNameNode,
+            localNode
           ]
         };
       }
     }
-    // Other conversions can go here...
+    
+    // Also handle vector exports if they exist in the code
+    if (
+      node.type === "ExportNamedDeclaration" && 
+      node.specifiers && 
+      Array.isArray(node.specifiers)
+    ) {
+      // Convert to a series of standard js-export list nodes
+      const exportElements = node.specifiers.map(spec => {
+        return {
+          type: "list",
+          elements: [
+            { type: "symbol", name: "js-export" },
+            { type: "literal", value: spec.exported.name },
+            spec.local
+          ]
+        };
+      });
+      
+      // If there's only one export, return it directly
+      if (exportElements.length === 1) {
+        return exportElements[0];
+      }
+      
+      // If there are multiple exports, create a list of them
+      return {
+        type: "list",
+        elements: [
+          { type: "symbol", name: "do" },
+          ...exportElements
+        ]
+      };
+    }
+    
     return node;
   });
 }

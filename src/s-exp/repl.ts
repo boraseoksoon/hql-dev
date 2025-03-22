@@ -7,7 +7,7 @@ import { expandMacros } from "./macro.ts";
 import { processImports } from "./imports.ts";
 import { sexpToString } from "./types.ts";
 import { Logger } from "../logger.ts";
-import { convertToHqlAst } from "./front-to-middle-connector.ts";
+import { convertToHqlAst } from "./macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 
 /**
