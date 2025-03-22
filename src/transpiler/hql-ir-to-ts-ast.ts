@@ -392,7 +392,7 @@ function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
         object,
         ts.factory.createIdentifier(propertyName)
       );
-    } 
+    }
     // For string literals, either use PropertyAccessExpression or ElementAccessExpression
     else if (node.property.type === IR.IRNodeType.StringLiteral) {
       const propValue = (node.property as IR.IRStringLiteral).value;

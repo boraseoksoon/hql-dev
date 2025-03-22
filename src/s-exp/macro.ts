@@ -1,4 +1,4 @@
-// src/s-exp/macro.ts - Refactored with parallel expansion using web workers
+// src/s-exp/macro.ts - Refactored with improved error handling and performance
 import { 
   SExp, SSymbol, SList, 
   isSymbol, isList, isLiteral, isDefMacro, isUserMacro,
@@ -20,32 +20,8 @@ const MAX_EXPANSION_ITERATIONS = 100;
 // Cache for macro expansion results
 const macroExpansionCache = new Map<string, SExp>();
 
-// Safely check for worker support (with proper feature detection)
-function isWorkerSupported(): boolean {
-  try {
-    // Check if Worker exists and can be instantiated
-    if (typeof Worker === 'undefined') return false;
-    
-    // In Deno, we need to explicitly check if workers are supported
-    // by checking for the presence of Deno.run
-    if (typeof Deno !== 'undefined' && 'version' in Deno) {
-      // Deno environment - return false as we'll use sequential processing
-      // Web Workers in Deno require special permissions and configuration
-      return false;
-    }
-    
-    return true;
-  } catch (e) {
-    // If any error occurs during detection, assume workers aren't supported
-    return false;
-  }
-}
-
-// Flag to determine if workers are available in the current environment
-const WORKERS_AVAILABLE = isWorkerSupported();
-
-// Number of worker threads to use for parallel expansion
-const DEFAULT_WORKER_COUNT = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
+// LRU tracking for cache eviction
+const cacheLRU: string[] = [];
 
 /**
  * Options for macro expansion
@@ -55,15 +31,13 @@ interface MacroExpanderOptions {
   maxExpandDepth?: number;
   currentFile?: string; 
   useCache?: boolean;
-  parallel?: boolean; // Whether to use parallel expansion (default: true)
-  workerCount?: number; // Number of worker threads to use (default: number of CPU cores)
 }
 
 /**
  * Define a user-level macro in the module scope
  */
 export function defineUserMacro(macroForm: SList, filePath: string, env: Environment, logger: Logger): void {
-  perform(() => {
+  return perform(() => {
     // Validate macro definition: (macro name [params...] body...)
     if (macroForm.elements.length < 4) {
       throw new MacroError(
@@ -742,39 +716,9 @@ function processQuasiquotedExpr(expr: SExp, env: Environment, logger: Logger): S
   }, "Error processing quasiquote", MacroError, ['quasiquote']);
 }
 
-// Placeholders for future worker implementation
-// These are deliberately minimized to avoid errors during parsing
-// The actual implementation will be added when proper worker support is implemented
-
-// Worker types - kept as documentation for future implementation
-interface WorkerTypes {
-  INIT: number;
-  EXPAND: number;
-  RESULT: number;
-  ERROR: number;
-}
-
-/**
- * Sequential expansion helper for improved performance
- * This function processes multiple expressions at once to improve locality
- */
-function batchExpand(
-  exprs: SExp[],
-  env: Environment,
-  logger: Logger,
-  options: MacroExpanderOptions,
-  currentDepth: number,
-  maxDepth: number,
-  useCache: boolean
-): SExp[] {
-  return exprs.map(expr => 
-    trampolineExpand(expr, env, logger, options, currentDepth, maxDepth, useCache)
-  );
-}
-
 /**
  * Expand all macros in a list of S-expressions using a fixed-point algorithm
- * with trampolining to prevent stack overflow, and parallel processing for improved performance
+ * with trampolining to prevent stack overflow
  */
 export function expandMacros(
   exprs: SExp[],
@@ -785,11 +729,8 @@ export function expandMacros(
     const logger = new Logger(options.verbose || false);
     const currentFile = options.currentFile;
     const useCache = options.useCache !== false; // Default to using cache
-    const useParallel = options.parallel !== false && WORKERS_AVAILABLE; // Default to parallel if available
-    const workerCount = options.workerCount || DEFAULT_WORKER_COUNT;
     
     logger.debug(`Starting macro expansion on ${exprs.length} expressions${currentFile ? ` in ${currentFile}` : ''}`);
-    logger.debug(`Using ${useParallel ? 'parallel' : 'sequential'} expansion with ${useParallel ? workerCount : 1} threads`);
 
     // If we have a current file, set it in the environment
     if (currentFile) {
@@ -821,9 +762,26 @@ export function expandMacros(
       
       logger.debug(`Macro expansion iteration ${iteration}`);
       
-      // Always use sequential expansion for now - parallel is disabled until we can properly support it
-      // This ensures compatibility across all environments
-      const newExprs = sequentialExpand(currentExprs, env, logger, options, useCache);
+      // Expand all expressions in the current pass
+      const newExprs = currentExprs.map(expr => {
+        const exprStr = useCache ? sexpToString(expr) : "";
+        
+        // If caching is enabled and we have a cache hit, use cached result
+        if (useCache && macroExpansionCache.has(exprStr)) {
+          logger.debug(`Cache hit for expression: ${exprStr.substring(0, 30)}...`);
+          return macroExpansionCache.get(exprStr)!;
+        }
+        
+        // Otherwise expand and update cache
+        const expandedExpr = expandMacroExpression(expr, env, options, 0);
+        
+        // Cache result if caching is enabled
+        if (useCache) {
+          updateCache(exprStr, expandedExpr);
+        }
+        
+        return expandedExpr;
+      });
       
       // Check if anything changed
       const oldStr = currentExprs.map(sexpToString).join('\n');
@@ -858,109 +816,44 @@ export function expandMacros(
 }
 
 /**
- * Sequential expansion of expressions
- * Enhanced with better error handling and detailed logging
+ * Update cache with LRU tracking
  */
-function sequentialExpand(
-  exprs: SExp[],
-  env: Environment,
-  logger: Logger,
-  options: MacroExpanderOptions,
-  useCache: boolean
-): SExp[] {
-  return perform(() => {
-    const depth = options.maxExpandDepth || 100;
-    logger.debug(`Using sequential expansion with depth limit ${depth}`);
-    const results: SExp[] = [];
-    
-    // Process expressions in batches for better performance
-    const batchSize = 10;
-    
-    // First, separate macro definitions (which are skipped) from expandable expressions
-    const macroDefinitions: SExp[] = [];
-    const expandableExprs: SExp[] = [];
-    
-    for (const expr of exprs) {
-      if (isDefMacro(expr) || isUserMacro(expr)) {
-        macroDefinitions.push(expr);
-      } else {
-        expandableExprs.push(expr);
-      }
+function updateCache(key: string, value: SExp): void {
+  // If the cache is full, remove the least recently used item
+  if (macroExpansionCache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = cacheLRU.shift(); // Remove oldest key
+    if (oldestKey) {
+      macroExpansionCache.delete(oldestKey);
     }
-    
-    // Process expandable expressions in batches
-    for (let i = 0; i < expandableExprs.length; i += batchSize) {
-      const batch = expandableExprs.slice(i, i + batchSize);
-      
-      try {
-        // Process batch
-        for (const expr of batch) {
-          try {
-            // Expand each expression
-            results.push(trampolineExpand(expr, env, logger, options, 0, depth, useCache));
-          } catch (error) {
-            logger.error(`Error during expansion: ${error instanceof Error ? error.message : String(error)}`);
-            // Add the original expression on error to avoid breaking the whole expansion
-            results.push(expr);
-          }
-        }
-      } catch (error) {
-        logger.error(`Error processing batch: ${error instanceof Error ? error.message : String(error)}`);
-        // Add all original expressions in the batch on batch error
-        results.push(...batch);
-      }
-    }
-    
-    // Combine macro definitions with expanded expressions
-    return [...macroDefinitions, ...results];
-  }, "Error in sequential expansion");
+  }
+  
+  // Add to cache
+  macroExpansionCache.set(key, value);
+  
+  // Update LRU tracking - remove key if exists then push to end (most recent)
+  const index = cacheLRU.indexOf(key);
+  if (index !== -1) {
+    cacheLRU.splice(index, 1);
+  }
+  cacheLRU.push(key);
 }
 
 /**
- * Parallel expansion of expressions using Web Workers - NOTE: Not currently used
- * This implementation is kept for future use when proper worker support is added
+ * Expand a single S-expression and all its nested expressions
  */
-async function parallelExpand(
-  exprs: SExp[],
-  env: Environment,
-  logger: Logger,
-  options: MacroExpanderOptions,
-  workerCount: number,
-  useCache: boolean
-): Promise<SExp[]> {
-  return perform(async () => {
-    // For now, always fall back to sequential expansion
-    // This function is preserved for future implementation
-    logger.debug("Parallel expansion attempted but not supported in this environment");
-    return sequentialExpand(exprs, env, logger, options, useCache);
-  }, "Error in expansion");
-}
-
-/**
- * Use trampolining to expand an expression, preventing stack overflow
- */
-function trampolineExpand(
+function expandMacroExpression(
   expr: SExp,
   env: Environment,
-  logger: Logger,
   options: MacroExpanderOptions,
-  currentDepth: number,
-  maxDepth: number,
-  useCache: boolean
+  depth: number
 ): SExp {
   return perform(() => {
-    // Stack depth guard
-    if (currentDepth > maxDepth) {
+    // Prevent excessive recursion
+    const maxDepth = options.maxExpandDepth || 100;
+    if (depth > maxDepth) {
+      const logger = new Logger(options.verbose || false);
       logger.warn(`Reached maximum expansion depth (${maxDepth}). Possible recursive macro?`);
       return expr;
-    }
-    
-    // Check cache for this expression if caching is enabled
-    if (useCache) {
-      const exprStr = sexpToString(expr);
-      if (macroExpansionCache.has(exprStr)) {
-        return macroExpansionCache.get(exprStr)!;
-      }
     }
     
     // Only lists can contain macro calls
@@ -993,7 +886,6 @@ function trampolineExpand(
         
         if (!macroFn) {
           // This should not happen given the hasMacro check, but just to be safe
-          logger.warn(`Macro ${op} not found despite hasMacro returning true`);
           return expr;
         }
         
@@ -1001,41 +893,19 @@ function trampolineExpand(
         const args = list.elements.slice(1);
         const expanded = macroFn(args, env);
         
-        // Cache the result if caching is enabled
-        if (useCache) {
-          const exprStr = sexpToString(expr);
-          macroExpansionCache.set(exprStr, expanded);
-          
-          // Prevent unbounded growth of the cache
-          if (macroExpansionCache.size > MAX_CACHE_SIZE) {
-            pruneCache();
-          }
-        }
-        
         // Recursively expand the result with increased depth
-        return trampolineExpand(expanded, env, logger, options, currentDepth + 1, maxDepth, useCache);
+        return expandMacroExpression(expanded, env, options, depth + 1);
       }
     }
     
     // Not a macro call, expand each element recursively
     const expandedElements = list.elements.map(elem => 
-      trampolineExpand(elem, env, logger, options, currentDepth + 1, maxDepth, useCache)
+      expandMacroExpression(elem, env, options, depth + 1)
     );
     
     // Create a new list with the expanded elements
     return createList(...expandedElements);
-  }, "Error in trampolineExpand");
-}
-
-/**
- * Prune the cache when it gets too large
- */
-function pruneCache(): void {
-  // Simple strategy: clear half the cache when it gets too large
-  const keys = [...macroExpansionCache.keys()];
-  for (let i = 0; i < keys.length / 2; i++) {
-    macroExpansionCache.delete(keys[i]);
-  }
+  }, "Error expanding macro expression");
 }
 
 /**
