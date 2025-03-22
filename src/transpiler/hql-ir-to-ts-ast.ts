@@ -1,17 +1,16 @@
-// src/transpiler/hql-ir-to-ts-ast.ts - Enhanced with improved error handling
-
+// src/transpiler/hql-ir-to-ts-ast.ts
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 import { CodeGenError } from "./errors.ts";
 import { Logger } from "../logger.ts";
+import { perform } from "./error-utils.ts";
 
 /**
- * Convert an IR node to a TypeScript statement.
- * Enhanced with error handling for each node type.
+ * Convert an IR node to a TypeScript statement with centralized error handling.
  */
 export function convertIRNode(node: IR.IRNode): ts.Statement | ts.Statement[] | null {
-  try {
+  return perform(() => {
     if (!node) {
       throw new CodeGenError(
         "Cannot convert null or undefined node to TS AST",
@@ -19,10 +18,10 @@ export function convertIRNode(node: IR.IRNode): ts.Statement | ts.Statement[] | 
         node
       );
     }
-    
+
     const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
     logger.debug(`Converting IR node of type ${IR.IRNodeType[node.type]}`);
-    
+
     switch (node.type) {
       case IR.IRNodeType.ObjectExpression:
         return createExpressionStatement(convertObjectExpression(node as IR.IRObjectExpression));
@@ -84,62 +83,32 @@ export function convertIRNode(node: IR.IRNode): ts.Statement | ts.Statement[] | 
           node
         );
     }
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    // Wrap other errors in a CodeGenError with node context
-    const nodeType = node ? IR.IRNodeType[node.type] || String(node.type) : "unknown";
-    throw new CodeGenError(
-      `Failed to convert IR node of type ${nodeType} to TS AST: ${error instanceof Error ? error.message : String(error)}`,
-      nodeType,
-      node
-    );
-  }
+  }, "Failed to convert IR node to TS AST", CodeGenError, [
+    node ? IR.IRNodeType[node.type] || String(node.type) : "unknown",
+    node
+  ]);
 }
 
 /**
- * Convert an object expression with proper error handling
+ * Convert an object expression with error handling via perform.
  */
 function convertObjectExpression(node: IR.IRObjectExpression): ts.ObjectLiteralExpression {
-  try {
+  return perform(() => {
     const properties: ts.PropertyAssignment[] = [];
-    
     for (const prop of node.properties) {
-      try {
-        const key = convertObjectPropertyKey(prop.key);
-        const value = convertIRExpr(prop.value);
-        
-        properties.push(ts.factory.createPropertyAssignment(key, value));
-      } catch (error) {
-        throw new CodeGenError(
-          `Failed to convert object property: ${error instanceof Error ? error.message : String(error)}`,
-          `object property conversion`,
-          prop
-        );
-      }
+      const key = convertObjectPropertyKey(prop.key);
+      const value = convertIRExpr(prop.value);
+      properties.push(ts.factory.createPropertyAssignment(key, value));
     }
-    
     return ts.factory.createObjectLiteralExpression(properties, true);
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    throw new CodeGenError(
-      `Failed to convert object expression: ${error instanceof Error ? error.message : String(error)}`,
-      "object expression",
-      node
-    );
-  }
+  }, "Failed to convert object expression", CodeGenError, ["object expression", node]);
 }
 
 /**
- * Convert an object property key with error handling
+ * Convert an object property key with error handling via perform.
  */
 function convertObjectPropertyKey(node: IR.IRNode): ts.PropertyName {
-  try {
+  return perform(() => {
     switch (node.type) {
       case IR.IRNodeType.StringLiteral: {
         const literal = node as IR.IRStringLiteral;
@@ -152,299 +121,170 @@ function convertObjectPropertyKey(node: IR.IRNode): ts.PropertyName {
       }
       case IR.IRNodeType.Identifier:
         return ts.factory.createIdentifier((node as IR.IRIdentifier).name);
-        
-      default:{
-        // For computed properties (unlikely in this context)
+      default:
         const computed = convertIRExpr(node);
         return ts.factory.createComputedPropertyName(computed);
-      }
     }
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert object property key: ${error instanceof Error ? error.message : String(error)}`,
-      `property key conversion`,
-      node
-    );
-  }
+  }, "Failed to convert object property key", CodeGenError, ["property key conversion", node]);
 }
 
 /**
- * Helper to create expression statements with error handling
+ * Helper to create expression statements with error handling via perform.
  */
 function createExpressionStatement(expr: ts.Expression): ts.ExpressionStatement {
-  try {
+  return perform(() => {
     return ts.factory.createExpressionStatement(expr);
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to create expression statement: ${error instanceof Error ? error.message : String(error)}`,
-      "expression statement creation",
-      expr
-    );
-  }
+  }, "Failed to create expression statement", CodeGenError, ["expression statement creation", expr]);
 }
 
 /**
- * Convert a string literal with error handling
+ * Convert a string literal with error handling via perform.
  */
 function convertStringLiteral(node: IR.IRStringLiteral): ts.StringLiteral {
-  try {
+  return perform(() => {
     return ts.factory.createStringLiteral(node.value);
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert string literal "${node.value}": ${error instanceof Error ? error.message : String(error)}`,
-      "string literal",
-      node
-    );
-  }
+  }, `Failed to convert string literal "${node.value}"`, CodeGenError, ["string literal", node]);
 }
 
 /**
- * Convert a numeric literal with error handling
+ * Convert a numeric literal with error handling via perform.
  */
 function convertNumericLiteral(node: IR.IRNumericLiteral): ts.Expression {
-  try {
-    // For negative numbers, create a prefix unary expression with minus sign
+  return perform(() => {
     if (node.value < 0) {
       return ts.factory.createPrefixUnaryExpression(
         ts.SyntaxKind.MinusToken,
         ts.factory.createNumericLiteral(Math.abs(node.value).toString())
       );
     }
-    
-    // For zero or positive numbers, create a numeric literal directly
     return ts.factory.createNumericLiteral(node.value.toString());
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert numeric literal ${node.value}: ${error instanceof Error ? error.message : String(error)}`,
-      "numeric literal",
-      node
-    );
-  }
+  }, `Failed to convert numeric literal ${node.value}`, CodeGenError, ["numeric literal", node]);
 }
 
 /**
- * Convert a boolean literal with error handling
+ * Convert a boolean literal with error handling via perform.
  */
 function convertBooleanLiteral(node: IR.IRBooleanLiteral): ts.BooleanLiteral {
-  try {
+  return perform(() => {
     return node.value ? ts.factory.createTrue() : ts.factory.createFalse();
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert boolean literal ${node.value}: ${error instanceof Error ? error.message : String(error)}`,
-      "boolean literal",
-      node
-    );
-  }
+  }, `Failed to convert boolean literal ${node.value}`, CodeGenError, ["boolean literal", node]);
 }
 
 /**
- * Convert a null literal with error handling
+ * Convert a null literal with error handling via perform.
  */
 function convertNullLiteral(): ts.NullLiteral {
-  try {
+  return perform(() => {
     return ts.factory.createNull();
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert null literal: ${error instanceof Error ? error.message : String(error)}`,
-      "null literal",
-      null
-    );
-  }
+  }, "Failed to convert null literal", CodeGenError, ["null literal", null]);
 }
 
 /**
- * Convert an identifier with error handling
+ * Convert an identifier with error handling via perform.
  */
 function convertIdentifier(node: IR.IRIdentifier): ts.Identifier {
-  try {
+  return perform(() => {
     const sanitizedName = sanitizeIdentifier(node.name);
     return ts.factory.createIdentifier(sanitizedName);
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert identifier "${node.name}": ${error instanceof Error ? error.message : String(error)}`,
-      "identifier",
-      node
-    );
-  }
+  }, `Failed to convert identifier "${node.name}"`, CodeGenError, ["identifier", node]);
 }
 
 /**
- * Enhanced conversion for call expressions to handle method chains with error handling
+ * Convert a call expression with error handling via perform.
  */
 function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
-  try {
-    // If the callee is a member expression, use specialized handling
+  return perform(() => {
     if (node.callee.type === IR.IRNodeType.MemberExpression) {
       return convertCallExpressionWithMemberCallee(node);
     }
-    
-    // If the callee is itself a call expression, handle chained calls
     if (node.callee.type === IR.IRNodeType.CallExpression) {
-      try {
-        const innerCall = convertCallExpression(node.callee as IR.IRCallExpression);
-        
-        // Create a call using the result of the inner call
-        return ts.factory.createCallExpression(
-          innerCall,
-          undefined,
-          node.arguments.map(arg => convertIRExpr(arg))
-        );
-      } catch (error) {
-        throw new CodeGenError(
-          `Failed to convert nested call expression: ${error instanceof Error ? error.message : String(error)}`,
-          "nested call expression",
-          node.callee
-        );
-      }
-    }
-    
-    // Standard call expression handling
-    const callee = convertIRExpr(node.callee);
-    
-    try {
-      const args = node.arguments.map(arg => convertIRExpr(arg));
-      return ts.factory.createCallExpression(callee, undefined, args);
-    } catch (error) {
-      throw new CodeGenError(
-        `Failed to convert call expression arguments: ${error instanceof Error ? error.message : String(error)}`,
-        "call expression arguments",
-        node.arguments
-      );
-    }
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    throw new CodeGenError(
-      `Failed to convert call expression: ${error instanceof Error ? error.message : String(error)}`,
-      "call expression",
-      node
-    );
-  }
-}
-
-/**
- * Enhanced function to handle call expressions with member expressions as callee
- * with better error handling
- */
-function convertCallExpressionWithMemberCallee(node: IR.IRCallExpression): ts.CallExpression {
-  try {
-    // Check if the callee is a member expression
-    if (node.callee.type === IR.IRNodeType.MemberExpression) {
-      const memberExpr = node.callee as IR.IRMemberExpression;
-      
-      // Create the member expression
-      let tsPropertyAccessExpr: ts.Expression;
-      
-      // Handle the property access
-      if (memberExpr.property.type === IR.IRNodeType.Identifier) {
-        const propName = (memberExpr.property as IR.IRIdentifier).name;
-        
-        tsPropertyAccessExpr = ts.factory.createPropertyAccessExpression(
-          convertIRExpr(memberExpr.object),
-          ts.factory.createIdentifier(propName)
-        );
-      } else {
-        // Fallback for computed property access
-        tsPropertyAccessExpr = ts.factory.createElementAccessExpression(
-          convertIRExpr(memberExpr.object),
-          convertIRExpr(memberExpr.property)
-        );
-      }
-      
-      // Create the method call with the property access as callee
+      const innerCall = convertCallExpression(node.callee as IR.IRCallExpression);
       return ts.factory.createCallExpression(
-        tsPropertyAccessExpr,
+        innerCall,
         undefined,
         node.arguments.map(arg => convertIRExpr(arg))
       );
     }
-    
-    // Fallback to regular call expression
-    return ts.factory.createCallExpression(
-      convertIRExpr(node.callee),
-      undefined,
-      node.arguments.map(arg => convertIRExpr(arg))
-    );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert call expression with member callee: ${error instanceof Error ? error.message : String(error)}`,
-      "call expression with member",
-      node
-    );
-  }
+    const callee = convertIRExpr(node.callee);
+    const args = node.arguments.map(arg => convertIRExpr(arg));
+    return ts.factory.createCallExpression(callee, undefined, args);
+  }, "Failed to convert call expression", CodeGenError, ["call expression", node]);
 }
 
 /**
- * Improved handling for nested member expressions and method chains with error handling
+ * Convert a call expression with a member callee with error handling via perform.
+ */
+function convertCallExpressionWithMemberCallee(node: IR.IRCallExpression): ts.CallExpression {
+  return perform(() => {
+    const memberExpr = node.callee as IR.IRMemberExpression;
+    let tsPropertyAccessExpr: ts.Expression;
+    if (memberExpr.property.type === IR.IRNodeType.Identifier) {
+      const propName = (memberExpr.property as IR.IRIdentifier).name;
+      tsPropertyAccessExpr = ts.factory.createPropertyAccessExpression(
+        convertIRExpr(memberExpr.object),
+        ts.factory.createIdentifier(propName)
+      );
+    } else {
+      tsPropertyAccessExpr = ts.factory.createElementAccessExpression(
+        convertIRExpr(memberExpr.object),
+        convertIRExpr(memberExpr.property)
+      );
+    }
+    return ts.factory.createCallExpression(
+      tsPropertyAccessExpr,
+      undefined,
+      node.arguments.map(arg => convertIRExpr(arg))
+    );
+  }, "Failed to convert call expression with member callee", CodeGenError, ["call expression with member", node]);
+}
+
+/**
+ * Convert a member expression with error handling via perform.
  */
 function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
-  try {
+  return perform(() => {
     const object = convertIRExpr(node.object);
-    
-    // For identifier properties, use PropertyAccessExpression
     if (node.property.type === IR.IRNodeType.Identifier) {
       const propertyName = (node.property as IR.IRIdentifier).name;
-      
-      // Create a property access expression (using dot notation)
       return ts.factory.createPropertyAccessExpression(
         object,
         ts.factory.createIdentifier(propertyName)
       );
-    }
-    // For string literals, either use PropertyAccessExpression or ElementAccessExpression
-    else if (node.property.type === IR.IRNodeType.StringLiteral) {
+    } else if (node.property.type === IR.IRNodeType.StringLiteral) {
       const propValue = (node.property as IR.IRStringLiteral).value;
-      
-      // If the property name is a valid identifier, use property access
       if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propValue)) {
         return ts.factory.createPropertyAccessExpression(
           object,
           ts.factory.createIdentifier(propValue)
         );
-      } 
-      // Otherwise use computed access
-      else {
+      } else {
         return ts.factory.createElementAccessExpression(
           object,
           ts.factory.createStringLiteral(propValue)
         );
       }
-    } 
-    // For all other property types, use ElementAccessExpression
-    else {
+    } else {
       return ts.factory.createElementAccessExpression(
         object,
         convertIRExpr(node.property)
       );
     }
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert member expression: ${error instanceof Error ? error.message : String(error)}`,
-      "member expression",
-      node
-    );
-  }
+  }, "Failed to convert member expression", CodeGenError, ["member expression", node]);
 }
 
 /**
- * Convert a CallMemberExpression with error handling
+ * Convert a call member expression with error handling via perform.
  */
 function convertCallMemberExpression(node: IR.IRCallMemberExpression): ts.CallExpression {
-  try {
-    // Create member expression first
+  return perform(() => {
     let memberExpr: ts.Expression;
-    
     if (node.property.type === IR.IRNodeType.StringLiteral) {
-      // For string literal properties, create a property access with an identifier
       const propName = (node.property as IR.IRStringLiteral).value;
       memberExpr = ts.factory.createPropertyAccessExpression(
         convertIRExpr(node.object),
         ts.factory.createIdentifier(propName)
       );
     } else {
-      // For other types of properties, convert and use element access if needed
       const property = convertIRExpr(node.property);
       if (ts.isStringLiteral(property)) {
         memberExpr = ts.factory.createPropertyAccessExpression(
@@ -457,172 +297,112 @@ function convertCallMemberExpression(node: IR.IRCallMemberExpression): ts.CallEx
           property
         );
       } else {
-        // Fallback to element access
         memberExpr = ts.factory.createElementAccessExpression(
           convertIRExpr(node.object),
           property
         );
       }
     }
-    
-    // Then create the call
     return ts.factory.createCallExpression(
       memberExpr,
       undefined,
       node.arguments.map(arg => convertIRExpr(arg))
     );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert call member expression: ${error instanceof Error ? error.message : String(error)}`,
-      "call member expression",
-      node
-    );
-  }
+  }, "Failed to convert call member expression", CodeGenError, ["call member expression", node]);
 }
 
 /**
- * Convert a NewExpression with error handling
+ * Convert a new expression with error handling via perform.
  */
 function convertNewExpression(node: IR.IRNewExpression): ts.NewExpression {
-  try {
+  return perform(() => {
     return ts.factory.createNewExpression(
       convertIRExpr(node.callee),
       undefined,
       node.arguments.map(arg => convertIRExpr(arg))
     );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert new expression: ${error instanceof Error ? error.message : String(error)}`,
-      "new expression",
-      node
-    );
-  }
+  }, "Failed to convert new expression", CodeGenError, ["new expression", node]);
 }
 
 /**
- * Convert a BinaryExpression with enhanced error handling
+ * Convert a binary expression with error handling via perform.
  */
 function convertBinaryExpression(node: IR.IRBinaryExpression): ts.BinaryExpression {
-  try {
-    // Add null checks for left and right operands
+  return perform(() => {
     if (!node.left || !node.right) {
-      let left: ts.Expression;
-      if (node.left) {
-        left = convertIRExpr(node.left);
-      } else {
-        left = ts.factory.createNumericLiteral("0");
-      }
-      
-      let right: ts.Expression;
-      if (node.right) {
-        right = convertIRExpr(node.right);
-      } else {
-        // For null right operand, create a numeric literal 1 for addition, 0 for other operations
-        const defaultValue = node.operator === "+" ? "1" : "0";
-        right = ts.factory.createNumericLiteral(defaultValue);
-      }
-      
-      // Determine operator - use the existing one if available
-      let operator: ts.BinaryOperator;
-      switch (node.operator || '+') { // Default to '+' if no operator
-        case '+': operator = ts.SyntaxKind.PlusToken; break;
-        case '-': operator = ts.SyntaxKind.MinusToken; break;
-        case '*': operator = ts.SyntaxKind.AsteriskToken; break;
-        case '/': operator = ts.SyntaxKind.SlashToken; break;
-        case '%': operator = ts.SyntaxKind.PercentToken; break;
-        default: operator = ts.SyntaxKind.PlusToken; // Default to addition
-      }
-      
+      const left = node.left ? convertIRExpr(node.left) : ts.factory.createNumericLiteral("0");
+      const right = node.right ? convertIRExpr(node.right) : (node.operator === "+" ? ts.factory.createNumericLiteral("1") : ts.factory.createNumericLiteral("0"));
+      const operator = node.operator ? getBinaryOperator(node.operator) : ts.SyntaxKind.PlusToken;
       return ts.factory.createBinaryExpression(
         left,
         ts.factory.createToken(operator),
         right
       );
     }
-    
-    // Normal case when both operands are present
-    let operator: ts.BinaryOperator;
-    switch (node.operator) {
-      case '+': operator = ts.SyntaxKind.PlusToken; break;
-      case '-': operator = ts.SyntaxKind.MinusToken; break;
-      case '*': operator = ts.SyntaxKind.AsteriskToken; break;
-      case '/': operator = ts.SyntaxKind.SlashToken; break;
-      case '%': operator = ts.SyntaxKind.PercentToken; break;
-      case '===': case '==': operator = ts.SyntaxKind.EqualsEqualsEqualsToken; break;
-      case '!==': case '!=': operator = ts.SyntaxKind.ExclamationEqualsEqualsToken; break;
-      case '>': operator = ts.SyntaxKind.GreaterThanToken; break;
-      case '<': operator = ts.SyntaxKind.LessThanToken; break;
-      case '>=': operator = ts.SyntaxKind.GreaterThanEqualsToken; break;
-      case '<=': operator = ts.SyntaxKind.LessThanEqualsToken; break;
-      case '&&': operator = ts.SyntaxKind.AmpersandAmpersandToken; break;
-      case '||': operator = ts.SyntaxKind.BarBarToken; break;
-      default: 
-        throw new CodeGenError(
-          `Unknown binary operator: ${node.operator}`,
-          "binary expression operator",
-          node
-        );
-    }
-    
+    const operator = getBinaryOperator(node.operator);
     return ts.factory.createBinaryExpression(
       convertIRExpr(node.left),
       ts.factory.createToken(operator),
       convertIRExpr(node.right)
     );
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    throw new CodeGenError(
-      `Failed to convert binary expression with operator "${node.operator}": ${error instanceof Error ? error.message : String(error)}`,
-      "binary expression",
-      node
-    );
+  }, `Failed to convert binary expression with operator "${node.operator}"`, CodeGenError, ["binary expression", node]);
+}
+
+/**
+ * Helper to get the TypeScript binary operator token.
+ */
+function getBinaryOperator(op: string): ts.BinaryOperator {
+  switch (op) {
+    case '+': return ts.SyntaxKind.PlusToken;
+    case '-': return ts.SyntaxKind.MinusToken;
+    case '*': return ts.SyntaxKind.AsteriskToken;
+    case '/': return ts.SyntaxKind.SlashToken;
+    case '%': return ts.SyntaxKind.PercentToken;
+    case '===': case '==': return ts.SyntaxKind.EqualsEqualsEqualsToken;
+    case '!==': case '!=': return ts.SyntaxKind.ExclamationEqualsEqualsToken;
+    case '>': return ts.SyntaxKind.GreaterThanToken;
+    case '<': return ts.SyntaxKind.LessThanToken;
+    case '>=': return ts.SyntaxKind.GreaterThanEqualsToken;
+    case '<=': return ts.SyntaxKind.LessThanEqualsToken;
+    case '&&': return ts.SyntaxKind.AmpersandAmpersandToken;
+    case '||': return ts.SyntaxKind.BarBarToken;
+    default:
+      throw new CodeGenError(`Unknown binary operator: ${op}`, "binary expression operator", op);
   }
 }
 
 /**
- * Convert a UnaryExpression with error handling
+ * Convert a unary expression with error handling via perform.
  */
 function convertUnaryExpression(node: IR.IRUnaryExpression): ts.UnaryExpression {
-  try {
-    let operator: ts.PrefixUnaryOperator;
-    switch (node.operator) {
-      case '+': operator = ts.SyntaxKind.PlusToken; break;
-      case '-': operator = ts.SyntaxKind.MinusToken; break;
-      case '!': operator = ts.SyntaxKind.ExclamationToken; break;
-      case '~': operator = ts.SyntaxKind.TildeToken; break;
-      default: 
-        throw new CodeGenError(
-          `Unknown unary operator: ${node.operator}`,
-          "unary expression operator",
-          node
-        );
-    }
-    
+  return perform(() => {
+    const operator = getUnaryOperator(node.operator);
     return ts.factory.createPrefixUnaryExpression(
       operator,
       convertIRExpr(node.argument)
     );
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    throw new CodeGenError(
-      `Failed to convert unary expression with operator "${node.operator}": ${error instanceof Error ? error.message : String(error)}`,
-      "unary expression",
-      node
-    );
+  }, `Failed to convert unary expression with operator "${node.operator}"`, CodeGenError, ["unary expression", node]);
+}
+
+/**
+ * Helper to get the TypeScript unary operator token.
+ */
+function getUnaryOperator(op: string): ts.PrefixUnaryOperator {
+  switch (op) {
+    case '+': return ts.SyntaxKind.PlusToken;
+    case '-': return ts.SyntaxKind.MinusToken;
+    case '!': return ts.SyntaxKind.ExclamationToken;
+    case '~': return ts.SyntaxKind.TildeToken;
+    default:
+      throw new CodeGenError(`Unknown unary operator: ${op}`, "unary expression operator", op);
   }
 }
 
 /**
- * Convert a ConditionalExpression with error handling
+ * Convert a conditional expression with error handling via perform.
  */
 function convertConditionalExpression(node: IR.IRConditionalExpression): ts.ConditionalExpression {
-  try {
+  return perform(() => {
     return ts.factory.createConditionalExpression(
       convertIRExpr(node.test),
       ts.factory.createToken(ts.SyntaxKind.QuestionToken),
@@ -630,262 +410,147 @@ function convertConditionalExpression(node: IR.IRConditionalExpression): ts.Cond
       ts.factory.createToken(ts.SyntaxKind.ColonToken),
       convertIRExpr(node.alternate)
     );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert conditional expression: ${error instanceof Error ? error.message : String(error)}`,
-      "conditional expression",
-      node
-    );
-  }
+  }, "Failed to convert conditional expression", CodeGenError, ["conditional expression", node]);
 }
 
 /**
- * Convert an ArrayExpression with error handling
+ * Convert an array expression with error handling via perform.
  */
 function convertArrayExpression(node: IR.IRArrayExpression): ts.ArrayLiteralExpression {
-  try {
+  return perform(() => {
     return ts.factory.createArrayLiteralExpression(
       node.elements.map(elem => convertIRExpr(elem)),
-      false // multiline
+      false
     );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert array expression: ${error instanceof Error ? error.message : String(error)}`,
-      "array expression",
-      node
-    );
-  }
+  }, "Failed to convert array expression", CodeGenError, ["array expression", node]);
 }
 
 /**
- * Convert a FunctionExpression with error handling
+ * Convert a function expression with error handling via perform.
  */
 function convertFunctionExpression(node: IR.IRFunctionExpression): ts.FunctionExpression {
-  try {
-    // Convert parameters, handling rest parameters (marked with ... prefix)
+  return perform(() => {
     const parameters = node.params.map(param => {
-      try {
-        // Check if this is a rest parameter (name starts with '...')
-        if (param.name && param.name.startsWith('...')) {
-          const paramName = param.name.slice(3); // Remove the '...' prefix
-          const dotDotDotToken = ts.factory.createToken(ts.SyntaxKind.DotDotDotToken);
-          const identifier = ts.factory.createIdentifier(paramName);
-          
-          // Create a parameter with dot-dot-dot token for rest parameters
-          // Using the minimal 3-argument form
-          return ts.factory.createParameterDeclaration(
-            undefined, // modifiers
-            dotDotDotToken,
-            identifier
-          );
-        }
-
-        // Regular parameters - use the minimal form
+      if (param.name && param.name.startsWith('...')) {
+        const paramName = param.name.slice(3);
         return ts.factory.createParameterDeclaration(
-          undefined, // modifiers 
-          undefined, // dotDotDotToken
-          convertIdentifier(param)
-        );
-      } catch (error) {
-        throw new CodeGenError(
-          `Failed to convert function parameter: ${error instanceof Error ? error.message : String(error)}`,
-          "function parameter",
-          param
+          undefined,
+          ts.factory.createToken(ts.SyntaxKind.DotDotDotToken),
+          ts.factory.createIdentifier(paramName)
         );
       }
+      return ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        convertIdentifier(param)
+      );
     });
-    
-    try {
-      // Create the function expression with the converted parameters and body
-      return ts.factory.createFunctionExpression(
-        undefined, // modifiers
-        undefined, // asteriskToken
-        undefined, // name
-        undefined, // typeParameters
-        parameters,
-        undefined, // type
-        convertBlockStatement(node.body)
-      );
-    } catch (error) {
-      throw new CodeGenError(
-        `Failed to create function expression: ${error instanceof Error ? error.message : String(error)}`,
-        "function expression creation",
-        node
-      );
-    }
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    throw new CodeGenError(
-      `Failed to convert function expression: ${error instanceof Error ? error.message : String(error)}`,
-      "function expression",
-      node
+    return ts.factory.createFunctionExpression(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      parameters,
+      undefined,
+      convertBlockStatement(node.body)
     );
-  }
+  }, "Failed to convert function expression", CodeGenError, ["function expression", node]);
 }
 
 /**
- * Convert a VariableDeclaration with error handling
+ * Convert a variable declaration with error handling via perform.
  */
 function convertVariableDeclaration(node: IR.IRVariableDeclaration): ts.VariableStatement {
-  try {
-    let nodeFlags: ts.NodeFlags;
-    switch (node.kind) {
-      case "const": nodeFlags = ts.NodeFlags.Const; break;
-      case "let": nodeFlags = ts.NodeFlags.Let; break;
-      case "var": nodeFlags = ts.NodeFlags.None; break;
-      default: 
-        throw new CodeGenError(
-          `Unknown variable declaration kind: ${node.kind}`,
-          "variable declaration kind",
-          node
-        );
-    }
-    
+  return perform(() => {
+    const nodeFlags = getVariableNodeFlags(node.kind);
     const declarations = node.declarations.map(decl => {
-      try {
-        return ts.factory.createVariableDeclaration(
-          convertIdentifier(decl.id),
-          undefined,
-          undefined,
-          convertIRExpr(decl.init)
-        );
-      } catch (error) {
-        throw new CodeGenError(
-          `Failed to convert variable declarator: ${error instanceof Error ? error.message : String(error)}`,
-          "variable declarator",
-          decl
-        );
-      }
+      return ts.factory.createVariableDeclaration(
+        convertIdentifier(decl.id),
+        undefined,
+        undefined,
+        convertIRExpr(decl.init)
+      );
     });
-    
     return ts.factory.createVariableStatement(
       undefined,
       ts.factory.createVariableDeclarationList(declarations, nodeFlags)
     );
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    throw new CodeGenError(
-      `Failed to convert variable declaration: ${error instanceof Error ? error.message : String(error)}`,
-      "variable declaration",
-      node
-    );
+  }, "Failed to convert variable declaration", CodeGenError, ["variable declaration", node]);
+}
+
+/**
+ * Helper to get node flags for variable declarations.
+ */
+function getVariableNodeFlags(kind: string): ts.NodeFlags {
+  switch (kind) {
+    case "const": return ts.NodeFlags.Const;
+    case "let": return ts.NodeFlags.Let;
+    case "var": return ts.NodeFlags.None;
+    default:
+      throw new CodeGenError(`Unknown variable declaration kind: ${kind}`, "variable declaration kind", kind);
   }
 }
 
 /**
- * Convert a FunctionDeclaration with error handling
+ * Convert a function declaration with error handling via perform.
  */
 function convertFunctionDeclaration(node: IR.IRFunctionDeclaration): ts.FunctionDeclaration {
-  try {
+  return perform(() => {
     const params = node.params.map(param => {
-      try {
-        return ts.factory.createParameterDeclaration(
-          undefined,
-          undefined,
-          convertIdentifier(param)
-        );
-      } catch (error) {
-        throw new CodeGenError(
-          `Failed to convert function parameter: ${error instanceof Error ? error.message : String(error)}`,
-          "function declaration parameter",
-          param
-        );
-      }
+      return ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        convertIdentifier(param)
+      );
     });
-    
     return ts.factory.createFunctionDeclaration(
-      undefined, // modifiers
-      undefined, // asteriskToken
+      undefined,
+      undefined,
       convertIdentifier(node.id),
-      undefined, // typeParameters
+      undefined,
       params,
-      undefined, // type
+      undefined,
       convertBlockStatement(node.body)
     );
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    throw new CodeGenError(
-      `Failed to convert function declaration: ${error instanceof Error ? error.message : String(error)}`,
-      "function declaration",
-      node
-    );
-  }
+  }, "Failed to convert function declaration", CodeGenError, ["function declaration", node]);
 }
 
 /**
- * Convert a ReturnStatement with error handling
+ * Convert a return statement with error handling via perform.
  */
 function convertReturnStatement(node: IR.IRReturnStatement): ts.ReturnStatement {
-  try {
+  return perform(() => {
     return ts.factory.createReturnStatement(
       node.argument ? convertIRExpr(node.argument) : undefined
     );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert return statement: ${error instanceof Error ? error.message : String(error)}`,
-      "return statement",
-      node
-    );
-  }
+  }, "Failed to convert return statement", CodeGenError, ["return statement", node]);
 }
 
 /**
- * Convert a BlockStatement with error handling
+ * Convert a block statement with error handling via perform.
  */
 function convertBlockStatement(node: IR.IRBlockStatement): ts.Block {
-  try {
+  return perform(() => {
     const statements: ts.Statement[] = [];
-    
     for (const stmt of node.body) {
-      try {
-        const converted = convertIRNode(stmt);
-        if (Array.isArray(converted)) {
-          statements.push(...converted);
-        } else if (converted) {
-          statements.push(converted);
-        }
-      } catch (error) {
-        throw new CodeGenError(
-          `Failed to convert statement in block: ${error instanceof Error ? error.message : String(error)}`,
-          "block statement item",
-          stmt
-        );
+      const converted = convertIRNode(stmt);
+      if (Array.isArray(converted)) {
+        statements.push(...converted);
+      } else if (converted) {
+        statements.push(converted);
       }
     }
-    
     return ts.factory.createBlock(statements, true);
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    throw new CodeGenError(
-      `Failed to convert block statement: ${error instanceof Error ? error.message : String(error)}`,
-      "block statement",
-      node
-    );
-  }
+  }, "Failed to convert block statement", CodeGenError, ["block statement", node]);
 }
 
 /**
- * Convert an ImportDeclaration with error handling
+ * Convert an import declaration with error handling via perform.
  */
 function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclaration {
-  try {
-    // If there are no specifiers or only a namespace import, 
-    // create a namespace import (import * as name from 'source')
+  return perform(() => {
     if (!node.specifiers || node.specifiers.length === 0) {
       const moduleName = createModuleVariableName(node.source);
-      
       return ts.factory.createImportDeclaration(
         undefined,
         ts.factory.createImportClause(
@@ -898,31 +563,15 @@ function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclar
         ts.factory.createStringLiteral(node.source)
       );
     }
-    
-    // Create named imports for all specifiers
     const namedImports = node.specifiers.map(spec => {
-      try {
-        // Check if we need an alias (if imported and local names differ)
-        const importedName = spec.imported.name;
-        const localName = spec.local.name;
-        
-        return ts.factory.createImportSpecifier(
-          false,
-          importedName !== localName ? 
-            ts.factory.createIdentifier(importedName) : 
-            undefined,
-          ts.factory.createIdentifier(localName)
-        );
-      } catch (error) {
-        throw new CodeGenError(
-          `Failed to convert import specifier: ${error instanceof Error ? error.message : String(error)}`,
-          "import specifier",
-          spec
-        );
-      }
+      const importedName = spec.imported.name;
+      const localName = spec.local.name;
+      return ts.factory.createImportSpecifier(
+        false,
+        importedName !== localName ? ts.factory.createIdentifier(importedName) : undefined,
+        ts.factory.createIdentifier(localName)
+      );
     });
-    
-    // Create the import declaration with named imports
     return ts.factory.createImportDeclaration(
       undefined,
       ts.factory.createImportClause(
@@ -932,29 +581,16 @@ function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclar
       ),
       ts.factory.createStringLiteral(node.source)
     );
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    throw new CodeGenError(
-      `Failed to convert import declaration: ${error instanceof Error ? error.message : String(error)}`,
-      "import declaration",
-      node
-    );
-  }
+  }, "Failed to convert import declaration", CodeGenError, ["import declaration", node]);
 }
 
 /**
- * Convert a JsImportReference with error handling
+ * Convert a JS import reference with error handling via perform.
  */
 function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] {
-  try {
-    // Generate a unique internal module name based on the user-provided name
+  return perform(() => {
     const importName = sanitizeIdentifier(node.name);
     const internalModuleName = `${importName}Module`;
-    
-    // Create import declaration
     const importDecl = ts.factory.createImportDeclaration(
       undefined,
       ts.factory.createImportClause(
@@ -966,12 +602,8 @@ function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] 
       ),
       ts.factory.createStringLiteral(node.source)
     );
-    
-    // Create a simpler implementation using a function
-    // This is more readable and maintainable than the complex Object.assign approach
     const functionBody = ts.factory.createBlock(
       [
-        // Create a wrapper function that will preserve the 'this' binding
         ts.factory.createVariableStatement(
           undefined,
           ts.factory.createVariableDeclarationList(
@@ -981,7 +613,6 @@ function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] 
                 undefined,
                 undefined,
                 ts.factory.createConditionalExpression(
-                  // Check if default export exists
                   ts.factory.createBinaryExpression(
                     ts.factory.createPropertyAccessExpression(
                       ts.factory.createIdentifier(internalModuleName),
@@ -991,13 +622,11 @@ function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] 
                     ts.factory.createIdentifier("undefined")
                   ),
                   ts.factory.createToken(ts.SyntaxKind.QuestionToken),
-                  // If default exists, use it
                   ts.factory.createPropertyAccessExpression(
                     ts.factory.createIdentifier(internalModuleName),
                     ts.factory.createIdentifier("default")
                   ),
                   ts.factory.createToken(ts.SyntaxKind.ColonToken),
-                  // If no default, use empty object
                   ts.factory.createObjectLiteralExpression([], false)
                 )
               )
@@ -1005,8 +634,6 @@ function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] 
             ts.NodeFlags.Const
           )
         ),
-        
-        // Copy all named exports to the wrapper
         ts.factory.createForOfStatement(
           undefined,
           ts.factory.createVariableDeclarationList(
@@ -1014,15 +641,15 @@ function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] 
               ts.factory.createVariableDeclaration(
                 ts.factory.createArrayBindingPattern([
                   ts.factory.createBindingElement(
-                    undefined, 
-                    undefined, 
-                    ts.factory.createIdentifier("key"), 
+                    undefined,
+                    undefined,
+                    ts.factory.createIdentifier("key"),
                     undefined
                   ),
                   ts.factory.createBindingElement(
-                    undefined, 
-                    undefined, 
-                    ts.factory.createIdentifier("value"), 
+                    undefined,
+                    undefined,
+                    ts.factory.createIdentifier("value"),
                     undefined
                   )
                 ]),
@@ -1065,16 +692,12 @@ function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] 
             true
           )
         ),
-        
-        // Return the enhanced wrapper
         ts.factory.createReturnStatement(
           ts.factory.createIdentifier("wrapper")
         )
       ],
       true
     );
-    
-    // Create a self-executing function expression
     const iife = ts.factory.createCallExpression(
       ts.factory.createParenthesizedExpression(
         ts.factory.createFunctionExpression(
@@ -1090,8 +713,6 @@ function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] 
       undefined,
       []
     );
-    
-    // Create the assignment with the IIFE
     const defaultAssignment = ts.factory.createVariableStatement(
       undefined,
       ts.factory.createVariableDeclarationList(
@@ -1106,71 +727,38 @@ function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] 
         ts.NodeFlags.Const
       )
     );
-    
     return [importDecl, defaultAssignment];
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert JS import reference: ${error instanceof Error ? error.message : String(error)}`,
-      "JS import reference",
-      node
-    );
-  }
+  }, "Failed to convert JS import reference", CodeGenError, ["JS import reference", node]);
 }
 
 /**
- * Convert an ExportNamedDeclaration with error handling
+ * Convert an export named declaration with error handling via perform.
  */
 function convertExportNamedDeclaration(node: IR.IRExportNamedDeclaration): ts.ExportDeclaration {
-  try {
+  return perform(() => {
     const specifiers = node.specifiers.map(spec => {
-      try {
-        return ts.factory.createExportSpecifier(
-          false,
-          spec.local.name !== spec.exported.name ? 
-            ts.factory.createIdentifier(spec.local.name) : 
-            undefined,
-          ts.factory.createIdentifier(spec.exported.name)
-        );
-      } catch (error) {
-        throw new CodeGenError(
-          `Failed to convert export specifier: ${error instanceof Error ? error.message : String(error)}`,
-          "export specifier",
-          spec
-        );
-      }
+      return ts.factory.createExportSpecifier(
+        false,
+        spec.local.name !== spec.exported.name ? ts.factory.createIdentifier(spec.local.name) : undefined,
+        ts.factory.createIdentifier(spec.exported.name)
+      );
     });
-    
     return ts.factory.createExportDeclaration(
       undefined,
       false,
       ts.factory.createNamedExports(specifiers),
       undefined
     );
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    throw new CodeGenError(
-      `Failed to convert export named declaration: ${error instanceof Error ? error.message : String(error)}`,
-      "export named declaration",
-      node
-    );
-  }
+  }, "Failed to convert export named declaration", CodeGenError, ["export named declaration", node]);
 }
 
 /**
- * Convert an ExportVariableDeclaration with error handling
+ * Convert an export variable declaration with error handling via perform.
  */
 function convertExportVariableDeclaration(node: IR.IRExportVariableDeclaration): ts.Statement[] {
-  try {
-    // First create the variable declaration
+  return perform(() => {
     const varDecl = convertVariableDeclaration(node.declaration);
-    
-    // Get the variable name from the first declaration
     const varName = node.declaration.declarations[0].id.name;
-    
-    // Create the export declaration
     const exportDecl = ts.factory.createExportDeclaration(
       undefined,
       false,
@@ -1183,29 +771,18 @@ function convertExportVariableDeclaration(node: IR.IRExportVariableDeclaration):
       ]),
       undefined
     );
-    
     return [varDecl, exportDecl];
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert export variable declaration: ${error instanceof Error ? error.message : String(error)}`,
-      "export variable declaration",
-      node
-    );
-  }
+  }, "Failed to convert export variable declaration", CodeGenError, ["export variable declaration", node]);
 }
 
 /**
- * Convert an InteropIIFE with error handling
+ * Convert an interop IIFE with error handling via perform.
  */
 function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
-  try {
-    // Create temporary variables for the object and member
+  return perform(() => {
     const objVar = ts.factory.createIdentifier("_obj");
     const memberVar = ts.factory.createIdentifier("_member");
-    
-    // Create the function body with correct variable references
     const statements: ts.Statement[] = [
-      // const _obj = object;
       ts.factory.createVariableStatement(
         undefined,
         ts.factory.createVariableDeclarationList(
@@ -1218,8 +795,6 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
           ts.NodeFlags.Const
         )
       ),
-      
-      // const _member = _obj[property];
       ts.factory.createVariableStatement(
         undefined,
         ts.factory.createVariableDeclarationList(
@@ -1235,8 +810,6 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
           ts.NodeFlags.Const
         )
       ),
-      
-      // return typeof _member === "function" ? _member.call(_obj) : _member;
       ts.factory.createReturnStatement(
         ts.factory.createConditionalExpression(
           ts.factory.createBinaryExpression(
@@ -1255,8 +828,6 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
         )
       )
     ];
-    
-    // Return the IIFE
     return ts.factory.createCallExpression(
       ts.factory.createFunctionExpression(
         undefined,
@@ -1270,20 +841,14 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
       undefined,
       []
     );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert interop IIFE: ${error instanceof Error ? error.message : String(error)}`,
-      "interop IIFE",
-      node
-    );
-  }
+  }, "Failed to convert interop IIFE", CodeGenError, ["interop IIFE", node]);
 }
 
 /**
- * Convert a CommentBlock with error handling
+ * Convert a comment block with error handling via perform.
  */
 function convertCommentBlock(node: IR.IRCommentBlock): ts.EmptyStatement {
-  try {
+  return perform(() => {
     const statement = ts.factory.createEmptyStatement();
     ts.addSyntheticLeadingComment(
       statement,
@@ -1292,44 +857,29 @@ function convertCommentBlock(node: IR.IRCommentBlock): ts.EmptyStatement {
       true
     );
     return statement;
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert comment block: ${error instanceof Error ? error.message : String(error)}`,
-      "comment block",
-      node
-    );
-  }
+  }, "Failed to convert comment block", CodeGenError, ["comment block", node]);
 }
 
 /**
- * Convert a Raw node with error handling
+ * Convert a raw node with error handling via perform.
  */
 function convertRaw(node: IR.IRRaw): ts.ExpressionStatement {
-  try {
-    // Create a raw code block as a non-executable string
+  return perform(() => {
     return ts.factory.createExpressionStatement(
       ts.factory.createIdentifier(node.code)
     );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert raw code: ${error instanceof Error ? error.message : String(error)}`,
-      "raw code",
-      node
-    );
-  }
+  }, "Failed to convert raw code", CodeGenError, ["raw code", node]);
 }
 
 /**
- * Convert an IR Node to a TypeScript Expression with error handling
+ * Convert an IR Node to a TypeScript Expression with error handling via perform.
  */
 function convertIRExpr(node: IR.IRNode): ts.Expression {
-  try {
-    // Add null check to prevent "Cannot read properties of null" errors
+  return perform(() => {
     if (!node) {
       console.warn("Null node passed to convertIRExpr, returning 'undefined'");
       return ts.factory.createIdentifier("undefined");
     }
-    
     switch (node.type) {
       case IR.IRNodeType.ObjectExpression:
         return convertObjectExpression(node as IR.IRObjectExpression);
@@ -1370,54 +920,33 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
           node
         );
     }
-  } catch (error) {
-    if (error instanceof CodeGenError) {
-      throw error; // Re-throw CodeGenError directly
-    }
-    
-    const nodeType = node ? IR.IRNodeType[node.type] || String(node.type) : "unknown";
-    throw new CodeGenError(
-      `Failed to convert IR node to expression: ${error instanceof Error ? error.message : String(error)}`,
-      nodeType,
-      node
-    );
-  }
+  }, "Failed to convert IR node to expression", CodeGenError, [
+    node ? IR.IRNodeType[node.type] || String(node.type) : "unknown",
+    node
+  ]);
 }
 
 /**
- * Create a module variable name from the source path
+ * Create a module variable name from the source path with error handling via perform.
  */
 function createModuleVariableName(source: string): string {
-  try {
-    // Handle npm: and jsr: prefixes
+  return perform(() => {
     let cleanSource = source;
     if (cleanSource.startsWith("npm:")) {
       cleanSource = cleanSource.substring(4);
     } else if (cleanSource.startsWith("jsr:")) {
       cleanSource = cleanSource.substring(4);
     }
-    
-    // Handle scoped packages (e.g., @nothing628/chalk)
     if (cleanSource.includes('@') && cleanSource.includes('/')) {
       const parts = cleanSource.split('/');
-      // For scoped packages, use the last part (e.g., "chalk" from "@nothing628/chalk")
       cleanSource = parts[parts.length - 1];
     } else if (cleanSource.includes('/')) {
       const parts = cleanSource.split('/');
       cleanSource = parts[parts.length - 1];
     }
-    
-    // Clean up the name
     let baseName = cleanSource.replace(/\.(js|ts|mjs|cjs)$/, '');
     baseName = baseName.replace(/[^a-zA-Z0-9]+(.)/g, (_, c) => c.toUpperCase());
     baseName = baseName.replace(/^[^a-zA-Z_$]/, '_');
-    
     return `${baseName}Module`;
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to create module variable name: ${error instanceof Error ? error.message : String(error)}`,
-      "module variable name creation",
-      source
-    );
-  }
+  }, "Failed to create module variable name", CodeGenError, ["module variable name creation", source]);
 }
