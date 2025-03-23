@@ -123,3 +123,14 @@
   `(if (= (js-get ~coll "length") 0)
        null
        ~coll))
+
+(defmacro mapfilter (pred mapper coll)
+  `(do
+     (import [map, filter] from "./lib/stdlib/stdlib.hql")
+     (map ~mapper (filter ~pred ~coll))))
+
+;; Remote module macro using js-import for lodash
+(defmacro chunk-array (array size)
+  `(do
+     (import [_] from "npm:lodash")
+     (_.chunk ~array ~size)))

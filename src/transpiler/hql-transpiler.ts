@@ -9,7 +9,7 @@ import { convertToHqlAst } from '../s-exp/macro-reader.ts';
 import { transformAST } from '../transformer.ts';
 import { Logger } from '../logger.ts';
 import { TranspilerError, ParseError, MacroError, ImportError, createErrorReport } from './errors.ts';
-import { perform, performAsync } from "./error-utils.ts";
+import { performAsync } from "./error-utils.ts";
 
 // Environment singleton for consistent state
 let globalEnv: Environment | null = null;
