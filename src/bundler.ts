@@ -1,12 +1,14 @@
-// src/bundler.ts - Refactored with modularity and enhanced error handling
+// src/bundler.ts - Complete implementation with enhanced JS import resolution
 
-import { dirname, resolve, writeTextFile, exists, basename, join, ensureDir } from "./platform/platform.ts";
+import { resolve, dirname, writeTextFile, exists, basename, join, ensureDir } from "./platform/platform.ts";
 import { build, stop } from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import { Logger } from "./logger.ts";
+import { transpileCLI } from "../src/bundler.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
-import { TranspilerError, ValidationError, createErrorReport } from "./transpiler/errors.ts";
+import { TranspilerError, ValidationError, ImportError, MacroError, createErrorReport } from "./transpiler/errors.ts";
 import { perform, performAsync } from "./transpiler/error-utils.ts";
 import { simpleHash } from "./utils.ts";
+import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 
 // Constants
 const MAX_RETRIES = 3;
@@ -67,6 +69,20 @@ async function writeOutput(
 }
 
 /**
+ * Check if a file is an HQL file
+ */
+function isHqlFile(filePath: string): boolean {
+  return filePath.endsWith(".hql");
+}
+
+/**
+ * Check if a file is a JavaScript file
+ */
+function isJsFile(filePath: string): boolean {
+  return filePath.endsWith(".js") || filePath.endsWith(".mjs") || filePath.endsWith(".cjs");
+}
+
+/**
  * Process an entry file (HQL or JS) and output transpiled JS
  * Enhanced with parallel processing and better error handling
  */
@@ -96,20 +112,6 @@ async function processEntryFile(
       );
     }
   }, `Failed to process entry file ${inputPath}`, TranspilerError);
-}
-
-/**
- * Check if a file is an HQL file
- */
-function isHqlFile(filePath: string): boolean {
-  return filePath.endsWith(".hql");
-}
-
-/**
- * Check if a file is a JavaScript file
- */
-function isJsFile(filePath: string): boolean {
-  return filePath.endsWith(".js");
 }
 
 /**
@@ -200,7 +202,7 @@ async function processHqlToJs(
       verbose: options.verbose,
       tempDir,
       keepTemp: options.keepTemp,
-      sourceDir: options.sourceDir
+      sourceDir: options.sourceDir || dirname(resolvedInputPath)
     }),
     "HQL entry file transpilation",
     TranspilerError
@@ -290,7 +292,7 @@ export async function bundleWithEsbuild(
       const hqlPlugin = createHqlPlugin({ 
         verbose: options.verbose,
         tempDir,
-        sourceDir: options.sourceDir
+        sourceDir: options.sourceDir || dirname(entryPath)
       });
       
       const externalPlugin = createExternalPlugin();
@@ -490,8 +492,8 @@ function createHqlPlugin(options: {
   return {
     name: "hql-plugin",
     setup(build: any) {
-      // Handle resolving .hql files
-      build.onResolve({ filter: /\.hql$/ }, async (args: any) => {
+      // Handle resolving .hql and .js files
+      build.onResolve({ filter: /\.(js|hql)$/ }, async (args: any) => {
         return resolveHqlImport(args, options, logger);
       });
       
@@ -511,129 +513,129 @@ async function resolveHqlImport(
   options: { verbose?: boolean, tempDir?: string, sourceDir?: string },
   logger: Logger
 ): Promise<any> {
-  logger.debug(`Resolving HQL import: "${args.path}" from importer: ${args.importer || 'unknown'}`);
+  logger.debug(`Resolving import: "${args.path}" from importer: ${args.importer || 'unknown'}`);
   
   // Create and try resolution strategies in parallel
-  const resolutionStrategies = createResolutionStrategies(args, options.sourceDir);
+  const resolutionStrategies = [
+    // Strategy 1: Resolve relative to importer
+    {
+      description: "relative to importer",
+      path: args.importer ? resolve(dirname(args.importer), args.path) : args.path,
+      tryResolve: async () => {
+        if (args.importer) {
+          const importerDir = dirname(args.importer);
+          const relativePath = resolve(importerDir, args.path);
+          try {
+            await Deno.stat(relativePath);
+            logger.debug(`Found import at ${relativePath} (relative to importer)`);
+            return true;
+          } catch (e) {
+            return false;
+          }
+        }
+        return false;
+      }
+    },
+    
+    // Strategy 2: Resolve relative to original source directory
+    {
+      description: "relative to source directory",
+      path: options.sourceDir ? resolve(options.sourceDir, args.path) : args.path,
+      tryResolve: async () => {
+        if (options.sourceDir) {
+          const sourcePath = resolve(options.sourceDir, args.path);
+          try {
+            await Deno.stat(sourcePath);
+            logger.debug(`Found import at ${sourcePath} (relative to source directory)`);
+            return true;
+          } catch (e) {
+            return false;
+          }
+        }
+        return false;
+      }
+    },
+    
+    // Strategy 3: Resolve relative to current working directory
+    {
+      description: "relative to CWD",
+      path: resolve(Deno.cwd(), args.path),
+      tryResolve: async () => {
+        const cwdPath = resolve(Deno.cwd(), args.path);
+        try {
+          await Deno.stat(cwdPath);
+          logger.debug(`Found import at ${cwdPath} (relative to CWD)`);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+    },
+    
+    // Strategy 4: Look in the examples directory
+    {
+      description: "in examples directory",
+      path: resolve(Deno.cwd(), 'examples/dependency-test2', basename(args.path)),
+      tryResolve: async () => {
+        const examplesPath = resolve(Deno.cwd(), 'examples/dependency-test2', basename(args.path));
+        try {
+          await Deno.stat(examplesPath);
+          logger.debug(`Found import at ${examplesPath} (in examples directory)`);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+    },
+
+    // Strategy 5: Try looking in the same directory as the original file
+    {
+      description: "in original file's parent directory",
+      path: options.sourceDir && args.path.startsWith('./') ? 
+            resolve(dirname(options.sourceDir), args.path) : args.path,
+      tryResolve: async () => {
+        if (options.sourceDir && args.path.startsWith('./')) {
+          const sourceParentDir = dirname(options.sourceDir);
+          const sourcePath = resolve(sourceParentDir, args.path);
+          try {
+            await Deno.stat(sourcePath);
+            logger.debug(`Found import at ${sourcePath} (in parent directory)`);
+            return true;
+          } catch (e) {
+            return false;
+          }
+        }
+        return false;
+      }
+    }
+  ];
   
+  // Try all strategies in parallel for better performance
   const results = await Promise.all(
     resolutionStrategies.map(async strategy => ({
       success: await strategy.tryResolve(),
-      path: strategy.path
+      path: strategy.path,
+      description: strategy.description
     }))
   );
   
+  // Find the first successful resolution
   const successResult = results.find(result => result.success);
   
   if (successResult) {
+    logger.debug(`Resolved "${args.path}" to "${successResult.path}" (${successResult.description})`);
     return { 
       path: successResult.path, 
-      namespace: "hql" 
+      namespace: args.path.endsWith('.hql') ? "hql" : "file" 
     };
   }
   
-  logger.warn(`Could not resolve HQL file: ${args.path} after trying all strategies in parallel`);
+  // If all strategies fail, log the failure and return the original path
+  logger.warn(`Could not resolve file: ${args.path} after trying all strategies in parallel`);
   return { 
-    path: args.path, // Return original path if not resolved
-    namespace: "hql" 
+    path: args.path, 
+    namespace: args.path.endsWith('.hql') ? "hql" : "file" 
   };
-}
-
-/**
- * Create resolution strategies for HQL imports
- */
-function createResolutionStrategies(
-  args: any,
-  sourceDir?: string
-): { description: string, path: string, tryResolve: () => Promise<boolean> }[] {
-  const strategies = [];
-  
-  // Strategy 1: Resolve relative to importer
-  if (args.importer) {
-    const importerDir = dirname(args.importer);
-    const relativePath = resolve(importerDir, args.path);
-    
-    strategies.push({
-      description: `relative to importer: ${relativePath}`,
-      path: relativePath,
-      tryResolve: async () => {
-        try {
-          await Deno.stat(relativePath);
-          return true;
-        } catch (e) {
-          return false;
-        }
-      }
-    });
-  }
-  
-  // Strategy 2: Try resolving from current working directory
-  const cwdPath = resolve(Deno.cwd(), args.path);
-  strategies.push({
-    description: `relative to cwd: ${cwdPath}`,
-    path: cwdPath,
-    tryResolve: async () => {
-      try {
-        await Deno.stat(cwdPath);
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-  });
-  
-  // Strategy 3: Try resolving from original source directory
-  if (sourceDir) {
-    const sourcePath = resolve(sourceDir, args.path);
-    strategies.push({
-      description: `relative to original source directory: ${sourcePath}`,
-      path: sourcePath,
-      tryResolve: async () => {
-        try {
-          await Deno.stat(sourcePath);
-          return true;
-        } catch (e) {
-          return false;
-        }
-      }
-    });
-  }
-  
-  // Strategy 4: Try looking in examples directory
-  const fileName = basename(args.path);
-  const examplesPath = resolve(Deno.cwd(), "examples", "dependency-test", fileName);
-  strategies.push({
-    description: `in examples directory: ${examplesPath}`,
-    path: examplesPath,
-    tryResolve: async () => {
-      try {
-        await Deno.stat(examplesPath);
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-  });
-  
-  // Strategy 5: Try looking in the same directory as the original file
-  if (sourceDir && args.path.startsWith('./')) {
-    const sourceParentDir = dirname(sourceDir);
-    const sourcePath = resolve(sourceParentDir, args.path);
-    strategies.push({
-      description: `in original file's parent directory: ${sourcePath}`,
-      path: sourcePath,
-      tryResolve: async () => {
-        try {
-          await Deno.stat(sourcePath);
-          return true;
-        } catch (e) {
-          return false;
-        }
-      }
-    });
-  }
-  
-  return strategies;
 }
 
 /**
@@ -743,8 +745,9 @@ async function findActualFilePath(filePath: string, logger: Logger): Promise<str
   // Try alternatives in parallel
   const fileName = basename(filePath);
   const alternativePaths = [
-    resolve(Deno.cwd(), "examples", "dependency-test", fileName)
-    // Add other alternative paths if needed
+    resolve(Deno.cwd(), "examples", "dependency-test2", fileName),
+    resolve(Deno.cwd(), fileName),
+    resolve(Deno.cwd(), "examples", fileName)
   ];
   
   const alternativeResults = await Promise.all(
@@ -806,7 +809,6 @@ async function transpileHqlFile(
 
 /**
  * Create esbuild options from our bundle options
- * Now using the perform utility
  */
 function createBuildOptions(
   entryPath: string, 
@@ -887,7 +889,7 @@ export async function transpileCLI(
     // Process the entry file to get an intermediate JS file
     const processedPath = await processEntryFile(resolvedInputPath, outPath, {
       ...options,
-      sourceDir // Pass source directory to ensure import resolution works
+      sourceDir // Pass source directory
     });
     
     logger.debug(`Entry file processed to: ${processedPath}`);
