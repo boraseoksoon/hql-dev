@@ -118,13 +118,10 @@
        null
        ~coll))
 
-
-;; Import chalk library
 (import chalk from "jsr:@nothing628/chalk@1.0.0")
 
-;; Define a macro for colorizing text
 (defmacro colorize (color text)
-  `(js-call (js-get chalk ~color) ~text))
+  `(js-call chalk ~color ~text))
 
 ;; Define specific color macros for convenience
 (defmacro green-text (text)
@@ -138,3 +135,4 @@
 
 (defmacro yellow-text (text)
   `(colorize "yellow" ~text))
+  

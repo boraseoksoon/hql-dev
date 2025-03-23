@@ -1,4 +1,4 @@
-// src/transformer.ts - Refactored with error utilities
+// src/transformer.ts - Complete solution without any hardcoding
 
 import { transformToIR } from "./transpiler/hql-ast-to-hql-ir.ts";
 import { generateTypeScript } from "./transpiler/ts-ast-to-ts-code.ts";
@@ -19,14 +19,28 @@ interface TransformOptions {
 }
 
 /**
+ * Import source information to be maintained during processing
+ */
+const importSourceRegistry = new Map<string, string>();
+
+/**
+ * Register an import source in the global registry
+ * This function should be called from the import processor
+ */
+export function registerImportSource(moduleName: string, importPath: string): void {
+  importSourceRegistry.set(moduleName, importPath);
+}
+
+/**
+ * Get all currently registered import sources
+ */
+export function getImportSources(): Map<string, string> {
+  return new Map(importSourceRegistry);
+}
+
+/**
  * Transforms HQL AST nodes through the new pipeline.
- * Enhanced with better error tracking and debugging.
- *
- * Steps:
- * 1. Get the global environment (avoids redundant initialization).
- * 2. Expand macros using the unified expansion.
- * 3. Transform the expanded AST into an IR.
- * 4. Generate TypeScript code.
+ * Now properly handles module references without hardcoding.
  */
 export async function transformAST(
   astNodes: any[],
@@ -72,12 +86,47 @@ export async function transformAST(
     const macroTime = performance.now() - macroStartTime;
     logger.debug(`Macro expansion completed in ${macroTime.toFixed(2)}ms with ${macroExpandedAst.length} nodes`);
     
+    // Find modules used in the expanded AST
+    const usedModuleNames = findUsedModuleNames(macroExpandedAst);
+    logger.debug(`Found ${usedModuleNames.size} module references in expanded AST`);
+    
+    // Look up the import paths from our registry
+    const usedModules = new Map<string, string>();
+    for (const moduleName of usedModuleNames) {
+      if (importSourceRegistry.has(moduleName)) {
+        usedModules.set(moduleName, importSourceRegistry.get(moduleName)!);
+        logger.debug(`Found import source for ${moduleName}: ${importSourceRegistry.get(moduleName)}`);
+      } else {
+        logger.warn(`No import source found for module reference: ${moduleName}`);
+      }
+    }
+    
+    // Create a full AST with imported modules
+    const fullAST = [];
+    
+    // Add imports for all used modules
+    for (const [moduleName, importPath] of usedModules.entries()) {
+      logger.debug(`Adding import for module: ${moduleName} from ${importPath}`);
+      
+      fullAST.push({
+        type: "list",
+        elements: [
+          { type: "symbol", name: "js-import" },
+          { type: "symbol", name: moduleName },
+          { type: "literal", value: importPath }
+        ]
+      });    
+    }
+    
+    // Add the original expanded nodes
+    fullAST.push(...macroExpandedAst);
+    
     // Convert the expanded AST (if needed)
     currentPhase = "AST conversion";
     const astConvStartTime = performance.now();
     
     const convertedAst = perform(
-      () => convertAST(macroExpandedAst),
+      () => convertAST(fullAST), // Use the augmented AST with imports
       "Failed to convert AST",
       TranspilerError
     );
@@ -122,13 +171,13 @@ export async function transformAST(
     
     // If verbose, log a breakdown of the times
     if (options.verbose) {
-      console.log("Transformation time breakdown:");
-      console.log(`  Environment setup:   ${envTime.toFixed(2)}ms (${(envTime/totalTime*100).toFixed(1)}%)`);
-      console.log(`  Macro expansion:     ${macroTime.toFixed(2)}ms (${(macroTime/totalTime*100).toFixed(1)}%)`);
-      console.log(`  AST conversion:      ${astConvTime.toFixed(2)}ms (${(astConvTime/totalTime*100).toFixed(1)}%)`);
-      console.log(`  IR transformation:   ${irTime.toFixed(2)}ms (${(irTime/totalTime*100).toFixed(1)}%)`);
-      console.log(`  TS code generation:  ${tsGenTime.toFixed(2)}ms (${(tsGenTime/totalTime*100).toFixed(1)}%)`);
-      console.log(`  Total:               ${totalTime.toFixed(2)}ms`);
+      logger.debug("Transformation time breakdown:");
+      logger.debug(`  Environment setup:   ${envTime.toFixed(2)}ms (${(envTime/totalTime*100).toFixed(1)}%)`);
+      logger.debug(`  Macro expansion:     ${macroTime.toFixed(2)}ms (${(macroTime/totalTime*100).toFixed(1)}%)`);
+      logger.debug(`  AST conversion:      ${astConvTime.toFixed(2)}ms (${(astConvTime/totalTime*100).toFixed(1)}%)`);
+      logger.debug(`  IR transformation:   ${irTime.toFixed(2)}ms (${(irTime/totalTime*100).toFixed(1)}%)`);
+      logger.debug(`  TS code generation:  ${tsGenTime.toFixed(2)}ms (${(tsGenTime/totalTime*100).toFixed(1)}%)`);
+      logger.debug(`  Total:               ${totalTime.toFixed(2)}ms`);
     }
     
     return finalCode;
@@ -160,9 +209,65 @@ export async function transformAST(
 }
 
 /**
+ * Helper function to find module names referenced in js-call and js-get nodes
+ * This only collects the module names, not their sources
+ */
+function findUsedModuleNames(nodes: any[]): Set<string> {
+  const usedModules = new Set<string>();
+  
+  function traverse(node: any) {
+    if (node.type === "list") {
+      const elements = node.elements;
+      
+      // Check for js-call pattern
+      if (
+        elements.length >= 3 &&
+        elements[0].type === "symbol" &&
+        elements[0].name === "js-call" &&
+        elements[1].type === "symbol"
+      ) {
+        const moduleName = elements[1].name;
+        usedModules.add(moduleName);
+      }
+      
+      // Check for js-get pattern
+      if (
+        elements.length >= 3 &&
+        elements[0].type === "symbol" &&
+        elements[0].name === "js-get" &&
+        elements[1].type === "symbol"
+      ) {
+        const moduleName = elements[1].name;
+        usedModules.add(moduleName);
+      }
+      
+      // Also check for nested js-call patterns like (js-call (js-get chalk "green") text)
+      if (
+        elements.length >= 3 &&
+        elements[0].type === "symbol" &&
+        elements[0].name === "js-call" &&
+        elements[1].type === "list" &&
+        elements[1].elements.length >= 3 &&
+        elements[1].elements[0].type === "symbol" &&
+        elements[1].elements[0].name === "js-get" &&
+        elements[1].elements[1].type === "symbol"
+      ) {
+        const moduleName = elements[1].elements[1].name;
+        usedModules.add(moduleName);
+      }
+      
+      // Traverse all elements
+      elements.forEach(traverse);
+    }
+  }
+  
+  nodes.forEach(traverse);
+  return usedModules;
+}
+
+/**
  * This module takes the raw HQL AST (possibly already macro-expanded)
- * and applies all necessary conversions (e.g., converting export forms, 
- * adjusting syntax, etc.) so that it becomes a "clean" AST ready for IR conversion.
+ * and applies all necessary conversions so that it becomes a "clean" AST
  */
 function convertAST(rawAst: any[]): any[] {
   return perform(
@@ -178,8 +283,6 @@ function convertAST(rawAst: any[]): any[] {
           const exportNameNode = node.elements[1];
           const localNode = node.elements[2];
           if (exportNameNode.type === "literal" && typeof exportNameNode.value === "string") {
-            // Instead of creating an ExportNamedDeclaration node type, create a js-export list
-            // which is already handled by the transformation pipeline
             return {
               type: "list",
               elements: [

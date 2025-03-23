@@ -1152,6 +1152,12 @@ function transformJsGet(list: ListNode, currentDir: string): IR.IRNode {
 /**
  * Transform JavaScript method calls
  */
+// Look for the transformJsCall function in src/transpiler/hql-ast-to-hql-ir.ts
+// and replace it with this improved version
+
+/**
+ * Transform JavaScript method calls
+ */
 function transformJsCall(list: ListNode, currentDir: string): IR.IRNode {
   return perform(() => {
     if (list.elements.length < 3) {
@@ -1174,6 +1180,7 @@ function transformJsCall(list: ListNode, currentDir: string): IR.IRNode {
     }
 
     try {
+      // Check if the second argument is a string literal
       const method = extractStringLiteral(list.elements[2]);
       const args = list.elements.slice(3).map((arg) => {
         const transformed = transformNode(arg, currentDir);
@@ -1188,13 +1195,19 @@ function transformJsCall(list: ListNode, currentDir: string): IR.IRNode {
         return transformed;
       });
 
+      // Create a CallExpression that accesses the method via bracket notation
       return {
-        type: IR.IRNodeType.CallMemberExpression,
-        object,
-        property: { type: IR.IRNodeType.StringLiteral, value: method } as IR.IRStringLiteral,
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.MemberExpression,
+          object: object,
+          property: { type: IR.IRNodeType.StringLiteral, value: method },
+          computed: true
+        },
         arguments: args
-      } as IR.IRCallMemberExpression;
+      };
     } catch {
+      // If the second argument isn't a string literal, handle it differently
       const methodExpr = transformNode(list.elements[2], currentDir);
       if (!methodExpr) {
         throw new ValidationError(
@@ -1218,12 +1231,26 @@ function transformJsCall(list: ListNode, currentDir: string): IR.IRNode {
         return transformed;
       });
 
-      return {
-        type: IR.IRNodeType.CallMemberExpression,
-        object,
-        property: methodExpr,
-        arguments: args
-      } as IR.IRCallMemberExpression;
+      // If the method is a MemberExpression (e.g. from js-get), use it directly
+      if (methodExpr.type === IR.IRNodeType.MemberExpression) {
+        return {
+          type: IR.IRNodeType.CallExpression,
+          callee: methodExpr,
+          arguments: args
+        };
+      } else {
+        // Otherwise create a member expression
+        return {
+          type: IR.IRNodeType.CallExpression,
+          callee: {
+            type: IR.IRNodeType.MemberExpression,
+            object: object,
+            property: methodExpr,
+            computed: true
+          },
+          arguments: args
+        };
+      }
     }
   }, "transformJsCall", TransformError, [list]);
 }

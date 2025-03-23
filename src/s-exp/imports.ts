@@ -8,6 +8,7 @@ import { parse } from './parser.ts';
 import { Logger } from '../logger.ts';
 import { ImportError, MacroError } from '../transpiler/errors.ts';
 import { perform, performAsync } from '../transpiler/error-utils.ts';
+import { registerImportSource } from "../transformer.ts";
 import { 
   isRemoteModule, 
   isJavaScriptModule, 
@@ -374,6 +375,8 @@ async function processNamespaceImport(
     const moduleName = (elements[1] as SSymbol).name;
     const modulePath = (elements[3] as any).value as string;
     
+    registerImportSource(moduleName, modulePath);
+
     logger.debug(`Processing namespace import with "from": ${moduleName} from ${modulePath}`);
     
     // Resolve the path and load the module
