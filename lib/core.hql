@@ -118,6 +118,7 @@
        null
        ~coll))
 
+;; macro import test from default module import
 (import chalk from "jsr:@nothing628/chalk@1.0.0")
 
 (defmacro colorize (color text)
@@ -143,22 +144,13 @@
 ;; Test HQL imports
 (import module from "./test/text-utils.hql")
 
-;; Create a local macro that uses the imported function
-(defmacro text-wrapper [text]
+(defmacro text-wrapper (text)
   `(module.wrap_text ~text))
 
-/*
-;; 4. JS Import - named export
-(import [formatText] from "./lib/test/formatter.js")
+(import formatter from "./test/formatter.js")
+(defmacro js-format-text (text) `(formatter.formatText ~text))
 
-;; Define a JS named import macro
-(defmacro format-direct (text)
-  `(formatText ~text))
+;; macro import test from name imports
 
-;; 5. JS Import - default export
-(import formatter from "./lib/test/formatter.js") 
-
-;; Define a JS default import macro
-(defmacro format-default (text)
-  `(js-call formatter "formatText" ~text))
-*/
+;; (import [formatText] from "./test/formatter.js")
+;; (defmacro js-format-text2 (text) `(formatText ~text))
