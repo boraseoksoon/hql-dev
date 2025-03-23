@@ -19,11 +19,7 @@ export const KERNEL_PRIMITIVES = new Set([
   export const PRIMITIVE_OPS = new Set([
     "+", "-", "*", "/", "%",
     "=", "!=", "<", ">", "<=", ">=", "eq?",
-    "js-import", "js-export", "js-get", "js-call",
-    "first", "rest", "cons", "second", "length",
-    "next", "seq", "empty?",
-    "conj", "concat",
-    "symbol?", "list?", "map?", "nil?"
+    "js-import", "js-export", "js-get", "js-call"
   ]);
   
   /**

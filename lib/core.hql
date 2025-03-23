@@ -90,3 +90,8 @@
      (if ~(first binding)
          ~then-expr
          ~else-expr)))
+
+;; no distinction between list and vector now.
+(defmacro list (& items)
+  `[~@items])
+

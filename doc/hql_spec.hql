@@ -391,26 +391,13 @@
 ;; Sequence operation examples
 (def list-numbers '(1 2 3 4 5))
 
-(first list-numbers)     ;; => 1
-(rest list-numbers)      ;; => (2 3 4 5)
-(next list-numbers)      ;; => (2 3 4 5) or nil if less than 2 elements
-(seq list-numbers)       ;; => (1 2 3 4 5) or nil if empty
-
 ;; Collection manipulation examples
 (def xs '(1 2 3))
 (def ys '(4 5 6))
 
-(conj xs 4)         ;; => (1 2 3 4)
-(concat xs ys)      ;; => (1 2 3 4 5 6)
-(concat xs '() ys)  ;; => (1 2 3 4 5 6)
-
 ;; Collection manipulation examples
 (def xs2 '(1 2 3))
 (def ys2 '(4 5 6))
-
-(conj xs2 4)         ;; => (1 2 3 4)
-(concat xs2 ys2)      ;; => (1 2 3 4 5 6)
-(concat xs2 '() ys2)  ;; => (1 2 3 4 5 6)
 
 ;; str
 
