@@ -150,6 +150,9 @@
 (import formatter from "./test/formatter.js")
 (defmacro js-format-text (text) `(formatter.formatText ~text))
 
+;; (import nested from "./test/nested.js")
+;; (defmacro hqlFormatText (text) `(nested.hqlFormatText ~text))
+
 ;; macro import test from name imports
 
 ;; (import [formatText] from "./test/formatter.js")

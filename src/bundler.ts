@@ -1,11 +1,9 @@
 // src/bundler.ts - Updated to fix local HQL import path resolution
 
 import { resolve, dirname, writeTextFile, exists, basename, join, ensureDir } from "./platform/platform.ts";
-import { build, stop } from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import { Logger } from "./logger.ts";
-import { transpileCLI } from "../src/bundler.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
-import { TranspilerError, ValidationError, ImportError, MacroError, createErrorReport } from "./transpiler/errors.ts";
+import { TranspilerError, ValidationError, ImportError, createErrorReport } from "./transpiler/errors.ts";
 import { perform, performAsync } from "./transpiler/error-utils.ts";
 import { simpleHash } from "./utils.ts";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";

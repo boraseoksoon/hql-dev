@@ -1,6 +1,1 @@
-(console.log (green-text "defmacro-import JSR working!")) ;; implemented => O
-(console.log (capitalize-text "defmacro-import npm working!")) ;; implmented  => O
-(console.log (uppercase-text "defmacro-import http working!")) ;; implemented => O
-(console.log (text-wrapper "defmacro-import hql working!")) ;; implemented => O
-(console.log (js-format-text "defmacro-import JS working1!")) ;; implemented => O
-(console.log (green-text "This text is green by macro jsr import")) ;; implemented => O
+(console.log (hqlFormatText "defmacro-import JS working1!"))
