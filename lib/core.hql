@@ -95,3 +95,31 @@
 (defmacro list (& items)
   `[~@items])
 
+;; Add these to lib/core.hql
+
+;; Basic nil check
+(defmacro nil? (x)
+  `(= ~x null))
+
+;; Direct length implementation that doesn't rely on other macros
+(defmacro length (coll)
+  `(if (= ~coll null)
+       0
+       (js-get ~coll "length")))
+
+;; Simple implementations of list operations
+(defmacro first (coll)
+  `(get ~coll 0))
+
+(defmacro rest (coll)
+  `(js-call ~coll "slice" 1))
+
+(defmacro next (coll)
+  `(if (< (js-get ~coll "length") 2)
+       null
+       (js-call ~coll "slice" 1)))
+
+(defmacro seq (coll)
+  `(if (= (js-get ~coll "length") 0)
+       null
+       ~coll))
