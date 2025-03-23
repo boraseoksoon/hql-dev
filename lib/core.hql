@@ -123,16 +123,42 @@
 (defmacro colorize (color text)
   `(js-call chalk ~color ~text))
 
-;; Define specific color macros for convenience
 (defmacro green-text (text)
   `(colorize "green" ~text))
 
-(defmacro red-text (text)
-  `(colorize "red" ~text))
+;; Test NPM imports
+(import _ from "npm:lodash")
 
-(defmacro blue-text (text)
-  `(colorize "blue" ~text))
+;; Define a macro that uses lodash's capitalize function
+(defmacro capitalize-text (text)
+  `(js-call _ "capitalize" ~text))
 
-(defmacro yellow-text (text)
-  `(colorize "yellow" ~text))
-  
+;; Test HTTP imports using esm.sh CDN
+(import _ from "https://esm.sh/lodash")
+
+;; Define a macro that uses lodash's uppercase function
+(defmacro uppercase-text (text)
+  `(js-call _ "toUpper" ~text))
+
+;; Test HQL imports
+(import module from "./test/text-utils.hql")
+
+;; Create a local macro that uses the imported function
+(defmacro text-wrapper [text]
+  `(module.wrap_text ~text))
+
+/*
+;; 4. JS Import - named export
+(import [formatText] from "./lib/test/formatter.js")
+
+;; Define a JS named import macro
+(defmacro format-direct (text)
+  `(formatText ~text))
+
+;; 5. JS Import - default export
+(import formatter from "./lib/test/formatter.js") 
+
+;; Define a JS default import macro
+(defmacro format-default (text)
+  `(js-call formatter "formatText" ~text))
+*/

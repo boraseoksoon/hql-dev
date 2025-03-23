@@ -1,5 +1,6 @@
-(console.log (green-text "defmacro-import JSR working!")) ;; implemented
-(console.log (green-text "defmacro-import NPM working!")) ;; we have to make it and test reuiqred
-(console.log (green-text "defmacro-import http working!")) ;; we have to make it and test reuiqred
-(console.log (green-text "defmacro-import Js working!")) ;; we have to make it and test reuiqred
-(console.log (green-text "defmacro-import Hql working!")) ;; we have to make it and test reuiqred
+(console.log (green-text "defmacro-import JSR working!")) ;; implemented => O
+(console.log (capitalize-text "defmacro-import npm working!")) ;; implmented  => O
+(console.log (uppercase-text "defmacro-import http working!")) ;; implemented => O
+(console.log (text-wrapper "defmacro-import hql working!"))
+;; (console.log (format-direct "js named import test"))
+;; (console.log (format-default "js default import test"))
