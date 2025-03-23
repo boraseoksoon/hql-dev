@@ -6,6 +6,6 @@
    "test-hql-spec": "deno task run ./doc/hql_spec.hql",
    "test-new-front-end-transpiler": "deno run -A ./cli/run.ts ./examples/macro.hql && deno run -A ./cli/run.ts ./examples/dependency-test/macro-a.hql && deno task test-hql-spec",
    "full-macro-test": "deno run -A ./cli/run.ts ./examples/import/simple2/b.hql && deno run -A ./cli/run.ts ./examples/import/simple/b.hql && deno run -A ./cli/run.ts ./examples/import/module2.hql",
-   "test-import": "deno run -A ./cli/run.ts ./examples/import.hql"
+   "test-import": "deno run -A ./cli/run.ts ./examples/import.hql && deno run -A ./cli/run.ts ./examples/macro-import.hql"
   }
  }

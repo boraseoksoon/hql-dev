@@ -1,4 +1,4 @@
-// src/transformer.ts - Complete solution without any hardcoding
+// src/transformer.ts - Prevents duplicate import errors
 
 import { transformToIR } from "./transpiler/hql-ast-to-hql-ir.ts";
 import { generateTypeScript } from "./transpiler/ts-ast-to-ts-code.ts";
@@ -39,8 +39,7 @@ export function getImportSources(): Map<string, string> {
 }
 
 /**
- * Transforms HQL AST nodes through the new pipeline.
- * Now properly handles module references without hardcoding.
+ * Transforms HQL AST nodes through the pipeline.
  */
 export async function transformAST(
   astNodes: any[],
@@ -86,47 +85,77 @@ export async function transformAST(
     const macroTime = performance.now() - macroStartTime;
     logger.debug(`Macro expansion completed in ${macroTime.toFixed(2)}ms with ${macroExpandedAst.length} nodes`);
     
-    // Find modules used in the expanded AST
-    const usedModuleNames = findUsedModuleNames(macroExpandedAst);
-    logger.debug(`Found ${usedModuleNames.size} module references in expanded AST`);
-    
-    // Look up the import paths from our registry
-    const usedModules = new Map<string, string>();
-    for (const moduleName of usedModuleNames) {
-      if (importSourceRegistry.has(moduleName)) {
-        usedModules.set(moduleName, importSourceRegistry.get(moduleName)!);
-        logger.debug(`Found import source for ${moduleName}: ${importSourceRegistry.get(moduleName)}`);
-      } else {
-        logger.warn(`No import source found for module reference: ${moduleName}`);
-      }
-    }
+    // Find modules with proper context
+    const moduleReferences = findExternalModuleReferences(macroExpandedAst, env);
+    logger.debug(`Found ${moduleReferences.size} external module references`);
     
     // Create a full AST with imported modules
     const fullAST = [];
+    const processedImports = new Set<string>(); // Track imported modules to prevent duplicates
     
-    // Add imports for all used modules
-    for (const [moduleName, importPath] of usedModules.entries()) {
-      logger.debug(`Adding import for module: ${moduleName} from ${importPath}`);
-      
-      fullAST.push({
-        type: "list",
-        elements: [
-          { type: "symbol", name: "js-import" },
-          { type: "symbol", name: moduleName },
-          { type: "literal", value: importPath }
-        ]
-      });    
+    // Process the AST to extract all existing imports
+    // This will also help us avoid duplicating imports that are already in the AST
+    const existingImports = findExistingImports(macroExpandedAst);
+    for (const [moduleName, importPath] of existingImports) {
+      logger.debug(`Found existing import in AST: ${moduleName} from ${importPath}`);
+      processedImports.add(moduleName);
     }
     
-    // Add the original expanded nodes
-    fullAST.push(...macroExpandedAst);
+    // Add imports for all required external modules that aren't already imported
+    for (const moduleName of moduleReferences) {
+      // Skip if we've already added this import
+      if (processedImports.has(moduleName)) {
+        logger.debug(`Skipping duplicate import for module: ${moduleName}`);
+        continue;
+      }
+      
+      if (importSourceRegistry.has(moduleName)) {
+        const importPath = importSourceRegistry.get(moduleName)!;
+        logger.debug(`Adding import for module: ${moduleName} from ${importPath}`);
+        
+        fullAST.push({
+          type: "list",
+          elements: [
+            { type: "symbol", name: "js-import" },
+            { type: "symbol", name: moduleName },
+            { type: "literal", value: importPath }
+          ]
+        });
+        
+        // Mark as processed to avoid duplicates
+        processedImports.add(moduleName);
+      }
+    }
+    
+    // Now filter macroExpandedAst to remove duplicate imports
+    const filteredAst = macroExpandedAst.filter(node => {
+      // Check if it's an import node we need to potentially skip
+      if (isImportNode(node)) {
+        const [moduleName, importPath] = extractImportInfo(node);
+        
+        // If this is a duplicate import but not the first one we've seen, skip it
+        if (moduleName && processedImports.has(moduleName) && !existingImports.has(moduleName)) {
+          logger.debug(`Removing duplicate import: ${moduleName} from ${importPath}`);
+          return false;
+        }
+        
+        // Mark this import as processed if we're keeping it
+        if (moduleName) {
+          processedImports.add(moduleName);
+        }
+      }
+      return true;
+    });
+    
+    // Add the filtered original nodes
+    fullAST.push(...filteredAst);
     
     // Convert the expanded AST (if needed)
     currentPhase = "AST conversion";
     const astConvStartTime = performance.now();
     
     const convertedAst = perform(
-      () => convertAST(fullAST), // Use the augmented AST with imports
+      () => convertAST(fullAST),
       "Failed to convert AST",
       TranspilerError
     );
@@ -209,11 +238,112 @@ export async function transformAST(
 }
 
 /**
- * Helper function to find module names referenced in js-call and js-get nodes
- * This only collects the module names, not their sources
+ * Check if a node is an import statement
  */
-function findUsedModuleNames(nodes: any[]): Set<string> {
-  const usedModules = new Set<string>();
+function isImportNode(node: any): boolean {
+  return (
+    node.type === "list" &&
+    node.elements.length >= 3 &&
+    node.elements[0].type === "symbol" &&
+    (node.elements[0].name === "import" || node.elements[0].name === "js-import")
+  );
+}
+
+/**
+ * Extract import module name and path from an import node
+ */
+function extractImportInfo(node: any): [string | null, string | null] {
+  try {
+    if (node.type === "list" && node.elements[0].type === "symbol") {
+      // Handle namespace imports: (import name from "path")
+      if (
+        node.elements[0].name === "import" &&
+        node.elements.length === 4 &&
+        node.elements[1].type === "symbol" &&
+        node.elements[2].type === "symbol" &&
+        node.elements[2].name === "from" &&
+        node.elements[3].type === "literal"
+      ) {
+        return [node.elements[1].name, node.elements[3].value];
+      }
+      
+      // Handle JS imports: (js-import name "path")
+      if (
+        node.elements[0].name === "js-import" &&
+        node.elements.length === 3 &&
+        node.elements[1].type === "symbol" &&
+        node.elements[2].type === "literal"
+      ) {
+        return [node.elements[1].name, node.elements[2].value];
+      }
+      
+      // Add more import patterns if needed
+    }
+  } catch (e) {
+    // If anything fails, return null values
+  }
+  
+  return [null, null];
+}
+
+/**
+ * Find all existing imports in the AST
+ */
+function findExistingImports(nodes: any[]): Map<string, string> {
+  const imports = new Map<string, string>();
+  
+  for (const node of nodes) {
+    if (isImportNode(node)) {
+      const [moduleName, importPath] = extractImportInfo(node);
+      if (moduleName && importPath) {
+        imports.set(moduleName, importPath);
+      }
+    }
+  }
+  
+  return imports;
+}
+
+/**
+ * Find which modules are external and require imports
+ */
+function findExternalModuleReferences(nodes: any[], env: Environment): Set<string> {
+  const logger = new Logger(false);
+  const externalModules = new Set<string>();
+  
+  function isModuleExternal(moduleName: string): boolean {
+    // Check if this module is already registered as an import
+    if (importSourceRegistry.has(moduleName)) {
+      return true;
+    }
+    
+    try {
+      // Try to determine if it's a JavaScript global
+      if (typeof globalThis !== 'undefined' && moduleName in globalThis) {
+        return false; // It's a built-in global
+      }
+
+      // Check if it's defined in the environment
+      try {
+        env.lookup(moduleName);
+        return false; // It's defined in the environment
+      } catch (e) {
+        // Not defined in env, could be external
+      }
+      
+      // Check if it's a macro
+      if (env.hasMacro(moduleName)) {
+        return false; // It's a macro
+      }
+      
+      // If we got here, it's likely an external module
+      return true;
+      
+    } catch (e) {
+      // If anything fails, assume it could be external just to be safe
+      return true;
+    }
+  }
   
   function traverse(node: any) {
     if (node.type === "list") {
@@ -227,7 +357,9 @@ function findUsedModuleNames(nodes: any[]): Set<string> {
         elements[1].type === "symbol"
       ) {
         const moduleName = elements[1].name;
-        usedModules.add(moduleName);
+        if (isModuleExternal(moduleName)) {
+          externalModules.add(moduleName);
+        }
       }
       
       // Check for js-get pattern
@@ -238,10 +370,12 @@ function findUsedModuleNames(nodes: any[]): Set<string> {
         elements[1].type === "symbol"
       ) {
         const moduleName = elements[1].name;
-        usedModules.add(moduleName);
+        if (isModuleExternal(moduleName)) {
+          externalModules.add(moduleName);
+        }
       }
       
-      // Also check for nested js-call patterns like (js-call (js-get chalk "green") text)
+      // Nested js-call patterns
       if (
         elements.length >= 3 &&
         elements[0].type === "symbol" &&
@@ -253,21 +387,22 @@ function findUsedModuleNames(nodes: any[]): Set<string> {
         elements[1].elements[1].type === "symbol"
       ) {
         const moduleName = elements[1].elements[1].name;
-        usedModules.add(moduleName);
+        if (isModuleExternal(moduleName)) {
+          externalModules.add(moduleName);
+        }
       }
       
-      // Traverse all elements
+      // Recursively check all elements
       elements.forEach(traverse);
     }
   }
   
   nodes.forEach(traverse);
-  return usedModules;
+  return externalModules;
 }
 
 /**
- * This module takes the raw HQL AST (possibly already macro-expanded)
- * and applies all necessary conversions so that it becomes a "clean" AST
+ * AST conversion function
  */
 function convertAST(rawAst: any[]): any[] {
   return perform(
