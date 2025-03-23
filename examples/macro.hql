@@ -4,7 +4,7 @@
   (print "Executing step 2")
   (+ 1 2))
 
-(import chalk "jsr:@nothing628/chalk@1.0.0")
+(import chalk from "jsr:@nothing628/chalk@1.0.0")
 
 (defmacro color-text (color text)
   `(console.log (js-call chalk ~color ~text)))

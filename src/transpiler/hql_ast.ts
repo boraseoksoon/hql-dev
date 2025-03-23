@@ -83,14 +83,16 @@ export function isVectorImport(list: ListNode): boolean {
 }
 
 /**
- * Check if a list node represents a legacy import
+ * Check if a list node represents a namespace import with "from"
  */
-export function isLegacyImport(list: ListNode): boolean {
+export function isNamespaceImport(list: ListNode): boolean {
   return (
-    list.elements.length === 3 &&
+    list.elements.length === 4 &&
     list.elements[0].type === "symbol" &&
     (list.elements[0] as SymbolNode).name === "import" &&
     list.elements[1].type === "symbol" &&
-    list.elements[2].type === "literal"
+    list.elements[2].type === "symbol" &&
+    (list.elements[2] as SymbolNode).name === "from" &&
+    list.elements[3].type === "literal"
   );
 }

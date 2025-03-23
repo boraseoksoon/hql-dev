@@ -1,11 +1,4 @@
 export const RUNTIME_FUNCTIONS = `
-// Enhanced runtime functions for HQL transpilation
-
-function getProperty(obj, prop) {
-  const member = obj[prop];
-  return typeof member === "function" ? member.bind(obj) : member;
-}
-
 function get(obj, key, notFound = null) {
   // Handle null/undefined case
   if (obj == null) return notFound;

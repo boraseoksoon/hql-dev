@@ -1,7 +1,7 @@
 // src/s-exp/imports.ts - Refactored with better modularity and error handling
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport, isSExpVectorImport, isSExpLegacyImport } from './types.ts';
+import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport, isSExpVectorImport, isSExpLegacyImport, isSExpNamespaceImport } from './types.ts';
 import { Environment } from '../environment.ts';
 import { evaluateForMacro, defineUserMacro } from './macro.ts';
 import { parse } from './parser.ts';
@@ -318,21 +318,73 @@ async function processImport(
   const logger = new Logger(options.verbose || false);
   
   return performAsync(async () => {
-    // Quickly determine import type and process accordingly
+    // Determine import type and process accordingly
     if (isSExpVectorImport(elements)) {
-      // Vector-based import
+      // Vector-based import with "from"
       await processVectorBasedImport(elements, env, baseDir, options);
+    } else if (isSExpNamespaceImport(elements)) {
+      // Namespace import with "from" syntax
+      await processNamespaceImport(elements, env, baseDir, options);
     } else if (isSExpLegacyImport(elements)) {
-      // Legacy import
-      await processLegacyImport(elements, env, baseDir, options);
+      // Legacy import - deprecated
+      throw new ImportError(
+        "Legacy import syntax without 'from' is deprecated. Please use 'import name from \"path\"' instead of 'import name \"path\"'",
+        "deprecated-import-syntax",
+        options.currentFile
+      );
     } else {
       throw new ImportError(
-        "Invalid import syntax, expected either (import [symbols] from \"path\") or (import name \"path\")",
+        "Invalid import syntax, expected either (import [symbols] from \"path\") or (import name from \"path\")",
         "syntax-error",
         options.currentFile
       );
     }
   }, "Processing import expression", ImportError, [getModulePathFromImport(importExpr), options.currentFile]);
+}
+
+/**
+ * Process namespace import with "from" syntax
+ * Format: (import name from "path")
+ */
+async function processNamespaceImport(
+  elements: SExp[],
+  env: Environment,
+  baseDir: string,
+  options: ImportProcessorOptions
+): Promise<void> {
+  const logger = new Logger(options.verbose || false);
+  
+  return performAsync(async () => {
+    if (!isSymbol(elements[1])) {
+      throw new ImportError(
+        "Module name must be a symbol",
+        "namespace import",
+        options.currentFile
+      );
+    }
+    
+    if (!isLiteral(elements[3]) || typeof elements[3].value !== 'string') {
+      throw new ImportError(
+        "Module path must be a string literal",
+        "namespace import",
+        options.currentFile
+      );
+    }
+    
+    const moduleName = (elements[1] as SSymbol).name;
+    const modulePath = (elements[3] as any).value as string;
+    
+    logger.debug(`Processing namespace import with "from": ${moduleName} from ${modulePath}`);
+    
+    // Resolve the path and load the module
+    const resolvedPath = await resolveImportPath(modulePath, baseDir, logger);
+    
+    // Load the module with the given name
+    await loadModuleByType(moduleName, modulePath, resolvedPath, baseDir, env, options);
+  }, "Processing namespace import", ImportError, [
+    elements[3]?.type === "literal" ? String(elements[3].value) : "unknown", 
+    options.currentFile
+  ]);
 }
 
 /**

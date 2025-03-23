@@ -1,6 +1,6 @@
 ;; macro-a.hql
 
-(import macroB "./macro-b.hql")
+(import macroB from "./macro-b.hql")
 
 (console.log "macroB : " macroB)
 

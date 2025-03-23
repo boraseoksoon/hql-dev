@@ -22,8 +22,6 @@
 (defmacro print (& args)
   `(console.log ~@args))
 
-(def base 10)
-
 (defmacro cons (item lst)
   `(concat (list ~item) ~lst))
 
@@ -95,13 +93,9 @@
 (defmacro list (& items)
   `[~@items])
 
-;; Add these to lib/core.hql
-
-;; Basic nil check
 (defmacro nil? (x)
   `(= ~x null))
 
-;; Direct length implementation that doesn't rely on other macros
 (defmacro length (coll)
   `(if (= ~coll null)
        0
@@ -124,13 +118,23 @@
        null
        ~coll))
 
-(defmacro mapfilter (pred mapper coll)
-  `(do
-     (import [map, filter] from "./lib/stdlib/stdlib.hql")
-     (map ~mapper (filter ~pred ~coll))))
 
-;; Remote module macro using js-import for lodash
-(defmacro chunk-array (array size)
-  `(do
-     (import [_] from "npm:lodash")
-     (_.chunk ~array ~size)))
+;; Import chalk library
+(import chalk from "jsr:@nothing628/chalk@1.0.0")
+
+;; Define a macro for colorizing text
+(defmacro colorize (color text)
+  `(js-call (js-get chalk ~color) ~text))
+
+;; Define specific color macros for convenience
+(defmacro green-text (text)
+  `(colorize "green" ~text))
+
+(defmacro red-text (text)
+  `(colorize "red" ~text))
+
+(defmacro blue-text (text)
+  `(colorize "blue" ~text))
+
+(defmacro yellow-text (text)
+  `(colorize "yellow" ~text))

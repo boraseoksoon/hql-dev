@@ -143,7 +143,7 @@ export async function transformAST(
   const tsCode = generateTypeScript(ir);
   
   // Step 4: Prepend runtime functions
-  return RUNTIME_FUNCTIONS + tsCode;
+  return tsCode;
 }
 ```
 

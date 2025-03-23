@@ -179,3 +179,16 @@ export function isSExpLegacyImport(elements: SExp[]): boolean {
          isLiteral(elements[2]) && 
          typeof elements[2].value === 'string';
 }
+
+/**
+ * Check if an import is namespace-based with "from" syntax
+ * Format: (import name from "path")
+ */
+export function isSExpNamespaceImport(elements: SExp[]): boolean {
+  return elements.length === 4 && 
+         isSymbol(elements[1]) && 
+         isSymbol(elements[2]) && 
+         elements[2].name === 'from' &&
+         isLiteral(elements[3]) && 
+         typeof elements[3].value === 'string';
+}

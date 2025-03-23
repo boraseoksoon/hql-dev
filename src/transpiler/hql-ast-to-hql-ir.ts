@@ -16,7 +16,7 @@ import * as path from "../platform/platform.ts";
 import { TransformError, ValidationError } from "./errors.ts";
 import { Logger } from "../logger.ts";
 import { perform } from "./error-utils.ts";
-import { isVectorExport, isVectorImport, isLegacyImport } from "./hql_ast.ts" 
+import { isVectorExport, isVectorImport, isNamespaceImport } from "./hql_ast.ts" 
 
 // Initialize logger for this module
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
@@ -291,11 +291,11 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
         logger.debug("Transforming vector import");
         return transformVectorImport(list, currentDir);
       }
-
-      if (isLegacyImport(list)) {
-        logger.debug("Transforming legacy import");
-        return transformLegacyImport(list, currentDir);
-      }
+      
+      if (isNamespaceImport(list)) {
+        logger.debug("Transforming namespace import");
+        return transformNamespaceImport(list, currentDir);
+      }   
 
       if (isDotNotation(op)) {
         logger.debug(`Transforming dot notation: ${op}`);
@@ -332,6 +332,43 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     logger.debug("Transforming standard function call");
     return transformStandardFunctionCall(list, currentDir);
   }, "transformList", TransformError, [list]);
+}
+
+/**
+ * Transform namespace import with "from" syntax
+ */
+function transformNamespaceImport(list: ListNode, currentDir: string): IR.IRNode | null {
+  return perform(() => {
+    const nameNode = list.elements[1];
+    const pathNode = list.elements[3];
+
+    if (nameNode.type !== "symbol") {
+      throw new ValidationError(
+        "Import name must be a symbol",
+        "namespace import",
+        "symbol",
+        nameNode.type
+      );
+    }
+
+    if (pathNode.type !== "literal") {
+      throw new ValidationError(
+        "Import path must be a string literal",
+        "namespace import",
+        "string literal",
+        pathNode.type
+      );
+    }
+
+    const name = (nameNode as SymbolNode).name;
+    const pathVal = String((pathNode as LiteralNode).value);
+
+    return {
+      type: IR.IRNodeType.JsImportReference,
+      name,
+      source: pathVal
+    } as IR.IRJsImportReference;
+  }, "transformNamespaceImport", TransformError, [list]);
 }
 
 /**

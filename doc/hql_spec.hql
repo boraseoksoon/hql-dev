@@ -265,13 +265,13 @@
 ;; (element.addEventListener "click" (fn (event) (console.log "Clicked!")))
 
 ;; --- Imports ---
-(import path "https://deno.land/std@0.170.0/path/mod.ts")
+(import path from "https://deno.land/std@0.170.0/path/mod.ts")
 (def joined-path (path.join "folder" "file.txt"))
 
-(import file "https://deno.land/std@0.170.0/fs/mod.ts")
+(import file from "https://deno.land/std@0.170.0/fs/mod.ts")
 (def exists (file.existsSync "example-dir"))
 
-(import express "npm:express")
+(import express from "npm:express")
 (def app (express))                ;; Using default export
 (def router (express.Router))      ;; Using named export
 (app.use (express.json))           ;; Using named export)
