@@ -1,6 +1,12 @@
 // cli/publish/publish_common.ts - Improved version
-import { join, readTextFile, writeTextFile, runCmd, getEnv } from "../../src/platform/platform.ts";
-import { exists, ensureDir } from "jsr:@std/fs@1.0.13";
+import {
+  getEnv,
+  join,
+  readTextFile,
+  runCmd,
+  writeTextFile,
+} from "../../src/platform/platform.ts";
+import { ensureDir, exists } from "jsr:@std/fs@1.0.13";
 
 /**
  * Returns the next version string for the given directory.
@@ -11,17 +17,17 @@ export async function getNextVersionInDir(
   provided?: string,
 ): Promise<string> {
   console.log(`\n📝 Determining version for "${outDir}"...`);
-  
+
   await ensureDir(outDir);
   const versionFile = join(outDir, "VERSION");
-  
+
   // If version is explicitly provided, use it
   if (provided) {
     await writeTextFile(versionFile, provided);
     console.log(`  → Setting version to explicitly provided: ${provided}`);
     return provided;
   }
-  
+
   // Try reading from package.json
   const packageJsonPath = join(outDir, "package.json");
   if (await exists(packageJsonPath)) {
@@ -32,9 +38,14 @@ export async function getNextVersionInDir(
         if (parts.length === 3) {
           const [major, minor, patch] = parts;
           const newVersion = `${major}.${minor}.${parseInt(patch) + 1}`;
-          console.log(`  → Incrementing version from ${pkgJson.version} to ${newVersion}`);
+          console.log(
+            `  → Incrementing version from ${pkgJson.version} to ${newVersion}`,
+          );
           pkgJson.version = newVersion;
-          await writeTextFile(packageJsonPath, JSON.stringify(pkgJson, null, 2));
+          await writeTextFile(
+            packageJsonPath,
+            JSON.stringify(pkgJson, null, 2),
+          );
           await writeTextFile(versionFile, newVersion);
           return newVersion;
         }
@@ -42,10 +53,14 @@ export async function getNextVersionInDir(
         return pkgJson.version;
       }
     } catch (error) {
-      console.warn(`  ⚠️ Error reading package.json: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `  ⚠️ Error reading package.json: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
-  
+
   // Try reading from jsr.json
   const jsrConfigPath = join(outDir, "jsr.json");
   if (await exists(jsrConfigPath)) {
@@ -56,9 +71,14 @@ export async function getNextVersionInDir(
         if (parts.length === 3) {
           const [major, minor, patch] = parts;
           const newVersion = `${major}.${minor}.${parseInt(patch) + 1}`;
-          console.log(`  → Incrementing version from ${jsrConfig.version} to ${newVersion}`);
+          console.log(
+            `  → Incrementing version from ${jsrConfig.version} to ${newVersion}`,
+          );
           jsrConfig.version = newVersion;
-          await writeTextFile(jsrConfigPath, JSON.stringify(jsrConfig, null, 2));
+          await writeTextFile(
+            jsrConfigPath,
+            JSON.stringify(jsrConfig, null, 2),
+          );
           await writeTextFile(versionFile, newVersion);
           return newVersion;
         }
@@ -66,18 +86,24 @@ export async function getNextVersionInDir(
         return jsrConfig.version;
       }
     } catch (error) {
-      console.warn(`  ⚠️ Error reading jsr.json: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `  ⚠️ Error reading jsr.json: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
-  
+
   // Try reading from VERSION file or create one
   if (!(await exists(versionFile))) {
     const defaultVersion = "0.0.1";
     await writeTextFile(versionFile, defaultVersion);
-    console.log(`  → No version information found. Setting initial version to ${defaultVersion}`);
+    console.log(
+      `  → No version information found. Setting initial version to ${defaultVersion}`,
+    );
     return defaultVersion;
   }
-  
+
   // Increment the version in VERSION file
   try {
     const current = (await readTextFile(versionFile)).trim();
@@ -96,7 +122,11 @@ export async function getNextVersionInDir(
     console.log(`  → Bumped version from ${current} to ${newVersion}`);
     return newVersion;
   } catch (error) {
-    console.error(`  ❌ Error incrementing version: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `  ❌ Error incrementing version: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
     const fallbackVersion = "0.1.0";
     await writeTextFile(versionFile, fallbackVersion);
     console.log(`  → Using fallback version ${fallbackVersion}`);
@@ -109,13 +139,13 @@ export async function getNextVersionInDir(
  */
 export async function getNpmUsername(): Promise<string | undefined> {
   console.log(`\n👤 Checking npm username...`);
-  
+
   let npmUser = getEnv("NPM_USERNAME");
   if (npmUser) {
     console.log(`  → Using npm username from environment: ${npmUser}`);
     return npmUser.trim();
   }
-  
+
   try {
     console.log(`  → Running 'npm whoami' to detect username`);
     const proc = runCmd({
@@ -126,7 +156,7 @@ export async function getNpmUsername(): Promise<string | undefined> {
     const output = await proc.output();
     proc.close();
     npmUser = new TextDecoder().decode(output).trim();
-    
+
     if (npmUser) {
       console.log(`  → Detected npm username: ${npmUser}`);
       return npmUser;
@@ -135,7 +165,11 @@ export async function getNpmUsername(): Promise<string | undefined> {
       return undefined;
     }
   } catch (error) {
-    console.warn(`  ⚠️ Failed to auto-detect npm username: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `  ⚠️ Failed to auto-detect npm username: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
     console.log(`  → You may need to run 'npm login' first`);
     return undefined;
   }
@@ -146,7 +180,7 @@ export async function getNpmUsername(): Promise<string | undefined> {
  */
 export async function getJsrUsername(): Promise<string> {
   console.log(`\n👤 Checking JSR username...`);
-  
+
   try {
     const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || "";
     const registriesPath = join(homeDir, ".deno", "registries.json");
@@ -159,9 +193,13 @@ export async function getJsrUsername(): Promise<string> {
     }
     console.warn(`  ⚠️ Could not find JSR username in registries.json`);
   } catch (error) {
-    console.warn(`  ⚠️ Could not read JSR username: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `  ⚠️ Could not read JSR username: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
-  
+
   console.log(`  → Using default username: "username"`);
   return "username";
 }
@@ -169,71 +207,87 @@ export async function getJsrUsername(): Promise<string> {
 /**
  * Check that required tools (Deno, npm) are installed and configured.
  */
-export async function checkEnvironment(publishTarget: "npm" | "jsr"): Promise<boolean> {
-    console.log(`\n🔍 Checking environment for ${publishTarget.toUpperCase()} publishing...`);
-    
-    try {
-      // Check for Deno
-      console.log(`  → Checking Deno installation`);
-      const denoProc = runCmd({
-        cmd: ["deno", "--version"],
+export async function checkEnvironment(
+  publishTarget: "npm" | "jsr",
+): Promise<boolean> {
+  console.log(
+    `\n🔍 Checking environment for ${publishTarget.toUpperCase()} publishing...`,
+  );
+
+  try {
+    // Check for Deno
+    console.log(`  → Checking Deno installation`);
+    const denoProc = runCmd({
+      cmd: ["deno", "--version"],
+      stdout: "piped",
+      stderr: "null",
+    });
+    const denoOutput = await denoProc.output();
+    denoProc.close();
+    if (denoOutput.length === 0) {
+      console.error(
+        `  ❌ Deno not found. Please install Deno: https://deno.land/manual/getting_started/installation`,
+      );
+      return false;
+    }
+    console.log(`  ✅ Deno is installed`);
+
+    // Check for npm if needed
+    if (publishTarget === "npm") {
+      // npm checking code remains unchanged
+      console.log(`  → Checking npm installation`);
+      const npmProc = runCmd({
+        cmd: ["npm", "--version"],
         stdout: "piped",
         stderr: "null",
       });
-      const denoOutput = await denoProc.output();
-      denoProc.close();
-      if (denoOutput.length === 0) {
-        console.error(`  ❌ Deno not found. Please install Deno: https://deno.land/manual/getting_started/installation`);
+      const npmOutput = await npmProc.output();
+      npmProc.close();
+      if (npmOutput.length === 0) {
+        console.error(
+          `  ❌ npm not found. Please install Node.js and npm: https://nodejs.org/`,
+        );
         return false;
       }
-      console.log(`  ✅ Deno is installed`);
-      
-      // Check for npm if needed
-      if (publishTarget === "npm") {
-        // npm checking code remains unchanged
-        console.log(`  → Checking npm installation`);
-        const npmProc = runCmd({
-          cmd: ["npm", "--version"],
+      console.log(`  ✅ npm is installed`);
+
+      // Check npm login status
+      try {
+        console.log(`  → Checking npm login status`);
+        const whoamiProc = runCmd({
+          cmd: ["npm", "whoami"],
           stdout: "piped",
           stderr: "null",
         });
-        const npmOutput = await npmProc.output();
-        npmProc.close();
-        if (npmOutput.length === 0) {
-          console.error(`  ❌ npm not found. Please install Node.js and npm: https://nodejs.org/`);
+        const whoamiOutput = await whoamiProc.output();
+        whoamiProc.close();
+        if (whoamiOutput.length === 0) {
+          console.warn(
+            `  ⚠️ Not logged in to npm. Please run 'npm login' first.`,
+          );
           return false;
         }
-        console.log(`  ✅ npm is installed`);
-        
-        // Check npm login status
-        try {
-          console.log(`  → Checking npm login status`);
-          const whoamiProc = runCmd({
-            cmd: ["npm", "whoami"],
-            stdout: "piped",
-            stderr: "null",
-          });
-          const whoamiOutput = await whoamiProc.output();
-          whoamiProc.close();
-          if (whoamiOutput.length === 0) {
-            console.warn(`  ⚠️ Not logged in to npm. Please run 'npm login' first.`);
-            return false;
-          }
-          console.log(`  ✅ Logged in to npm as: ${new TextDecoder().decode(whoamiOutput).trim()}`);
-        } catch (error) {
-          console.warn(`  ⚠️ npm login check failed. Please run 'npm login' before publishing.`);
-          return false;
-        }
+        console.log(
+          `  ✅ Logged in to npm as: ${
+            new TextDecoder().decode(whoamiOutput).trim()
+          }`,
+        );
+      } catch (error) {
+        console.warn(
+          `  ⚠️ npm login check failed. Please run 'npm login' before publishing.`,
+        );
+        return false;
       }
-      
-      // Check JSR login status if needed
-      if (publishTarget === "jsr") {
-        // Always skip JSR login check for now since authentication is problematic
-        console.log(`  → JSR login check bypassed for development`);
-        console.log(`  ✅ JSR configuration check skipped`);
-        
-        // The following code is now completely bypassed
-        /*
+    }
+
+    // Check JSR login status if needed
+    if (publishTarget === "jsr") {
+      // Always skip JSR login check for now since authentication is problematic
+      console.log(`  → JSR login check bypassed for development`);
+      console.log(`  ✅ JSR configuration check skipped`);
+
+      // The following code is now completely bypassed
+      /*
         if (getEnv("SKIP_LOGIN_CHECK") === "1") {
           console.log(`  → Skipping JSR login check (SKIP_LOGIN_CHECK=1)`);
           console.log(`  ✅ JSR configuration check skipped`);
@@ -253,12 +307,16 @@ export async function checkEnvironment(publishTarget: "npm" | "jsr"): Promise<bo
           }
         }
         */
-      }
-      
-      console.log(`\n✅ Environment check completed successfully`);
-      return true;
-    } catch (error) {
-      console.error(`\n❌ Environment check failed: ${error instanceof Error ? error.message : String(error)}`);
-      return false;
     }
+
+    console.log(`\n✅ Environment check completed successfully`);
+    return true;
+  } catch (error) {
+    console.error(
+      `\n❌ Environment check failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
   }
+}

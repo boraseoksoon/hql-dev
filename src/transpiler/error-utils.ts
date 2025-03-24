@@ -8,7 +8,7 @@ export function perform<T>(
   fn: () => T,
   context?: string,
   errorType?: new (message: string, ...args: any[]) => TranspilerError,
-  errorArgs?: any[]
+  errorArgs?: any[],
 ): T {
   try {
     return fn();
@@ -21,7 +21,9 @@ export function perform<T>(
     // Prepare the message with context
     const msg = context
       ? `${context}: ${error instanceof Error ? error.message : String(error)}`
-      : error instanceof Error ? error.message : String(error);
+      : error instanceof Error
+      ? error.message
+      : String(error);
 
     // If an error type is specified, create a new error of that type
     if (errorType) {
@@ -40,7 +42,7 @@ export async function performAsync<T>(
   fn: () => Promise<T>,
   context?: string,
   errorType?: new (message: string, ...args: any[]) => TranspilerError,
-  errorArgs?: any[]
+  errorArgs?: any[],
 ): Promise<T> {
   try {
     return await fn();
@@ -53,7 +55,9 @@ export async function performAsync<T>(
     // Prepare the message with context
     const msg = context
       ? `${context}: ${error instanceof Error ? error.message : String(error)}`
-      : error instanceof Error ? error.message : String(error);
+      : error instanceof Error
+      ? error.message
+      : String(error);
 
     // If an error type is specified, create a new error of that type
     if (errorType) {

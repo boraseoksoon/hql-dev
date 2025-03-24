@@ -1,10 +1,14 @@
 # HQL Transpiler Architecture
 
-This document outlines the architecture of the HQL (Higher Query Language) transpiler, which follows the core principles of "macro everywhere, minimal-core, expression-oriented, single-bundled-output, platform agnostic" design.
+This document outlines the architecture of the HQL (Higher Query Language)
+transpiler, which follows the core principles of "macro everywhere,
+minimal-core, expression-oriented, single-bundled-output, platform agnostic"
+design.
 
 ## Overview
 
-HQL transpiles S-expression syntax to JavaScript/TypeScript using a pipeline of transformations that preserves the expression-oriented nature of the language.
+HQL transpiles S-expression syntax to JavaScript/TypeScript using a pipeline of
+transformations that preserves the expression-oriented nature of the language.
 
 ```
 HQL Code → HQL AST → Macro Expansion → HQL IR → TypeScript AST → TypeScript Code (legacy) => X
@@ -19,7 +23,9 @@ HQL Transpiler Pipeline (new)
 
 ## Streamlined Pipeline
 
-The transpiler uses a direct conversion from HQL IR to the official TypeScript AST, bypassing proprietary intermediate representations for improved performance and maintainability.
+The transpiler uses a direct conversion from HQL IR to the official TypeScript
+AST, bypassing proprietary intermediate representations for improved performance
+and maintainability.
 
 ### File Structure
 
@@ -58,7 +64,8 @@ const astNodes = parse(source);
 
 ### 2. Macro Expansion (`macro-expander.ts`)
 
-Expands macros in the AST, replacing high-level constructs with kernel primitives.
+Expands macros in the AST, replacing high-level constructs with kernel
+primitives.
 
 ```typescript
 import { expandMacros } from "../macro-expander.ts";
@@ -109,16 +116,16 @@ const printer = ts.createPrinter({
 });
 
 const resultFile = ts.createSourceFile(
-  "output.ts", 
-  "", 
-  ts.ScriptTarget.Latest, 
-  false
+  "output.ts",
+  "",
+  ts.ScriptTarget.Latest,
+  false,
 );
 
 const tsCode = printer.printNode(
-  ts.EmitHint.Unspecified, 
-  tsAST, 
-  resultFile
+  ts.EmitHint.Unspecified,
+  tsAST,
+  resultFile,
 );
 
 // Final output: TypeScript code
@@ -130,18 +137,18 @@ The entire pipeline is orchestrated by the `transformer.ts` module:
 
 ```typescript
 export async function transformAST(
-  astNodes: HQLNode[], 
-  currentDir: string
+  astNodes: HQLNode[],
+  currentDir: string,
 ): Promise<string> {
   // Step 1: Expand macros in the AST
   const expandedNodes = await expandMacros(astNodes);
-  
+
   // Step 2: Transform to IR
   const ir = transformToIR(expandedNodes, currentDir);
-  
+
   // Step 3: Generate TypeScript code directly from IR
   const tsCode = generateTypeScript(ir);
-  
+
   // Step 4: Prepend runtime functions
   return tsCode;
 }
@@ -152,12 +159,14 @@ export async function transformAST(
 Here's a complete example of how HQL code transforms through the pipeline:
 
 ### HQL Source
+
 ```
 (defn greet (name)
   (+ "Hello, " name "!"))
 ```
 
 ### HQL AST
+
 ```json
 [
   {
@@ -165,8 +174,8 @@ Here's a complete example of how HQL code transforms through the pipeline:
     "elements": [
       { "type": "symbol", "name": "defn" },
       { "type": "symbol", "name": "greet" },
-      { 
-        "type": "list", 
+      {
+        "type": "list",
         "elements": [{ "type": "symbol", "name": "name" }]
       },
       {
@@ -184,6 +193,7 @@ Here's a complete example of how HQL code transforms through the pipeline:
 ```
 
 ### Expanded AST (after macro expansion)
+
 ```json
 [
   {
@@ -216,6 +226,7 @@ Here's a complete example of how HQL code transforms through the pipeline:
 ```
 
 ### HQL IR (simplified)
+
 ```javascript
 {
   type: IRNodeType.Program,
@@ -258,28 +269,34 @@ Here's a complete example of how HQL code transforms through the pipeline:
 ```
 
 ### TypeScript Output
+
 ```typescript
-const greet = function(name) {
+const greet = function (name) {
   return "Hello, " + name + "!";
 };
 ```
 
 ## Key Benefits
 
-1. **Expression-Oriented**: Every construct is an expression that returns a value
+1. **Expression-Oriented**: Every construct is an expression that returns a
+   value
 2. **Macro-Driven**: High-level language features compile to minimal core forms
-3. **Efficient Pipeline**: Direct IR-to-TypeScript transformation removes unnecessary steps
-4. **Modern Tooling**: Leverages the TypeScript Compiler API for optimized code generation
-5. **Maintainable Architecture**: Clean separation of concerns with well-defined interfaces
+3. **Efficient Pipeline**: Direct IR-to-TypeScript transformation removes
+   unnecessary steps
+4. **Modern Tooling**: Leverages the TypeScript Compiler API for optimized code
+   generation
+5. **Maintainable Architecture**: Clean separation of concerns with well-defined
+   interfaces
 
 ## Implementation Details
 
-The key innovation is the direct conversion from HQL IR to the official TypeScript AST, implemented in `ir-to-official-ts.ts`:
+The key innovation is the direct conversion from HQL IR to the official
+TypeScript AST, implemented in `ir-to-official-ts.ts`:
 
 ```typescript
 export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
   const statements: ts.Statement[] = [];
-  
+
   for (const node of program.body) {
     const statement = convertIRNode(node);
     if (Array.isArray(statement)) {
@@ -288,23 +305,29 @@ export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
       statements.push(statement);
     }
   }
-  
+
   return ts.factory.createSourceFile(
     statements,
     ts.factory.createToken(ts.SyntaxKind.EndOfFileToken),
-    ts.NodeFlags.None
+    ts.NodeFlags.None,
   );
 }
 
 function convertIRNode(node: IR.IRNode): ts.Statement | ts.Statement[] | null {
   switch (node.type) {
     case IR.IRNodeType.StringLiteral:
-      return createExpressionStatement(convertStringLiteral(node as IR.IRStringLiteral));
+      return createExpressionStatement(
+        convertStringLiteral(node as IR.IRStringLiteral),
+      );
     case IR.IRNodeType.NumericLiteral:
-      return createExpressionStatement(convertNumericLiteral(node as IR.IRNumericLiteral));
-    // Additional cases for other node types...
+      return createExpressionStatement(
+        convertNumericLiteral(node as IR.IRNumericLiteral),
+      );
+      // Additional cases for other node types...
   }
 }
 ```
 
-This approach provides a streamlined, efficient pipeline that preserves the expression-oriented nature of HQL while benefiting from the robustness of the TypeScript compiler.
+This approach provides a streamlined, efficient pipeline that preserves the
+expression-oriented nature of HQL while benefiting from the robustness of the
+TypeScript compiler.

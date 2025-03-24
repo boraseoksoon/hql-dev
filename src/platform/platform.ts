@@ -1,5 +1,5 @@
 import * as stdPath from "jsr:@std/path@1.0.8";
-import { exists, ensureDir } from "jsr:@std/fs@1.0.13";
+import { ensureDir, exists } from "jsr:@std/fs@1.0.13";
 import { Logger } from "../logger.ts";
 
 /**
@@ -51,9 +51,12 @@ export interface Platform {
 export const DenoPlatform: Platform = {
   cwd: () => Deno.cwd(),
   stat: async (path: string): Promise<Deno.FileInfo> => await Deno.stat(path),
-  readTextFile: async (path: string): Promise<string> => await Deno.readTextFile(path),
-  writeTextFile: async (path: string, data: string): Promise<void> => await Deno.writeTextFile(path, data),
-  mkdir: async (path: string, opts?: { recursive?: boolean }): Promise<void> => await Deno.mkdir(path, opts),
+  readTextFile: async (path: string): Promise<string> =>
+    await Deno.readTextFile(path),
+  writeTextFile: async (path: string, data: string): Promise<void> =>
+    await Deno.writeTextFile(path, data),
+  mkdir: async (path: string, opts?: { recursive?: boolean }): Promise<void> =>
+    await Deno.mkdir(path, opts),
   join: (...segments: string[]): string => stdPath.join(...segments),
   dirname: (path: string): string => stdPath.dirname(path),
   basename: (path: string, ext?: string): string => stdPath.basename(path, ext),
@@ -73,7 +76,8 @@ export const DenoPlatform: Platform = {
 
   // Appended implementations
   getArgs: () => Deno.args,
-  copyFile: (src: string, dest: string): Promise<void> => Deno.copyFile(src, dest),
+  copyFile: (src: string, dest: string): Promise<void> =>
+    Deno.copyFile(src, dest),
 };
 
 /**
@@ -106,4 +110,4 @@ export const exit = CurrentPlatform.exit;
 export const getEnv = CurrentPlatform.getEnv;
 export const setEnv = CurrentPlatform.setEnv;
 export const existsFn = CurrentPlatform.exists; // Exporting exists as existsFn
-export { exists, ensureDir };
+export { ensureDir, exists };

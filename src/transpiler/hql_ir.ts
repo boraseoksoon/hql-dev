@@ -3,16 +3,16 @@
 export enum IRNodeType {
   // Basic program structure
   Program,
-  
+
   // Literals
   StringLiteral,
   NumericLiteral,
   BooleanLiteral,
   NullLiteral,
-  
+
   // Identifiers
   Identifier,
-  
+
   // Expressions
   CallExpression,
   MemberExpression,
@@ -24,34 +24,34 @@ export enum IRNodeType {
   ArrayExpression,
   ArrayConsExpression,
   FunctionExpression,
-  
+
   // Object literal support (for maps)
   ObjectExpression,
   ObjectProperty,
-  
+
   // Statements/Declarations
   VariableDeclaration,
   VariableDeclarator,
   FunctionDeclaration,
   ReturnStatement,
   BlockStatement,
-  
+
   // Import/Export
   ImportDeclaration,
   ImportSpecifier,
   ExportNamedDeclaration,
   ExportSpecifier,
   ExportVariableDeclaration,
-  
+
   // JS Interop
   InteropIIFE,
-  
+
   // Other
   CommentBlock,
   Raw,
-  
+
   // For representing a JS import reference from (js-import "module")
-  JsImportReference
+  JsImportReference,
 }
 
 export interface IRNode {

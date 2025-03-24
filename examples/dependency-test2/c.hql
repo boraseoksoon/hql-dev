@@ -1,7 +1,5 @@
 
 ;; c.hql
 
-(defn minus (x y)
-  (- x y))
-
+(import [minus] from "./d.hql")
 (export [minus])

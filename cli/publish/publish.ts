@@ -71,7 +71,9 @@ function parsePublishArgs(args: string[]): PublishOptions {
     if (w === "npm" || w === "jsr") {
       platform = w as "jsr" | "npm";
     } else {
-      console.error(`\n❌ Invalid value for -where: "${parsed.where}". Must be 'npm' or 'jsr'.`);
+      console.error(
+        `\n❌ Invalid value for -where: "${parsed.where}". Must be 'npm' or 'jsr'.`,
+      );
       exit(1);
     }
   }
@@ -85,7 +87,9 @@ function parsePublishArgs(args: string[]): PublishOptions {
     if (maybePlatform === "npm" || maybePlatform === "jsr") {
       platform = maybePlatform as "jsr" | "npm";
     } else {
-      console.error(`\n❌ Invalid platform: "${pos[1]}". Must be "npm" or "jsr".`);
+      console.error(
+        `\n❌ Invalid platform: "${pos[1]}". Must be "npm" or "jsr".`,
+      );
       exit(1);
     }
   }
@@ -110,11 +114,11 @@ function parsePublishArgs(args: string[]): PublishOptions {
 /** Main publish function that calls the appropriate publisher. */
 export async function publish(args: string[]): Promise<void> {
   const options = parsePublishArgs(args);
-  
+
   if (options.verbose) {
     console.log("Running with verbose logging enabled\n");
   }
-  
+
   console.log(`Publishing ${options.platform.toUpperCase()} package with:
   Directory (what): "${options.what}"
   Name: ${options.name ?? "(auto-generated)"}
@@ -122,10 +126,12 @@ export async function publish(args: string[]): Promise<void> {
 
   // Check environment before proceeding
   if (!await checkEnvironment(options.platform)) {
-    console.error("\n❌ Environment check failed. Please fix the issues before publishing.");
+    console.error(
+      "\n❌ Environment check failed. Please fix the issues before publishing.",
+    );
     exit(1);
   }
-  
+
   try {
     if (options.platform === "npm") {
       await publishNpm(options);
@@ -134,14 +140,20 @@ export async function publish(args: string[]): Promise<void> {
     }
     console.log("\n✅ Publishing completed successfully!");
   } catch (error) {
-    console.error("\n❌ Publishing failed:", error instanceof Error ? error.message : String(error));
+    console.error(
+      "\n❌ Publishing failed:",
+      error instanceof Error ? error.message : String(error),
+    );
     exit(1);
   }
 }
 
 if (import.meta.main) {
   publish(Deno.args).catch((err) => {
-    console.error("\n❌ Publish failed:", err instanceof Error ? err.message : String(err));
+    console.error(
+      "\n❌ Publish failed:",
+      err instanceof Error ? err.message : String(err),
+    );
     exit(1);
   });
 }

@@ -15,6 +15,7 @@
 (numbers.push 5)
 (numbers.push 6)
 (numbers.push 7)
+(print numbers)
 
 ;; --- Basic Values and Definitions ---
 (def pi 3.14159)

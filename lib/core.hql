@@ -105,6 +105,11 @@
 (defmacro first (coll)
   `(get ~coll 0))
 
+(defmacro second (coll)
+  `(if (and (not (nil? ~coll)) (> (length ~coll) 1))
+      (nth ~coll 1)
+      nil))
+
 (defmacro rest (coll)
   `(js-call ~coll "slice" 1))
 

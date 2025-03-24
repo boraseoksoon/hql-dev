@@ -30,7 +30,7 @@ export class ParseError extends TranspilerError {
   constructor(
     message: string,
     position: { line: number; column: number; offset: number },
-    source?: string
+    source?: string,
   ) {
     super(message);
     this.name = "ParseError";
@@ -40,7 +40,8 @@ export class ParseError extends TranspilerError {
   }
 
   public override formatMessage(): string {
-    let result = `${this.message} at line ${this.position.line}, column ${this.position.column}`;
+    let result =
+      `${this.message} at line ${this.position.line}, column ${this.position.column}`;
 
     // Add a snippet of source if available
     if (this.source) {
@@ -67,7 +68,7 @@ export class MacroError extends TranspilerError {
     message: string,
     macroName: string,
     sourceFile?: string,
-    originalError?: Error
+    originalError?: Error,
   ) {
     super(message);
     this.name = "MacroError";
@@ -81,7 +82,8 @@ export class MacroError extends TranspilerError {
     let result: string;
 
     if (this.sourceFile) {
-      result = `Error expanding macro '${this.macroName}' (from ${this.sourceFile}): ${this.message}`;
+      result =
+        `Error expanding macro '${this.macroName}' (from ${this.sourceFile}): ${this.message}`;
     } else {
       result = `Error expanding macro '${this.macroName}': ${this.message}`;
     }
@@ -107,7 +109,7 @@ export class ImportError extends TranspilerError {
     message: string,
     importPath: string,
     sourceFile?: string,
-    originalError?: Error
+    originalError?: Error,
   ) {
     super(message);
     this.name = "ImportError";
@@ -121,7 +123,8 @@ export class ImportError extends TranspilerError {
     let result: string;
 
     if (this.sourceFile) {
-      result = `Error importing '${this.importPath}' from '${this.sourceFile}': ${this.message}`;
+      result =
+        `Error importing '${this.importPath}' from '${this.sourceFile}': ${this.message}`;
     } else {
       result = `Error importing '${this.importPath}': ${this.message}`;
     }
@@ -147,7 +150,7 @@ export class TransformError extends TranspilerError {
     message: string,
     nodeSummary: string,
     phase: string,
-    originalNode?: any
+    originalNode?: any,
   ) {
     super(message);
     this.name = "TransformError";
@@ -158,11 +161,14 @@ export class TransformError extends TranspilerError {
   }
 
   public override formatMessage(): string {
-    let result = `Error during ${this.phase} transformation: ${this.message}\nNode: ${this.nodeSummary}`;
+    let result =
+      `Error during ${this.phase} transformation: ${this.message}\nNode: ${this.nodeSummary}`;
 
     if (this.originalNode) {
       try {
-        result += `\n\nFull node dump:\n${JSON.stringify(this.originalNode, null, 2)}`;
+        result += `\n\nFull node dump:\n${
+          JSON.stringify(this.originalNode, null, 2)
+        }`;
       } catch (e) {
         result += `\n\nCould not stringify original node: ${
           e instanceof Error ? e.message : String(e)
@@ -190,11 +196,14 @@ export class CodeGenError extends TranspilerError {
   }
 
   public override formatMessage(): string {
-    let result = `Error generating code for node type '${this.nodeType}': ${this.message}`;
+    let result =
+      `Error generating code for node type '${this.nodeType}': ${this.message}`;
 
     if (this.originalNode) {
       try {
-        result += `\n\nFull node dump:\n${JSON.stringify(this.originalNode, null, 2)}`;
+        result += `\n\nFull node dump:\n${
+          JSON.stringify(this.originalNode, null, 2)
+        }`;
       } catch (e) {
         result += `\n\nCould not stringify original node: ${
           e instanceof Error ? e.message : String(e)
@@ -218,7 +227,7 @@ export class ValidationError extends TranspilerError {
     message: string,
     context: string,
     expectedType?: string,
-    actualType?: string
+    actualType?: string,
   ) {
     super(message);
     this.name = "ValidationError";
@@ -232,7 +241,8 @@ export class ValidationError extends TranspilerError {
     let result = `Validation error in ${this.context}: ${this.message}`;
 
     if (this.expectedType && this.actualType) {
-      result += `\nExpected type: ${this.expectedType}\nActual type: ${this.actualType}`;
+      result +=
+        `\nExpected type: ${this.expectedType}\nActual type: ${this.actualType}`;
     }
 
     return result;
@@ -254,7 +264,9 @@ export function summarizeNode(node: any): string {
     if (node.length <= 3) {
       return `[${node.map(summarizeNode).join(", ")}]`;
     }
-    return `[${summarizeNode(node[0])}, ${summarizeNode(node[1])}, ... (${node.length} items)]`;
+    return `[${summarizeNode(node[0])}, ${
+      summarizeNode(node[1])
+    }, ... (${node.length} items)]`;
   }
 
   // Handle node objects based on common properties
@@ -268,10 +280,9 @@ export function summarizeNode(node: any): string {
 
     // Add value for literals
     if ("value" in node) {
-      const valueStr =
-        typeof (node as any).value === "string"
-          ? `"${(node as any).value}"`
-          : String((node as any).value);
+      const valueStr = typeof (node as any).value === "string"
+        ? `"${(node as any).value}"`
+        : String((node as any).value);
       summary += ` ${valueStr}`;
     }
 
@@ -288,7 +299,7 @@ export function summarizeNode(node: any): string {
 export function createErrorReport(
   error: Error,
   stageName: string,
-  context: any = {}
+  context: any = {},
 ): string {
   let report = `Error in ${stageName}:\n${error.message}\n`;
 

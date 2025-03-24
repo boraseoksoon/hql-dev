@@ -36,20 +36,46 @@ function printBlock(header: string, content: string) {
  */
 function printBanner(): void {
   console.log("╔════════════════════════════════════════════════════════════╗");
-  console.log("║                HQL S-Expression REPL                        ║");
+  console.log(
+    "║                HQL S-Expression REPL                        ║",
+  );
   console.log("╠════════════════════════════════════════════════════════════╣");
-  console.log("║  Type HQL expressions to evaluate them                      ║");
-  console.log("║  Special commands:                                          ║");
-  console.log("║    :help - Display this help                                ║");
-  console.log("║    :quit, :exit - Exit the REPL                             ║");
-  console.log("║    :env - Show environment bindings                         ║");
-  console.log("║    :macros - Show defined macros                            ║");
-  console.log("║    :verbose - Toggle verbose mode                           ║");
-  console.log("║    :ast - Toggle AST display                                ║");
-  console.log("║    :expanded - Toggle expanded form display                 ║");
-  console.log("║    :js - Toggle JavaScript output display                   ║");
-  console.log("║    :load <filename> - Load and evaluate a file              ║");
-  console.log("║    :save <filename> - Save history to a file                ║");
+  console.log(
+    "║  Type HQL expressions to evaluate them                      ║",
+  );
+  console.log(
+    "║  Special commands:                                          ║",
+  );
+  console.log(
+    "║    :help - Display this help                                ║",
+  );
+  console.log(
+    "║    :quit, :exit - Exit the REPL                             ║",
+  );
+  console.log(
+    "║    :env - Show environment bindings                         ║",
+  );
+  console.log(
+    "║    :macros - Show defined macros                            ║",
+  );
+  console.log(
+    "║    :verbose - Toggle verbose mode                           ║",
+  );
+  console.log(
+    "║    :ast - Toggle AST display                                ║",
+  );
+  console.log(
+    "║    :expanded - Toggle expanded form display                 ║",
+  );
+  console.log(
+    "║    :js - Toggle JavaScript output display                   ║",
+  );
+  console.log(
+    "║    :load <filename> - Load and evaluate a file              ║",
+  );
+  console.log(
+    "║    :save <filename> - Save history to a file                ║",
+  );
   console.log("╚════════════════════════════════════════════════════════════╝");
 }
 
@@ -60,24 +86,24 @@ async function loadCoreMacros(env: Environment, logger: Logger): Promise<void> {
   try {
     // Find the core.hql file
     const cwd = Deno.cwd();
-    const corePath = path.join(cwd, 'lib/core.hql');
-    
+    const corePath = path.join(cwd, "lib/core.hql");
+
     logger.debug(`Loading core.hql from: ${corePath}`);
-    
+
     // Read and parse the file
     const coreSource = await Deno.readTextFile(corePath);
     const coreExps = parse(coreSource);
-    
+
     // Process imports in core.hql
     await processImports(coreExps, env, {
       verbose: logger.enabled,
-      baseDir: path.dirname(corePath)
+      baseDir: path.dirname(corePath),
     });
-    
+
     // Expand macros to register them
     expandMacros(coreExps, env);
-    
-    logger.debug('Core macros loaded successfully');
+
+    logger.debug("Core macros loaded successfully");
   } catch (error) {
     logger.error(`Error loading core macros: ${error.message}`);
     throw error;
@@ -95,46 +121,48 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
   const showAst = options.showAst ?? false;
   const showExpanded = options.showExpanded ?? false;
   const showJs = options.showJs ?? false;
-  
+
   printBanner();
 
   // Initialize environment and load core.hql macros
   logger.log("Initializing environment...");
-  const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
+  const env = await Environment.initializeGlobalEnv({
+    verbose: options.verbose,
+  });
 
   await loadCoreMacros(env, logger);
-  
+
   // Display available macros
   if (options.verbose) {
     const macroKeys = Array.from(env.macros.keys());
     logger.log(`Available macros: ${macroKeys.join(", ")}`);
   }
-  
+
   const history: string[] = [];
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
-  
+
   let running = true;
   let multilineInput = "";
   let multilineMode = false;
   let parenBalance = 0;
-  
+
   while (running) {
     try {
       const prompt = multilineMode ? "... " : "hql> ";
       await Deno.stdout.write(encoder.encode(prompt));
-      
+
       const buf = new Uint8Array(1024);
       const n = await Deno.stdin.read(buf);
       if (n === null) break;
       const line = decoder.decode(buf.subarray(0, n)).trim();
-      
+
       // Handle multiline input.
       if (multilineMode) {
         multilineInput += line + "\n";
         for (const char of line) {
-          if (char === '(') parenBalance++;
-          else if (char === ')') parenBalance--;
+          if (char === "(") parenBalance++;
+          else if (char === ")") parenBalance--;
         }
         if (parenBalance <= 0) {
           multilineMode = false;
@@ -151,7 +179,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
         }
         continue;
       }
-      
+
       // Handle special commands.
       if (line.startsWith(":")) {
         await handleCommand(line, env, history, {
@@ -161,23 +189,27 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           showExpanded,
           showJs,
           running: () => running,
-          setRunning: (value) => { running = value; },
-          setVerbose: (value) => { logger.setEnabled(value); },
+          setRunning: (value) => {
+            running = value;
+          },
+          setVerbose: (value) => {
+            logger.setEnabled(value);
+          },
         });
         continue;
       }
-      
+
       // Check if input is incomplete.
       for (const char of line) {
-        if (char === '(') parenBalance++;
-        else if (char === ')') parenBalance--;
+        if (char === "(") parenBalance++;
+        else if (char === ")") parenBalance--;
       }
       if (parenBalance > 0) {
         multilineMode = true;
         multilineInput = line + "\n";
         continue;
       }
-      
+
       await processInput(line, env, history, {
         logger,
         baseDir,
@@ -204,13 +236,19 @@ async function processInput(
   input: string,
   env: Environment,
   history: string[],
-  { logger, baseDir, historySize, showAst, showExpanded, showJs }:
-    { logger: Logger; baseDir: string; historySize: number; showAst: boolean; showExpanded: boolean; showJs: boolean }
+  { logger, baseDir, historySize, showAst, showExpanded, showJs }: {
+    logger: Logger;
+    baseDir: string;
+    historySize: number;
+    showAst: boolean;
+    showExpanded: boolean;
+    showJs: boolean;
+  },
 ): Promise<void> {
   if (!input.trim()) return;
   if (history.length >= historySize) history.shift();
   history.push(input);
-  
+
   try {
     logger.debug("Parsing input...");
     const sexps = parse(input);
@@ -218,35 +256,33 @@ async function processInput(
       console.log("No expressions to evaluate");
       return;
     }
-    
+
     // Optionally display the parsed AST.
     if (showAst) {
       printBlock("Parsed S-expressions:", sexps.map(sexpToString).join("\n  "));
     }
-    
+
     logger.debug("Expanding macros...");
     const expanded = expandMacros(sexps, env, { verbose: logger.enabled });
-    
+
     // Optionally display expanded forms.
     if (showExpanded) {
       printBlock("Expanded forms:", expanded.map(sexpToString).join("\n  "));
     }
-    
+
     // Transpile to JavaScript.
     logger.debug("Converting to HQL AST...");
     const hqlAst = convertToHqlAst(expanded, { verbose: logger.enabled });
     logger.debug("Transforming to JavaScript...");
     const jsCode = await transformAST(hqlAst, baseDir, {
       verbose: logger.enabled,
-      module: 'esm',
-      bundle: false,
     });
-    
+
     // Optionally display transpiled JavaScript.
     if (showJs) {
       printBlock("JavaScript:", "```javascript\n" + jsCode + "\n```");
     }
-    
+
     // Evaluate the transpiled JavaScript.
     logger.debug("Evaluating transpiled JavaScript...");
     let evalResult: any;
@@ -257,7 +293,7 @@ async function processInput(
       console.error("Error during JavaScript evaluation:", e);
       return;
     }
-    
+
     console.log("=> ", evalResult);
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
@@ -273,13 +309,29 @@ async function handleCommand(
   command: string,
   env: Environment,
   history: string[],
-  { logger, baseDir, showAst, showExpanded, showJs, running, setRunning, setVerbose }:
-    { logger: Logger; baseDir: string; showAst: boolean; showExpanded: boolean; showJs: boolean;
-      running: () => boolean; setRunning: (value: boolean) => void; setVerbose: (value: boolean) => void; }
+  {
+    logger,
+    baseDir,
+    showAst,
+    showExpanded,
+    showJs,
+    running,
+    setRunning,
+    setVerbose,
+  }: {
+    logger: Logger;
+    baseDir: string;
+    showAst: boolean;
+    showExpanded: boolean;
+    showJs: boolean;
+    running: () => boolean;
+    setRunning: (value: boolean) => void;
+    setVerbose: (value: boolean) => void;
+  },
 ): Promise<void> {
   const parts = command.trim().split(/\s+/);
   const cmd = parts[0].toLowerCase();
-  
+
   switch (cmd) {
     case ":help":
     case ":h":
@@ -293,7 +345,7 @@ async function handleCommand(
     case ":env":
       console.log("Environment bindings: (simplified view)\n");
       for (const [key, value] of env.variables.entries()) {
-        if (typeof value === 'function') {
+        if (typeof value === "function") {
           console.log(`${key}: [Function]`);
         } else {
           console.log(`${key}: ${value}`);
@@ -319,9 +371,20 @@ async function handleCommand(
         const filename = parts.slice(1).join(" ");
         const content = await Deno.readTextFile(filename);
         console.log(`Loading file: ${filename}`);
-        await processInput(content, env, history, { logger, baseDir, historySize: 1000, showAst, showExpanded, showJs });
+        await processInput(content, env, history, {
+          logger,
+          baseDir,
+          historySize: 1000,
+          showAst,
+          showExpanded,
+          showJs,
+        });
       } catch (error) {
-        console.error(`Error loading file: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `Error loading file: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
       break;
     case ":save":
@@ -334,7 +397,11 @@ async function handleCommand(
         await Deno.writeTextFile(filename, history.join("\n"));
         console.log(`History saved to: ${filename}`);
       } catch (error) {
-        console.error(`Error saving history: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `Error saving history: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
       break;
     case ":clear":

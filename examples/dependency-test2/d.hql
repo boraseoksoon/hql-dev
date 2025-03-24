@@ -1,5 +1,5 @@
 ;; d.hql
-(defn minus (x y)
-  (- x y))
+
+(import [minus] from "./e.js")
 
 (export [minus])

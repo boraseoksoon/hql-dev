@@ -1,8 +1,15 @@
 // cli/publish/utils.ts
-import { readTextFile, writeTextFile, exists } from "../../src/platform/platform.ts";
+import {
+  exists,
+  readTextFile,
+  writeTextFile,
+} from "../../src/platform/platform.ts";
 
 /** Prompt the user with a question; return the entered value or the default if empty. */
-export async function prompt(question: string, defaultValue = ""): Promise<string> {
+export async function prompt(
+  question: string,
+  defaultValue = "",
+): Promise<string> {
   Deno.stdout.writeSync(new TextEncoder().encode(`${question} `));
   const buf = new Uint8Array(1024);
   const n = await Deno.stdin.read(buf);

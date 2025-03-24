@@ -24,8 +24,8 @@ export function isImportNode(node: HQLNode): boolean {
     node.type === "list" &&
     node.elements.length >= 3 &&
     node.elements[0].type === "symbol" &&
-    ((node.elements[0] as SymbolNode).name === "import" || 
-     (node.elements[0] as SymbolNode).name === "js-import")
+    ((node.elements[0] as SymbolNode).name === "import" ||
+      (node.elements[0] as SymbolNode).name === "js-import")
   );
 }
 
@@ -45,11 +45,13 @@ export function isMacroImport(node: HQLNode): boolean {
  * Helper to extract import path from a node
  */
 export function extractImportPath(node: any): string | null {
-  if (node.type === "list" && 
-      node.elements.length >= 3 && 
-      node.elements[0].type === "symbol" && 
-      node.elements[0].name === "import" &&
-      node.elements[2].type === "literal") {
+  if (
+    node.type === "list" &&
+    node.elements.length >= 3 &&
+    node.elements[0].type === "symbol" &&
+    node.elements[0].name === "import" &&
+    node.elements[2].type === "literal"
+  ) {
     return node.elements[2].value;
   }
   return null;

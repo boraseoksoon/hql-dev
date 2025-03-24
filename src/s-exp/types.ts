@@ -6,17 +6,17 @@
 export type SExp = SSymbol | SList | SLiteral;
 
 export interface SSymbol {
-  type: 'symbol';
+  type: "symbol";
   name: string;
 }
 
 export interface SList {
-  type: 'list';
+  type: "list";
   elements: SExp[];
 }
 
 export interface SLiteral {
-  type: 'literal';
+  type: "literal";
   value: string | number | boolean | null;
 }
 
@@ -24,102 +24,104 @@ export interface SLiteral {
  * Helper functions to create S-expressions
  */
 export function createSymbol(name: string): SSymbol {
-  return { type: 'symbol', name };
+  return { type: "symbol", name };
 }
 
 export function createList(...elements: SExp[]): SList {
-  return { type: 'list', elements };
+  return { type: "list", elements };
 }
 
-export function createLiteral(value: string | number | boolean | null): SLiteral {
-  return { type: 'literal', value };
+export function createLiteral(
+  value: string | number | boolean | null,
+): SLiteral {
+  return { type: "literal", value };
 }
 
 export function createNilLiteral(): SLiteral {
-  return { type: 'literal', value: null };
+  return { type: "literal", value: null };
 }
 
 /**
  * Type guards for S-expressions
  */
 export function isSymbol(exp: SExp): exp is SSymbol {
-  return exp.type === 'symbol';
+  return exp.type === "symbol";
 }
 
 export function isList(exp: SExp): exp is SList {
-  return exp.type === 'list';
+  return exp.type === "list";
 }
 
 export function isLiteral(exp: SExp): exp is SLiteral {
-  return exp.type === 'literal';
+  return exp.type === "literal";
 }
 
 /**
  * Check if an S-expression is a specific form
  */
 export function isForm(exp: SExp, formName: string): boolean {
-  return isList(exp) && 
-         exp.elements.length > 0 && 
-         isSymbol(exp.elements[0]) && 
-         exp.elements[0].name === formName;
+  return isList(exp) &&
+    exp.elements.length > 0 &&
+    isSymbol(exp.elements[0]) &&
+    exp.elements[0].name === formName;
 }
 
 /**
  * Helpers for specific forms
  */
 export function isDefMacro(exp: SExp): boolean {
-  return isForm(exp, 'defmacro');
+  return isForm(exp, "defmacro");
 }
 
 /**
  * Check if an S-expression is a user-level macro definition
  */
 export function isUserMacro(exp: SExp): boolean {
-  return isForm(exp, 'macro');
+  return isForm(exp, "macro");
 }
 
 export function isImport(exp: SExp): boolean {
-  return isForm(exp, 'import');
+  return isForm(exp, "import");
 }
 
 export function isDef(exp: SExp): boolean {
-  return isForm(exp, 'def');
+  return isForm(exp, "def");
 }
 
 export function isDefn(exp: SExp): boolean {
-  return isForm(exp, 'defn');
+  return isForm(exp, "defn");
 }
 
 export function isExport(exp: SExp): boolean {
-  return isForm(exp, 'export');
+  return isForm(exp, "export");
 }
 
 export function isQuote(exp: SExp): boolean {
-  return isForm(exp, 'quote');
+  return isForm(exp, "quote");
 }
 
 export function isUnquote(exp: SExp): boolean {
-  return isForm(exp, 'unquote');
+  return isForm(exp, "unquote");
 }
 
 export function isUnquoteSplicing(exp: SExp): boolean {
-  return isForm(exp, 'unquote-splicing');
+  return isForm(exp, "unquote-splicing");
 }
 
 export function isQuasiquote(exp: SExp): boolean {
-  return isForm(exp, 'quasiquote');
+  return isForm(exp, "quasiquote");
 }
 
 export function isJsCall(exp: SExp): boolean {
-  return isForm(exp, 'js-call');
+  return isForm(exp, "js-call");
 }
 
 export function isJsGet(exp: SExp): boolean {
-  return isForm(exp, 'js-get');
+  return isForm(exp, "js-get");
 }
 
 export function isLambda(exp: SExp): boolean {
-  return isForm(exp, 'fn');
+  return isForm(exp, "fn");
 }
 
 /**
@@ -130,14 +132,14 @@ export function sexpToString(exp: SExp): string {
     return exp.name;
   } else if (isLiteral(exp)) {
     if (exp.value === null) {
-      return 'nil';
-    } else if (typeof exp.value === 'string') {
+      return "nil";
+    } else if (typeof exp.value === "string") {
       return `"${exp.value}"`;
     } else {
       return String(exp.value);
     }
   } else if (isList(exp)) {
-    return `(${exp.elements.map(sexpToString).join(' ')})`;
+    return `(${exp.elements.map(sexpToString).join(" ")})`;
   } else {
     return String(exp);
   }
@@ -158,16 +160,14 @@ export function cloneSExp(exp: SExp): SExp {
   }
 }
 
-
-
 /**
  * Check if an import is vector-based
  */
 export function isSExpVectorImport(elements: SExp[]): boolean {
-  return elements.length >= 4 && 
-         elements[1].type === 'list' && 
-         isSymbol(elements[2]) && 
-         elements[2].name === 'from';
+  return elements.length >= 4 &&
+    elements[1].type === "list" &&
+    isSymbol(elements[2]) &&
+    elements[2].name === "from";
 }
 
 /**
@@ -175,10 +175,10 @@ export function isSExpVectorImport(elements: SExp[]): boolean {
  * Format: (import name from "path")
  */
 export function isSExpNamespaceImport(elements: SExp[]): boolean {
-  return elements.length === 4 && 
-         isSymbol(elements[1]) && 
-         isSymbol(elements[2]) && 
-         elements[2].name === 'from' &&
-         isLiteral(elements[3]) && 
-         typeof elements[3].value === 'string';
+  return elements.length === 4 &&
+    isSymbol(elements[1]) &&
+    isSymbol(elements[2]) &&
+    elements[2].name === "from" &&
+    isLiteral(elements[3]) &&
+    typeof elements[3].value === "string";
 }
