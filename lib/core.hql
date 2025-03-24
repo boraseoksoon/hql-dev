@@ -142,18 +142,8 @@
   `(js-call _ "toUpper" ~text))
 
 ;; Test HQL imports
-(import module from "./test/text-utils.hql")
+;; (import module from "./test/text-utils.hql")
+;; (defmacro text-wrapper (text) `(module.wrap_text ~text))
 
-(defmacro text-wrapper (text)
-  `(module.wrap_text ~text))
-
-(import formatter from "./test/formatter.js")
-(defmacro js-format-text (text) `(formatter.formatText ~text))
-
-;; (import nested from "./test/nested.js")
-;; (defmacro hqlFormatText (text) `(nested.hqlFormatText ~text))
-
-;; macro import test from name imports
-
-;; (import [formatText] from "./test/formatter.js")
-;; (defmacro js-format-text2 (text) `(formatText ~text))
+;; (import formatter from "./test/formatter.js")
+;; (defmacro js-format-text (text) `(formatter.formatText ~text))

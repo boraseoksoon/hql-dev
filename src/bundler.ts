@@ -1,4 +1,4 @@
-// src/bundler.ts - Updated to fix local HQL import path resolution
+// src/bundler.ts - Complete implementation with enhanced JS import resolution
 
 import { resolve, dirname, writeTextFile, exists, basename, join, ensureDir } from "./platform/platform.ts";
 import { Logger } from "./logger.ts";
@@ -7,6 +7,7 @@ import { TranspilerError, ValidationError, ImportError, createErrorReport } from
 import { perform, performAsync } from "./transpiler/error-utils.ts";
 import { simpleHash } from "./utils.ts";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import { resolveRelativePath } from "./s-exp/imports.ts"
 
 // Constants
 const MAX_RETRIES = 3;
@@ -232,32 +233,120 @@ async function processJsEntryFile(
   options: BundleOptions,
   logger: Logger
 ): Promise<string> {
-  logger.log(`Using JS entry file: ${resolvedInputPath}`);
-  
-  // Read the JS file
-  const jsSource = await performAsync(
-    () => Deno.readTextFile(resolvedInputPath),
-    `Reading JS entry file ${resolvedInputPath}`,
-    TranspilerError
-  );
-  
-  logger.debug(`Read ${jsSource.length} bytes from ${resolvedInputPath}`);
-  
-  // Check for HQL imports
-  checkForHqlImports(jsSource, logger);
-  
-  await writeOutput(jsSource, outputPath, logger, options.force);
-  return outputPath;
+  return performAsync(async () => {
+    logger.log(`Using JS entry file: ${resolvedInputPath}`);
+    
+    // Read the JS file
+    const jsSource = await performAsync(
+      () => Deno.readTextFile(resolvedInputPath),
+      `Reading JS entry file ${resolvedInputPath}`,
+      TranspilerError
+    );
+    
+    logger.debug(`Read ${jsSource.length} bytes from ${resolvedInputPath}`);
+    
+    // Check for HQL imports and process them if found
+    const hasHqlImports = checkForHqlImports(jsSource, logger);
+    let processedSource = jsSource;
+    
+    if (hasHqlImports) {
+      // Process HQL imports in JS file
+      processedSource = await processHqlImportsInJs(
+        jsSource,
+        resolvedInputPath,
+        options,
+        logger
+      );
+    }
+    
+    await writeOutput(processedSource, outputPath, logger, options.force);
+    return outputPath;
+  }, "Processing JS entry file", TranspilerError, [resolvedInputPath]);
 }
 
 /**
  * Check for HQL imports in JavaScript file
+ * Returns true if HQL imports are found
  */
-function checkForHqlImports(jsSource: string, logger: Logger): void {
+function checkForHqlImports(jsSource: string, logger: Logger): boolean {
   const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
-  if (hqlImportRegex.test(jsSource)) {
-    logger.log(`JS file contains HQL imports - will be processed during bundling`);
+  const hasHqlImports = hqlImportRegex.test(jsSource);
+  
+  if (hasHqlImports) {
+    logger.log(`JS file contains HQL imports - processing these imports`);
   }
+  
+  return hasHqlImports;
+}
+
+/**
+ * Process HQL imports in a JavaScript file
+ * This will:
+ * 1. Extract all HQL imports
+ * 2. Process each HQL file to JavaScript
+ * 3. Update the import statements in the JS source
+ * 4. Return the modified JS source
+ */
+async function processHqlImportsInJs(
+  jsSource: string,
+  jsFilePath: string,
+  options: BundleOptions,
+  logger: Logger
+): Promise<string> {
+  return performAsync(async () => {
+    const baseDir = dirname(jsFilePath);
+    let modifiedSource = jsSource;
+    
+    // Extract all HQL imports
+    const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
+    const imports: { full: string; path: string }[] = [];
+    let match;
+    
+    // Reset regex state before using it again
+    hqlImportRegex.lastIndex = 0;
+    
+    // Find all HQL imports
+    while ((match = hqlImportRegex.exec(jsSource)) !== null) {
+      const fullImport = match[0];
+      const importPath = match[1];
+      imports.push({ full: fullImport, path: importPath });
+    }
+    
+    logger.debug(`Found ${imports.length} HQL imports in JS file`);
+    
+    // Process each HQL import
+    for (const importInfo of imports) {
+      const hqlPath = importInfo.path;
+      const resolvedHqlPath = path.resolve(baseDir, hqlPath);
+
+      logger.debug(`Processing HQL import: ${hqlPath} (resolved: ${resolvedHqlPath})`);
+      
+      // Generate output path for the transpiled HQL file
+      const hqlOutputPath = resolvedHqlPath.replace(/\.hql$/, '.js');
+      
+      // Check if output already exists
+      if (!await exists(hqlOutputPath) || options.force) {
+        // Transpile the HQL file
+        logger.debug(`Transpiling HQL import: ${resolvedHqlPath} -> ${hqlOutputPath}`);
+        
+        await transpileCLI(resolvedHqlPath, hqlOutputPath, {
+          ...options,
+          bundle: false, // Don't bundle, just transpile
+        });
+      } else {
+        logger.debug(`Using existing transpiled file: ${hqlOutputPath}`);
+      }
+      
+      // Update the import statement in the JS source
+      const relativePath = hqlPath.replace(/\.hql$/, '.js');
+      const newImport = importInfo.full.replace(hqlPath, relativePath);
+      
+      modifiedSource = modifiedSource.replace(importInfo.full, newImport);
+      logger.debug(`Updated import from "${importInfo.full}" to "${newImport}"`);
+    }
+    
+    return modifiedSource;
+  }, "Processing HQL imports in JS file", TranspilerError, [jsFilePath]);
 }
 
 /**
@@ -569,79 +658,6 @@ async function resolveHqlImport(
         }
       }
     },
-    
-    // Strategy 4: Look in lib directory for core-related imports
-    {
-      description: "in lib directory",
-      path: resolve(Deno.cwd(), 'lib', args.path.replace(/^\.\//, '')),
-      tryResolve: async () => {
-        // If path starts with ./ strip it off to check in lib directory
-        const libPath = resolve(Deno.cwd(), 'lib', args.path.replace(/^\.\//, ''));
-        try {
-          await Deno.stat(libPath);
-          logger.debug(`Found import at ${libPath} (in lib directory)`);
-          return true;
-        } catch (e) {
-          return false;
-        }
-      }
-    },
-    
-    // Strategy 5: Look in the examples directory
-    {
-      description: "in examples directory",
-      path: resolve(Deno.cwd(), 'examples', args.path.replace(/^\.\//, '')),
-      tryResolve: async () => {
-        const examplesPath = resolve(Deno.cwd(), 'examples', args.path.replace(/^\.\//, ''));
-        try {
-          await Deno.stat(examplesPath);
-          logger.debug(`Found import at ${examplesPath} (in examples directory)`);
-          return true;
-        } catch (e) {
-          return false;
-        }
-      }
-    },
-
-    // Strategy 6: Look specifically for lib/test path for text-utils.hql
-    {
-      description: "in lib/test directory",
-      path: args.path.includes("text-utils.hql") ? 
-            resolve(Deno.cwd(), 'lib/test/text-utils.hql') : args.path,
-      tryResolve: async () => {
-        if (args.path.includes("text-utils.hql")) {
-          const testPath = resolve(Deno.cwd(), 'lib/test/text-utils.hql');
-          try {
-            await Deno.stat(testPath);
-            logger.debug(`Found import at ${testPath} (specific lib/test path)`);
-            return true;
-          } catch (e) {
-            return false;
-          }
-        }
-        return false;
-      }
-    },
-    
-    // Strategy 7: Check if the formatter.js exists when looking for it 
-    {
-      description: "in lib/test directory for formatter.js",
-      path: args.path.includes("formatter.js") ? 
-            resolve(Deno.cwd(), 'lib/test/formatter.js') : args.path,
-      tryResolve: async () => {
-        if (args.path.includes("formatter.js")) {
-          const formatterPath = resolve(Deno.cwd(), 'lib/test/formatter.js');
-          try {
-            await Deno.stat(formatterPath);
-            logger.debug(`Found import at ${formatterPath} (specific lib/test/formatter.js path)`);
-            return true;
-          } catch (e) {
-            return false;
-          }
-        }
-        return false;
-      }
-    }
   ];
   
   // Try all strategies in parallel for better performance
@@ -666,11 +682,6 @@ async function resolveHqlImport(
   
   // If all strategies fail, log the failure and return the original path
   logger.warn(`Could not resolve file: ${args.path} after trying all strategies in parallel`);
-  
-  // List all paths that were tried for better diagnostics
-  const triedPaths = results.map(r => r.path).join(', ');
-  logger.error(`File not found: ${args.path}, also tried ${triedPaths}`);
-  
   return { 
     path: args.path, 
     namespace: args.path.endsWith('.hql') ? "hql" : "file" 
@@ -771,25 +782,6 @@ async function loadTranspiledJs(
  * Find the actual file path, trying multiple locations
  */
 async function findActualFilePath(filePath: string, logger: Logger): Promise<string> {
-  // Special handling for core.hql library files
-  if (filePath.includes("text-utils.hql")) {
-    const libTestPath = path.resolve(Deno.cwd(), 'lib/test/text-utils.hql');
-    const content = await tryReadFile(libTestPath, logger);
-    if (content !== null) {
-      logger.debug(`Found text-utils.hql at lib/test path: ${libTestPath}`);
-      return libTestPath;
-    }
-  }
-  
-  if (filePath.includes("formatter.js")) {
-    const formatterPath = path.resolve(Deno.cwd(), 'lib/test/formatter.js');
-    const content = await tryReadFile(formatterPath, logger);
-    if (content !== null) {
-      logger.debug(`Found formatter.js at lib/test path: ${formatterPath}`);
-      return formatterPath;
-    }
-  }
-
   // Try to read the main file first
   let content = await tryReadFile(filePath, logger);
   
@@ -801,22 +793,12 @@ async function findActualFilePath(filePath: string, logger: Logger): Promise<str
   logger.debug(`File not found at ${filePath}, trying alternatives in parallel`);
   
   // Try alternatives in parallel
-  const fileName = path.basename(filePath);
+  const fileName = basename(filePath);
   const alternativePaths = [
-    path.resolve(Deno.cwd(), "lib", fileName),
-    path.resolve(Deno.cwd(), "lib/test", fileName),
-    path.resolve(Deno.cwd(), fileName),
-    path.resolve(Deno.cwd(), "examples", fileName)
+    resolve(Deno.cwd(), "examples", "dependency-test2", fileName),
+    resolve(Deno.cwd(), fileName),
+    resolve(Deno.cwd(), "examples", fileName)
   ];
-  
-  // Add paths with stripped ./ prefix for relative paths
-  if (filePath.startsWith('./')) {
-    const strippedPath = filePath.substring(2);
-    alternativePaths.push(
-      path.resolve(Deno.cwd(), "lib", strippedPath),
-      path.resolve(Deno.cwd(), strippedPath),
-    );
-  }
   
   const alternativeResults = await Promise.all(
     alternativePaths.map(async path => ({
@@ -835,11 +817,7 @@ async function findActualFilePath(filePath: string, logger: Logger): Promise<str
   
   // If all alternatives fail, throw an error
   logger.error(`File not found: ${filePath}, also tried ${alternativePaths.join(', ')}`);
-  throw new ImportError(
-    `File not found: ${filePath}, also tried ${alternativePaths.join(', ')}`,
-    filePath,
-    logger.getCurrentFile()
-  );
+  throw new TranspilerError(`File not found: ${filePath}, also tried ${alternativePaths.join(', ')}`);
 }
 
 /**

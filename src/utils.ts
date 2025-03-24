@@ -67,25 +67,10 @@ export function isJavaScriptModule(modulePath: string): boolean {
 }
 
 /**
- * Check if a path is a special or absolute path
- */
-export function isSpecialOrAbsolutePath(modulePath: string): boolean {
-  return Array.from(REMOTE_PATH_PREFIXES).some(prefix => modulePath.startsWith(prefix)) || 
-         path.isAbsolute(modulePath);
-}
-
-/**
  * Check if a path is a remote path (npm, jsr, http)
  */
 export function isRemotePath(path: string): boolean {
   return Array.from(REMOTE_PATH_PREFIXES).some(prefix => path.startsWith(prefix));
-}
-
-/**
- * Check if a path is a relative path
- */
-export function isRelativePath(modulePath: string): boolean {
-  return modulePath.startsWith('./') || modulePath.startsWith('../');
 }
 
 /**

@@ -171,16 +171,6 @@ export function isSExpVectorImport(elements: SExp[]): boolean {
 }
 
 /**
- * Check if an import is legacy-style
- */
-export function isSExpLegacyImport(elements: SExp[]): boolean {
-  return elements.length === 3 && 
-         isSymbol(elements[1]) && 
-         isLiteral(elements[2]) && 
-         typeof elements[2].value === 'string';
-}
-
-/**
  * Check if an import is namespace-based with "from" syntax
  * Format: (import name from "path")
  */

@@ -894,43 +894,6 @@ function transformVectorImport(list: ListNode, currentDir: string): IR.IRNode | 
 }
 
 /**
- * Transform legacy import syntax
- */
-function transformLegacyImport(list: ListNode, currentDir: string): IR.IRNode | null {
-  return perform(() => {
-    const nameNode = list.elements[1];
-    const pathNode = list.elements[2];
-
-    if (nameNode.type !== "symbol") {
-      throw new ValidationError(
-        "Import name must be a symbol",
-        "legacy import",
-        "symbol",
-        nameNode.type
-      );
-    }
-
-    if (pathNode.type !== "literal") {
-      throw new ValidationError(
-        "Import path must be a string literal",
-        "legacy import",
-        "string literal",
-        pathNode.type
-      );
-    }
-
-    const name = (nameNode as SymbolNode).name;
-    const pathVal = String((pathNode as LiteralNode).value);
-
-    return {
-      type: IR.IRNodeType.JsImportReference,
-      name,
-      source: pathVal
-    } as IR.IRJsImportReference;
-  }, "transformLegacyImport", TransformError, [list]);
-}
-
-/**
  * Transform JavaScript imports
  */
 function transformJsImport(list: ListNode, currentDir: string): IR.IRNode {

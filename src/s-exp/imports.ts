@@ -1,7 +1,7 @@
 // src/s-exp/imports.ts - Refactored with better modularity and error handling
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport, isSExpVectorImport, isSExpLegacyImport, isSExpNamespaceImport } from './types.ts';
+import { SExp, SList, SSymbol, isSymbol, isLiteral, isImport, isSExpVectorImport, isSExpNamespaceImport } from './types.ts';
 import { Environment } from '../environment.ts';
 import { evaluateForMacro, defineUserMacro } from './macro.ts';
 import { parse } from './parser.ts';
@@ -12,9 +12,7 @@ import { registerImportSource } from "../transformer.ts";
 import { 
   isRemoteModule, 
   isJavaScriptModule, 
-  isSpecialOrAbsolutePath, 
   isRemotePath, 
-  isRelativePath 
 } from '../utils.ts'
 
 /**
@@ -326,13 +324,6 @@ async function processImport(
     } else if (isSExpNamespaceImport(elements)) {
       // Namespace import with "from" syntax
       await processNamespaceImport(elements, env, baseDir, options);
-    } else if (isSExpLegacyImport(elements)) {
-      // Legacy import - deprecated
-      throw new ImportError(
-        "Legacy import syntax without 'from' is deprecated. Please use 'import name from \"path\"' instead of 'import name \"path\"'",
-        "deprecated-import-syntax",
-        options.currentFile
-      );
     } else {
       throw new ImportError(
         "Invalid import syntax, expected either (import [symbols] from \"path\") or (import name from \"path\")",
@@ -378,9 +369,8 @@ async function processNamespaceImport(
     registerImportSource(moduleName, modulePath);
 
     logger.debug(`Processing namespace import with "from": ${moduleName} from ${modulePath}`);
-    
-    // Resolve the path and load the module
-    const resolvedPath = await resolveImportPath(modulePath, baseDir, logger);
+
+    const resolvedPath = path.resolve(baseDir, modulePath);
     
     // Load the module with the given name
     await loadModuleByType(moduleName, modulePath, resolvedPath, baseDir, env, options);
@@ -443,17 +433,18 @@ async function processVectorBasedImport(
     }
     
     const modulePath = elements[3].value as string;
+
+    const resolvedPath = path.resolve(baseDir, modulePath);
     
-    // Resolve the path and prepare module
-    const resolvedPath = await resolveImportPath(modulePath, baseDir, logger);
-    
+    console.log("resolvedPath : ", resolvedPath)
+    console.log("modulePath : ", modulePath)
+
     // Use a consistent module name that doesn't depend on timestamps
     // Using a faster naming scheme than full path hashing
     const tempModuleName = `__temp_module_${modulePath.replace(/[^a-zA-Z0-9_]/g, '_')}`;
     
-    // Load the module
     await loadModuleByType(tempModuleName, modulePath, resolvedPath, baseDir, env, options);
-    
+
     // Process the vector elements
     const vectorElements = processVectorElements(symbolsVector.elements);
     
@@ -624,49 +615,6 @@ async function processRegularImports(
 }
 
 /**
- * Process a legacy import
- */
-async function processLegacyImport(
-  elements: SExp[],
-  env: Environment,
-  baseDir: string,
-  options: ImportProcessorOptions
-): Promise<void> {
-  const logger = new Logger(options.verbose);
-  
-  return performAsync(async () => {
-    if (!isSymbol(elements[1])) {
-      throw new ImportError(
-        "Module name must be a symbol",
-        "syntax-error",
-        options.currentFile
-      );
-    }
-    
-    const moduleName = (elements[1] as SSymbol).name;
-    
-    if (!isLiteral(elements[2]) || typeof elements[2].value !== 'string') {
-      throw new ImportError(
-        "Module path must be a string literal",
-        "syntax-error",
-        options.currentFile
-      );
-    }
-    
-    const modulePath = (elements[2] as any).value as string;
-    
-    logger.debug(`Processing legacy import: ${moduleName} from ${modulePath}`);
-    
-    // Resolve the path and load the module
-    const resolvedPath = await resolveImportPath(modulePath, baseDir, logger);
-    
-    // Load the module with the given name
-    await loadModuleByType(moduleName, modulePath, resolvedPath, baseDir, env, options);
-  }, `Processing legacy import ${elements[1]?.type === "symbol" ? (elements[1] as SSymbol).name : "unknown"}`, 
-  ImportError, [elements[2]?.type === "literal" ? String(elements[2].value) : "unknown", options.currentFile]);
-}
-
-/**
  * Load a module based on its file type, with improved circular dependency handling
  */
 async function loadModuleByType(
@@ -696,8 +644,10 @@ async function loadModuleByType(
     
     // Determine module type and process accordingly
     if (isRemoteModule(modulePath)) {
+      console.log("loadRemoteModule : ", resolvedPath)
       await loadRemoteModule(moduleName, modulePath, env, logger);
     } else if (modulePath.endsWith('.hql')) {
+      console.log("loadHqlModule : ", resolvedPath)
       await loadHqlModule(
         moduleName, 
         modulePath, 
@@ -710,6 +660,7 @@ async function loadModuleByType(
         options
       );
     } else if (isJavaScriptModule(modulePath)) {
+      console.log("loadJavaScriptModule : ", resolvedPath)
       await loadJavaScriptModule(
         moduleName, 
         modulePath, 
@@ -719,6 +670,7 @@ async function loadModuleByType(
         processedFiles
       );
     } else {
+      console.log("else fuck! ", resolvedPath)
       throw new ImportError(
         `Unsupported import file type: ${modulePath}`,
         modulePath,
@@ -807,9 +759,6 @@ async function loadJavaScriptModule(
 /**
  * Process HQL file import with improved circular dependency handling
  */
-/**
- * Process HQL file import with improved circular dependency handling
- */
 async function processHqlImport(
   moduleName: string, 
   modulePath: string,
@@ -827,65 +776,21 @@ async function processHqlImport(
   
   return performAsync(async () => {
     try {
-      // Special case for specific core library files
-      let actualResolvedPath = resolvedPath;
-      
-      if (modulePath.includes("test/text-utils.hql")) {
-        const libTestPath = path.resolve(Deno.cwd(), 'lib/test/text-utils.hql');
-        try {
-          await Deno.stat(libTestPath);
-          actualResolvedPath = libTestPath;
-          logger.debug(`Using special path for text-utils.hql: ${libTestPath}`);
-        } catch (e) {
-          // Continue with original path if special path doesn't exist
-        }
-      }
-      
-      if (modulePath.includes("formatter.js")) {
-        const formatterPath = path.resolve(Deno.cwd(), 'lib/test/formatter.js');
-        try {
-          await Deno.stat(formatterPath);
-          actualResolvedPath = formatterPath;
-          logger.debug(`Using special path for formatter.js: ${formatterPath}`);
-        } catch (e) {
-          // Continue with original path if special path doesn't exist
-        }
-      }
-
       // Read and parse the file
-      let fileContent;
-      try {
-        fileContent = await readFile(actualResolvedPath, options.currentFile);
-      } catch (error) {
-        // If we can't read the actual path, try lib/test/ directory as a fallback
-        if (modulePath.endsWith("text-utils.hql")) {
-          const fallbackPath = path.resolve(Deno.cwd(), 'lib/test/text-utils.hql');
-          try {
-            fileContent = await readFile(fallbackPath, options.currentFile);
-            actualResolvedPath = fallbackPath;
-            logger.debug(`Using fallback path for text-utils.hql: ${fallbackPath}`);
-          } catch (e) {
-            // Re-throw the original error if fallback also fails
-            throw error;
-          }
-        } else {
-          throw error; // Re-throw for other files
-        }
-      }
-      
-      const importedExprs = parseHqlContent(fileContent, actualResolvedPath, options.currentFile);
+      const fileContent = await readFile(resolvedPath, options.currentFile);
+      const importedExprs = parseHqlContent(fileContent, resolvedPath, options.currentFile);
       
       // Set current file to imported file for correct context
-      env.setCurrentFile(actualResolvedPath);
+      env.setCurrentFile(resolvedPath);
       
       // First, process file definitions to make symbols available
       processFileDefinitions(importedExprs, env, logger);
       
       // Process nested imports
-      await processNestedImports(importedExprs, env, actualResolvedPath, tempDir, options, processedFiles, inProgressFiles, importMap);
+      await processNestedImports(importedExprs, env, resolvedPath, tempDir, options, processedFiles, inProgressFiles, importMap);
       
       // Process exports
-      const moduleExports = processExports(importedExprs, env, actualResolvedPath, logger);
+      const moduleExports = processExports(importedExprs, env, resolvedPath, logger);
       
       // Register the module with its exports
       env.importModule(moduleName, moduleExports);
@@ -1062,109 +967,6 @@ async function processHttpImport(
 }
 
 /**
- * Resolve an import path to an absolute path
- * This can be parallel since it's a pure computation with no side effects
- */
-async function resolveImportPath(
-  modulePath: string, 
-  baseDir: string, 
-  logger: Logger
-): Promise<string> {
-  return performAsync(async () => {
-    // Fast path for special schemas and absolute paths
-    if (isSpecialOrAbsolutePath(modulePath)) {
-      return modulePath;
-    }
-    
-    // For relative paths, check multiple possible locations in parallel
-    if (isRelativePath(modulePath)) {
-      return await resolveRelativePath(modulePath, baseDir, logger);
-    }
-    
-    // Default resolution if all checks fail
-    const resolvedPath = path.resolve(baseDir, modulePath);
-    logger.debug(`Resolved import path: ${modulePath} -> ${resolvedPath}`);
-    return resolvedPath;
-  }, `Resolving import path: ${modulePath}`, ImportError, [modulePath, baseDir]);
-}
-
-/**
- * Resolve a relative path by checking multiple locations
- */
-async function resolveRelativePath(
-  modulePath: string, 
-  baseDir: string,
-  logger: Logger
-): Promise<string> {
-  // Special case for text-utils.hql from core.hql
-  if (modulePath.includes("test/text-utils.hql")) {
-    const libPath = path.resolve(Deno.cwd(), "lib/test/text-utils.hql");
-    try {
-      await Deno.stat(libPath);
-      logger.debug(`Found special path for text-utils.hql: ${libPath}`);
-      return libPath;
-    } catch (_) {
-      // Continue to other strategies if this fails
-    }
-  }
-  
-  // Special case for formatter.js from core.hql
-  if (modulePath.includes("test/formatter.js")) {
-    const libPath = path.resolve(Deno.cwd(), "lib/test/formatter.js");
-    try {
-      await Deno.stat(libPath);
-      logger.debug(`Found special path for formatter.js: ${libPath}`);
-      return libPath;
-    } catch (_) {
-      // Continue to other strategies if this fails
-    }
-  }
-
-  // Try primary location first
-  try {
-    const resolvedPath = path.resolve(baseDir, modulePath);
-    await Deno.stat(resolvedPath);
-    logger.debug(`Resolved import path: ${modulePath} -> ${resolvedPath}`);
-    return resolvedPath;
-  } catch (_) {
-    // Continue to alternative locations
-  }
-  
-  // Try alternative locations
-  const alternateLocations = [
-    Deno.cwd(),
-    path.join(Deno.cwd(), 'src'),
-    path.join(Deno.cwd(), 'lib'),
-    path.join(Deno.cwd(), 'lib/test')
-  ];
-  
-  for (const location of alternateLocations) {
-    try {
-      const resolvedPath = path.resolve(location, modulePath);
-      await Deno.stat(resolvedPath);
-      logger.debug(`Resolved import path: ${modulePath} -> ${resolvedPath} from ${location}`);
-      return resolvedPath;
-    } catch (_) {
-      // Try with stripped ./ prefix
-      try {
-        const strippedPath = modulePath.replace(/^\.\//, '');
-        const resolvedWithoutPrefix = path.resolve(location, strippedPath);
-        await Deno.stat(resolvedWithoutPrefix);
-        logger.debug(`Resolved import path with stripped prefix: ${modulePath} -> ${resolvedWithoutPrefix}`);
-        return resolvedWithoutPrefix;
-      } catch (_) {
-        // Continue to the next location
-      }
-    }
-  }
-  
-  // Default resolution if all checks fail
-  const resolvedPath = path.resolve(baseDir, modulePath);
-  logger.debug(`No match found, default resolved import path: ${modulePath} -> ${resolvedPath}`);
-  return resolvedPath;
-}
-
-/**
  * Helper function to process file definitions for macros
  */
 function processFileDefinitions(exprs: SExp[], env: Environment, logger: Logger): void {
@@ -1308,22 +1110,6 @@ function processFileExportsAndDefinitions(
           );
         }
       }
-      // Legacy string-based exports: (export "name" value)
-      else if (op === 'export' && expr.elements.length === 3 && 
-               isLiteral(expr.elements[1]) && typeof expr.elements[1].value === 'string') {
-        try {
-          processLegacyExport(expr, env, moduleExports, filePath, logger);
-        } catch (error) {
-          const exportName = isLiteral(expr.elements[1]) ? String(expr.elements[1].value) : "unknown";
-          
-          throw new ImportError(
-            `Error processing legacy export '${exportName}': ${error instanceof Error ? error.message : String(error)}`,
-            filePath,
-            filePath,
-            error instanceof Error ? error : undefined
-          );
-        }
-      }
     }
   }, "Processing file exports and definitions", ImportError, [filePath, filePath]);
 }
@@ -1388,76 +1174,4 @@ function processVectorExport(
       }
     }
   }, "Processing vector export", ImportError, [filePath, filePath]);
-}
-
-/**
- * Process a legacy string-based export
- */
-function processLegacyExport(
-  expr: SList,
-  env: Environment,
-  moduleExports: Record<string, any>,
-  filePath: string,
-  logger: Logger
-): void {
-  return perform(() => {
-    // Validate export structure
-    if (expr.elements.length !== 3 || !isLiteral(expr.elements[1])) {
-      throw new ImportError(
-        "Invalid legacy export syntax, expected (export \"name\" value)",
-        filePath,
-        filePath
-      );
-    }
-    
-    const exportName = expr.elements[1].value as string;
-    const exportSymbol = expr.elements[2];
-    
-    // Handle symbol exports
-    if (isSymbol(exportSymbol)) {
-      const symbolName = exportSymbol.name;
-      
-      // Check if this is a macro first
-      if (env.hasModuleMacro(filePath, symbolName)) {
-        env.exportMacro(filePath, symbolName);
-        logger.debug(`Marked macro ${symbolName} as exported from ${filePath} with name ${exportName}`);
-        return;
-      }
-      
-      // Regular value export
-      try {
-        moduleExports[exportName] = env.lookup(symbolName);
-        logger.debug(`Added export "${exportName}" with value from ${symbolName}`);
-      } catch (error) {
-        logger.warn(`Failed to lookup symbol "${symbolName}" for export "${exportName}"`);
-        throw new ImportError(
-          `Failed to export "${exportName}" from symbol "${symbolName}": ${error instanceof Error ? error.message : String(error)}`,
-          filePath,
-          filePath,
-          error instanceof Error ? error : undefined
-        );
-      }
-    } else {
-      // For non-symbol exports, evaluate the expression
-      try {
-        const value = evaluateForMacro(exportSymbol, env, logger);
-        
-        if (isLiteral(value)) {
-          moduleExports[exportName] = value.value;
-        } else {
-          moduleExports[exportName] = value;
-        }
-        
-        logger.debug(`Added export "${exportName}" with direct value`);
-      } catch (error) {
-        logger.warn(`Failed to evaluate export "${exportName}": ${error instanceof Error ? error.message : String(error)}`);
-        throw new ImportError(
-          `Failed to evaluate export "${exportName}": ${error instanceof Error ? error.message : String(error)}`,
-          filePath,
-          filePath,
-          error instanceof Error ? error : undefined
-        );
-      }
-    }
-  }, "Processing legacy export", ImportError, [filePath, filePath]);
 }
