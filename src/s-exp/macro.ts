@@ -1,4 +1,4 @@
-// src/s-exp/macro.ts - Complete implementation with proper hygiene
+// src/s-exp/macro.ts - Simplified implementation with proper hygiene
 import {
   createList,
   createLiteral,
@@ -17,7 +17,6 @@ import { Environment } from "../environment.ts";
 import { Logger } from "../logger.ts";
 import { MacroFn } from "../environment.ts";
 import { MacroError } from "../transpiler/errors.ts";
-import { perform } from "../transpiler/error-utils.ts";
 import { gensym } from "../gensym.ts";
 import { LRUCache } from "../utils/lru-cache.ts";
 
@@ -74,75 +73,83 @@ export function defineUserMacro(
   env: Environment,
   logger: Logger,
 ): void {
-  return perform(
-    () => {
-      // Validate macro definition: (macro name [params...] body...)
-      if (macroForm.elements.length < 4) {
-        throw new MacroError(
-          "macro requires a name, parameter list, and body",
-          "macro",
-          filePath,
-        );
-      }
-
-      // Get macro name
-      const macroNameExp = macroForm.elements[1];
-      if (!isSymbol(macroNameExp)) {
-        throw new MacroError(
-          "Macro name must be a symbol",
-          "macro",
-          filePath,
-        );
-      }
-      const macroName = macroNameExp.name;
-
-      // Skip if already defined (avoid redundant work)
-      if (env.hasModuleMacro(filePath, macroName)) {
-        logger.debug(
-          `Macro ${macroName} already defined in ${filePath}, skipping`,
-        );
-        return;
-      }
-
-      // Get parameter list
-      const paramsExp = macroForm.elements[2];
-      if (!isList(paramsExp)) {
-        throw new MacroError(
-          "Macro parameters must be a list",
-          macroName,
-          filePath,
-        );
-      }
-
-      // Process parameter list, handling rest parameters
-      const { params, restParam } = processParamList(paramsExp, logger);
-
-      // Get macro body (all remaining forms)
-      const body = macroForm.elements.slice(3);
-
-      // Create macro function
-      const macroFn = createMacroFunction(
-        macroName,
-        params,
-        restParam,
-        body,
-        logger,
+  try {
+    // Validate macro definition: (macro name [params...] body...)
+    if (macroForm.elements.length < 4) {
+      throw new MacroError(
+        "macro requires a name, parameter list, and body",
+        "macro",
         filePath,
       );
+    }
 
-      // Register the macro in the module's registry
-      env.defineModuleMacro(filePath, macroName, macroFn);
-      logger.debug(`Defined user-level macro ${macroName} in ${filePath}`);
-    },
-    `Failed to define user macro in ${filePath}`,
-    MacroError,
-    [
+    // Get macro name
+    const macroNameExp = macroForm.elements[1];
+    if (!isSymbol(macroNameExp)) {
+      throw new MacroError(
+        "Macro name must be a symbol",
+        "macro",
+        filePath,
+      );
+    }
+    const macroName = macroNameExp.name;
+
+    // Skip if already defined (avoid redundant work)
+    if (env.hasModuleMacro(filePath, macroName)) {
+      logger.debug(
+        `Macro ${macroName} already defined in ${filePath}, skipping`,
+      );
+      return;
+    }
+
+    // Get parameter list
+    const paramsExp = macroForm.elements[2];
+    if (!isList(paramsExp)) {
+      throw new MacroError(
+        "Macro parameters must be a list",
+        macroName,
+        filePath,
+      );
+    }
+
+    // Process parameter list, handling rest parameters
+    const { params, restParam } = processParamList(paramsExp, logger);
+
+    // Get macro body (all remaining forms)
+    const body = macroForm.elements.slice(3);
+
+    // Create macro function
+    const macroFn = createMacroFunction(
+      macroName,
+      params,
+      restParam,
+      body,
+      logger,
+      filePath,
+    );
+
+    // Register the macro in the module's registry
+    env.defineModuleMacro(filePath, macroName, macroFn);
+    logger.debug(`Defined user-level macro ${macroName} in ${filePath}`);
+  } catch (error) {
+    if (error instanceof MacroError) {
+      throw error;
+    }
+
+    const macroName =
       macroForm.elements.length > 1 && isSymbol(macroForm.elements[1])
         ? (macroForm.elements[1] as SSymbol).name
-        : "unknown",
+        : "unknown";
+
+    throw new MacroError(
+      `Failed to define user macro in ${filePath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      macroName,
       filePath,
-    ],
-  );
+      error instanceof Error ? error : undefined,
+    );
+  }
 }
 
 /**
@@ -156,97 +163,107 @@ function createMacroFunction(
   logger: Logger,
   sourceFile?: string,
 ): MacroFn {
-  return perform(
-    () => {
-      const macroFn = (args: SExp[], callEnv: Environment): SExp => {
-        const source = sourceFile ? ` from ${sourceFile}` : "";
-        logger.debug(
-          `Expanding ${
-            sourceFile ? "module " : ""
-          }macro ${macroName}${source} with ${args.length} args`,
-        );
+  try {
+    const macroFn = (args: SExp[], callEnv: Environment): SExp => {
+      const source = sourceFile ? ` from ${sourceFile}` : "";
+      logger.debug(
+        `Expanding ${
+          sourceFile ? "module " : ""
+        }macro ${macroName}${source} with ${args.length} args`,
+      );
 
-        // Set current macro context for hygiene
-        callEnv.setCurrentMacroContext(`macro_${macroName}`);
+      // Set current macro context for hygiene
+      callEnv.setCurrentMacroContext(`macro_${macroName}`);
 
-        // Create new environment for macro expansion with proper hygiene
-        const macroEnv = createMacroEnv(
-          callEnv,
-          params,
-          restParam,
-          args,
-          logger,
-        );
+      // Create new environment for macro expansion with proper hygiene
+      const macroEnv = createMacroEnv(
+        callEnv,
+        params,
+        restParam,
+        args,
+        logger,
+      );
 
-        // Evaluate body expressions with error handling
-        let result: SExp = createNilLiteral();
+      // Evaluate body expressions with error handling
+      let result: SExp = createNilLiteral();
 
-        for (const expr of body) {
-          result = evaluateForMacro(expr, macroEnv, logger);
-        }
-
-        // Apply hygiene transformation to result
-        result = applyHygiene(result, macroName, logger);
-
-        // Clear the macro context
-        callEnv.setCurrentMacroContext(null);
-
-        logger.debug(`Macro ${macroName} expanded to: ${sexpToString(result)}`);
-        return result;
-      };
-
-      // Tag the function as a macro
-      Object.defineProperty(macroFn, "isMacro", { value: true });
-      Object.defineProperty(macroFn, "macroName", { value: macroName });
-
-      // Additional metadata for user-level macros
-      if (sourceFile) {
-        Object.defineProperty(macroFn, "sourceFile", { value: sourceFile });
-        Object.defineProperty(macroFn, "isUserMacro", { value: true });
+      for (const expr of body) {
+        result = evaluateForMacro(expr, macroEnv, logger);
       }
 
-      return macroFn;
-    },
-    `Failed to create macro function for ${macroName}`,
-    MacroError,
-    [macroName, sourceFile],
-  );
+      // Apply hygiene transformation to result
+      result = applyHygiene(result, macroName, logger);
+
+      // Clear the macro context
+      callEnv.setCurrentMacroContext(null);
+
+      logger.debug(`Macro ${macroName} expanded to: ${sexpToString(result)}`);
+      return result;
+    };
+
+    // Tag the function as a macro
+    Object.defineProperty(macroFn, "isMacro", { value: true });
+    Object.defineProperty(macroFn, "macroName", { value: macroName });
+
+    // Additional metadata for user-level macros
+    if (sourceFile) {
+      Object.defineProperty(macroFn, "sourceFile", { value: sourceFile });
+      Object.defineProperty(macroFn, "isUserMacro", { value: true });
+    }
+
+    return macroFn;
+  } catch (error) {
+    throw new MacroError(
+      `Failed to create macro function for ${macroName}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      macroName,
+      sourceFile,
+    );
+  }
 }
 
 /**
  * Apply hygiene transformations to an expression
  */
 function applyHygiene(expr: SExp, macroName: string, logger: Logger): SExp {
-  const hygieneContext = `macro_${macroName}`;
+  try {
+    const hygieneContext = `macro_${macroName}`;
 
-  // Helper for recursive processing
-  function processExpr(expr: SExp): SExp {
-    // Handle different expression types
-    if (isList(expr)) {
-      const list = expr as SList;
-      const elements = list.elements.map((elem) => processExpr(elem));
-      return { type: "list", elements };
-    } else if (isSymbol(expr)) {
-      const originalName = (expr as SSymbol).name;
-      const renamedSymbol = getSymbolRename(hygieneContext, originalName);
+    // Helper for recursive processing
+    function processExpr(expr: SExp): SExp {
+      // Handle different expression types
+      if (isList(expr)) {
+        const list = expr as SList;
+        const elements = list.elements.map((elem) => processExpr(elem));
+        return { type: "list", elements };
+      } else if (isSymbol(expr)) {
+        const originalName = (expr as SSymbol).name;
+        const renamedSymbol = getSymbolRename(hygieneContext, originalName);
 
-      if (renamedSymbol) {
-        logger.debug(
-          `Using renamed symbol ${originalName} -> ${renamedSymbol}`,
-        );
-        return { type: "symbol", name: renamedSymbol };
+        if (renamedSymbol) {
+          logger.debug(
+            `Using renamed symbol ${originalName} -> ${renamedSymbol}`,
+          );
+          return { type: "symbol", name: renamedSymbol };
+        }
+
+        return expr;
       }
 
+      // Other expression types remain unchanged
       return expr;
     }
 
-    // Other expression types remain unchanged
-    return expr;
-  }
-
-  return perform(() => {
     return processExpr(expr);
-  }, `Error applying hygiene to expression`);
+  } catch (error) {
+    logger.warn(
+      `Error applying hygiene to expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return expr; // Return original expression on error to avoid breaking things
+  }
 }
 
 /**
@@ -256,7 +273,7 @@ export function processParamList(
   paramsExp: SList,
   logger: Logger,
 ): { params: string[]; restParam: string | null } {
-  return perform(() => {
+  try {
     const params: string[] = [];
     let restParam: string | null = null;
     let restMode = false;
@@ -291,7 +308,13 @@ export function processParamList(
     }
 
     return { params, restParam };
-  }, "Error processing parameter list");
+  } catch (error) {
+    throw new Error(
+      `Error processing parameter list: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 /**
@@ -305,7 +328,7 @@ function createMacroEnv(
   args: SExp[],
   logger: Logger,
 ): Environment {
-  return perform(() => {
+  try {
     const env = parent.extend(); // Create a child environment
     const macroContext = parent.getCurrentMacroContext();
 
@@ -353,7 +376,13 @@ function createMacroEnv(
     }
 
     return env;
-  }, "Error creating macro environment");
+  } catch (error) {
+    throw new Error(
+      `Error creating macro environment: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 /**
@@ -364,7 +393,7 @@ export function evaluateForMacro(
   env: Environment,
   logger: Logger,
 ): SExp {
-  return perform(() => {
+  try {
     logger.debug(`Evaluating for macro: ${sexpToString(expr)}`);
 
     // Handle literals
@@ -384,14 +413,21 @@ export function evaluateForMacro(
 
     // Unknown expression type
     return expr;
-  }, `Error evaluating expression for macro: ${sexpToString(expr)}`);
+  } catch (error) {
+    logger.warn(
+      `Error evaluating expression for macro: ${sexpToString(expr)}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return expr; // Return original expression on error as a fallback
+  }
 }
 
 /**
  * Evaluate a symbol expression during macro expansion
  */
 function evaluateSymbol(expr: SSymbol, env: Environment, logger: Logger): SExp {
-  return perform(() => {
+  try {
     try {
       const value = env.lookup(expr.name);
 
@@ -416,14 +452,21 @@ function evaluateSymbol(expr: SSymbol, env: Environment, logger: Logger): SExp {
       );
       return expr; // Return symbol as is if not found
     }
-  }, `Error evaluating symbol ${expr.name}`);
+  } catch (error) {
+    logger.warn(
+      `Error evaluating symbol ${expr.name}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return expr;
+  }
 }
 
 /**
  * Evaluate a list expression during macro expansion
  */
 function evaluateList(expr: SList, env: Environment, logger: Logger): SExp {
-  return perform(() => {
+  try {
     // Empty list
     if (expr.elements.length === 0) {
       return expr;
@@ -480,170 +523,185 @@ function evaluateList(expr: SList, env: Environment, logger: Logger): SExp {
     return createList(
       ...expr.elements.map((elem) => evaluateForMacro(elem, env, logger)),
     );
-  }, `Error evaluating list for macro`);
+  } catch (error) {
+    logger.warn(
+      `Error evaluating list for macro: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return expr;
+  }
 }
 
 /**
  * Evaluate a quoted expression
  */
 function evaluateQuote(list: SList, env: Environment, logger: Logger): SExp {
-  return perform(
-    () => {
-      if (list.elements.length !== 2) {
-        throw new MacroError("quote requires exactly one argument", "quote");
-      }
-      return list.elements[1];
-    },
-    "Error evaluating quote",
-    MacroError,
-    ["quote"],
-  );
+  try {
+    if (list.elements.length !== 2) {
+      throw new MacroError("quote requires exactly one argument", "quote");
+    }
+    return list.elements[1];
+  } catch (error) {
+    throw new MacroError(
+      `Error evaluating quote: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "quote",
+    );
+  }
 }
 
 /**
  * Evaluate a conditional (if) expression
  */
 function evaluateIf(list: SList, env: Environment, logger: Logger): SExp {
-  return perform(
-    () => {
-      if (list.elements.length < 3 || list.elements.length > 4) {
-        throw new MacroError(
-          `'if' requires 2 or 3 arguments, got ${list.elements.length - 1}`,
-          "if",
-        );
-      }
+  try {
+    if (list.elements.length < 3 || list.elements.length > 4) {
+      throw new MacroError(
+        `'if' requires 2 or 3 arguments, got ${list.elements.length - 1}`,
+        "if",
+      );
+    }
 
-      // Evaluate the test condition
-      const test = evaluateForMacro(list.elements[1], env, logger);
+    // Evaluate the test condition
+    const test = evaluateForMacro(list.elements[1], env, logger);
 
-      // Determine truth value
-      let isTruthy = false;
-      if (isLiteral(test)) {
-        const value = (test as any).value;
-        isTruthy = value !== false && value !== null && value !== undefined;
-      } else {
-        // Non-literals (lists, symbols) are considered truthy
-        isTruthy = true;
-      }
+    // Determine truth value
+    let isTruthy = false;
+    if (isLiteral(test)) {
+      const value = (test as any).value;
+      isTruthy = value !== false && value !== null && value !== undefined;
+    } else {
+      // Non-literals (lists, symbols) are considered truthy
+      isTruthy = true;
+    }
 
-      if (isTruthy) {
-        // Evaluate "then" branch
-        return evaluateForMacro(list.elements[2], env, logger);
-      } else if (list.elements.length > 3) {
-        // Evaluate "else" branch if present
-        return evaluateForMacro(list.elements[3], env, logger);
-      } else {
-        // No else branch, return nil
-        return createNilLiteral();
-      }
-    },
-    "Error evaluating if expression",
-    MacroError,
-    ["if"],
-  );
+    if (isTruthy) {
+      // Evaluate "then" branch
+      return evaluateForMacro(list.elements[2], env, logger);
+    } else if (list.elements.length > 3) {
+      // Evaluate "else" branch if present
+      return evaluateForMacro(list.elements[3], env, logger);
+    } else {
+      // No else branch, return nil
+      return createNilLiteral();
+    }
+  } catch (error) {
+    throw new MacroError(
+      `Error evaluating if expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "if",
+    );
+  }
 }
 
 /**
  * Evaluate a cond expression
  */
 function evaluateCond(list: SList, env: Environment, logger: Logger): SExp {
-  return perform(
-    () => {
-      // Check each clause
-      for (let i = 1; i < list.elements.length; i++) {
-        const clause = list.elements[i];
-        if (!isList(clause)) {
-          throw new MacroError("cond clauses must be lists", "cond");
-        }
-
-        const clauseList = clause as SList;
-        if (clauseList.elements.length < 2) {
-          throw new MacroError(
-            "cond clauses must have a test and a result",
-            "cond",
-          );
-        }
-
-        const test = evaluateForMacro(clauseList.elements[0], env, logger);
-
-        // Convert to boolean value
-        let isTruthy = false;
-        if (isLiteral(test)) {
-          const value = (test as any).value;
-          isTruthy = value !== false && value !== null && value !== undefined;
-        } else {
-          // Non-literals are truthy
-          isTruthy = true;
-        }
-
-        if (isTruthy) {
-          return evaluateForMacro(clauseList.elements[1], env, logger);
-        }
+  try {
+    // Check each clause
+    for (let i = 1; i < list.elements.length; i++) {
+      const clause = list.elements[i];
+      if (!isList(clause)) {
+        throw new MacroError("cond clauses must be lists", "cond");
       }
 
-      // No matching clause
-      return createNilLiteral();
-    },
-    "Error evaluating cond expression",
-    MacroError,
-    ["cond"],
-  );
+      const clauseList = clause as SList;
+      if (clauseList.elements.length < 2) {
+        throw new MacroError(
+          "cond clauses must have a test and a result",
+          "cond",
+        );
+      }
+
+      const test = evaluateForMacro(clauseList.elements[0], env, logger);
+
+      // Convert to boolean value
+      let isTruthy = false;
+      if (isLiteral(test)) {
+        const value = (test as any).value;
+        isTruthy = value !== false && value !== null && value !== undefined;
+      } else {
+        // Non-literals are truthy
+        isTruthy = true;
+      }
+
+      if (isTruthy) {
+        return evaluateForMacro(clauseList.elements[1], env, logger);
+      }
+    }
+
+    // No matching clause
+    return createNilLiteral();
+  } catch (error) {
+    throw new MacroError(
+      `Error evaluating cond expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "cond",
+    );
+  }
 }
 
 /**
  * Evaluate a let expression
  */
 function evaluateLet(list: SList, env: Environment, logger: Logger): SExp {
-  return perform(
-    () => {
-      if (list.elements.length < 2) {
-        throw new MacroError(
-          "let requires bindings and at least one body form",
-          "let",
-        );
+  try {
+    if (list.elements.length < 2) {
+      throw new MacroError(
+        "let requires bindings and at least one body form",
+        "let",
+      );
+    }
+
+    const bindings = list.elements[1];
+    if (!isList(bindings)) {
+      throw new MacroError("let bindings must be a list", "let");
+    }
+
+    const bindingsList = bindings as SList;
+    if (bindingsList.elements.length % 2 !== 0) {
+      throw new MacroError(
+        "let bindings must have an even number of forms",
+        "let",
+      );
+    }
+
+    // Create a new environment for let bindings
+    const letEnv = env.extend();
+
+    // Evaluate bindings
+    for (let i = 0; i < bindingsList.elements.length; i += 2) {
+      const name = bindingsList.elements[i];
+      const value = bindingsList.elements[i + 1];
+
+      if (!isSymbol(name)) {
+        throw new MacroError("let binding names must be symbols", "let");
       }
 
-      const bindings = list.elements[1];
-      if (!isList(bindings)) {
-        throw new MacroError("let bindings must be a list", "let");
-      }
+      const evalValue = evaluateForMacro(value, letEnv, logger);
+      letEnv.define((name as SSymbol).name, evalValue);
+    }
 
-      const bindingsList = bindings as SList;
-      if (bindingsList.elements.length % 2 !== 0) {
-        throw new MacroError(
-          "let bindings must have an even number of forms",
-          "let",
-        );
-      }
+    // Evaluate body in the new environment
+    let result: SExp = createNilLiteral();
+    for (let i = 2; i < list.elements.length; i++) {
+      result = evaluateForMacro(list.elements[i], letEnv, logger);
+    }
 
-      // Create a new environment for let bindings
-      const letEnv = env.extend();
-
-      // Evaluate bindings
-      for (let i = 0; i < bindingsList.elements.length; i += 2) {
-        const name = bindingsList.elements[i];
-        const value = bindingsList.elements[i + 1];
-
-        if (!isSymbol(name)) {
-          throw new MacroError("let binding names must be symbols", "let");
-        }
-
-        const evalValue = evaluateForMacro(value, letEnv, logger);
-        letEnv.define((name as SSymbol).name, evalValue);
-      }
-
-      // Evaluate body in the new environment
-      let result: SExp = createNilLiteral();
-      for (let i = 2; i < list.elements.length; i++) {
-        result = evaluateForMacro(list.elements[i], letEnv, logger);
-      }
-
-      return result;
-    },
-    "Error evaluating let expression",
-    MacroError,
-    ["let"],
-  );
+    return result;
+  } catch (error) {
+    throw new MacroError(
+      `Error evaluating let expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "let",
+    );
+  }
 }
 
 /**
@@ -654,33 +712,35 @@ function evaluateMacroCall(
   env: Environment,
   logger: Logger,
 ): SExp {
-  return perform(
-    () => {
-      const op = (list.elements[0] as SSymbol).name;
-      const macroFn = env.getMacro(op);
+  try {
+    const op = (list.elements[0] as SSymbol).name;
+    const macroFn = env.getMacro(op);
 
-      if (!macroFn) {
-        throw new MacroError(`Macro not found: ${op}`, op);
-      }
+    if (!macroFn) {
+      throw new MacroError(`Macro not found: ${op}`, op);
+    }
 
-      // Get macro arguments (don't evaluate them)
-      const args = list.elements.slice(1);
+    // Get macro arguments (don't evaluate them)
+    const args = list.elements.slice(1);
 
-      // Apply the macro
-      const expanded = macroFn(args, env);
-      logger.debug(`Macro ${op} expanded to: ${sexpToString(expanded)}`);
+    // Apply the macro
+    const expanded = macroFn(args, env);
+    logger.debug(`Macro ${op} expanded to: ${sexpToString(expanded)}`);
 
-      // Recursively evaluate the result
-      return evaluateForMacro(expanded, env, logger);
-    },
-    "Error evaluating macro call",
-    MacroError,
-    [
-      list.elements.length > 0 && isSymbol(list.elements[0])
-        ? (list.elements[0] as SSymbol).name
-        : "unknown",
-    ],
-  );
+    // Recursively evaluate the result
+    return evaluateForMacro(expanded, env, logger);
+  } catch (error) {
+    const op = list.elements.length > 0 && isSymbol(list.elements[0])
+      ? (list.elements[0] as SSymbol).name
+      : "unknown";
+
+    throw new MacroError(
+      `Error evaluating macro call: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      op,
+    );
+  }
 }
 
 /**
@@ -691,7 +751,7 @@ function evaluateFunctionCall(
   env: Environment,
   logger: Logger,
 ): SExp {
-  return perform(() => {
+  try {
     const first = list.elements[0];
 
     // If first element is a symbol, create a function call with that name
@@ -771,14 +831,24 @@ function evaluateFunctionCall(
     return createList(
       ...list.elements.map((elem) => evaluateForMacro(elem, env, logger)),
     );
-  }, "Error evaluating function call");
+  } catch (error) {
+    logger.warn(
+      `Error evaluating function call: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    // Return the list with evaluated elements on error
+    return createList(
+      ...list.elements.map((elem) => evaluateForMacro(elem, env, logger)),
+    );
+  }
 }
 
 /**
  * Convert a JavaScript value to an S-expression
  */
 function convertJsValueToSExp(value: any): SExp {
-  return perform(() => {
+  try {
     if (value === null || value === undefined) {
       return createNilLiteral();
     } else if (
@@ -794,7 +864,13 @@ function convertJsValueToSExp(value: any): SExp {
     } else {
       return createLiteral(String(value));
     }
-  }, "Error converting JS value to S-expression");
+  } catch (error) {
+    throw new Error(
+      `Error converting JS value to S-expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 /**
@@ -805,26 +881,28 @@ function evaluateQuasiquote(
   env: Environment,
   logger: Logger,
 ): SExp {
-  return perform(
-    () => {
-      // The first element is 'quasiquote', the second is the expression to process
-      if (expr.elements.length !== 2) {
-        throw new MacroError(
-          "quasiquote requires exactly one argument",
-          "quasiquote",
-        );
-      }
+  try {
+    // The first element is 'quasiquote', the second is the expression to process
+    if (expr.elements.length !== 2) {
+      throw new MacroError(
+        "quasiquote requires exactly one argument",
+        "quasiquote",
+      );
+    }
 
-      const quasiquotedExpr = expr.elements[1];
-      logger.debug(`Evaluating quasiquote: ${sexpToString(quasiquotedExpr)}`);
+    const quasiquotedExpr = expr.elements[1];
+    logger.debug(`Evaluating quasiquote: ${sexpToString(quasiquotedExpr)}`);
 
-      // Delegate to helper function for actual processing
-      return processQuasiquotedExpr(quasiquotedExpr, env, logger);
-    },
-    "Error evaluating quasiquote",
-    MacroError,
-    ["quasiquote"],
-  );
+    // Delegate to helper function for actual processing
+    return processQuasiquotedExpr(quasiquotedExpr, env, logger);
+  } catch (error) {
+    throw new MacroError(
+      `Error evaluating quasiquote: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "quasiquote",
+    );
+  }
 }
 
 /**
@@ -835,124 +913,126 @@ function processQuasiquotedExpr(
   env: Environment,
   logger: Logger,
 ): SExp {
-  return perform(
-    () => {
-      // Base case: not a list - just return the expression
-      if (!isList(expr)) {
-        return expr;
-      }
+  try {
+    // Base case: not a list - just return the expression
+    if (!isList(expr)) {
+      return expr;
+    }
 
-      // Empty list - return as is
-      if ((expr as SList).elements.length === 0) {
-        return expr;
-      }
+    // Empty list - return as is
+    if ((expr as SList).elements.length === 0) {
+      return expr;
+    }
 
-      const list = expr as SList;
-      const first = list.elements[0];
+    const list = expr as SList;
+    const first = list.elements[0];
 
-      // Handle unquote (~)
-      if (isSymbol(first) && (first as SSymbol).name === "unquote") {
-        if (list.elements.length !== 2) {
-          throw new MacroError(
-            "unquote requires exactly one argument",
-            "unquote",
-          );
-        }
-        // Evaluate the unquoted expression
-        logger.debug(`Evaluating unquote: ${sexpToString(list.elements[1])}`);
-        return evaluateForMacro(list.elements[1], env, logger);
-      }
-
-      // Handle unquote-splicing (error if not inside a list)
-      if (isSymbol(first) && (first as SSymbol).name === "unquote-splicing") {
+    // Handle unquote (~)
+    if (isSymbol(first) && (first as SSymbol).name === "unquote") {
+      if (list.elements.length !== 2) {
         throw new MacroError(
-          "unquote-splicing not in list context",
-          "unquote-splicing",
+          "unquote requires exactly one argument",
+          "unquote",
         );
       }
+      // Evaluate the unquoted expression
+      logger.debug(`Evaluating unquote: ${sexpToString(list.elements[1])}`);
+      return evaluateForMacro(list.elements[1], env, logger);
+    }
 
-      // Process list contents
-      const processedElements: SExp[] = [];
+    // Handle unquote-splicing (error if not inside a list)
+    if (isSymbol(first) && (first as SSymbol).name === "unquote-splicing") {
+      throw new MacroError(
+        "unquote-splicing not in list context",
+        "unquote-splicing",
+      );
+    }
 
-      for (let i = 0; i < list.elements.length; i++) {
-        const element = list.elements[i];
+    // Process list contents
+    const processedElements: SExp[] = [];
 
-        // Handle unquote-splicing (~@)
-        if (
-          isList(element) &&
-          (element as SList).elements.length > 0 &&
-          isSymbol((element as SList).elements[0]) &&
-          ((element as SList).elements[0] as SSymbol).name ===
-            "unquote-splicing"
-        ) {
-          const spliceList = element as SList;
+    for (let i = 0; i < list.elements.length; i++) {
+      const element = list.elements[i];
 
-          if (spliceList.elements.length !== 2) {
-            throw new MacroError(
-              "unquote-splicing requires exactly one argument",
-              "unquote-splicing",
-            );
-          }
+      // Handle unquote-splicing (~@)
+      if (
+        isList(element) &&
+        (element as SList).elements.length > 0 &&
+        isSymbol((element as SList).elements[0]) &&
+        ((element as SList).elements[0] as SSymbol).name ===
+          "unquote-splicing"
+      ) {
+        const spliceList = element as SList;
 
-          // Get the expression to splice
-          const splicedExpr = spliceList.elements[1];
-          logger.debug(
-            `Processing unquote-splicing: ${sexpToString(splicedExpr)}`,
+        if (spliceList.elements.length !== 2) {
+          throw new MacroError(
+            "unquote-splicing requires exactly one argument",
+            "unquote-splicing",
           );
-
-          // Evaluate the expression
-          const spliced = evaluateForMacro(splicedExpr, env, logger);
-          logger.debug(
-            `Evaluated unquote-splicing to: ${sexpToString(spliced)}`,
-          );
-
-          // Handle different types of spliced values
-          if (isList(spliced)) {
-            logger.debug(
-              `Splicing elements from list with ${
-                (spliced as SList).elements.length
-              } items`,
-            );
-            // Splice the elements into the result list
-            processedElements.push(...(spliced as SList).elements);
-          } // Handle array-like objects with a special isRestParameter flag
-          else if (
-            typeof spliced === "object" && spliced !== null &&
-            "isRestParameter" in spliced && (spliced as any).isRestParameter
-          ) {
-            // Access the elements property which should contain the list items
-            if ("elements" in spliced) {
-              const elements = (spliced as any).elements;
-              logger.debug(
-                `Splicing elements from rest parameter with ${elements.length} items`,
-              );
-              processedElements.push(...elements);
-            } else {
-              logger.warn(`Rest parameter doesn't have elements property`);
-            }
-          } // Fall back to adding the value as a single element
-          else {
-            logger.warn(
-              `unquote-splicing received a non-list value: ${
-                sexpToString(spliced)
-              }`,
-            );
-            processedElements.push(spliced);
-          }
-        } // For other elements, process them recursively
-        else {
-          const processed = processQuasiquotedExpr(element, env, logger);
-          processedElements.push(processed);
         }
-      }
 
-      // Create a new list with the processed elements
-      return createList(...processedElements);
-    },
-    "Error processing quasiquote",
-    MacroError,
-    ["quasiquote"],
-  );
+        // Get the expression to splice
+        const splicedExpr = spliceList.elements[1];
+        logger.debug(
+          `Processing unquote-splicing: ${sexpToString(splicedExpr)}`,
+        );
+
+        // Evaluate the expression
+        const spliced = evaluateForMacro(splicedExpr, env, logger);
+        logger.debug(
+          `Evaluated unquote-splicing to: ${sexpToString(spliced)}`,
+        );
+
+        // Handle different types of spliced values
+        if (isList(spliced)) {
+          logger.debug(
+            `Splicing elements from list with ${
+              (spliced as SList).elements.length
+            } items`,
+          );
+          // Splice the elements into the result list
+          processedElements.push(...(spliced as SList).elements);
+        } // Handle array-like objects with a special isRestParameter flag
+        else if (
+          typeof spliced === "object" && spliced !== null &&
+          "isRestParameter" in spliced && (spliced as any).isRestParameter
+        ) {
+          // Access the elements property which should contain the list items
+          if ("elements" in spliced) {
+            const elements = (spliced as any).elements;
+            logger.debug(
+              `Splicing elements from rest parameter with ${elements.length} items`,
+            );
+            processedElements.push(...elements);
+          } else {
+            logger.warn(`Rest parameter doesn't have elements property`);
+          }
+        } // Fall back to adding the value as a single element
+        else {
+          logger.warn(
+            `unquote-splicing received a non-list value: ${
+              sexpToString(spliced)
+            }`,
+          );
+          processedElements.push(spliced);
+        }
+      } // For other elements, process them recursively
+      else {
+        const processed = processQuasiquotedExpr(element, env, logger);
+        processedElements.push(processed);
+      }
+    }
+
+    // Create a new list with the processed elements
+    return createList(...processedElements);
+  } catch (error) {
+    throw new MacroError(
+      `Error processing quasiquote: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "quasiquote",
+    );
+  }
 }
 
 /**
@@ -964,7 +1044,7 @@ function expandMacroExpression(
   options: MacroExpanderOptions,
   depth: number,
 ): SExp {
-  return perform(() => {
+  try {
     // Prevent excessive recursion
     const maxDepth = options.maxExpandDepth || 100;
     if (depth > maxDepth) {
@@ -1024,7 +1104,15 @@ function expandMacroExpression(
 
     // Create a new list with the expanded elements
     return createList(...expandedElements);
-  }, "Error expanding macro expression");
+  } catch (error) {
+    const logger = new Logger(options.verbose || false);
+    logger.warn(
+      `Error expanding macro expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return expr;
+  }
 }
 
 /**
@@ -1036,7 +1124,7 @@ function processMacroDefinitions(
   currentFile: string | undefined,
   logger: Logger,
 ): void {
-  perform(() => {
+  try {
     // First register all global macro definitions
     for (const expr of exprs) {
       if (isDefMacro(expr) && isList(expr)) {
@@ -1100,14 +1188,22 @@ function processMacroDefinitions(
         }
       }
     }
-  }, "Error processing macro definitions");
+  } catch (error) {
+    throw new MacroError(
+      `Error processing macro definitions: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "",
+      currentFile,
+    );
+  }
 }
 
 /**
  * Filter out macro definitions (both system and user-level)
  */
 function filterMacroDefinitions(exprs: SExp[], logger: Logger): SExp[] {
-  return perform(() => {
+  try {
     return exprs.filter((expr) => {
       // Remove defmacro forms
       if (isDefMacro(expr)) {
@@ -1128,7 +1224,14 @@ function filterMacroDefinitions(exprs: SExp[], logger: Logger): SExp[] {
       // Keep everything else
       return true;
     });
-  }, "Error filtering macro definitions");
+  } catch (error) {
+    logger.warn(
+      `Error filtering macro definitions: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return exprs;
+  }
 }
 
 /**
@@ -1139,62 +1242,65 @@ export function defineMacro(
   env: Environment,
   logger: Logger,
 ): void {
-  perform(
-    () => {
-      // Validate macro definition: (defmacro name [params...] body...)
-      if (macroForm.elements.length < 4) {
-        throw new MacroError(
-          "defmacro requires a name, parameter list, and body",
-          "defmacro",
-        );
-      }
-
-      // Get macro name
-      const macroNameExp = macroForm.elements[1];
-      if (!isSymbol(macroNameExp)) {
-        throw new MacroError(
-          "Macro name must be a symbol",
-          "defmacro",
-        );
-      }
-      const macroName = macroNameExp.name;
-
-      // Get parameter list
-      const paramsExp = macroForm.elements[2];
-      if (!isList(paramsExp)) {
-        throw new MacroError(
-          "Macro parameters must be a list",
-          macroName,
-        );
-      }
-
-      // Process parameter list, handling rest parameters
-      const { params, restParam } = processParamList(paramsExp, logger);
-
-      // Get macro body (all remaining forms)
-      const body = macroForm.elements.slice(3);
-
-      // Create macro function
-      const macroFn = createMacroFunction(
-        macroName,
-        params,
-        restParam,
-        body,
-        logger,
+  try {
+    // Validate macro definition: (defmacro name [params...] body...)
+    if (macroForm.elements.length < 4) {
+      throw new MacroError(
+        "defmacro requires a name, parameter list, and body",
+        "defmacro",
       );
+    }
 
-      // Register the macro in the environment
-      env.defineMacro(macroName, macroFn);
-      logger.debug(`Registered global macro: ${macroName}`);
-    },
-    "Failed to define macro",
-    MacroError,
-    [
+    // Get macro name
+    const macroNameExp = macroForm.elements[1];
+    if (!isSymbol(macroNameExp)) {
+      throw new MacroError(
+        "Macro name must be a symbol",
+        "defmacro",
+      );
+    }
+    const macroName = macroNameExp.name;
+
+    // Get parameter list
+    const paramsExp = macroForm.elements[2];
+    if (!isList(paramsExp)) {
+      throw new MacroError(
+        "Macro parameters must be a list",
+        macroName,
+      );
+    }
+
+    // Process parameter list, handling rest parameters
+    const { params, restParam } = processParamList(paramsExp, logger);
+
+    // Get macro body (all remaining forms)
+    const body = macroForm.elements.slice(3);
+
+    // Create macro function
+    const macroFn = createMacroFunction(
+      macroName,
+      params,
+      restParam,
+      body,
+      logger,
+    );
+
+    // Register the macro in the environment
+    env.defineMacro(macroName, macroFn);
+    logger.debug(`Registered global macro: ${macroName}`);
+  } catch (error) {
+    const macroName =
       macroForm.elements.length > 1 && isSymbol(macroForm.elements[1])
         ? (macroForm.elements[1] as SSymbol).name
-        : "unknown",
-    ],
-  );
+        : "unknown";
+
+    throw new MacroError(
+      `Failed to define macro: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      macroName,
+    );
+  }
 }
 
 /**
@@ -1205,111 +1311,103 @@ export function expandMacros(
   env: Environment,
   options: MacroExpanderOptions = {},
 ): SExp[] {
-  return perform(
-    () => {
-      const logger = new Logger(options.verbose || false);
-      const currentFile = options.currentFile;
-      const useCache = options.useCache !== false; // Default to using cache
+  try {
+    const logger = new Logger(options.verbose || false);
+    const currentFile = options.currentFile;
+    const useCache = options.useCache !== false; // Default to using cache
 
-      logger.debug(
-        `Starting macro expansion on ${exprs.length} expressions${
-          currentFile ? ` in ${currentFile}` : ""
-        }`,
-      );
+    logger.debug(
+      `Starting macro expansion on ${exprs.length} expressions${
+        currentFile ? ` in ${currentFile}` : ""
+      }`,
+    );
 
-      // If we have a current file, set it in the environment
-      if (currentFile) {
-        env.setCurrentFile(currentFile);
-        logger.debug(`Setting current file to: ${currentFile}`);
-      }
+    // If we have a current file, set it in the environment
+    if (currentFile) {
+      env.setCurrentFile(currentFile);
+      logger.debug(`Setting current file to: ${currentFile}`);
+    }
 
-      // First pass: register all global and user-level macro definitions
-      try {
-        processMacroDefinitions(exprs, env, currentFile, logger);
-      } catch (error) {
-        throw new MacroError(
-          `Error processing macro definitions: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          "",
-          currentFile,
-          error instanceof Error ? error : undefined,
-        );
-      }
+    // First pass: register all global and user-level macro definitions
+    processMacroDefinitions(exprs, env, currentFile, logger);
 
-      // Use fixed-point iteration to expand all macros
-      let currentExprs = [...exprs];
-      let iteration = 0;
-      let changed = true;
+    // Use fixed-point iteration to expand all macros
+    let currentExprs = [...exprs];
+    let iteration = 0;
+    let changed = true;
 
-      // Keep expanding until no changes occur (fixed point) or max iterations reached
-      while (changed && iteration < MAX_EXPANSION_ITERATIONS) {
-        changed = false;
-        iteration++;
+    // Keep expanding until no changes occur (fixed point) or max iterations reached
+    while (changed && iteration < MAX_EXPANSION_ITERATIONS) {
+      changed = false;
+      iteration++;
 
-        logger.debug(`Macro expansion iteration ${iteration}`);
+      logger.debug(`Macro expansion iteration ${iteration}`);
 
-        // Expand all expressions in the current pass with simplified caching
-        const newExprs = currentExprs.map((expr) => {
-          const exprStr = useCache ? sexpToString(expr) : "";
+      // Expand all expressions in the current pass with simplified caching
+      const newExprs = currentExprs.map((expr) => {
+        const exprStr = useCache ? sexpToString(expr) : "";
 
-          // Simplified cache handling
-          if (useCache && macroExpansionCache.has(exprStr)) {
-            logger.debug(
-              `Cache hit for expression: ${exprStr.substring(0, 30)}...`,
-            );
-            return macroExpansionCache.get(exprStr)!;
-          }
-
-          // Otherwise expand and update cache
-          const expandedExpr = expandMacroExpression(expr, env, options, 0);
-
-          // Cache result if caching is enabled
-          if (useCache) {
-            macroExpansionCache.set(exprStr, expandedExpr);
-          }
-
-          return expandedExpr;
-        });
-
-        // Check if anything changed
-        const oldStr = currentExprs.map(sexpToString).join("\n");
-        const newStr = newExprs.map(sexpToString).join("\n");
-
-        if (oldStr !== newStr) {
-          changed = true;
-          currentExprs = newExprs;
+        // Simplified cache handling
+        if (useCache && macroExpansionCache.has(exprStr)) {
           logger.debug(
-            `Changes detected in iteration ${iteration}, continuing expansion`,
+            `Cache hit for expression: ${exprStr.substring(0, 30)}...`,
           );
-        } else {
-          logger.debug(
-            `No changes in iteration ${iteration}, fixed point reached`,
-          );
+          return macroExpansionCache.get(exprStr)!;
         }
-      }
 
-      if (iteration >= MAX_EXPANSION_ITERATIONS) {
-        logger.warn(
-          `Macro expansion reached maximum iterations (${MAX_EXPANSION_ITERATIONS}). Check for infinite recursion.`,
+        // Otherwise expand and update cache
+        const expandedExpr = expandMacroExpression(expr, env, options, 0);
+
+        // Cache result if caching is enabled
+        if (useCache) {
+          macroExpansionCache.set(exprStr, expandedExpr);
+        }
+
+        return expandedExpr;
+      });
+
+      // Check if anything changed
+      const oldStr = currentExprs.map(sexpToString).join("\n");
+      const newStr = newExprs.map(sexpToString).join("\n");
+
+      if (oldStr !== newStr) {
+        changed = true;
+        currentExprs = newExprs;
+        logger.debug(
+          `Changes detected in iteration ${iteration}, continuing expansion`,
+        );
+      } else {
+        logger.debug(
+          `No changes in iteration ${iteration}, fixed point reached`,
         );
       }
+    }
 
-      logger.debug(`Completed macro expansion after ${iteration} iterations`);
+    if (iteration >= MAX_EXPANSION_ITERATIONS) {
+      logger.warn(
+        `Macro expansion reached maximum iterations (${MAX_EXPANSION_ITERATIONS}). Check for infinite recursion.`,
+      );
+    }
 
-      // Filter out macro definitions from the final result
-      currentExprs = filterMacroDefinitions(currentExprs, logger);
+    logger.debug(`Completed macro expansion after ${iteration} iterations`);
 
-      // Clean up environment when done
-      if (currentFile) {
-        env.setCurrentFile(null);
-        logger.debug(`Clearing current file`);
-      }
+    // Filter out macro definitions from the final result
+    currentExprs = filterMacroDefinitions(currentExprs, logger);
 
-      return currentExprs;
-    },
-    "Macro expansion failed",
-    MacroError,
-    ["", options.currentFile],
-  );
+    // Clean up environment when done
+    if (currentFile) {
+      env.setCurrentFile(null);
+      logger.debug(`Clearing current file`);
+    }
+
+    return currentExprs;
+  } catch (error) {
+    throw new MacroError(
+      `Macro expansion failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "",
+      options.currentFile,
+    );
+  }
 }

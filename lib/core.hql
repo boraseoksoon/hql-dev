@@ -150,5 +150,5 @@
 ;; (import module from "./test/text-utils.hql")
 ;; (defmacro text-wrapper (text) `(module.wrap_text ~text))
 
-;; (import formatter from "./test/formatter.js")
-;; (defmacro js-format-text (text) `(formatter.formatText ~text))
+(import formatter from "./test/formatter.js")
+(defmacro js-format-text (text) `(formatter.formatText ~text))

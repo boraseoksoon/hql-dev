@@ -15,7 +15,6 @@ import {
   ParseError,
   TranspilerError,
 } from "./errors.ts";
-import { perform, performAsync } from "./error-utils.ts";
 
 // Environment singleton for consistent state
 let globalEnv: Environment | null = null;
@@ -36,7 +35,6 @@ interface ProcessOptions {
 
 /**
  * Process HQL source code through the S-expression layer
- * Enhanced with better error handling and diagnostic capabilities
  */
 export async function processHql(
   source: string,
@@ -83,16 +81,7 @@ export async function processHql(
     logger.debug("Getting global environment with macros");
     const startEnvTime = performance.now();
 
-    let env;
-    try {
-      env = await getGlobalEnv(options);
-    } catch (error) {
-      throw new TranspilerError(
-        `Failed to initialize global environment: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    const env = await getGlobalEnv(options);
 
     const envTime = performance.now() - startEnvTime;
     logger.debug(
@@ -170,16 +159,7 @@ export async function processHql(
     logger.debug("Converting to HQL AST");
     const startAstTime = performance.now();
 
-    let hqlAst;
-    try {
-      hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
-    } catch (error) {
-      throw new TranspilerError(
-        `Failed to convert to HQL AST: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
 
     const astTime = performance.now() - startAstTime;
     logger.debug(
@@ -192,18 +172,9 @@ export async function processHql(
     logger.debug("Transforming to JavaScript");
     const startTransformTime = performance.now();
 
-    let jsCode;
-    try {
-      jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), {
-        verbose: options.verbose,
-      });
-    } catch (error) {
-      throw new TranspilerError(
-        `Failed to transform to JavaScript: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), {
+      verbose: options.verbose,
+    });
 
     const transformTime = performance.now() - startTransformTime;
     logger.debug(
@@ -356,7 +327,6 @@ function logExpandedExpressions(expanded: any[], logger: Logger): void {
 
 /**
  * Load and process core.hql to establish the standard library
- * Enhanced with better error handling and parallelized I/O operations
  */
 async function loadCoreHql(
   env: Environment,
@@ -372,167 +342,133 @@ async function loadCoreHql(
 
   logger.debug("Loading core.hql standard library");
 
-  return performAsync(
-    async () => {
-      // Look for lib/core.hql from the current directory
-      const cwd = Deno.cwd();
-      const corePath = path.join(cwd, "lib/core.hql");
+  try {
+    // Look for lib/core.hql from the current directory
+    const cwd = Deno.cwd();
+    const corePath = path.join(cwd, "lib/core.hql");
 
-      logger.debug(`Looking for core.hql at: ${corePath}`);
+    logger.debug(`Looking for core.hql at: ${corePath}`);
 
-      // Check if we need to parse core.hql or if we can use cached expressions
-      let coreExps;
-      if (cachedCoreExpressions) {
-        logger.debug("Using cached core.hql expressions");
-        coreExps = cachedCoreExpressions;
-      } else {
-        // Use the environment's file tracking to avoid redundant processing
-        if (env.hasProcessedFile(corePath)) {
-          logger.debug(
-            `Core.hql already processed in this environment, skipping`,
-          );
-          coreHqlLoaded = true;
-          return;
-        }
-
-        // Read the file and check file tracking in parallel
-        const coreSource = await performAsync(
-          async () => {
-            try {
-              return await Deno.readTextFile(corePath);
-            } catch (e) {
-              const error = e instanceof Error ? e : new Error(String(e));
-              logger.error(
-                `Could not find or read lib/core.hql at ${corePath}`,
-              );
-
-              throw new ImportError(
-                `Could not find lib/core.hql at ${corePath}. Make sure you are running from the project root.`,
-                corePath,
-                undefined,
-                error,
-              );
-            }
-          },
-          `Reading core.hql from ${corePath}`,
-          ImportError,
-          [corePath, undefined, undefined],
-        );
-
+    // Check if we need to parse core.hql or if we can use cached expressions
+    let coreExps;
+    if (cachedCoreExpressions) {
+      logger.debug("Using cached core.hql expressions");
+      coreExps = cachedCoreExpressions;
+    } else {
+      // Use the environment's file tracking to avoid redundant processing
+      if (env.hasProcessedFile(corePath)) {
         logger.debug(
-          `Found core.hql at: ${corePath} (${coreSource.length} bytes)`,
+          `Core.hql already processed in this environment, skipping`,
         );
-
-        // Parse the core.hql file
-        try {
-          coreExps = parse(coreSource);
-          cachedCoreExpressions = coreExps; // Cache for future use
-          logger.debug(
-            `Parsed core.hql and cached ${coreExps.length} expressions`,
-          );
-        } catch (error) {
-          throw new ParseError(
-            `Failed to parse core.hql: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            { line: 1, column: 1, offset: 0 },
-            coreSource,
-          );
-        }
-      }
-
-      // Parallel processing: imports and macro expansion preparation
-      try {
-        // Run import processing and any required setup in parallel
-        await Promise.all([
-          // Task 1: Process imports in core.hql
-          performAsync(
-            async () => {
-              await processImports(coreExps, env, {
-                verbose: options.verbose || false,
-                baseDir: path.dirname(corePath),
-                currentFile: corePath, // Set current file to the core.hql path
-              });
-            },
-            "Processing imports in core.hql",
-            ImportError,
-            [
-              corePath,
-              undefined,
-              (error) => error instanceof Error ? error : undefined,
-            ],
-          ),
-
-          // Task 2: Any other parallel setup you might need
-          // This place is reserved for future parallel tasks
-          // For now, we'll just add a no-op resolved promise
-          Promise.resolve(),
-        ]);
-
-        // Expand macros defined in core.hql (kept sequential as it depends on import results)
-        perform(
-          () => {
-            expandMacros(coreExps, env, {
-              verbose: options.verbose,
-              currentFile: corePath,
-            });
-          },
-          "Expanding macros in core.hql",
-          MacroError,
-          ["", corePath],
-        );
-
-        // Mark core as loaded and processed
         coreHqlLoaded = true;
-        env.markFileProcessed(corePath);
-
-        logger.debug("Core.hql loaded and all macros registered successfully");
-      } catch (error) {
-        // Let performAsync handle these errors
-        throw error;
+        return;
       }
-    },
-    "Loading core.hql standard library",
-    TranspilerError,
-  );
+
+      // Read the file
+      let coreSource;
+      try {
+        coreSource = await Deno.readTextFile(corePath);
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger.error(
+          `Could not find or read lib/core.hql at ${corePath}`,
+        );
+
+        throw new ImportError(
+          `Could not find lib/core.hql at ${corePath}. Make sure you are running from the project root.`,
+          corePath,
+          undefined,
+          error,
+        );
+      }
+
+      logger.debug(
+        `Found core.hql at: ${corePath} (${coreSource.length} bytes)`,
+      );
+
+      // Parse the core.hql file
+      try {
+        coreExps = parse(coreSource);
+        cachedCoreExpressions = coreExps; // Cache for future use
+        logger.debug(
+          `Parsed core.hql and cached ${coreExps.length} expressions`,
+        );
+      } catch (error) {
+        throw new ParseError(
+          `Failed to parse core.hql: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { line: 1, column: 1, offset: 0 },
+          coreSource,
+        );
+      }
+    }
+
+    // Process imports in core.hql
+    await processImports(coreExps, env, {
+      verbose: options.verbose || false,
+      baseDir: path.dirname(corePath),
+      currentFile: corePath, // Set current file to the core.hql path
+    });
+
+    // Expand macros defined in core.hql
+    expandMacros(coreExps, env, {
+      verbose: options.verbose,
+      currentFile: corePath,
+    });
+
+    // Mark core as loaded and processed
+    coreHqlLoaded = true;
+    env.markFileProcessed(corePath);
+
+    logger.debug("Core.hql loaded and all macros registered successfully");
+  } catch (error) {
+    throw new TranspilerError(
+      `Loading core.hql standard library: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 /**
  * Initialize the global environment once
- * Uses singleton pattern for consistency, with enhanced error handling and parallel initialization
+ * Uses singleton pattern for consistency
  */
 async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
   const logger = new Logger(options.verbose);
 
-  return performAsync(
-    async () => {
-      // If we already have a global environment, reuse it
-      if (globalEnv) {
-        logger.debug("Reusing existing global environment");
-        return globalEnv;
-      }
-
-      // Otherwise, initialize a new one
-      const startTime = performance.now();
-      logger.debug("Initializing new global environment");
-
-      // Create the environment
-      globalEnv = await Environment.initializeGlobalEnv({
-        verbose: options.verbose,
-      });
-
-      await loadCoreHql(globalEnv, options);
-
-      const endTime = performance.now();
-      logger.debug(
-        `Global environment initialization took ${
-          (endTime - startTime).toFixed(2)
-        }ms`,
-      );
-
+  try {
+    // If we already have a global environment, reuse it
+    if (globalEnv) {
+      logger.debug("Reusing existing global environment");
       return globalEnv;
-    },
-    "Initializing global environment",
-    TranspilerError,
-  );
+    }
+
+    // Otherwise, initialize a new one
+    const startTime = performance.now();
+    logger.debug("Initializing new global environment");
+
+    // Create the environment
+    globalEnv = await Environment.initializeGlobalEnv({
+      verbose: options.verbose,
+    });
+
+    await loadCoreHql(globalEnv, options);
+
+    const endTime = performance.now();
+    logger.debug(
+      `Global environment initialization took ${
+        (endTime - startTime).toFixed(2)
+      }ms`,
+    );
+
+    return globalEnv;
+  } catch (error) {
+    throw new TranspilerError(
+      `Initializing global environment: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }

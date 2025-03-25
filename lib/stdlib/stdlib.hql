@@ -1,7 +1,7 @@
 ;; stdlib.hql - HQL wrapper over the JavaScript implementation
 
-(import [_take] from "./stdlib.js")
-(import [_map, _filter, _reduce, _range, _rangeGenerator, _groupBy, _keys] from "./stdlib.js")
+(import [_take] from "./core.js")
+(import [_map, _filter, _reduce, _range, _rangeGenerator, _groupBy, _keys] from "./core.js")
 
 (defn take (n coll)
   (_take n coll))
