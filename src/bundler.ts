@@ -10,6 +10,7 @@ import {
   join,
   resolve,
   writeTextFile,
+  isAbsolute
 } from "./platform/platform.ts";
 import { Logger } from "./logger.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
@@ -610,6 +611,7 @@ function createHqlPlugin(options: {
 /**
  * Resolve HQL imports with parallel resolution strategies
  */
+// Modified resolveHqlImport function in src/bundler.ts
 async function resolveHqlImport(
   args: any,
   options: { verbose?: boolean; tempDir?: string; sourceDir?: string },
@@ -685,6 +687,23 @@ async function resolveHqlImport(
         }
       },
     },
+    
+    // Strategy 4: NEW - Resolve relative to lib directory for core.hql dependencies
+    {
+      description: "relative to lib directory",
+      path: resolve(Deno.cwd(), "lib", args.path),
+      tryResolve: async () => {
+        // This strategy is especially useful for core.hql dependencies
+        const libPath = resolve(Deno.cwd(), "lib", args.path);
+        try {
+          await Deno.stat(libPath);
+          logger.debug(`Found import at ${libPath} (relative to lib directory)`);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      },
+    },
   ];
 
   // Try all strategies in parallel for better performance
@@ -708,15 +727,6 @@ async function resolveHqlImport(
       namespace: args.path.endsWith(".hql") ? "hql" : "file",
     };
   }
-
-  // If all strategies fail, log the failure and return the original path
-  logger.warn(
-    `Could not resolve file: ${args.path} after trying all strategies in parallel`,
-  );
-  return {
-    path: args.path,
-    namespace: args.path.endsWith(".hql") ? "hql" : "file",
-  };
 }
 
 /**
