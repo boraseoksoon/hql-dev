@@ -491,13 +491,6 @@ function parseList(state: ParserState): SList {
 }
 
 /**
- * Check if token value is dot notation
- */
-function isDotNotation(value: string): boolean {
-  return value.includes(".") && !value.startsWith(".") && !value.endsWith(".");
-}
-
-/**
  * Parse dot notation call
  */
 function parseDotNotationCall(state: ParserState): SExp[] {
@@ -723,6 +716,13 @@ function isAsAliasConstruct(expr: SExp, state: ParserState): boolean {
   return isSymbol(expr) &&
     state.currentPos < state.tokens.length &&
     state.tokens[state.currentPos].value === "as";
+}
+
+/**
+ * Check if token value is dot notation
+ */
+function isDotNotation(value: string): boolean {
+  return value.includes(".") && !value.startsWith(".") && !value.endsWith(".");
 }
 
 /**

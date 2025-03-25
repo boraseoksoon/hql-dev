@@ -1,7 +1,7 @@
 // src/s-exp/imports.ts - Refactored with better modularity and error handling
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { writeTextFile } from "../../src/platform/platform.ts";
+import { writeTextFile } from "../platform/platform.ts";
 import {
   isImport,
   isLiteral,
@@ -19,7 +19,13 @@ import { Logger } from "../logger.ts";
 import { ImportError, MacroError } from "../transpiler/errors.ts";
 import { checkForHqlImports, processHqlImportsInJs } from "../bundler.ts";
 import { registerTempFile } from "../temp-file-tracker.ts";
-import { isJavaScriptModule, isRemoteModule, isRemotePath } from "../utils.ts";
+import {
+  isHqlFile,
+  isJavaScriptModule,
+  isRemoteModule,
+  isRemoteUrl,
+  registerModulePath, 
+} from "../utils/import-utils.ts";
 
 /**
  * Options for import processing
@@ -33,11 +39,6 @@ interface ImportProcessorOptions {
   importMap?: Map<string, string>;
   currentFile?: string;
 }
-
-/**
- * Import source information to be maintained during processing
- */
-export const importSourceRegistry = new Map<string, string>();
 
 /**
  * Process all imports in a list of S-expressions
@@ -200,7 +201,7 @@ function categorizeImports(importExprs: SList[], logger: Logger): {
   for (const importExpr of importExprs) {
     const modulePath = getModulePathFromImport(importExpr);
 
-    if (isRemotePath(modulePath)) {
+    if (isRemoteUrl(modulePath) || isRemoteModule(modulePath)) {
       remoteImports.push(importExpr);
     } else {
       localImports.push(importExpr);
@@ -450,7 +451,8 @@ async function processNamespaceImport(
     const moduleName = (elements[1] as SSymbol).name;
     const modulePath = (elements[3] as SLiteral).value as string;
 
-    importSourceRegistry.set(moduleName, modulePath);
+    // Register the module path in the central registry
+    registerModulePath(moduleName, modulePath);
 
     logger.debug(
       `Processing namespace import with "from": ${moduleName} from ${modulePath}`,
@@ -757,7 +759,7 @@ async function loadModuleByType(
     // Determine module type and process accordingly
     if (isRemoteModule(modulePath)) {
       await loadRemoteModule(moduleName, modulePath, env, logger);
-    } else if (modulePath.endsWith(".hql")) {
+    } else if (isHqlFile(modulePath)) {
       await loadHqlModule(
         moduleName,
         modulePath,

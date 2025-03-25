@@ -4,7 +4,6 @@ import * as IR from "./hql_ir.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 import { CodeGenError } from "./errors.ts";
 import { Logger } from "../logger.ts";
-import { performAsync } from "./error-utils.ts";
 
 // Initialize logger for this module
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");

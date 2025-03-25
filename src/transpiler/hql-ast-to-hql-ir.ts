@@ -1,5 +1,5 @@
 ////////////////////////////////////////////////////////////////////////////////
-// src/transpiler/hql-ast-to-hql-ir.ts
+// src/transpiler/hql-ast-to-hql-ir.ts - Improved import handling with better organization
 ////////////////////////////////////////////////////////////////////////////////
 
 import * as IR from "./hql_ir.ts";
@@ -16,7 +16,7 @@ import * as path from "../platform/platform.ts";
 import { TransformError, ValidationError } from "./errors.ts";
 import { Logger } from "../logger.ts";
 import { perform } from "./error-utils.ts";
-import { macroCache, isUserLevelMacro } from "../s-exp/macro.ts"
+import { macroCache, isUserLevelMacro } from "../s-exp/macro.ts";
 import {
   isNamespaceImport,
   isVectorExport,
@@ -261,6 +261,10 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
   );
 }
 
+//-----------------------------------------------------------------------------
+// Vector, List, and Collection Processing
+//-----------------------------------------------------------------------------
+
 /**
  * Process elements in a vector, handling vector keyword and commas
  */
@@ -319,6 +323,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
           return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
         }
 
+        // Handle special import/export forms
         if (isVectorExport(list)) {
           logger.debug("Transforming vector export");
           return transformVectorExport(list, currentDir);
@@ -381,51 +386,6 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
 }
 
 /**
- * Transform namespace import with "from" syntax
- */
-function transformNamespaceImport(
-  list: ListNode,
-  currentDir: string,
-): IR.IRNode | null {
-  return perform(
-    () => {
-      const nameNode = list.elements[1];
-      const pathNode = list.elements[3];
-
-      if (nameNode.type !== "symbol") {
-        throw new ValidationError(
-          "Import name must be a symbol",
-          "namespace import",
-          "symbol",
-          nameNode.type,
-        );
-      }
-
-      if (pathNode.type !== "literal") {
-        throw new ValidationError(
-          "Import path must be a string literal",
-          "namespace import",
-          "string literal",
-          pathNode.type,
-        );
-      }
-
-      const name = (nameNode as SymbolNode).name;
-      const pathVal = String((pathNode as LiteralNode).value);
-
-      return {
-        type: IR.IRNodeType.JsImportReference,
-        name,
-        source: pathVal,
-      } as IR.IRJsImportReference;
-    },
-    "transformNamespaceImport",
-    TransformError,
-    [list],
-  );
-}
-
-/**
  * Transform an empty list into an empty array expression.
  */
 function transformEmptyList(): IR.IRArrayExpression {
@@ -444,7 +404,7 @@ function transformEmptyList(): IR.IRArrayExpression {
 /**
  * Transform empty array literals
  */
-function transformEmptyArray(list: ListNode, currentDir: string): IR.IRNode {
+function transformEmptyArray(_list: ListNode, _currentDir: string): IR.IRNode {
   return perform(
     () => {
       return {
@@ -454,14 +414,13 @@ function transformEmptyArray(list: ListNode, currentDir: string): IR.IRNode {
     },
     "transformEmptyArray",
     TransformError,
-    [list],
   );
 }
 
 /**
  * Transform empty map literals
  */
-function transformEmptyMap(list: ListNode, currentDir: string): IR.IRNode {
+function transformEmptyMap(_list: ListNode, _currentDir: string): IR.IRNode {
   return perform(
     () => {
       return {
@@ -471,14 +430,13 @@ function transformEmptyMap(list: ListNode, currentDir: string): IR.IRNode {
     },
     "transformEmptyMap",
     TransformError,
-    [list],
   );
 }
 
 /**
  * Transform empty set literals
  */
-function transformEmptySet(list: ListNode, currentDir: string): IR.IRNode {
+function transformEmptySet(_list: ListNode, _currentDir: string): IR.IRNode {
   return perform(
     () => {
       return {
@@ -492,7 +450,6 @@ function transformEmptySet(list: ListNode, currentDir: string): IR.IRNode {
     },
     "transformEmptySet",
     TransformError,
-    [list],
   );
 }
 
@@ -709,6 +666,159 @@ function transformDotNotation(
 }
 
 /**
+ * Transform collection access syntax: (myList 2) => (get myList 2)
+ */
+function transformCollectionAccess(
+  list: ListNode,
+  op: string,
+  currentDir: string,
+): IR.IRNode {
+  return perform(
+    () => {
+      const collection = transformNode(list.elements[0], currentDir);
+      if (!collection) {
+        throw new ValidationError(
+          "Collection transformed to null",
+          "collection access",
+          "valid collection expression",
+          "null",
+        );
+      }
+
+      const index = transformNode(list.elements[1], currentDir);
+      if (!index) {
+        throw new ValidationError(
+          "Index transformed to null",
+          "collection access",
+          "valid index expression",
+          "null",
+        );
+      }
+
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.Identifier,
+          name: "get",
+        } as IR.IRIdentifier,
+        arguments: [collection, index],
+      } as IR.IRCallExpression;
+    },
+    `transformCollectionAccess '${op}'`,
+    TransformError,
+    [list],
+  );
+}
+
+/**
+ * Transform a standard function call.
+ */
+function transformStandardFunctionCall(
+  list: ListNode,
+  currentDir: string,
+): IR.IRNode {
+  return perform(
+    () => {
+      const first = list.elements[0];
+      if (first.type === "symbol") {
+        const op = (first as SymbolNode).name;
+        const args = list.elements.slice(1).map((arg) => {
+          const transformed = transformNode(arg, currentDir);
+          if (!transformed) {
+            throw new ValidationError(
+              `Function argument transformed to null: ${JSON.stringify(arg)}`,
+              "function argument",
+              "valid expression",
+              "null",
+            );
+          }
+          return transformed;
+        });
+        return {
+          type: IR.IRNodeType.CallExpression,
+          callee: {
+            type: IR.IRNodeType.Identifier,
+            name: sanitizeIdentifier(op),
+          } as IR.IRIdentifier,
+          arguments: args,
+        } as IR.IRCallExpression;
+      }
+
+      const callee = transformNode(list.elements[0], currentDir);
+      if (!callee) {
+        throw new ValidationError(
+          "Function callee transformed to null",
+          "function call",
+          "valid function expression",
+          "null",
+        );
+      }
+
+      const args = list.elements.slice(1).map((arg) => {
+        const transformed = transformNode(arg, currentDir);
+        if (!transformed) {
+          throw new ValidationError(
+            `Function argument transformed to null: ${JSON.stringify(arg)}`,
+            "function argument",
+            "valid expression",
+            "null",
+          );
+        }
+        return transformed;
+      });
+
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee,
+        arguments: args,
+      } as IR.IRCallExpression;
+    },
+    "transformStandardFunctionCall",
+    TransformError,
+    [list],
+  );
+}
+
+//-----------------------------------------------------------------------------
+// String and Macro Processing Utilities
+//-----------------------------------------------------------------------------
+
+/**
+ * Extract a string literal from a node.
+ */
+function extractStringLiteral(node: HQLNode): string {
+  return perform(
+    () => {
+      if (node.type === "literal") {
+        return String((node as LiteralNode).value);
+      }
+
+      if (node.type === "list") {
+        const theList = node as ListNode;
+        if (
+          theList.elements.length === 2 &&
+          theList.elements[0].type === "symbol" &&
+          (theList.elements[0] as SymbolNode).name === "quote" &&
+          theList.elements[1].type === "literal"
+        ) {
+          return String((theList.elements[1] as LiteralNode).value);
+        }
+      }
+
+      throw new ValidationError(
+        `Expected string literal but got: ${node.type}`,
+        "string literal extraction",
+        "string literal or quoted literal",
+        node.type,
+      );
+    },
+    "extractStringLiteral",
+    TransformError,
+    [node],
+  );
+}
+
+/**
  * Transform quasiquoted expressions
  */
 function transformQuasiquote(list: ListNode, currentDir: string): IR.IRNode {
@@ -813,81 +923,9 @@ function transformUnquoteSplicing(
   );
 }
 
-/**
- * Transform vector-based export statement
- */
-function transformVectorExport(
-  list: ListNode,
-  currentDir: string,
-): IR.IRNode | null {
-  return perform(
-    () => {
-      const vectorNode = list.elements[1];
-      if (vectorNode.type !== "list") {
-        throw new ValidationError(
-          "Export argument must be a vector (list)",
-          "vector export",
-          "vector (list)",
-          vectorNode.type,
-        );
-      }
-
-      const symbols = processVectorElements((vectorNode as ListNode).elements);
-      const exportSpecifiers: IR.IRExportSpecifier[] = [];
-
-      for (const elem of symbols) {
-        if (elem.type !== "symbol") {
-          logger.warn(`Skipping non-symbol export element: ${elem.type}`);
-          continue;
-        }
-        const symbolName = (elem as SymbolNode).name;
-
-        if (isUserLevelMacro(symbolName, currentDir)) {
-          logger.debug(`Skipping macro in export: ${symbolName}`);
-          continue;
-        }
-        exportSpecifiers.push(createExportSpecifier(symbolName));
-      }
-
-      if (exportSpecifiers.length === 0) {
-        logger.debug("All exports were macros, skipping export declaration");
-        return null;
-      }
-
-      return {
-        type: IR.IRNodeType.ExportNamedDeclaration,
-        specifiers: exportSpecifiers,
-      } as IR.IRExportNamedDeclaration;
-    },
-    "transformVectorExport",
-    TransformError,
-    [list],
-  );
-}
-
-/**
- * Create an export specifier
- */
-function createExportSpecifier(symbolName: string): IR.IRExportSpecifier {
-  return perform(
-    () => {
-      return {
-        type: IR.IRNodeType.ExportSpecifier,
-        local: {
-          type: IR.IRNodeType.Identifier,
-          name: sanitizeIdentifier(symbolName),
-        } as IR.IRIdentifier,
-        exported: {
-          type: IR.IRNodeType.Identifier,
-          name: symbolName,
-        } as IR.IRIdentifier,
-      };
-    },
-    `createExportSpecifier '${symbolName}'`,
-    TransformError,
-    [symbolName],
-  );
-}
+//-----------------------------------------------------------------------------
+// Import and Export Transformers - Reorganized for better clarity
+//-----------------------------------------------------------------------------
 
 /**
  * Check if a position in a list of nodes has an 'as' alias following it
@@ -984,87 +1022,45 @@ function isSymbolMacroInModule(
 }
 
 /**
- * Transform a vector-based import statement
+ * Transform namespace import with "from" syntax
  */
-function transformVectorImport(
+function transformNamespaceImport(
   list: ListNode,
   currentDir: string,
 ): IR.IRNode | null {
   return perform(
     () => {
-      const vectorNode = list.elements[1] as ListNode;
-      if (list.elements[3].type !== "literal") {
+      const nameNode = list.elements[1];
+      const pathNode = list.elements[3];
+
+      if (nameNode.type !== "symbol") {
+        throw new ValidationError(
+          "Import name must be a symbol",
+          "namespace import",
+          "symbol",
+          nameNode.type,
+        );
+      }
+
+      if (pathNode.type !== "literal") {
         throw new ValidationError(
           "Import path must be a string literal",
-          "vector import",
+          "namespace import",
           "string literal",
-          list.elements[3].type,
+          pathNode.type,
         );
       }
 
-      const modulePath = (list.elements[3] as LiteralNode).value as string;
-      if (typeof modulePath !== "string") {
-        throw new ValidationError(
-          "Import path must be a string",
-          "vector import",
-          "string",
-          typeof modulePath,
-        );
-      }
-
-      const elements = processVectorElements(vectorNode.elements);
-      const importSpecifiers: IR.IRImportSpecifier[] = [];
-      let i = 0;
-      while (i < elements.length) {
-        const elem = elements[i];
-        if (elem.type === "symbol") {
-          const symbolName = (elem as SymbolNode).name;
-          const hasAlias = hasAliasFollowing(elements, i);
-          const aliasName = hasAlias
-            ? (elements[i + 2] as SymbolNode).name
-            : null;
-
-          const isMacro = isUserLevelMacro(symbolName, currentDir) ||
-            isSymbolMacroInModule(symbolName, modulePath, currentDir);
-
-          if (isMacro) {
-            logger.debug(
-              `Skipping macro in import: ${symbolName}${
-                aliasName ? ` as ${aliasName}` : ""
-              }`,
-            );
-            i += hasAlias ? 3 : 1;
-            continue;
-          }
-
-          if (hasAlias) {
-            importSpecifiers.push(
-              createImportSpecifier(symbolName, aliasName!),
-            );
-            i += 3;
-          } else {
-            importSpecifiers.push(
-              createImportSpecifier(symbolName, symbolName),
-            );
-            i += 1;
-          }
-        } else {
-          i += 1;
-        }
-      }
-
-      if (importSpecifiers.length === 0) {
-        logger.debug("All imports were macros, skipping import declaration");
-        return null;
-      }
+      const name = (nameNode as SymbolNode).name;
+      const pathVal = String((pathNode as LiteralNode).value);
 
       return {
-        type: IR.IRNodeType.ImportDeclaration,
-        source: modulePath,
-        specifiers: importSpecifiers,
-      } as IR.IRImportDeclaration;
+        type: IR.IRNodeType.JsImportReference,
+        name,
+        source: pathVal,
+      } as IR.IRJsImportReference;
     },
-    "transformVectorImport",
+    "transformNamespaceImport",
     TransformError,
     [list],
   );
@@ -1196,6 +1192,173 @@ function transformJsExport(list: ListNode, currentDir: string): IR.IRNode {
 }
 
 /**
+ * Transform a vector-based export statement
+ */
+function transformVectorExport(
+  list: ListNode,
+  currentDir: string,
+): IR.IRNode | null {
+  return perform(
+    () => {
+      const vectorNode = list.elements[1];
+      if (vectorNode.type !== "list") {
+        throw new ValidationError(
+          "Export argument must be a vector (list)",
+          "vector export",
+          "vector (list)",
+          vectorNode.type,
+        );
+      }
+
+      const symbols = processVectorElements((vectorNode as ListNode).elements);
+      const exportSpecifiers: IR.IRExportSpecifier[] = [];
+
+      for (const elem of symbols) {
+        if (elem.type !== "symbol") {
+          logger.warn(`Skipping non-symbol export element: ${elem.type}`);
+          continue;
+        }
+        const symbolName = (elem as SymbolNode).name;
+
+        if (isUserLevelMacro(symbolName, currentDir)) {
+          logger.debug(`Skipping macro in export: ${symbolName}`);
+          continue;
+        }
+        exportSpecifiers.push(createExportSpecifier(symbolName));
+      }
+
+      if (exportSpecifiers.length === 0) {
+        logger.debug("All exports were macros, skipping export declaration");
+        return null;
+      }
+
+      return {
+        type: IR.IRNodeType.ExportNamedDeclaration,
+        specifiers: exportSpecifiers,
+      } as IR.IRExportNamedDeclaration;
+    },
+    "transformVectorExport",
+    TransformError,
+    [list],
+  );
+}
+
+/**
+ * Create an export specifier
+ */
+function createExportSpecifier(symbolName: string): IR.IRExportSpecifier {
+  return perform(
+    () => {
+      return {
+        type: IR.IRNodeType.ExportSpecifier,
+        local: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(symbolName),
+        } as IR.IRIdentifier,
+        exported: {
+          type: IR.IRNodeType.Identifier,
+          name: symbolName,
+        } as IR.IRIdentifier,
+      };
+    },
+    `createExportSpecifier '${symbolName}'`,
+    TransformError,
+    [symbolName],
+  );
+}
+
+/**
+ * Transform a vector-based import statement
+ */
+function transformVectorImport(
+  list: ListNode,
+  currentDir: string,
+): IR.IRNode | null {
+  return perform(
+    () => {
+      const vectorNode = list.elements[1] as ListNode;
+      if (list.elements[3].type !== "literal") {
+        throw new ValidationError(
+          "Import path must be a string literal",
+          "vector import",
+          "string literal",
+          list.elements[3].type,
+        );
+      }
+
+      const modulePath = (list.elements[3] as LiteralNode).value as string;
+      if (typeof modulePath !== "string") {
+        throw new ValidationError(
+          "Import path must be a string",
+          "vector import",
+          "string",
+          typeof modulePath,
+        );
+      }
+
+      const elements = processVectorElements(vectorNode.elements);
+      const importSpecifiers: IR.IRImportSpecifier[] = [];
+      let i = 0;
+      while (i < elements.length) {
+        const elem = elements[i];
+        if (elem.type === "symbol") {
+          const symbolName = (elem as SymbolNode).name;
+          const hasAlias = hasAliasFollowing(elements, i);
+          const aliasName = hasAlias
+            ? (elements[i + 2] as SymbolNode).name
+            : null;
+
+          const isMacro = isUserLevelMacro(symbolName, currentDir) ||
+            isSymbolMacroInModule(symbolName, modulePath, currentDir);
+
+          if (isMacro) {
+            logger.debug(
+              `Skipping macro in import: ${symbolName}${
+                aliasName ? ` as ${aliasName}` : ""
+              }`,
+            );
+            i += hasAlias ? 3 : 1;
+            continue;
+          }
+
+          if (hasAlias) {
+            importSpecifiers.push(
+              createImportSpecifier(symbolName, aliasName!),
+            );
+            i += 3;
+          } else {
+            importSpecifiers.push(
+              createImportSpecifier(symbolName, symbolName),
+            );
+            i += 1;
+          }
+        } else {
+          i += 1;
+        }
+      }
+
+      if (importSpecifiers.length === 0) {
+        logger.debug("All imports were macros, skipping import declaration");
+        return null;
+      }
+
+      return {
+        type: IR.IRNodeType.ImportDeclaration,
+        source: modulePath,
+        specifiers: importSpecifiers,
+      } as IR.IRImportDeclaration;
+    },
+    "transformVectorImport",
+    TransformError,
+    [list],
+  );
+}
+
+//-----------------------------------------------------------------------------
+// JS Interop Transformers
+//-----------------------------------------------------------------------------
+
+/**
  * Transform JavaScript "new" expressions
  */
 function transformJsNew(list: ListNode, currentDir: string): IR.IRNode {
@@ -1318,12 +1481,6 @@ function transformJsGet(list: ListNode, currentDir: string): IR.IRNode {
     [list],
   );
 }
-
-/**
- * Transform JavaScript method calls
- */
-// Look for the transformJsCall function in src/transpiler/hql-ast-to-hql-ir.ts
-// and replace it with this improved version
 
 /**
  * Transform JavaScript method calls
@@ -1486,6 +1643,10 @@ function transformJsGetInvoke(list: ListNode, currentDir: string): IR.IRNode {
   );
 }
 
+//-----------------------------------------------------------------------------
+// Data Structure Transformers
+//-----------------------------------------------------------------------------
+
 /**
  * Transform vector literals
  */
@@ -1627,6 +1788,10 @@ function transformHashSet(list: ListNode, currentDir: string): IR.IRNode {
   );
 }
 
+//-----------------------------------------------------------------------------
+// Collection Operation Transformers
+//-----------------------------------------------------------------------------
+
 /**
  * Transform collection 'get' operation.
  */
@@ -1722,154 +1887,9 @@ function transformNew(list: ListNode, currentDir: string): IR.IRNode {
   );
 }
 
-/**
- * Transform collection access syntax: (myList 2) => (get myList 2)
- */
-function transformCollectionAccess(
-  list: ListNode,
-  op: string,
-  currentDir: string,
-): IR.IRNode {
-  return perform(
-    () => {
-      const collection = transformNode(list.elements[0], currentDir);
-      if (!collection) {
-        throw new ValidationError(
-          "Collection transformed to null",
-          "collection access",
-          "valid collection expression",
-          "null",
-        );
-      }
-
-      const index = transformNode(list.elements[1], currentDir);
-      if (!index) {
-        throw new ValidationError(
-          "Index transformed to null",
-          "collection access",
-          "valid index expression",
-          "null",
-        );
-      }
-
-      return {
-        type: IR.IRNodeType.CallExpression,
-        callee: {
-          type: IR.IRNodeType.Identifier,
-          name: "get",
-        } as IR.IRIdentifier,
-        arguments: [collection, index],
-      } as IR.IRCallExpression;
-    },
-    `transformCollectionAccess '${op}'`,
-    TransformError,
-    [list],
-  );
-}
-
-/**
- * Transform a standard function call.
- */
-function transformStandardFunctionCall(
-  list: ListNode,
-  currentDir: string,
-): IR.IRNode {
-  return perform(
-    () => {
-      const first = list.elements[0];
-      if (first.type === "symbol") {
-        const op = (first as SymbolNode).name;
-        const args = list.elements.slice(1).map((arg) => {
-          const transformed = transformNode(arg, currentDir);
-          if (!transformed) {
-            throw new ValidationError(
-              `Function argument transformed to null: ${JSON.stringify(arg)}`,
-              "function argument",
-              "valid expression",
-              "null",
-            );
-          }
-          return transformed;
-        });
-        return {
-          type: IR.IRNodeType.CallExpression,
-          callee: {
-            type: IR.IRNodeType.Identifier,
-            name: sanitizeIdentifier(op),
-          } as IR.IRIdentifier,
-          arguments: args,
-        } as IR.IRCallExpression;
-      }
-
-      const callee = transformNode(list.elements[0], currentDir);
-      if (!callee) {
-        throw new ValidationError(
-          "Function callee transformed to null",
-          "function call",
-          "valid function expression",
-          "null",
-        );
-      }
-
-      const args = list.elements.slice(1).map((arg) => {
-        const transformed = transformNode(arg, currentDir);
-        if (!transformed) {
-          throw new ValidationError(
-            `Function argument transformed to null: ${JSON.stringify(arg)}`,
-            "function argument",
-            "valid expression",
-            "null",
-          );
-        }
-        return transformed;
-      });
-
-      return {
-        type: IR.IRNodeType.CallExpression,
-        callee,
-        arguments: args,
-      } as IR.IRCallExpression;
-    },
-    "transformStandardFunctionCall",
-    TransformError,
-    [list],
-  );
-}
-
-/**
- * Extract a string literal from a node.
- */
-function extractStringLiteral(node: HQLNode): string {
-  return perform(
-    () => {
-      if (node.type === "literal") {
-        return String((node as LiteralNode).value);
-      }
-
-      if (node.type === "list") {
-        const theList = node as ListNode;
-        if (
-          theList.elements.length === 2 &&
-          theList.elements[0].type === "symbol" &&
-          (theList.elements[0] as SymbolNode).name === "quote" &&
-          theList.elements[1].type === "literal"
-        ) {
-          return String((theList.elements[1] as LiteralNode).value);
-        }
-      }
-
-      throw new ValidationError(
-        `Expected string literal but got: ${node.type}`,
-        "string literal extraction",
-        "string literal or quoted literal",
-        node.type,
-      );
-    },
-    "extractStringLiteral",
-    TransformError,
-    [node],
-  );
-}
+//-----------------------------------------------------------------------------
+// Expression and Statement Transformers
+//-----------------------------------------------------------------------------
 
 /**
  * Transform a quoted expression.
