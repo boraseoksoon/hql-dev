@@ -7,7 +7,7 @@ export class Logger {
   /**
    * Create a new logger
    */
-  constructor(enabled: boolean = false) {
+  constructor(enabled = false) {
     this.enabled = enabled;
   }
 
@@ -25,7 +25,7 @@ export class Logger {
   /**
    * Log a debug message if logging is enabled
    */
-  debug(message: string, ...args: any[]): void {
+  debug(message: string, ...args: unknown[]): void {
     if (this.enabled) {
       console.log(`[DEBUG] ${message}`, ...args);
     }
@@ -50,7 +50,7 @@ export class Logger {
   /**
    * Log an error message (always shown)
    */
-  error(message: string, error?: any): void {
+  error(message: string, error?: unknown): void {
     const errorDetails = error
       ? `: ${error instanceof Error ? error.message : String(error)}`
       : "";

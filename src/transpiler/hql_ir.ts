@@ -155,7 +155,7 @@ export interface IRFunctionExpression extends IRNode {
   body: IRBlockStatement;
 }
 
-// NEW: Object literal support (for maps)
+// Object literal support (for maps)
 export interface IRObjectProperty extends IRNode {
   type: IRNodeType.ObjectProperty;
   key: IRNode;
@@ -228,7 +228,7 @@ export interface IRInteropIIFE extends IRNode {
   property: IRStringLiteral;
 }
 
-// NEW: IR node for JS import references
+// IR node for JS import references
 export interface IRJsImportReference extends IRNode {
   type: IRNodeType.JsImportReference;
   name: string;

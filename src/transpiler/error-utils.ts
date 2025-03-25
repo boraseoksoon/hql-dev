@@ -1,5 +1,5 @@
 // src/transpiler/error-utils.ts
-import { TranspilerError } from "../transpiler/errors.ts";
+import { TranspilerError } from "./errors.ts";
 
 /**
  * Helper function to handle synchronous operations with consistent error handling

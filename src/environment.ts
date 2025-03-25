@@ -10,6 +10,9 @@ import {
 } from "./transpiler/errors.ts";
 import { LRUCache } from "./utils/lru-cache.ts";
 
+// Define a type for values that can be stored in the environment
+export type Value = string | number | boolean | null | SExp | Function | Record<string, unknown> | unknown[];
+
 /**
  * Type definition for macro functions
  */
@@ -21,13 +24,13 @@ export type MacroFn = (args: SExp[], env: Environment) => SExp;
  */
 export class Environment {
   // Runtime variables store JavaScript values
-  public variables = new Map<string, any>();
+  public variables = new Map<string, Value>();
 
   // Macros store macro expansion functions (system-level) - kept for backward compatibility
   public macros = new Map<string, MacroFn>();
 
   // Imported modules store module exports
-  public moduleExports = new Map<string, Record<string, any>>();
+  public moduleExports = new Map<string, Record<string, Value>>();
 
   // Parent environment for lexical scoping
   private parent: Environment | null;
@@ -54,7 +57,7 @@ export class Environment {
   private processedFiles = new Set<string>();
 
   // Simplified variable lookup cache
-  private lookupCache = new LRUCache<string, any>(500);
+  private lookupCache = new LRUCache<string, Value>(500);
 
   // Centralized macro registry - the single source of truth for macros
   private macroRegistry: MacroRegistry;
@@ -68,38 +71,41 @@ export class Environment {
   /**
    * Initialize a global unified environment
    */
-  static async initializeGlobalEnv(
+  static initializeGlobalEnv(
     options: { verbose?: boolean } = {},
   ): Promise<Environment> {
-    const logger = new Logger(options.verbose);
-    logger.debug("Starting global environment initialization");
+    return new Promise(resolve => {
+      const logger = new Logger(options.verbose);
+      logger.debug("Starting global environment initialization");
 
-    if (Environment.globalEnv) {
-      logger.debug("Reusing existing global environment");
-      return Environment.globalEnv;
-    }
-
-    try {
-      const env = new Environment(null, logger);
-
-      // Initialize built-in functions and macros
-      env.initializeBuiltins();
-
-      logger.debug("Global environment initialized successfully");
-      Environment.globalEnv = env;
-      return env;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(`Failed to initialize global environment: ${errorMsg}`);
-
-      // Convert to TranspilerError if it's not already
-      if (!(error instanceof TranspilerError)) {
-        throw new TranspilerError(
-          `Global environment initialization failed: ${errorMsg}`,
-        );
+      if (Environment.globalEnv) {
+        logger.debug("Reusing existing global environment");
+        resolve(Environment.globalEnv);
+        return;
       }
-      throw error;
-    }
+
+      try {
+        const env = new Environment(null, logger);
+
+        // Initialize built-in functions and macros
+        env.initializeBuiltins();
+
+        logger.debug("Global environment initialized successfully");
+        Environment.globalEnv = env;
+        resolve(env);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to initialize global environment: ${errorMsg}`);
+
+        // Convert to TranspilerError if it's not already
+        if (!(error instanceof TranspilerError)) {
+          throw new TranspilerError(
+            `Global environment initialization failed: ${errorMsg}`,
+          );
+        }
+        throw error;
+      }
+    });
   }
 
   /**
@@ -149,7 +155,7 @@ export class Environment {
   private defineArithmeticOperators(): void {
     try {
       this.define("+", (...args: number[]) => args.reduce((a, b) => a + b, 0));
-      this.define("-", (a: number, b: number) => {
+      this.define("-", (a: number, b?: number) => {
         // Handle unary minus when only one argument
         if (b === undefined) return -a;
         return a - b;
@@ -196,9 +202,9 @@ export class Environment {
    */
   private defineComparisonOperators(): void {
     try {
-      this.define("=", (a: any, b: any) => a === b);
-      this.define("eq?", (a: any, b: any) => a === b);
-      this.define("!=", (a: any, b: any) => a !== b);
+      this.define("=", (a: Value, b: Value) => a === b);
+      this.define("eq?", (a: Value, b: Value) => a === b);
+      this.define("!=", (a: Value, b: Value) => a !== b);
       this.define("<", (a: number, b: number) => a < b);
       this.define(">", (a: number, b: number) => a > b);
       this.define("<=", (a: number, b: number) => a <= b);
@@ -219,14 +225,16 @@ export class Environment {
    */
   private defineListOperations(): void {
     try {
-      this.define("get", (coll, key, notFound = null) => {
+      this.define("get", (coll: unknown, key: string | number, notFound: Value = null) => {
         if (coll == null) return notFound;
         if (Array.isArray(coll)) {
           return (typeof key === "number" && key >= 0 && key < coll.length)
             ? coll[key]
             : notFound;
         }
-        return (key in coll) ? coll[key] : notFound;
+        return (typeof coll === "object" && key in (coll as Record<string, unknown>)) 
+          ? (coll as Record<string, unknown>)[key]
+          : notFound;
       });
       this.logger.debug("List operations defined");
     } catch (error) {
@@ -247,7 +255,7 @@ export class Environment {
    */
   private defineJsInterop(): void {
     try {
-      this.define("js-get", (obj: any, prop: string) => {
+      this.define("js-get", (obj: unknown, prop: string) => {
         if (obj === null || obj === undefined) {
           throw new ValidationError(
             "Cannot access property on null or undefined",
@@ -256,10 +264,10 @@ export class Environment {
             obj === null ? "null" : "undefined",
           );
         }
-        return obj[prop];
+        return (obj as Record<string, unknown>)[prop];
       });
 
-      this.define("js-call", (obj: any, method: string, ...args: any[]) => {
+      this.define("js-call", (obj: unknown, method: string, ...args: unknown[]) => {
         if (obj === null || obj === undefined) {
           throw new ValidationError(
             "Cannot call method on null or undefined",
@@ -269,16 +277,17 @@ export class Environment {
           );
         }
 
-        if (typeof obj[method] !== "function") {
+        const objWithMethods = obj as Record<string, unknown>;
+        if (typeof objWithMethods[method] !== "function") {
           throw new ValidationError(
             `${method} is not a function on the given object`,
             "js-call operation",
             "function",
-            typeof obj[method],
+            typeof objWithMethods[method],
           );
         }
 
-        return obj[method](...args);
+        return (objWithMethods[method] as Function)(...args);
       });
 
       // Enhanced throw for better error handling
@@ -303,7 +312,7 @@ export class Environment {
   /**
    * Define a variable in this environment with simplified cache handling
    */
-  define(key: string, value: any): void {
+  define(key: string, value: Value): void {
     try {
       this.logger.debug(`Defining symbol: ${key}`);
       this.variables.set(key, value);
@@ -329,7 +338,7 @@ export class Environment {
   /**
    * Look up a variable in the environment chain with simplified caching
    */
-  lookup(key: string): any {
+  lookup(key: string): Value {
     try {
       // Check cache first for performance
       const cachedValue = this.lookupCache.get(key);
@@ -349,16 +358,16 @@ export class Environment {
 
       if (this.variables.has(sanitizedKey)) {
         const value = this.variables.get(sanitizedKey);
-        this.lookupCache.set(key, value);
-        this.lookupCache.set(sanitizedKey, value);
-        return value;
+        this.lookupCache.set(key, value!);
+        this.lookupCache.set(sanitizedKey, value!);
+        return value!;
       }
 
       // Check with original name
       if (this.variables.has(key)) {
         const value = this.variables.get(key);
-        this.lookupCache.set(key, value);
-        return value;
+        this.lookupCache.set(key, value!);
+        return value!;
       }
 
       // Try parent environment
@@ -367,7 +376,7 @@ export class Environment {
           const value = this.parent.lookup(key);
           this.lookupCache.set(key, value);
           return value;
-        } catch (error) {
+        } catch (_error) {
           // Parent lookup failed, continue to throw our own error
         }
       }
@@ -397,7 +406,7 @@ export class Environment {
    * Look up a property using dot notation
    * Enhanced with better error messages
    */
-  private lookupDotNotation(key: string): any {
+  private lookupDotNotation(key: string): Value {
     const [moduleName, ...propertyParts] = key.split(".");
     const propertyPath = propertyParts.join(".");
 
@@ -450,7 +459,7 @@ export class Environment {
    * Helper to get a property from an object via a path string
    * Enhanced with better error messages
    */
-  private getPropertyFromPath(obj: any, path: string): any {
+  private getPropertyFromPath(obj: unknown, path: string): Value {
     if (!path) return obj;
 
     if (obj === null || obj === undefined) {
@@ -465,22 +474,30 @@ export class Environment {
     }
 
     const parts = path.split(".");
-    let current = obj;
+    let current: unknown = obj;
 
     for (const part of parts) {
+      if (current === null || current === undefined || typeof current !== "object") {
+        throw new ValidationError(
+          `Cannot access property '${part}' of ${typeof current}`,
+          "property path access",
+          "object",
+          typeof current,
+        );
+      }
+      
+      const currentObj = current as Record<string, unknown>;
+      
       // Try original property name
-      if (current && typeof current === "object" && part in current) {
-        current = current[part];
+      if (part in currentObj) {
+        current = currentObj[part];
         continue;
       }
 
       // Try sanitized property name
       const sanitizedPart = part.replace(/-/g, "_");
-      if (
-        current && typeof current === "object" && sanitizedPart !== part &&
-        sanitizedPart in current
-      ) {
-        current = current[sanitizedPart];
+      if (sanitizedPart !== part && sanitizedPart in currentObj) {
+        current = currentObj[sanitizedPart];
         continue;
       }
 
@@ -492,19 +509,19 @@ export class Environment {
       );
     }
 
-    return current;
+    return current as Value;
   }
 
   /**
    * Import a module into the environment
    * Enhanced with better error handling
    */
-  importModule(moduleName: string, exports: Record<string, any>): void {
+  importModule(moduleName: string, exports: Record<string, Value>): void {
     try {
       this.logger.debug(`Importing module: ${moduleName}`);
 
       // Create a module object with all exports
-      const moduleObj: Record<string, any> = { ...exports };
+      const moduleObj: Record<string, Value> = { ...exports };
 
       // Store the module as a variable
       this.define(moduleName, moduleObj);

@@ -19,7 +19,7 @@ import {
   ValidationError,
 } from "./transpiler/errors.ts";
 import { performAsync } from "./transpiler/error-utils.ts";
-import { simpleHash } from "./utils.ts";
+import { simpleHash, isHqlFile, isJsFile } from "./utils.ts";
 import { registerTempFile } from "./temp-file-tracker.ts";
 
 // Constants
@@ -35,6 +35,139 @@ export interface BundleOptions {
   drop?: string[];
   tempDir?: string;
   sourceDir?: string;
+}
+
+/**
+ * Main CLI function for transpilation and bundling
+ */
+export function transpileCLI(
+  inputPath: string,
+  outputPath?: string,
+  options: BundleOptions = {},
+): Promise<string> {
+  return performAsync(async () => {
+    const logger = new Logger(options.verbose);
+    const startTime = performance.now();
+
+    logger.log(`Processing entry: ${inputPath}`);
+
+    const resolvedInputPath = resolve(inputPath);
+    const outPath = determineOutputPath(resolvedInputPath, outputPath);
+
+    // Store the original source directory to help with module resolution
+    const sourceDir = dirname(resolvedInputPath);
+
+    // Process the entry file to get an intermediate JS file
+    const processedPath = await processEntryFile(resolvedInputPath, outPath, {
+      ...options,
+      sourceDir, // Pass source directory
+    });
+
+    logger.debug(`Entry file processed to: ${processedPath}`);
+
+    await bundleWithEsbuild(processedPath, outPath, {
+      ...options,
+      sourceDir, // Pass source directory to bundleWithEsbuild
+    });
+
+    const endTime = performance.now();
+    logger.log(
+      `Successfully processed output to ${outPath} in ${
+        (endTime - startTime).toFixed(2)
+      }ms`,
+    );
+    return outPath;
+  }, `CLI transpilation failed for ${inputPath}`);
+}
+
+
+/**
+ * Check for HQL imports in JavaScript file
+ * Returns true if HQL imports are found
+ */
+export function checkForHqlImports(jsSource: string, logger: Logger): boolean {
+  const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
+  const hasHqlImports = hqlImportRegex.test(jsSource);
+
+  if (hasHqlImports) {
+    logger.log(`JS file contains HQL imports - processing these imports`);
+  }
+
+  return hasHqlImports;
+}
+
+/**
+ * Process HQL imports in a JavaScript file
+ */
+export async function processHqlImportsInJs(
+  jsSource: string,
+  jsFilePath: string,
+  options: BundleOptions,
+  logger: Logger,
+): Promise<string> {
+  try {
+    const baseDir = dirname(jsFilePath);
+    let modifiedSource = jsSource;
+
+    // Extract all HQL imports
+    const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
+    const imports: { full: string; path: string }[] = [];
+    let match;
+
+    // Reset regex state before using it again
+    hqlImportRegex.lastIndex = 0;
+
+    // Find all HQL imports
+    while ((match = hqlImportRegex.exec(jsSource)) !== null) {
+      const fullImport = match[0];
+      const importPath = match[1];
+      imports.push({ full: fullImport, path: importPath });
+    }
+
+    logger.debug(`Found ${imports.length} HQL imports in JS file`);
+
+    // Process each HQL import
+    for (const importInfo of imports) {
+      const hqlPath = importInfo.path;
+      const resolvedHqlPath = path.resolve(baseDir, hqlPath);
+
+      logger.debug(
+        `Processing HQL import: ${hqlPath} (resolved: ${resolvedHqlPath})`,
+      );
+
+      // Generate output path for the transpiled HQL file
+      const hqlOutputPath = resolvedHqlPath.replace(/\.hql$/, ".js");
+
+      // Check if output already exists
+      if (!await exists(hqlOutputPath)) {
+        // Transpile the HQL file
+        logger.debug(
+          `Transpiling HQL import: ${resolvedHqlPath} -> ${hqlOutputPath}`,
+        );
+
+        await transpileCLI(resolvedHqlPath, hqlOutputPath, options);
+      } else {
+        logger.debug(`Using existing transpiled file: ${hqlOutputPath}`);
+      }
+
+      // Update the import statement in the JS source
+      const relativePath = hqlPath.replace(/\.hql$/, ".js");
+      const newImport = importInfo.full.replace(hqlPath, relativePath);
+
+      modifiedSource = modifiedSource.replace(importInfo.full, newImport);
+      logger.debug(
+        `Updated import from "${importInfo.full}" to "${newImport}"`,
+      );
+    }
+
+    return modifiedSource;
+  } catch (error) {
+    throw new TranspilerError(
+      `Processing HQL imports in JS file: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 /**
@@ -68,24 +201,9 @@ async function writeOutput(
 }
 
 /**
- * Check if a file is an HQL file
- */
-function isHqlFile(filePath: string): boolean {
-  return filePath.endsWith(".hql");
-}
-
-/**
- * Check if a file is a JavaScript file
- */
-function isJsFile(filePath: string): boolean {
-  return filePath.endsWith(".js") || filePath.endsWith(".mjs") ||
-    filePath.endsWith(".cjs");
-}
-
-/**
  * Process an entry file (HQL or JS) and output transpiled JS
  */
-async function processEntryFile(
+function processEntryFile(
   inputPath: string,
   outputPath: string,
   options: BundleOptions = {},
@@ -206,8 +324,7 @@ async function createTempDirIfNeeded(
  * Read source file
  */
 async function readSourceFile(
-  filePath: string,
-  logger: Logger,
+  filePath: string
 ): Promise<string> {
   try {
     const content = await Deno.readTextFile(filePath);
@@ -261,98 +378,9 @@ async function processJsEntryFile(
 }
 
 /**
- * Check for HQL imports in JavaScript file
- * Returns true if HQL imports are found
- */
-export function checkForHqlImports(jsSource: string, logger: Logger): boolean {
-  const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
-  const hasHqlImports = hqlImportRegex.test(jsSource);
-
-  if (hasHqlImports) {
-    logger.log(`JS file contains HQL imports - processing these imports`);
-  }
-
-  return hasHqlImports;
-}
-
-/**
- * Process HQL imports in a JavaScript file
- */
-export async function processHqlImportsInJs(
-  jsSource: string,
-  jsFilePath: string,
-  options: BundleOptions,
-  logger: Logger,
-): Promise<string> {
-  try {
-    const baseDir = dirname(jsFilePath);
-    let modifiedSource = jsSource;
-
-    // Extract all HQL imports
-    const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
-    const imports: { full: string; path: string }[] = [];
-    let match;
-
-    // Reset regex state before using it again
-    hqlImportRegex.lastIndex = 0;
-
-    // Find all HQL imports
-    while ((match = hqlImportRegex.exec(jsSource)) !== null) {
-      const fullImport = match[0];
-      const importPath = match[1];
-      imports.push({ full: fullImport, path: importPath });
-    }
-
-    logger.debug(`Found ${imports.length} HQL imports in JS file`);
-
-    // Process each HQL import
-    for (const importInfo of imports) {
-      const hqlPath = importInfo.path;
-      const resolvedHqlPath = path.resolve(baseDir, hqlPath);
-
-      logger.debug(
-        `Processing HQL import: ${hqlPath} (resolved: ${resolvedHqlPath})`,
-      );
-
-      // Generate output path for the transpiled HQL file
-      const hqlOutputPath = resolvedHqlPath.replace(/\.hql$/, ".js");
-
-      // Check if output already exists
-      if (!await exists(hqlOutputPath)) {
-        // Transpile the HQL file
-        logger.debug(
-          `Transpiling HQL import: ${resolvedHqlPath} -> ${hqlOutputPath}`,
-        );
-
-        await transpileCLI(resolvedHqlPath, hqlOutputPath, options);
-      } else {
-        logger.debug(`Using existing transpiled file: ${hqlOutputPath}`);
-      }
-
-      // Update the import statement in the JS source
-      const relativePath = hqlPath.replace(/\.hql$/, ".js");
-      const newImport = importInfo.full.replace(hqlPath, relativePath);
-
-      modifiedSource = modifiedSource.replace(importInfo.full, newImport);
-      logger.debug(
-        `Updated import from "${importInfo.full}" to "${newImport}"`,
-      );
-    }
-
-    return modifiedSource;
-  } catch (error) {
-    throw new TranspilerError(
-      `Processing HQL imports in JS file: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-}
-
-/**
  * Bundles the code using esbuild
  */
-export async function bundleWithEsbuild(
+function bundleWithEsbuild(
   entryPath: string,
   outputPath: string,
   options: BundleOptions = {},
@@ -912,49 +940,6 @@ function createExternalPlugin(): any {
       });
     },
   };
-}
-
-/**
- * Main CLI function for transpilation and bundling
- */
-export async function transpileCLI(
-  inputPath: string,
-  outputPath?: string,
-  options: BundleOptions = {},
-): Promise<string> {
-  return performAsync(async () => {
-    const logger = new Logger(options.verbose);
-    const startTime = performance.now();
-
-    logger.log(`Processing entry: ${inputPath}`);
-
-    const resolvedInputPath = resolve(inputPath);
-    const outPath = determineOutputPath(resolvedInputPath, outputPath);
-
-    // Store the original source directory to help with module resolution
-    const sourceDir = dirname(resolvedInputPath);
-
-    // Process the entry file to get an intermediate JS file
-    const processedPath = await processEntryFile(resolvedInputPath, outPath, {
-      ...options,
-      sourceDir, // Pass source directory
-    });
-
-    logger.debug(`Entry file processed to: ${processedPath}`);
-
-    await bundleWithEsbuild(processedPath, outPath, {
-      ...options,
-      sourceDir, // Pass source directory to bundleWithEsbuild
-    });
-
-    const endTime = performance.now();
-    logger.log(
-      `Successfully processed output to ${outPath} in ${
-        (endTime - startTime).toFixed(2)
-      }ms`,
-    );
-    return outPath;
-  }, `CLI transpilation failed for ${inputPath}`);
 }
 
 /**

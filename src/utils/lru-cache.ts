@@ -6,7 +6,7 @@ export class LRUCache<K, V> {
   private cache = new Map<K, V>();
   private maxSize: number;
 
-  constructor(maxSize: number = 1000) {
+  constructor(maxSize = 1000) {
     this.maxSize = maxSize;
   }
 

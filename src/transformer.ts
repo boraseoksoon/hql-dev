@@ -6,10 +6,12 @@ import { expandMacros } from "./s-exp/macro.ts";
 import { Logger } from "./logger.ts";
 import { Environment } from "./environment.ts";
 import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts";
+import { isImportNode } from "./transpiler/hql_ast.ts";
+import { HQLNode } from "./transpiler/hql_ast.ts";
+import { importSourceRegistry } from "./s-exp/imports.ts"
 import {
   CodeGenError,
   createErrorReport,
-  MacroError,
   TransformError,
   TranspilerError,
 } from "./transpiler/errors.ts";
@@ -22,33 +24,10 @@ interface TransformOptions {
 }
 
 /**
- * Import source information to be maintained during processing
- */
-const importSourceRegistry = new Map<string, string>();
-
-/**
- * Register an import source in the global registry
- * This function should be called from the import processor
- */
-export function registerImportSource(
-  moduleName: string,
-  importPath: string,
-): void {
-  importSourceRegistry.set(moduleName, importPath);
-}
-
-/**
- * Get all currently registered import sources
- */
-export function getImportSources(): Map<string, string> {
-  return new Map(importSourceRegistry);
-}
-
-/**
  * Transforms HQL AST nodes through the pipeline.
  */
 export async function transformAST(
-  astNodes: any[],
+  astNodes: HQLNode[],
   currentDir: string,
   options: TransformOptions = {},
 ): Promise<string> {
@@ -288,22 +267,11 @@ export async function transformAST(
 }
 
 /**
- * Check if a node is an import statement
- */
-function isImportNode(node: any): boolean {
-  return (
-    node.type === "list" &&
-    node.elements.length >= 3 &&
-    node.elements[0].type === "symbol" &&
-    (node.elements[0].name === "import" ||
-      node.elements[0].name === "js-import")
-  );
-}
-
-/**
  * Extract import module name and path from an import node
  */
-function extractImportInfo(node: any): [string | null, string | null] {
+function extractImportInfo(
+  node: HQLNode,
+): [string | null, string | null] {
   try {
     if (node.type === "list" && node.elements[0].type === "symbol") {
       // Handle namespace imports: (import name from "path")
@@ -315,7 +283,7 @@ function extractImportInfo(node: any): [string | null, string | null] {
         node.elements[2].name === "from" &&
         node.elements[3].type === "literal"
       ) {
-        return [node.elements[1].name, node.elements[3].value];
+        return [node.elements[1].name, node.elements[3].value as string];
       }
 
       // Handle JS imports: (js-import name "path")
@@ -325,10 +293,10 @@ function extractImportInfo(node: any): [string | null, string | null] {
         node.elements[1].type === "symbol" &&
         node.elements[2].type === "literal"
       ) {
-        return [node.elements[1].name, node.elements[2].value];
+        return [node.elements[1].name, node.elements[2].value as string];
       }
     }
-  } catch (e) {
+  } catch {
     // If anything fails, return null values
   }
 
@@ -338,7 +306,7 @@ function extractImportInfo(node: any): [string | null, string | null] {
 /**
  * Find all existing imports in the AST
  */
-function findExistingImports(nodes: any[]): Map<string, string> {
+function findExistingImports(nodes: HQLNode[]): Map<string, string> {
   const imports = new Map<string, string>();
 
   for (const node of nodes) {
@@ -357,7 +325,7 @@ function findExistingImports(nodes: any[]): Map<string, string> {
  * Find which modules are external and require imports
  */
 function findExternalModuleReferences(
-  nodes: any[],
+  nodes: HQLNode[],
   env: Environment,
 ): Set<string> {
   const externalModules = new Set<string>();
@@ -378,7 +346,7 @@ function findExternalModuleReferences(
       try {
         env.lookup(moduleName);
         return false; // It's defined in the environment
-      } catch (e) {
+      } catch {
         // Not defined in env, could be external
       }
 
@@ -389,13 +357,13 @@ function findExternalModuleReferences(
 
       // If we got here, it's likely an external module
       return true;
-    } catch (e) {
+    } catch {
       // If anything fails, assume it could be external just to be safe
       return true;
     }
   }
 
-  function traverse(node: any) {
+  function traverse(node: HQLNode) {
     if (node.type === "list") {
       const elements = node.elements;
 
@@ -454,7 +422,7 @@ function findExternalModuleReferences(
 /**
  * AST conversion function
  */
-function convertAST(rawAst: any[]): any[] {
+function convertAST(rawAst: HQLNode[]): HQLNode[] {
   try {
     // Map through each node and transform export forms into standard HQL node types
     return rawAst.map((node) => {

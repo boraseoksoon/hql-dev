@@ -12,15 +12,13 @@ import {
   SList,
   SSymbol,
 } from "./types.ts";
-import { Environment } from "../environment.ts";
+import { Environment, Value } from "../environment.ts";
 import { defineUserMacro, evaluateForMacro } from "./macro.ts";
 import { parse } from "./parser.ts";
 import { Logger } from "../logger.ts";
 import { ImportError, MacroError } from "../transpiler/errors.ts";
-import { registerImportSource } from "../transformer.ts";
 import { checkForHqlImports, processHqlImportsInJs } from "../bundler.ts";
 import { registerTempFile } from "../temp-file-tracker.ts";
-
 import { isJavaScriptModule, isRemoteModule, isRemotePath } from "../utils.ts";
 
 /**
@@ -35,6 +33,11 @@ interface ImportProcessorOptions {
   importMap?: Map<string, string>;
   currentFile?: string;
 }
+
+/**
+ * Import source information to be maintained during processing
+ */
+export const importSourceRegistry = new Map<string, string>();
 
 /**
  * Process all imports in a list of S-expressions
@@ -102,7 +105,7 @@ export async function processImports(
 
     // Process definitions and exports
     if (options.currentFile) {
-      await processFileDefinitionsAndExports(exprs, env, options, logger);
+      processFileDefinitionsAndExports(exprs, env, options, logger);
     }
 
     // Mark current file as fully processed (not just in progress)
@@ -298,12 +301,12 @@ async function processLocalImportsSequentially(
 /**
  * Process file definitions and exports
  */
-async function processFileDefinitionsAndExports(
+function processFileDefinitionsAndExports(
   exprs: SExp[],
   env: Environment,
   options: ImportProcessorOptions,
   logger: Logger,
-): Promise<void> {
+): void {
   try {
     // Process file definitions for macros
     processFileDefinitions(exprs, env, logger);
@@ -357,17 +360,23 @@ function getModulePathFromImport(importExpr: SList): string {
       (importExpr.elements[2] as SSymbol).name === "from" &&
       importExpr.elements[3].type === "literal"
     ) {
-      return String((importExpr.elements[3] as any).value);
+      return String((importExpr.elements[3] as SLiteral).value);
     } else if (
       importExpr.elements.length === 3 &&
       importExpr.elements[2].type === "literal"
     ) {
-      return String((importExpr.elements[2] as any).value);
+      return String((importExpr.elements[2] as SLiteral).value);
     }
-  } catch (e) {
+  } catch (_e) {
     // Ignore errors
   }
   return "unknown";
+}
+
+// Type definition for SLiteral
+interface SLiteral {
+  type: "literal";
+  value: string | number | boolean | null;
 }
 
 /**
@@ -439,9 +448,9 @@ async function processNamespaceImport(
     }
 
     const moduleName = (elements[1] as SSymbol).name;
-    const modulePath = (elements[3] as any).value as string;
+    const modulePath = (elements[3] as SLiteral).value as string;
 
-    registerImportSource(moduleName, modulePath);
+    importSourceRegistry.set(moduleName, modulePath);
 
     logger.debug(
       `Processing namespace import with "from": ${moduleName} from ${modulePath}`,
@@ -555,15 +564,26 @@ async function processVectorBasedImport(
     const requestedSymbols = extractSymbolsAndAliases(vectorElements);
 
     // Process imports with HQL-specific handling
-    await processImportedSymbols(
-      requestedSymbols,
-      modulePath,
-      resolvedPath,
-      tempModuleName,
-      env,
-      options.currentFile,
-      logger,
-    );
+    if (options.currentFile && modulePath.endsWith(".hql")) {
+      processMacrosAndValuesFromHQL(
+        requestedSymbols,
+        resolvedPath,
+        tempModuleName,
+        env,
+        options.currentFile,
+        logger,
+      );
+    } else {
+      // For non-HQL files, process regular imports
+      processRegularImports(
+        requestedSymbols,
+        modulePath,
+        tempModuleName,
+        env,
+        options.currentFile,
+        logger,
+      );
+    }
   } catch (error) {
     throw new ImportError(
       `Processing vector import: ${
@@ -616,49 +636,14 @@ function extractSymbolsAndAliases(
 /**
  * Process and import the requested symbols
  */
-async function processImportedSymbols(
-  requestedSymbols: Map<string, string | null>,
-  modulePath: string,
-  resolvedPath: string,
-  tempModuleName: string,
-  env: Environment,
-  currentFile: string | undefined,
-  logger: Logger,
-): Promise<void> {
-  // Process imports with HQL-specific handling
-  if (currentFile && modulePath.endsWith(".hql")) {
-    await processMacrosAndValuesFromHQL(
-      requestedSymbols,
-      resolvedPath,
-      tempModuleName,
-      env,
-      currentFile,
-      logger,
-    );
-  } else {
-    // For non-HQL files, process regular imports
-    await processRegularImports(
-      requestedSymbols,
-      modulePath,
-      tempModuleName,
-      env,
-      currentFile,
-      logger,
-    );
-  }
-}
-
-/**
- * Process macros and values imported from an HQL file
- */
-async function processMacrosAndValuesFromHQL(
+function processMacrosAndValuesFromHQL(
   requestedSymbols: Map<string, string | null>,
   resolvedPath: string,
   tempModuleName: string,
   env: Environment,
   currentFile: string,
   logger: Logger,
-): Promise<void> {
+): void {
   // Only import the explicitly requested symbols
   for (const [symbolName, aliasName] of requestedSymbols.entries()) {
     // Check if this is a macro and import it with the proper alias
@@ -709,14 +694,14 @@ async function processMacrosAndValuesFromHQL(
 /**
  * Process regular imports from non-HQL files
  */
-async function processRegularImports(
+function processRegularImports(
   requestedSymbols: Map<string, string | null>,
   modulePath: string,
   tempModuleName: string,
   env: Environment,
   currentFile: string | undefined,
   logger: Logger,
-): Promise<void> {
+): void {
   for (const [symbolName, aliasName] of requestedSymbols.entries()) {
     try {
       const moduleLookupKey = `${tempModuleName}.${symbolName}`;
@@ -1031,9 +1016,9 @@ function processExports(
   env: Environment,
   resolvedPath: string,
   logger: Logger,
-): Record<string, any> {
+): Record<string, Value> {
   // Process exports
-  const moduleExports: Record<string, any> = {};
+  const moduleExports: Record<string, Value> = {};
 
   // Process exports and add them to moduleExports
   processFileExportsAndDefinitions(
@@ -1323,7 +1308,7 @@ function processDefnDeclaration(
 
     const fnName = expr.elements[1].name;
     // Create a simplified function for macro evaluation
-    const fn = (...args: any[]) => {
+    const fn = (...args: unknown[]) => {
       try {
         return `${fnName}(${args.join(", ")})`;
       } catch (e) {
@@ -1362,7 +1347,7 @@ function processDefnDeclaration(
 function processFileExportsAndDefinitions(
   expressions: SExp[],
   env: Environment,
-  moduleExports: Record<string, any>,
+  moduleExports: Record<string, Value>,
   filePath: string,
   logger: Logger,
 ): void {
@@ -1442,7 +1427,7 @@ function processFileExportsAndDefinitions(
 function processVectorExport(
   expr: SList,
   env: Environment,
-  moduleExports: Record<string, any>,
+  moduleExports: Record<string, Value>,
   filePath: string,
   logger: Logger,
 ): void {

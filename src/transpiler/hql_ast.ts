@@ -44,7 +44,7 @@ export function isMacroImport(node: HQLNode): boolean {
 /**
  * Helper to extract import path from a node
  */
-export function extractImportPath(node: any): string | null {
+export function extractImportPath(node: HQLNode): string | null {
   if (
     node.type === "list" &&
     node.elements.length >= 3 &&
@@ -52,7 +52,7 @@ export function extractImportPath(node: any): string | null {
     node.elements[0].name === "import" &&
     node.elements[2].type === "literal"
   ) {
-    return node.elements[2].value;
+    return String(node.elements[2].value);
   }
   return null;
 }

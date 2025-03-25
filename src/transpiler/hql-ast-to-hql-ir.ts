@@ -16,6 +16,7 @@ import * as path from "../platform/platform.ts";
 import { TransformError, ValidationError } from "./errors.ts";
 import { Logger } from "../logger.ts";
 import { perform } from "./error-utils.ts";
+import { macroCache, isUserLevelMacro } from "../s-exp/macro.ts"
 import {
   isNamespaceImport,
   isVectorExport,
@@ -24,11 +25,6 @@ import {
 
 // Initialize logger for this module
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
-
-/**
- * Cache to avoid repeated checks during transform
- */
-const macroCache = new Map<string, Map<string, boolean>>();
 
 /**
  * Transform factory to map operators to handler functions
@@ -51,8 +47,8 @@ export function transformToIR(
       logger.debug(`Transforming ${nodes.length} HQL AST nodes to IR`);
       const startTime = performance.now();
 
-      // Clear the macro cache for this transformation
       macroCache.clear();
+
       initializeTransformFactory();
 
       const body: IR.IRNode[] = [];
@@ -262,44 +258,6 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
     `transformSymbol '${sym.name}'`,
     TransformError,
     [sym],
-  );
-}
-
-/**
- * Check if a symbol represents a user-level macro
- * with caching.
- */
-function isUserLevelMacro(symbolName: string, currentDir: string): boolean {
-  return perform(
-    () => {
-      if (macroCache.has(currentDir)) {
-        const fileCache = macroCache.get(currentDir)!;
-        if (fileCache.has(symbolName)) {
-          return fileCache.get(symbolName)!;
-        }
-      } else {
-        macroCache.set(currentDir, new Map<string, boolean>());
-      }
-
-      const env = Environment.getGlobalEnv();
-      if (!env) {
-        logger.debug(
-          `No global environment found, assuming '${symbolName}' is not a macro`,
-        );
-        macroCache.get(currentDir)!.set(symbolName, false);
-        return false;
-      }
-
-      const result = env.isUserLevelMacro(symbolName, currentDir);
-      macroCache.get(currentDir)!.set(symbolName, result);
-      logger.debug(
-        `Checking if '${symbolName}' is a user-level macro: ${result}`,
-      );
-      return result;
-    },
-    `isUserLevelMacro '${symbolName}'`,
-    TransformError,
-    [symbolName, currentDir],
   );
 }
 

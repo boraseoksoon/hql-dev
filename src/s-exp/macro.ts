@@ -16,12 +16,16 @@ import {
 import { Environment } from "../environment.ts";
 import { Logger } from "../logger.ts";
 import { MacroFn } from "../environment.ts";
-import { MacroError } from "../transpiler/errors.ts";
+import { MacroError, TransformError } from "../transpiler/errors.ts";
 import { gensym } from "../gensym.ts";
 import { LRUCache } from "../utils/lru-cache.ts";
+import { perform } from "../transpiler/error-utils.ts"
 
 // Maximum number of expansion iterations to prevent infinite recursion
 const MAX_EXPANSION_ITERATIONS = 100;
+
+// Cache to avoid repeated checks during transform
+export const macroCache = new Map<string, Map<string, boolean>>();
 
 // Cache for macro expansion results
 const macroExpansionCache = new LRUCache<string, SExp>(5000);
@@ -40,28 +44,72 @@ interface MacroExpanderOptions {
 }
 
 /**
- * Get renamed symbol if it exists
+ * Register a global macro definition
  */
-function getSymbolRename(
-  context: string,
-  original: string,
-): string | undefined {
-  return symbolRenameMap.get(context)?.get(original);
-}
-
-/**
- * Register a symbol rename mapping
- */
-function registerSymbolRename(
-  context: string,
-  original: string,
-  renamed: string,
+export function defineMacro(
+  macroForm: SList,
+  env: Environment,
+  logger: Logger,
 ): void {
-  if (!symbolRenameMap.has(context)) {
-    symbolRenameMap.set(context, new Map<string, string>());
-  }
+  try {
+    // Validate macro definition: (defmacro name [params...] body...)
+    if (macroForm.elements.length < 4) {
+      throw new MacroError(
+        "defmacro requires a name, parameter list, and body",
+        "defmacro",
+      );
+    }
 
-  symbolRenameMap.get(context)!.set(original, renamed);
+    // Get macro name
+    const macroNameExp = macroForm.elements[1];
+    if (!isSymbol(macroNameExp)) {
+      throw new MacroError(
+        "Macro name must be a symbol",
+        "defmacro",
+      );
+    }
+    const macroName = macroNameExp.name;
+
+    // Get parameter list
+    const paramsExp = macroForm.elements[2];
+    if (!isList(paramsExp)) {
+      throw new MacroError(
+        "Macro parameters must be a list",
+        macroName,
+      );
+    }
+
+    // Process parameter list, handling rest parameters
+    const { params, restParam } = processParamList(paramsExp, logger);
+
+    // Get macro body (all remaining forms)
+    const body = macroForm.elements.slice(3);
+
+    // Create macro function
+    const macroFn = createMacroFunction(
+      macroName,
+      params,
+      restParam,
+      body,
+      logger,
+    );
+
+    // Register the macro in the environment
+    env.defineMacro(macroName, macroFn);
+    logger.debug(`Registered global macro: ${macroName}`);
+  } catch (error) {
+    const macroName =
+      macroForm.elements.length > 1 && isSymbol(macroForm.elements[1])
+        ? (macroForm.elements[1] as SSymbol).name
+        : "unknown";
+
+    throw new MacroError(
+      `Failed to define macro: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      macroName,
+    );
+  }
 }
 
 /**
@@ -153,6 +201,180 @@ export function defineUserMacro(
 }
 
 /**
+ * Main function to expand all macros in a list of S-expressions
+ */
+export function expandMacros(
+  exprs: SExp[],
+  env: Environment,
+  options: MacroExpanderOptions = {},
+): SExp[] {
+  try {
+    const logger = new Logger(options.verbose || false);
+    const currentFile = options.currentFile;
+    const useCache = options.useCache !== false; // Default to using cache
+
+    logger.debug(
+      `Starting macro expansion on ${exprs.length} expressions${
+        currentFile ? ` in ${currentFile}` : ""
+      }`,
+    );
+
+    // If we have a current file, set it in the environment
+    if (currentFile) {
+      env.setCurrentFile(currentFile);
+      logger.debug(`Setting current file to: ${currentFile}`);
+    }
+
+    // First pass: register all global and user-level macro definitions
+    processMacroDefinitions(exprs, env, currentFile, logger);
+
+    // Use fixed-point iteration to expand all macros
+    let currentExprs = [...exprs];
+    let iteration = 0;
+    let changed = true;
+
+    // Keep expanding until no changes occur (fixed point) or max iterations reached
+    while (changed && iteration < MAX_EXPANSION_ITERATIONS) {
+      changed = false;
+      iteration++;
+
+      logger.debug(`Macro expansion iteration ${iteration}`);
+
+      // Expand all expressions in the current pass with simplified caching
+      const newExprs = currentExprs.map((expr) => {
+        const exprStr = useCache ? sexpToString(expr) : "";
+
+        // Simplified cache handling
+        if (useCache && macroExpansionCache.has(exprStr)) {
+          logger.debug(
+            `Cache hit for expression: ${exprStr.substring(0, 30)}...`,
+          );
+          return macroExpansionCache.get(exprStr)!;
+        }
+
+        // Otherwise expand and update cache
+        const expandedExpr = expandMacroExpression(expr, env, options, 0);
+
+        // Cache result if caching is enabled
+        if (useCache) {
+          macroExpansionCache.set(exprStr, expandedExpr);
+        }
+
+        return expandedExpr;
+      });
+
+      // Check if anything changed
+      const oldStr = currentExprs.map(sexpToString).join("\n");
+      const newStr = newExprs.map(sexpToString).join("\n");
+
+      if (oldStr !== newStr) {
+        changed = true;
+        currentExprs = newExprs;
+        logger.debug(
+          `Changes detected in iteration ${iteration}, continuing expansion`,
+        );
+      } else {
+        logger.debug(
+          `No changes in iteration ${iteration}, fixed point reached`,
+        );
+      }
+    }
+
+    if (iteration >= MAX_EXPANSION_ITERATIONS) {
+      logger.warn(
+        `Macro expansion reached maximum iterations (${MAX_EXPANSION_ITERATIONS}). Check for infinite recursion.`,
+      );
+    }
+
+    logger.debug(`Completed macro expansion after ${iteration} iterations`);
+
+    // Filter out macro definitions from the final result
+    currentExprs = filterMacroDefinitions(currentExprs, logger);
+
+    // Clean up environment when done
+    if (currentFile) {
+      env.setCurrentFile(null);
+      logger.debug(`Clearing current file`);
+    }
+
+    return currentExprs;
+  } catch (error) {
+    throw new MacroError(
+      `Macro expansion failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "",
+      options.currentFile,
+    );
+  }
+}
+
+/**
+ * Check if a symbol represents a user-level macro
+ * with caching.
+ */
+export function isUserLevelMacro(symbolName: string, currentDir: string): boolean {
+  const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+
+  return perform(
+    () => {
+      if (macroCache.has(currentDir)) {
+        const fileCache = macroCache.get(currentDir)!;
+        if (fileCache.has(symbolName)) {
+          return fileCache.get(symbolName)!;
+        }
+      } else {
+        macroCache.set(currentDir, new Map<string, boolean>());
+      }
+
+      const env = Environment.getGlobalEnv();
+      if (!env) {
+        logger.debug(
+          `No global environment found, assuming '${symbolName}' is not a macro`,
+        );
+        macroCache.get(currentDir)!.set(symbolName, false);
+        return false;
+      }
+
+      const result = env.isUserLevelMacro(symbolName, currentDir);
+      macroCache.get(currentDir)!.set(symbolName, result);
+      logger.debug(
+        `Checking if '${symbolName}' is a user-level macro: ${result}`,
+      );
+      return result;
+    },
+    `isUserLevelMacro '${symbolName}'`,
+    TransformError,
+    [symbolName, currentDir],
+  );
+}
+
+/**
+ * Get renamed symbol if it exists
+ */
+function getSymbolRename(
+  context: string,
+  original: string,
+): string | undefined {
+  return symbolRenameMap.get(context)?.get(original);
+}
+
+/**
+ * Register a symbol rename mapping
+ */
+function registerSymbolRename(
+  context: string,
+  original: string,
+  renamed: string,
+): void {
+  if (!symbolRenameMap.has(context)) {
+    symbolRenameMap.set(context, new Map<string, string>());
+  }
+
+  symbolRenameMap.get(context)!.set(original, renamed);
+}
+
+/**
  * Helper function to create a macro function with consistent implementation
  */
 function createMacroFunction(
@@ -231,6 +453,7 @@ function applyHygiene(expr: SExp, macroName: string, logger: Logger): SExp {
     const hygieneContext = `macro_${macroName}`;
 
     // Helper for recursive processing
+    // deno-lint-ignore no-inner-declarations
     function processExpr(expr: SExp): SExp {
       // Handle different expression types
       if (isList(expr)) {
@@ -269,9 +492,8 @@ function applyHygiene(expr: SExp, macroName: string, logger: Logger): SExp {
 /**
  * Process a parameter list, handling rest parameters
  */
-export function processParamList(
-  paramsExp: SList,
-  logger: Logger,
+function processParamList(
+  paramsExp: SList
 ): { params: string[]; restParam: string | null } {
   try {
     const params: string[] = [];
@@ -1231,183 +1453,5 @@ function filterMacroDefinitions(exprs: SExp[], logger: Logger): SExp[] {
       }`,
     );
     return exprs;
-  }
-}
-
-/**
- * Register a global macro definition
- */
-export function defineMacro(
-  macroForm: SList,
-  env: Environment,
-  logger: Logger,
-): void {
-  try {
-    // Validate macro definition: (defmacro name [params...] body...)
-    if (macroForm.elements.length < 4) {
-      throw new MacroError(
-        "defmacro requires a name, parameter list, and body",
-        "defmacro",
-      );
-    }
-
-    // Get macro name
-    const macroNameExp = macroForm.elements[1];
-    if (!isSymbol(macroNameExp)) {
-      throw new MacroError(
-        "Macro name must be a symbol",
-        "defmacro",
-      );
-    }
-    const macroName = macroNameExp.name;
-
-    // Get parameter list
-    const paramsExp = macroForm.elements[2];
-    if (!isList(paramsExp)) {
-      throw new MacroError(
-        "Macro parameters must be a list",
-        macroName,
-      );
-    }
-
-    // Process parameter list, handling rest parameters
-    const { params, restParam } = processParamList(paramsExp, logger);
-
-    // Get macro body (all remaining forms)
-    const body = macroForm.elements.slice(3);
-
-    // Create macro function
-    const macroFn = createMacroFunction(
-      macroName,
-      params,
-      restParam,
-      body,
-      logger,
-    );
-
-    // Register the macro in the environment
-    env.defineMacro(macroName, macroFn);
-    logger.debug(`Registered global macro: ${macroName}`);
-  } catch (error) {
-    const macroName =
-      macroForm.elements.length > 1 && isSymbol(macroForm.elements[1])
-        ? (macroForm.elements[1] as SSymbol).name
-        : "unknown";
-
-    throw new MacroError(
-      `Failed to define macro: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      macroName,
-    );
-  }
-}
-
-/**
- * Main function to expand all macros in a list of S-expressions
- */
-export function expandMacros(
-  exprs: SExp[],
-  env: Environment,
-  options: MacroExpanderOptions = {},
-): SExp[] {
-  try {
-    const logger = new Logger(options.verbose || false);
-    const currentFile = options.currentFile;
-    const useCache = options.useCache !== false; // Default to using cache
-
-    logger.debug(
-      `Starting macro expansion on ${exprs.length} expressions${
-        currentFile ? ` in ${currentFile}` : ""
-      }`,
-    );
-
-    // If we have a current file, set it in the environment
-    if (currentFile) {
-      env.setCurrentFile(currentFile);
-      logger.debug(`Setting current file to: ${currentFile}`);
-    }
-
-    // First pass: register all global and user-level macro definitions
-    processMacroDefinitions(exprs, env, currentFile, logger);
-
-    // Use fixed-point iteration to expand all macros
-    let currentExprs = [...exprs];
-    let iteration = 0;
-    let changed = true;
-
-    // Keep expanding until no changes occur (fixed point) or max iterations reached
-    while (changed && iteration < MAX_EXPANSION_ITERATIONS) {
-      changed = false;
-      iteration++;
-
-      logger.debug(`Macro expansion iteration ${iteration}`);
-
-      // Expand all expressions in the current pass with simplified caching
-      const newExprs = currentExprs.map((expr) => {
-        const exprStr = useCache ? sexpToString(expr) : "";
-
-        // Simplified cache handling
-        if (useCache && macroExpansionCache.has(exprStr)) {
-          logger.debug(
-            `Cache hit for expression: ${exprStr.substring(0, 30)}...`,
-          );
-          return macroExpansionCache.get(exprStr)!;
-        }
-
-        // Otherwise expand and update cache
-        const expandedExpr = expandMacroExpression(expr, env, options, 0);
-
-        // Cache result if caching is enabled
-        if (useCache) {
-          macroExpansionCache.set(exprStr, expandedExpr);
-        }
-
-        return expandedExpr;
-      });
-
-      // Check if anything changed
-      const oldStr = currentExprs.map(sexpToString).join("\n");
-      const newStr = newExprs.map(sexpToString).join("\n");
-
-      if (oldStr !== newStr) {
-        changed = true;
-        currentExprs = newExprs;
-        logger.debug(
-          `Changes detected in iteration ${iteration}, continuing expansion`,
-        );
-      } else {
-        logger.debug(
-          `No changes in iteration ${iteration}, fixed point reached`,
-        );
-      }
-    }
-
-    if (iteration >= MAX_EXPANSION_ITERATIONS) {
-      logger.warn(
-        `Macro expansion reached maximum iterations (${MAX_EXPANSION_ITERATIONS}). Check for infinite recursion.`,
-      );
-    }
-
-    logger.debug(`Completed macro expansion after ${iteration} iterations`);
-
-    // Filter out macro definitions from the final result
-    currentExprs = filterMacroDefinitions(currentExprs, logger);
-
-    // Clean up environment when done
-    if (currentFile) {
-      env.setCurrentFile(null);
-      logger.debug(`Clearing current file`);
-    }
-
-    return currentExprs;
-  } catch (error) {
-    throw new MacroError(
-      `Macro expansion failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      "",
-      options.currentFile,
-    );
   }
 }

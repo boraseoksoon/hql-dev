@@ -4,7 +4,7 @@ import * as IR from "./hql_ir.ts";
 import { convertIRNode } from "./hql-ir-to-ts-ast.ts";
 import { CodeGenError, createErrorReport } from "./errors.ts";
 import { Logger } from "../logger.ts";
-import { perform, performAsync } from "./error-utils.ts";
+import { perform } from "./error-utils.ts";
 
 // Initialize logger
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");

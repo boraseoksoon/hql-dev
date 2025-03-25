@@ -96,3 +96,19 @@ export function simpleHash(str: string): number {
   }
   return Math.abs(hash);
 }
+
+
+/**
+ * Check if a file is an HQL file
+ */
+export function isHqlFile(filePath: string): boolean {
+  return filePath.endsWith(".hql");
+}
+
+/**
+ * Check if a file is a JavaScript file
+ */
+export function isJsFile(filePath: string): boolean {
+  return filePath.endsWith(".js") || filePath.endsWith(".mjs") ||
+    filePath.endsWith(".cjs");
+}

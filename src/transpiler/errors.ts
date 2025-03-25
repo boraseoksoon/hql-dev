@@ -144,13 +144,13 @@ export class ImportError extends TranspilerError {
 export class TransformError extends TranspilerError {
   public nodeSummary: string;
   public phase: string;
-  public originalNode?: any;
+  public originalNode?: unknown;
 
   constructor(
     message: string,
     nodeSummary: string,
     phase: string,
-    originalNode?: any,
+    originalNode?: unknown,
   ) {
     super(message);
     this.name = "TransformError";
@@ -185,9 +185,9 @@ export class TransformError extends TranspilerError {
  */
 export class CodeGenError extends TranspilerError {
   public nodeType: string;
-  public originalNode?: any;
+  public originalNode?: unknown;
 
-  constructor(message: string, nodeType: string, originalNode?: any) {
+  constructor(message: string, nodeType: string, originalNode?: unknown) {
     super(message);
     this.name = "CodeGenError";
     this.nodeType = nodeType;
@@ -252,7 +252,7 @@ export class ValidationError extends TranspilerError {
 /**
  * Create a descriptive summary of a node for error messages
  */
-export function summarizeNode(node: any): string {
+export function summarizeNode(node: unknown): string {
   if (!node) return "undefined";
 
   if (typeof node === "string") return `"${node}"`;
@@ -271,18 +271,18 @@ export function summarizeNode(node: any): string {
 
   // Handle node objects based on common properties
   if ("type" in node) {
-    let summary = `${node.type}`;
+    let summary = `${(node as {type: string}).type}`;
 
     // Add name for named nodes
     if ("name" in node) {
-      summary += ` "${(node as any).name}"`;
+      summary += ` "${(node as {name: string}).name}"`;
     }
 
     // Add value for literals
     if ("value" in node) {
-      const valueStr = typeof (node as any).value === "string"
-        ? `"${(node as any).value}"`
-        : String((node as any).value);
+      const valueStr = typeof (node as {value: unknown}).value === "string"
+        ? `"${(node as {value: string}).value}"`
+        : String((node as {value: unknown}).value);
       summary += ` ${valueStr}`;
     }
 
@@ -299,7 +299,7 @@ export function summarizeNode(node: any): string {
 export function createErrorReport(
   error: Error,
   stageName: string,
-  context: any = {},
+  context: Record<string, unknown> = {},
 ): string {
   let report = `Error in ${stageName}:\n${error.message}\n`;
 
