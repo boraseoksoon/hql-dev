@@ -7,10 +7,10 @@ import {
   dirname,
   ensureDir,
   exists,
-  isAbsolute,
   join,
   resolve,
   writeTextFile,
+  isAbsolute
 } from "./platform/platform.ts";
 import { Logger } from "./logger.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
@@ -20,7 +20,7 @@ import {
   ValidationError,
 } from "./transpiler/errors.ts";
 import { performAsync } from "./transpiler/error-utils.ts";
-import { isHqlFile, isJsFile, simpleHash } from "./utils.ts";
+import { simpleHash, isHqlFile, isJsFile } from "./utils.ts";
 import { registerTempFile } from "./temp-file-tracker.ts";
 
 // Constants
@@ -81,6 +81,7 @@ export function transpileCLI(
   }, `CLI transpilation failed for ${inputPath}`);
 }
 
+
 /**
  * Check for HQL imports in JavaScript file
  * Returns true if HQL imports are found
@@ -126,10 +127,10 @@ export async function processHqlImportsInJs(
     // Process each HQL import
     for (const importInfo of imports) {
       const hqlPath = importInfo.path;
-
+      
       // Try multiple strategies to resolve the import
       let resolvedHqlPath: string | null = null;
-
+      
       // Strategy 1: Resolve relative to the JavaScript file
       try {
         const pathFromJs = path.resolve(baseDir, hqlPath);
@@ -139,32 +140,23 @@ export async function processHqlImportsInJs(
       } catch {
         // Failed to resolve relative to JS file, try other strategies
       }
-
+      
       // Strategy 2: If sourceDir is available, try resolving relative to it
       if (!resolvedHqlPath && options.sourceDir) {
         try {
           const pathFromSource = path.resolve(options.sourceDir, hqlPath);
           await Deno.stat(pathFromSource);
           resolvedHqlPath = pathFromSource;
-          logger.debug(
-            `Resolved import relative to source dir: ${pathFromSource}`,
-          );
+          logger.debug(`Resolved import relative to source dir: ${pathFromSource}`);
         } catch {
           // Failed to resolve relative to source dir
         }
       }
-
+      
       // Strategy 3: For relative paths, try resolving from lib directory
-      if (
-        !resolvedHqlPath &&
-        (hqlPath.startsWith("./") || hqlPath.startsWith("../"))
-      ) {
+      if (!resolvedHqlPath && (hqlPath.startsWith('./') || hqlPath.startsWith('../'))) {
         try {
-          const pathFromLib = path.resolve(
-            Deno.cwd(),
-            "lib",
-            hqlPath.replace(/^\.\//, ""),
-          );
+          const pathFromLib = path.resolve(Deno.cwd(), "lib", hqlPath.replace(/^\.\//, ""));
           await Deno.stat(pathFromLib);
           resolvedHqlPath = pathFromLib;
           logger.debug(`Resolved import relative to lib dir: ${pathFromLib}`);
@@ -172,7 +164,7 @@ export async function processHqlImportsInJs(
           // Failed to resolve relative to lib directory
         }
       }
-
+      
       // Strategy 4: Try resolving relative to CWD as last resort
       if (!resolvedHqlPath) {
         try {
@@ -184,11 +176,9 @@ export async function processHqlImportsInJs(
           // Failed to resolve relative to CWD
         }
       }
-
+      
       if (!resolvedHqlPath) {
-        throw new Error(
-          `Could not resolve import: ${hqlPath} from ${jsFilePath}`,
-        );
+        throw new Error(`Could not resolve import: ${hqlPath} from ${jsFilePath}`);
       }
 
       // Generate output path for the transpiled HQL file
@@ -380,7 +370,7 @@ async function createTempDirIfNeeded(
  * Read source file
  */
 async function readSourceFile(
-  filePath: string,
+  filePath: string
 ): Promise<string> {
   try {
     const content = await Deno.readTextFile(filePath);
@@ -742,7 +732,7 @@ async function resolveHqlImport(
         }
       },
     },
-
+    
     // Strategy 4: NEW - Resolve relative to lib directory for core.hql dependencies
     {
       description: "relative to lib directory",
@@ -752,9 +742,7 @@ async function resolveHqlImport(
         const libPath = resolve(Deno.cwd(), "lib", args.path);
         try {
           await Deno.stat(libPath);
-          logger.debug(
-            `Found import at ${libPath} (relative to lib directory)`,
-          );
+          logger.debug(`Found import at ${libPath} (relative to lib directory)`);
           return true;
         } catch (e) {
           return false;

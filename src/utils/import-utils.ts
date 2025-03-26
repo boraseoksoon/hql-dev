@@ -21,10 +21,10 @@ export function isRemoteUrl(path: string): boolean {
  * Check if a module path represents a remote module (npm:, jsr:, http:, https:)
  */
 export function isRemoteModule(modulePath: string): boolean {
-  return modulePath.startsWith("npm:") ||
-    modulePath.startsWith("jsr:") ||
-    modulePath.startsWith("http:") ||
-    modulePath.startsWith("https:");
+  return modulePath.startsWith("npm:") || 
+         modulePath.startsWith("jsr:") || 
+         modulePath.startsWith("http:") ||
+         modulePath.startsWith("https:");
 }
 
 /**
@@ -39,8 +39,8 @@ export function isHqlFile(filePath: string): boolean {
  */
 export function isJavaScriptModule(filePath: string): boolean {
   return filePath.endsWith(".js") ||
-    filePath.endsWith(".mjs") ||
-    filePath.endsWith(".cjs");
+         filePath.endsWith(".mjs") ||
+         filePath.endsWith(".cjs");
 }
 
 /**
@@ -48,7 +48,7 @@ export function isJavaScriptModule(filePath: string): boolean {
  * Returns [moduleName, importPath] or [null, null] if not an import
  */
 export function extractImportInfo(
-  node: HQLNode,
+  node: HQLNode
 ): [string | null, string | null] {
   try {
     if (node.type === "list" && node.elements[0].type === "symbol") {
@@ -85,9 +85,9 @@ export function extractImportInfo(
  * Determine if a module is external and needs to be imported
  */
 export function isModuleExternal(
-  moduleName: string,
+  moduleName: string, 
   env: Environment,
-  logger: Logger,
+  logger: Logger
 ): boolean {
   // Check if this module is already registered as an import
   if (importSourceRegistry.has(moduleName)) {
@@ -98,14 +98,14 @@ export function isModuleExternal(
     // Try to determine if it's a JavaScript global
     if (typeof globalThis !== "undefined" && moduleName in globalThis) {
       logger.debug(`Module ${moduleName} identified as global, not external`);
-      return false;
+      return false; 
     }
 
     // Check if it's defined in the environment
     try {
       env.lookup(moduleName);
       logger.debug(`Module ${moduleName} found in environment, not external`);
-      return false;
+      return false; 
     } catch {
       // Not defined in env, continue checking
     }
@@ -134,7 +134,7 @@ export async function resolveModulePath(
   modulePath: string,
   currentDir: string,
   sourceDir: string | undefined,
-  logger: Logger,
+  logger: Logger
 ): Promise<string> {
   logger.debug(`Resolving module path: ${modulePath}`);
 
@@ -156,7 +156,7 @@ export async function resolveModulePath(
         } catch {
           return false;
         }
-      },
+      }
     },
     // Strategy 2: Resolve relative to source directory
     {
@@ -170,7 +170,7 @@ export async function resolveModulePath(
         } catch {
           return false;
         }
-      },
+      }
     },
     // Strategy 3: Resolve relative to CWD
     {
@@ -183,8 +183,8 @@ export async function resolveModulePath(
         } catch {
           return false;
         }
-      },
-    },
+      }
+    }
   ];
 
   // Try all strategies in parallel
@@ -192,23 +192,23 @@ export async function resolveModulePath(
     strategies.map(async (strategy) => ({
       name: strategy.name,
       path: strategy.path,
-      exists: await strategy.check(strategy.path),
-    })),
+      exists: await strategy.check(strategy.path)
+    }))
   );
 
   // Find the first successful resolution
-  const success = results.find((result) => result.exists);
+  const success = results.find(result => result.exists);
   if (success) {
     logger.debug(`Resolved ${modulePath} to ${success.path} (${success.name})`);
     return success.path;
   }
 
   // If all strategies fail, throw an error
-  const tried = results.map((r) => r.path).join(", ");
+  const tried = results.map(r => r.path).join(", ");
   throw new ImportError(
     `Could not resolve module path: ${modulePath}. Tried: ${tried}`,
     modulePath,
-    currentDir,
+    currentDir
   );
 }
 
@@ -219,15 +219,15 @@ export async function resolveModulePath(
 export function findUsedModules(
   nodes: HQLNode[],
   env: Environment,
-  logger: Logger,
+  logger: Logger
 ): Set<string> {
   const usedModules = new Set<string>();
-
+  
   function traverse(node: HQLNode): void {
     if (node.type !== "list") return;
-
+    
     const elements = node.elements;
-
+    
     // Check for js-call and js-get patterns
     if (elements.length >= 3 && elements[0].type === "symbol") {
       if (
@@ -240,18 +240,18 @@ export function findUsedModules(
         }
       }
     }
-
+    
     // Recursively check all elements
     for (const elem of elements) {
       traverse(elem);
     }
   }
-
+  
   // Traverse all nodes
   for (const node of nodes) {
     traverse(node);
   }
-
+  
   return usedModules;
 }
 
@@ -259,8 +259,8 @@ export function findUsedModules(
  * Register a module path in the import registry
  */
 export function registerModulePath(
-  moduleName: string,
-  modulePath: string,
+  moduleName: string, 
+  modulePath: string
 ): void {
   importSourceRegistry.set(moduleName, modulePath);
 }
@@ -269,114 +269,114 @@ export function registerModulePath(
  * Find all existing imports in the AST
  */
 export function findExistingImports(nodes: HQLNode[]): Map<string, string> {
-  const imports = new Map<string, string>();
-
-  for (const node of nodes) {
-    if (isImportNode(node)) {
-      const [moduleName, importPath] = extractImportInfo(node);
-      if (moduleName && importPath) {
-        imports.set(moduleName, importPath);
+    const imports = new Map<string, string>();
+  
+    for (const node of nodes) {
+      if (isImportNode(node)) {
+        const [moduleName, importPath] = extractImportInfo(node);
+        if (moduleName && importPath) {
+          imports.set(moduleName, importPath);
+        }
       }
     }
+  
+    return imports;
   }
-
-  return imports;
-}
-
-/**
- * Find which modules are external and require imports
- */
-export function findExternalModuleReferences(
-  nodes: HQLNode[],
-  env: Environment,
-): Set<string> {
-  const externalModules = new Set<string>();
-
-  function isModuleExternal(moduleName: string): boolean {
-    // Check if this module is already registered as an import
-    if (importSourceRegistry.has(moduleName)) {
-      return true;
-    }
-
-    try {
-      // Try to determine if it's a JavaScript global
-      if (typeof globalThis !== "undefined" && moduleName in globalThis) {
-        return false; // It's a built-in global
+  
+  /**
+   * Find which modules are external and require imports
+   */
+  export function findExternalModuleReferences(
+    nodes: HQLNode[],
+    env: Environment,
+  ): Set<string> {
+    const externalModules = new Set<string>();
+  
+    function isModuleExternal(moduleName: string): boolean {
+      // Check if this module is already registered as an import
+      if (importSourceRegistry.has(moduleName)) {
+        return true;
       }
-
-      // Check if it's defined in the environment
+  
       try {
-        env.lookup(moduleName);
-        return false; // It's defined in the environment
+        // Try to determine if it's a JavaScript global
+        if (typeof globalThis !== "undefined" && moduleName in globalThis) {
+          return false; // It's a built-in global
+        }
+  
+        // Check if it's defined in the environment
+        try {
+          env.lookup(moduleName);
+          return false; // It's defined in the environment
+        } catch {
+          // Not defined in env, could be external
+        }
+  
+        // Check if it's a macro
+        if (env.hasMacro(moduleName)) {
+          return false; // It's a macro
+        }
+  
+        // If we got here, it's likely an external module
+        return true;
       } catch {
-        // Not defined in env, could be external
+        // If anything fails, assume it could be external just to be safe
+        return true;
       }
-
-      // Check if it's a macro
-      if (env.hasMacro(moduleName)) {
-        return false; // It's a macro
-      }
-
-      // If we got here, it's likely an external module
-      return true;
-    } catch {
-      // If anything fails, assume it could be external just to be safe
-      return true;
     }
-  }
-
-  function traverse(node: HQLNode) {
-    if (node.type === "list") {
-      const elements = node.elements;
-
-      // Check for js-call pattern
-      if (
-        elements.length >= 3 &&
-        elements[0].type === "symbol" &&
-        elements[0].name === "js-call" &&
-        elements[1].type === "symbol"
-      ) {
-        const moduleName = elements[1].name;
-        if (isModuleExternal(moduleName)) {
-          externalModules.add(moduleName);
+  
+    function traverse(node: HQLNode) {
+      if (node.type === "list") {
+        const elements = node.elements;
+  
+        // Check for js-call pattern
+        if (
+          elements.length >= 3 &&
+          elements[0].type === "symbol" &&
+          elements[0].name === "js-call" &&
+          elements[1].type === "symbol"
+        ) {
+          const moduleName = elements[1].name;
+          if (isModuleExternal(moduleName)) {
+            externalModules.add(moduleName);
+          }
         }
-      }
-
-      // Check for js-get pattern
-      if (
-        elements.length >= 3 &&
-        elements[0].type === "symbol" &&
-        elements[0].name === "js-get" &&
-        elements[1].type === "symbol"
-      ) {
-        const moduleName = elements[1].name;
-        if (isModuleExternal(moduleName)) {
-          externalModules.add(moduleName);
+  
+        // Check for js-get pattern
+        if (
+          elements.length >= 3 &&
+          elements[0].type === "symbol" &&
+          elements[0].name === "js-get" &&
+          elements[1].type === "symbol"
+        ) {
+          const moduleName = elements[1].name;
+          if (isModuleExternal(moduleName)) {
+            externalModules.add(moduleName);
+          }
         }
-      }
-
-      // Nested js-call patterns
-      if (
-        elements.length >= 3 &&
-        elements[0].type === "symbol" &&
-        elements[0].name === "js-call" &&
-        elements[1].type === "list" &&
-        elements[1].elements.length >= 3 &&
-        elements[1].elements[0].type === "symbol" &&
-        elements[1].elements[0].name === "js-get" &&
-        elements[1].elements[1].type === "symbol"
-      ) {
-        const moduleName = elements[1].elements[1].name;
-        if (isModuleExternal(moduleName)) {
-          externalModules.add(moduleName);
+  
+        // Nested js-call patterns
+        if (
+          elements.length >= 3 &&
+          elements[0].type === "symbol" &&
+          elements[0].name === "js-call" &&
+          elements[1].type === "list" &&
+          elements[1].elements.length >= 3 &&
+          elements[1].elements[0].type === "symbol" &&
+          elements[1].elements[0].name === "js-get" &&
+          elements[1].elements[1].type === "symbol"
+        ) {
+          const moduleName = elements[1].elements[1].name;
+          if (isModuleExternal(moduleName)) {
+            externalModules.add(moduleName);
+          }
         }
+  
+        // Recursively check all elements
+        elements.forEach(traverse);
       }
-
-      // Recursively check all elements
-      elements.forEach(traverse);
     }
+  
+    nodes.forEach(traverse);
+    return externalModules;
   }
-
-  nodes.forEach(traverse);
-  return externalModules;
-}

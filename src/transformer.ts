@@ -8,12 +8,12 @@ import { Environment } from "./environment.ts";
 import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts";
 import { isImportNode } from "./transpiler/hql_ast.ts";
 import { HQLNode } from "./transpiler/hql_ast.ts";
-import {
-  extractImportInfo,
-  findExistingImports,
-  findExternalModuleReferences,
-  importSourceRegistry,
-} from "./utils/import-utils.ts";
+import { 
+  importSourceRegistry, 
+  extractImportInfo, 
+  findExistingImports, 
+  findExternalModuleReferences 
+} from "./utils/import-utils.ts"
 
 import {
   CodeGenError,

@@ -52,10 +52,6 @@ export enum IRNodeType {
 
   // For representing a JS import reference from (js-import "module")
   JsImportReference,
-
-  LoopExpression,
-  RecurExpression,
-  WhileExpression,
 }
 
 export interface IRNode {
@@ -261,22 +257,4 @@ export interface IRImportDeclaration extends IRNode {
   type: IRNodeType.ImportDeclaration;
   source: string;
   specifiers: IRImportSpecifier[];
-}
-
-// Define the new IR nodes
-export interface IRLoopExpression extends IRNode {
-  type: IRNodeType.LoopExpression;
-  bindings: IRVariableDeclarator[];
-  body: IRBlockStatement;
-}
-
-export interface IRRecurExpression extends IRNode {
-  type: IRNodeType.RecurExpression;
-  args: IRNode[];
-}
-
-export interface IRWhileExpression extends IRNode {
-  type: IRNodeType.WhileExpression;
-  test: IRNode;
-  body: IRBlockStatement;
 }
