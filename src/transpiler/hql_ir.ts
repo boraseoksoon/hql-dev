@@ -56,6 +56,7 @@ export enum IRNodeType {
   LoopExpression,
   RecurExpression,
   WhileExpression,
+  SetExpression,
 }
 
 export interface IRNode {
@@ -267,7 +268,7 @@ export interface IRImportDeclaration extends IRNode {
 export interface IRLoopExpression extends IRNode {
   type: IRNodeType.LoopExpression;
   bindings: IRVariableDeclarator[];
-  body: IRBlockStatement;
+  body: IRNode[];
 }
 
 export interface IRRecurExpression extends IRNode {
@@ -278,5 +279,10 @@ export interface IRRecurExpression extends IRNode {
 export interface IRWhileExpression extends IRNode {
   type: IRNodeType.WhileExpression;
   test: IRNode;
-  body: IRBlockStatement;
+  body: IRNode[];
+}
+export interface IRSetExpression extends IRNode {
+  type: IRNodeType.SetExpression;
+  target: IRNode;
+  value: IRNode;
 }

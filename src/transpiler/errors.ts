@@ -271,18 +271,18 @@ export function summarizeNode(node: unknown): string {
 
   // Handle node objects based on common properties
   if ("type" in node) {
-    let summary = `${(node as { type: string }).type}`;
+    let summary = `${(node as {type: string}).type}`;
 
     // Add name for named nodes
     if ("name" in node) {
-      summary += ` "${(node as { name: string }).name}"`;
+      summary += ` "${(node as {name: string}).name}"`;
     }
 
     // Add value for literals
     if ("value" in node) {
-      const valueStr = typeof (node as { value: unknown }).value === "string"
-        ? `"${(node as { value: string }).value}"`
-        : String((node as { value: unknown }).value);
+      const valueStr = typeof (node as {value: unknown}).value === "string"
+        ? `"${(node as {value: string}).value}"`
+        : String((node as {value: unknown}).value);
       summary += ` ${valueStr}`;
     }
 
