@@ -2,6 +2,4 @@
 function minus(x, y) {
   return x + y + 200;
 }
-export {
-  minus
-};
+export { minus };

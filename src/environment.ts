@@ -11,7 +11,15 @@ import {
 import { LRUCache } from "./utils/lru-cache.ts";
 
 // Define a type for values that can be stored in the environment
-export type Value = string | number | boolean | null | SExp | Function | Record<string, unknown> | unknown[];
+export type Value =
+  | string
+  | number
+  | boolean
+  | null
+  | SExp
+  | Function
+  | Record<string, unknown>
+  | unknown[];
 
 /**
  * Type definition for macro functions
@@ -79,7 +87,7 @@ export class Environment {
   static initializeGlobalEnv(
     options: { verbose?: boolean } = {},
   ): Promise<Environment> {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const logger = new Logger(options.verbose);
       logger.debug("Starting global environment initialization");
 
@@ -230,17 +238,21 @@ export class Environment {
    */
   private defineListOperations(): void {
     try {
-      this.define("get", (coll: unknown, key: string | number, notFound: Value = null) => {
-        if (coll == null) return notFound;
-        if (Array.isArray(coll)) {
-          return (typeof key === "number" && key >= 0 && key < coll.length)
-            ? coll[key]
+      this.define(
+        "get",
+        (coll: unknown, key: string | number, notFound: Value = null) => {
+          if (coll == null) return notFound;
+          if (Array.isArray(coll)) {
+            return (typeof key === "number" && key >= 0 && key < coll.length)
+              ? coll[key]
+              : notFound;
+          }
+          return (typeof coll === "object" &&
+              key in (coll as Record<string, unknown>))
+            ? (coll as Record<string, unknown>)[key]
             : notFound;
-        }
-        return (typeof coll === "object" && key in (coll as Record<string, unknown>)) 
-          ? (coll as Record<string, unknown>)[key]
-          : notFound;
-      });
+        },
+      );
       this.logger.debug("List operations defined");
     } catch (error) {
       if (error instanceof ValidationError) {
@@ -272,28 +284,31 @@ export class Environment {
         return (obj as Record<string, unknown>)[prop];
       });
 
-      this.define("js-call", (obj: unknown, method: string, ...args: unknown[]) => {
-        if (obj === null || obj === undefined) {
-          throw new ValidationError(
-            "Cannot call method on null or undefined",
-            "js-call operation",
-            "object",
-            obj === null ? "null" : "undefined",
-          );
-        }
+      this.define(
+        "js-call",
+        (obj: unknown, method: string, ...args: unknown[]) => {
+          if (obj === null || obj === undefined) {
+            throw new ValidationError(
+              "Cannot call method on null or undefined",
+              "js-call operation",
+              "object",
+              obj === null ? "null" : "undefined",
+            );
+          }
 
-        const objWithMethods = obj as Record<string, unknown>;
-        if (typeof objWithMethods[method] !== "function") {
-          throw new ValidationError(
-            `${method} is not a function on the given object`,
-            "js-call operation",
-            "function",
-            typeof objWithMethods[method],
-          );
-        }
+          const objWithMethods = obj as Record<string, unknown>;
+          if (typeof objWithMethods[method] !== "function") {
+            throw new ValidationError(
+              `${method} is not a function on the given object`,
+              "js-call operation",
+              "function",
+              typeof objWithMethods[method],
+            );
+          }
 
-        return (objWithMethods[method] as Function)(...args);
-      });
+          return (objWithMethods[method] as Function)(...args);
+        },
+      );
 
       // Enhanced throw for better error handling
       this.define("throw", (message: string) => {
@@ -482,7 +497,9 @@ export class Environment {
     let current: unknown = obj;
 
     for (const part of parts) {
-      if (current === null || current === undefined || typeof current !== "object") {
+      if (
+        current === null || current === undefined || typeof current !== "object"
+      ) {
         throw new ValidationError(
           `Cannot access property '${part}' of ${typeof current}`,
           "property path access",
@@ -490,9 +507,9 @@ export class Environment {
           typeof current,
         );
       }
-      
+
       const currentObj = current as Record<string, unknown>;
-      
+
       // Try original property name
       if (part in currentObj) {
         current = currentObj[part];

@@ -8,9 +8,6 @@ import { Logger } from "../logger.ts";
 // Initialize logger for this module
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
-// Add at the top of the file, with other module-level declarations
-let loopLabelCounter = 0;
-
 /**
  * Convert an IR node to a TypeScript statement with centralized error handling.
  */
@@ -119,10 +116,6 @@ export function convertIRNode(
         return convertLoopExpression(node as IR.IRLoopExpression);
       case IR.IRNodeType.WhileExpression:
         return convertWhileExpression(node as IR.IRWhileExpression);
-      case IR.IRNodeType.RecurExpression:
-        return convertRecurExpression(node as IR.IRRecurExpression);
-      case IR.IRNodeType.SetExpression:
-        return convertSetExpression(node as IR.IRSetExpression);
       default:
         logger.warn(
           `Cannot convert node of type ${node.type} (${
@@ -145,6 +138,163 @@ export function convertIRNode(
         error instanceof Error ? error.message : String(error)
       }`,
       node ? IR.IRNodeType[node.type] || String(node.type) : "unknown",
+      node,
+    );
+  }
+}
+
+// Counter for unique loop labels
+let loopLabelCounter = 0;
+
+/**
+ * Convert a loop expression to TypeScript.
+ */
+function convertLoopExpression(node: IR.IRLoopExpression): ts.Statement {
+  try {
+    // Create unique label for this loop
+    const labelName = `loop_${loopLabelCounter++}`;
+
+    // Prepare variable declarations
+    const variableDeclarations: ts.VariableDeclaration[] = [];
+    const variableNames: ts.Identifier[] = [];
+
+    for (const binding of node.bindings) {
+      const id = convertIdentifier(binding.id);
+      variableNames.push(id);
+      variableDeclarations.push(
+        ts.factory.createVariableDeclaration(
+          id,
+          undefined,
+          undefined,
+          convertIRExpr(binding.init),
+        ),
+      );
+    }
+
+    // Create variable statement
+    const varStatement = ts.factory.createVariableStatement(
+      undefined,
+      ts.factory.createVariableDeclarationList(
+        variableDeclarations,
+        ts.NodeFlags.Let,
+      ),
+    );
+
+    // Process body for recur statements
+    const loopBlock = processLoopBody(node.body.body, labelName, variableNames);
+
+    // Create labeled loop statement
+    const loopStatement = ts.factory.createLabeledStatement(
+      ts.factory.createIdentifier(labelName),
+      ts.factory.createWhileStatement(
+        ts.factory.createTrue(),
+        loopBlock,
+      ),
+    );
+
+    // Return block with both declarations and loop
+    return ts.factory.createBlock(
+      [varStatement, loopStatement],
+      true,
+    );
+  } catch (error) {
+    throw new CodeGenError(
+      `Failed to convert loop expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "loop expression",
+      node,
+    );
+  }
+}
+
+/**
+ * Process a loop body to handle recur statements specially.
+ */
+function processLoopBody(
+  body: IR.IRNode[],
+  labelName: string,
+  variableNames: ts.Identifier[],
+): ts.Block {
+  const statements: ts.Statement[] = [];
+
+  // Process all statements
+  for (let i = 0; i < body.length; i++) {
+    const node = body[i];
+    const isLast = i === body.length - 1;
+
+    // Special handling for recur in tail position
+    if (isLast && node.type === IR.IRNodeType.RecurExpression) {
+      const recurNode = node as IR.IRRecurExpression;
+
+      // Validate arity
+      if (recurNode.args.length !== variableNames.length) {
+        throw new CodeGenError(
+          `Recur arity mismatch: expected ${variableNames.length} arguments, got ${recurNode.args.length}`,
+          "recur expression",
+          recurNode,
+        );
+      }
+
+      // Generate variable reassignments
+      for (let j = 0; j < variableNames.length; j++) {
+        statements.push(
+          ts.factory.createExpressionStatement(
+            ts.factory.createBinaryExpression(
+              variableNames[j],
+              ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+              convertIRExpr(recurNode.args[j]),
+            ),
+          ),
+        );
+      }
+
+      // Continue the loop
+      statements.push(
+        ts.factory.createContinueStatement(
+          ts.factory.createIdentifier(labelName),
+        ),
+      );
+    } else {
+      // Normal statement processing
+      const statement = convertIRNode(node);
+      if (statement) {
+        if (Array.isArray(statement)) {
+          statements.push(...statement);
+        } else {
+          statements.push(statement);
+        }
+      }
+
+      // Add break for last non-recur statement
+      if (isLast) {
+        statements.push(
+          ts.factory.createBreakStatement(
+            ts.factory.createIdentifier(labelName),
+          ),
+        );
+      }
+    }
+  }
+
+  return ts.factory.createBlock(statements, true);
+}
+
+/**
+ * Convert a while expression to TypeScript.
+ */
+function convertWhileExpression(node: IR.IRWhileExpression): ts.Statement {
+  try {
+    return ts.factory.createWhileStatement(
+      convertIRExpr(node.test),
+      convertBlockStatement(node.body),
+    );
+  } catch (error) {
+    throw new CodeGenError(
+      `Failed to convert while expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "while expression",
       node,
     );
   }
@@ -1293,16 +1443,6 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
         return convertFunctionExpression(node as IR.IRFunctionExpression);
       case IR.IRNodeType.InteropIIFE:
         return convertInteropIIFE(node as IR.IRInteropIIFE);
-      case IR.IRNodeType.LoopExpression:
-        return convertLoopToIIFE(node as IR.IRLoopExpression);
-      case IR.IRNodeType.WhileExpression:
-        return convertWhileToIIFE(node as IR.IRWhileExpression);
-      case IR.IRNodeType.RecurExpression:
-        throw new CodeGenError(
-          "recur cannot be used as an expression. It must be in tail position.",
-          "recur as expression",
-          node
-        );
       default:
         throw new CodeGenError(
           `Cannot convert node of type ${
@@ -1357,567 +1497,6 @@ function createModuleVariableName(source: string): string {
       }`,
       "module variable name creation",
       source,
-    );
-  }
-}
-
-/**
- * Add recur statements to a statement list
- */
-function addRecurStatements(
-  recurNode: IR.IRRecurExpression,
-  variableNames: ts.Identifier[],
-  statements: ts.Statement[],
-  labelName: string
-): void {
-  // Validate arity
-  if (recurNode.args.length !== variableNames.length) {
-    throw new CodeGenError(
-      `Recur arity mismatch: expected ${variableNames.length} arguments, got ${recurNode.args.length}`,
-      "recur expression",
-      recurNode
-    );
-  }
-  
-  // Generate temporary variables for the new values to avoid dependency issues
-  const tempVars: ts.Identifier[] = [];
-  
-  // Create temp variables for all new values first
-  for (let j = 0; j < variableNames.length; j++) {
-    const tempVar = ts.factory.createIdentifier(`temp_${j}`);
-    tempVars.push(tempVar);
-    statements.push(
-      ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList(
-          [ts.factory.createVariableDeclaration(
-            tempVar,
-            undefined,
-            undefined,
-            convertIRExpr(recurNode.args[j])
-          )],
-          ts.NodeFlags.Const
-        )
-      )
-    );
-  }
-  
-  // Now assign the temp variables to the loop variables
-  for (let j = 0; j < variableNames.length; j++) {
-    statements.push(
-      ts.factory.createExpressionStatement(
-        ts.factory.createBinaryExpression(
-          variableNames[j],
-          ts.factory.createToken(ts.SyntaxKind.EqualsToken),
-          tempVars[j]
-        )
-      )
-    );
-  }
-  
-  // Continue the loop
-  statements.push(
-    ts.factory.createContinueStatement(
-      ts.factory.createIdentifier(labelName)
-    )
-  );
-}
-
-/**
- * Convert a while expression to an IIFE for expression contexts.
- */
-function convertWhileToIIFE(node: IR.IRWhileExpression): ts.Expression {
-  try {
-    const statements: ts.Statement[] = [];
-    
-    // Create result variable
-    const resultId = ts.factory.createIdentifier("result");
-    statements.push(
-      ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList(
-          [ts.factory.createVariableDeclaration(
-            resultId,
-            undefined,
-            undefined,
-            ts.factory.createNull()
-          )],
-          ts.NodeFlags.Let
-        )
-      )
-    );
-    
-    // Create while body statements
-    const bodyStatements: ts.Statement[] = [];
-    
-    for (const bodyNode of node.body) {
-      const statement = convertIRNode(bodyNode);
-      if (statement) {
-        if (Array.isArray(statement)) {
-          bodyStatements.push(...statement);
-        } else {
-          bodyStatements.push(statement);
-        }
-      }
-    }
-    
-    // Add while statement
-    statements.push(
-      ts.factory.createWhileStatement(
-        convertIRExpr(node.test),
-        ts.factory.createBlock(bodyStatements, true)
-      )
-    );
-    
-    // Return the result
-    statements.push(
-      ts.factory.createReturnStatement(resultId)
-    );
-    
-    // Create IIFE
-    return ts.factory.createCallExpression(
-      ts.factory.createParenthesizedExpression(
-        ts.factory.createArrowFunction(
-          undefined,
-          undefined,
-          [],
-          undefined,
-          ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-          ts.factory.createBlock(statements, true)
-        )
-      ),
-      undefined,
-      []
-    );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert while expression to IIFE: ${error instanceof Error ? error.message : String(error)}`,
-      "while expression to IIFE",
-      node
-    );
-  }
-}
-
-/**
- * Convert a while expression to a statement.
- */
-function convertWhileExpression(node: IR.IRWhileExpression): ts.Statement {
-  try {
-    const bodyStatements: ts.Statement[] = [];
-    
-    for (const bodyNode of node.body) {
-      const statement = convertIRNode(bodyNode);
-      if (statement) {
-        if (Array.isArray(statement)) {
-          bodyStatements.push(...statement);
-        } else {
-          bodyStatements.push(statement);
-        }
-      }
-    }
-    
-    return ts.factory.createWhileStatement(
-      convertIRExpr(node.test),
-      ts.factory.createBlock(bodyStatements, true)
-    );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert while expression: ${error instanceof Error ? error.message : String(error)}`,
-      "while expression",
-      node
-    );
-  }
-}
-
-/**
- * Convert a recur expression to a statement.
- */
-function convertRecurExpression(node: IR.IRRecurExpression): ts.Statement {
-  throw new CodeGenError(
-    "recur cannot be used directly as a statement outside of a loop",
-    "recur statement",
-    node
-  );
-}
-
-/**
- * Convert a loop expression to a statement.
- */
-function convertLoopExpression(node: IR.IRLoopExpression): ts.Statement {
-  try {
-    // Create unique label for this loop
-    const labelName = `loop_${loopLabelCounter++}`;
-    
-    // Create variable declarations for bindings
-    const variableDeclarations: ts.VariableDeclaration[] = [];
-    const variableNames: ts.Identifier[] = [];
-    
-    for (const binding of node.bindings) {
-      const id = convertIdentifier(binding.id);
-      variableNames.push(id);
-      variableDeclarations.push(
-        ts.factory.createVariableDeclaration(
-          id,
-          undefined,
-          undefined,
-          convertIRExpr(binding.init)
-        )
-      );
-    }
-    
-    // Create variable statement
-    const varStatement = ts.factory.createVariableStatement(
-      undefined,
-      ts.factory.createVariableDeclarationList(
-        variableDeclarations,
-        ts.NodeFlags.Let
-      )
-    );
-    
-    // Process the body to handle recur statements
-    const statements: ts.Statement[] = [];
-    for (const bodyNode of node.body) {
-      const isRecur = bodyNode.type === IR.IRNodeType.RecurExpression;
-      
-      if (isRecur) {
-        // Handle recur
-        const recurNode = bodyNode as IR.IRRecurExpression;
-        addRecurStatements(recurNode, variableNames, statements, labelName);
-      } else {
-        // Normal statement
-        const statement = convertIRNode(bodyNode);
-        if (statement) {
-          if (Array.isArray(statement)) {
-            statements.push(...statement);
-          } else {
-            statements.push(statement);
-          }
-        }
-      }
-    }
-    
-    // If no explicit recur, add break
-    if (!node.body.some(n => n.type === IR.IRNodeType.RecurExpression)) {
-      statements.push(
-        ts.factory.createBreakStatement(
-          ts.factory.createIdentifier(labelName)
-        )
-      );
-    }
-    
-    // Create the loop body block
-    const loopBody = ts.factory.createBlock(statements, true);
-    
-    // Create the labeled while(true) statement
-    const whileLoop = ts.factory.createLabeledStatement(
-      ts.factory.createIdentifier(labelName),
-      ts.factory.createWhileStatement(
-        ts.factory.createTrue(),
-        loopBody
-      )
-    );
-    
-    // Return the block containing variables and loop
-    return ts.factory.createBlock(
-      [varStatement, whileLoop],
-      true
-    );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert loop expression: ${error instanceof Error ? error.message : String(error)}`,
-      "loop expression",
-      node
-    );
-  }
-}
-
-function convertSetExpression(node: IR.IRSetExpression): ts.ExpressionStatement {
-  try {
-    return ts.factory.createExpressionStatement(
-      ts.factory.createBinaryExpression(
-        convertIRExpr(node.target),
-        ts.factory.createToken(ts.SyntaxKind.EqualsToken),
-        convertIRExpr(node.value)
-      )
-    );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert set! expression: ${error instanceof Error ? error.message : String(error)}`,
-      "set! expression",
-      node
-    );
-  }
-}
-
-/**
- * Process loop body with special handling for recur and conditionals.
- */
-function processLoopBody(
-  bodyNodes: IR.IRNode[],
-  labelName: string,
-  variableNames: ts.Identifier[],
-  resultId: ts.Identifier
-): ts.Statement[] {
-  const statements: ts.Statement[] = [];
-  
-  for (let i = 0; i < bodyNodes.length; i++) {
-    const node = bodyNodes[i];
-    const isLast = i === bodyNodes.length - 1;
-    
-    if (isLast) {
-      // Special handling for last expression in the body
-      if (node.type === IR.IRNodeType.RecurExpression) {
-        // Handle recur directly
-        processRecurExpression(node as IR.IRRecurExpression, variableNames, statements, labelName);
-      } 
-      else if (node.type === IR.IRNodeType.ConditionalExpression) {
-        // Handle if-then-else with possible recur
-        const condExpr = node as IR.IRConditionalExpression;
-        
-        statements.push(
-          ts.factory.createIfStatement(
-            convertIRExpr(condExpr.test),
-            processConditionalBranch(condExpr.consequent, variableNames, labelName, resultId),
-            processConditionalBranch(condExpr.alternate, variableNames, labelName, resultId)
-          )
-        );
-      } 
-      else {
-        // Handle other expressions by assigning to result and breaking
-        statements.push(
-          ts.factory.createExpressionStatement(
-            ts.factory.createBinaryExpression(
-              resultId,
-              ts.factory.createToken(ts.SyntaxKind.EqualsToken),
-              convertIRExpr(node)
-            )
-          )
-        );
-        
-        statements.push(
-          ts.factory.createBreakStatement(
-            ts.factory.createIdentifier(labelName)
-          )
-        );
-      }
-    } 
-    else {
-      // Non-last statements just get converted normally
-      const statement = convertIRNode(node);
-      if (statement) {
-        if (Array.isArray(statement)) {
-          statements.push(...statement);
-        } else {
-          statements.push(statement);
-        }
-      }
-    }
-  }
-  
-  return statements;
-}
-
-/**
- * Process a conditional branch, which might have recur as a tail expression.
- */
-function processConditionalBranch(
-  branch: IR.IRNode,
-  variableNames: ts.Identifier[],
-  labelName: string,
-  resultId: ts.Identifier
-): ts.Block {
-  const statements: ts.Statement[] = [];
-  
-  if (branch.type === IR.IRNodeType.RecurExpression) {
-    // Branch contains direct recur
-    processRecurExpression(branch as IR.IRRecurExpression, variableNames, statements, labelName);
-  } 
-  else {
-    // Branch returns a value
-    statements.push(
-      ts.factory.createExpressionStatement(
-        ts.factory.createBinaryExpression(
-          resultId,
-          ts.factory.createToken(ts.SyntaxKind.EqualsToken),
-          convertIRExpr(branch)
-        )
-      )
-    );
-    
-    statements.push(
-      ts.factory.createBreakStatement(
-        ts.factory.createIdentifier(labelName)
-      )
-    );
-  }
-  
-  return ts.factory.createBlock(statements, true);
-}
-
-/**
- * Process a recur expression by adding variable reassignments and continue.
- */
-function processRecurExpression(
-  recurNode: IR.IRRecurExpression,
-  variableNames: ts.Identifier[],
-  statements: ts.Statement[],
-  labelName: string
-): void {
-  // Validate arity
-  if (recurNode.args.length !== variableNames.length) {
-    throw new CodeGenError(
-      `Recur arity mismatch: expected ${variableNames.length} arguments, got ${recurNode.args.length}`,
-      "recur expression",
-      recurNode
-    );
-  }
-  
-  // Create temps to avoid dependency issues during reassignment
-  const tempVars: ts.Identifier[] = [];
-  
-  // Evaluate all arguments first into temp variables
-  for (let i = 0; i < variableNames.length; i++) {
-    const tempVar = ts.factory.createIdentifier(`temp_${i}`);
-    tempVars.push(tempVar);
-    
-    statements.push(
-      ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList(
-          [ts.factory.createVariableDeclaration(
-            tempVar,
-            undefined,
-            undefined,
-            convertIRExpr(recurNode.args[i])
-          )],
-          ts.NodeFlags.Const
-        )
-      )
-    );
-  }
-  
-  // Then reassign all variables from the temps
-  for (let i = 0; i < variableNames.length; i++) {
-    statements.push(
-      ts.factory.createExpressionStatement(
-        ts.factory.createBinaryExpression(
-          variableNames[i],
-          ts.factory.createToken(ts.SyntaxKind.EqualsToken),
-          tempVars[i]
-        )
-      )
-    );
-  }
-  
-  // Continue the loop
-  statements.push(
-    ts.factory.createContinueStatement(
-      ts.factory.createIdentifier(labelName)
-    )
-  );
-}
-
-/**
- * Convert a loop expression to an IIFE for expression contexts.
- */
-function convertLoopToIIFE(node: IR.IRLoopExpression): ts.Expression {
-  try {
-    // Create unique label for this loop
-    const labelName = `loop_${loopLabelCounter++}`;
-    
-    // Create statements for the IIFE body
-    const statements: ts.Statement[] = [];
-    
-    // Create variable declarations for bindings
-    const variableDeclarations: ts.VariableDeclaration[] = [];
-    const variableNames: ts.Identifier[] = [];
-    
-    // Process bindings
-    for (const binding of node.bindings) {
-      const id = convertIdentifier(binding.id);
-      variableNames.push(id);
-      variableDeclarations.push(
-        ts.factory.createVariableDeclaration(
-          id,
-          undefined,
-          undefined,
-          convertIRExpr(binding.init)
-        )
-      );
-    }
-    
-    // Add variable declarations
-    statements.push(
-      ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList(
-          variableDeclarations,
-          ts.NodeFlags.Let
-        )
-      )
-    );
-    
-    // Create result variable
-    const resultId = ts.factory.createIdentifier("result");
-    statements.push(
-      ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList(
-          [ts.factory.createVariableDeclaration(
-            resultId,
-            undefined,
-            undefined,
-            ts.factory.createNull()
-          )],
-          ts.NodeFlags.Let
-        )
-      )
-    );
-    
-    // Process loop body with a special visitor that transforms recur properly
-    const loopBodyStatements = processLoopBody(
-      node.body,  // Now this is an array, not a BlockStatement 
-      labelName, 
-      variableNames, 
-      resultId
-    );
-    
-    // Create labeled while statement
-    statements.push(
-      ts.factory.createLabeledStatement(
-        ts.factory.createIdentifier(labelName),
-        ts.factory.createWhileStatement(
-          ts.factory.createTrue(),
-          ts.factory.createBlock(loopBodyStatements, true)
-        )
-      )
-    );
-    
-    // Return the result variable
-    statements.push(
-      ts.factory.createReturnStatement(resultId)
-    );
-    
-    // Create IIFE wrapper
-    return ts.factory.createCallExpression(
-      ts.factory.createParenthesizedExpression(
-        ts.factory.createArrowFunction(
-          undefined,
-          undefined,
-          [],
-          undefined,
-          ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-          ts.factory.createBlock(statements, true)
-        )
-      ),
-      undefined,
-      []
-    );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert loop expression to IIFE: ${error instanceof Error ? error.message : String(error)}`,
-      "loop expression to IIFE",
-      node
     );
   }
 }

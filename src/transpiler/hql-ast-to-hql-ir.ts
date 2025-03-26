@@ -16,7 +16,7 @@ import * as path from "../platform/platform.ts";
 import { TransformError, ValidationError } from "./errors.ts";
 import { Logger } from "../logger.ts";
 import { perform } from "./error-utils.ts";
-import { macroCache, isUserLevelMacro } from "../s-exp/macro.ts";
+import { isUserLevelMacro, macroCache } from "../s-exp/macro.ts";
 import {
   isNamespaceImport,
   isVectorExport,
@@ -160,8 +160,6 @@ function initializeTransformFactory(): void {
       transformFactory.set("recur", transformRecur);
       transformFactory.set("while", transformWhile);
 
-      transformFactory.set("set!", transformSet);
-
       // Register import/export handlers
       transformFactory.set("export", null);
       transformFactory.set("import", null);
@@ -179,10 +177,10 @@ function initializeTransformFactory(): void {
 function transformLoop(list: ListNode, currentDir: string): IR.IRNode {
   return perform(
     () => {
-      if (list.elements.length < 3) {
+      if (list.elements.length < 2) {
         throw new ValidationError(
           "loop requires bindings and body",
-          "loop expression"
+          "loop expression",
         );
       }
 
@@ -190,7 +188,7 @@ function transformLoop(list: ListNode, currentDir: string): IR.IRNode {
       if (bindingsNode.type !== "list") {
         throw new ValidationError(
           "loop bindings must be a list",
-          "loop bindings"
+          "loop bindings",
         );
       }
 
@@ -198,7 +196,7 @@ function transformLoop(list: ListNode, currentDir: string): IR.IRNode {
       if (bindingsList.elements.length % 2 !== 0) {
         throw new ValidationError(
           "loop bindings must have an even number of forms",
-          "loop bindings"
+          "loop bindings",
         );
       }
 
@@ -207,37 +205,41 @@ function transformLoop(list: ListNode, currentDir: string): IR.IRNode {
       for (let i = 0; i < bindingsList.elements.length; i += 2) {
         const nameNode = bindingsList.elements[i];
         const valueNode = bindingsList.elements[i + 1];
-        
+
         if (nameNode.type !== "symbol") {
           throw new ValidationError(
             "binding names must be symbols",
-            "loop binding"
+            "loop binding",
           );
         }
 
         const id = transformSymbol(nameNode as SymbolNode) as IR.IRIdentifier;
         const init = transformNode(valueNode, currentDir);
-        
+
         bindings.push({
           type: IR.IRNodeType.VariableDeclarator,
           id,
-          init
-        } as IR.IRVariableDeclarator);
+          init,
+        });
       }
 
-      const bodyExprs = list.elements.slice(2).map(expr => 
+      // Transform body
+      const bodyExprs = list.elements.slice(2).map((expr) =>
         transformNode(expr, currentDir)
-      ).filter(node => node !== null) as IR.IRNode[];
+      ).filter((node) => node !== null) as IR.IRNode[];
 
       return {
         type: IR.IRNodeType.LoopExpression,
         bindings,
-        body: bodyExprs  // Just return the array directly
+        body: {
+          type: IR.IRNodeType.BlockStatement,
+          body: bodyExprs,
+        },
       } as IR.IRLoopExpression;
     },
     "transformLoop",
     TransformError,
-    [list]
+    [list],
   );
 }
 
@@ -247,14 +249,12 @@ function transformLoop(list: ListNode, currentDir: string): IR.IRNode {
 function transformRecur(list: ListNode, currentDir: string): IR.IRNode {
   return perform(
     () => {
-      const args = list.elements.slice(1).map(arg => {
+      const args = list.elements.slice(1).map((arg) => {
         const transformed = transformNode(arg, currentDir);
         if (!transformed) {
           throw new ValidationError(
             `Recur argument transformed to null`,
             "recur argument",
-            "valid expression",
-            "null"
           );
         }
         return transformed;
@@ -262,12 +262,12 @@ function transformRecur(list: ListNode, currentDir: string): IR.IRNode {
 
       return {
         type: IR.IRNodeType.RecurExpression,
-        args
+        args,
       } as IR.IRRecurExpression;
     },
     "transformRecur",
     TransformError,
-    [list]
+    [list],
   );
 }
 
@@ -281,8 +281,6 @@ function transformWhile(list: ListNode, currentDir: string): IR.IRNode {
         throw new ValidationError(
           "while requires test condition and body",
           "while expression",
-          "test and body",
-          `${list.elements.length - 1} arguments`
         );
       }
 
@@ -291,33 +289,25 @@ function transformWhile(list: ListNode, currentDir: string): IR.IRNode {
         throw new ValidationError(
           "Test condition transformed to null",
           "while test",
-          "valid expression",
-          "null"
         );
       }
 
-      const bodyExprs = list.elements.slice(2).map(expr => {
-        const transformed = transformNode(expr, currentDir);
-        if (!transformed) {
-          throw new ValidationError(
-            "Body expression transformed to null",
-            "while body",
-            "valid expression",
-            "null"
-          );
-        }
-        return transformed;
-      });
+      const bodyExprs = list.elements.slice(2).map((expr) =>
+        transformNode(expr, currentDir)
+      ).filter((node) => node !== null) as IR.IRNode[];
 
       return {
         type: IR.IRNodeType.WhileExpression,
         test,
-        body: bodyExprs  // Just return the array directly
+        body: {
+          type: IR.IRNodeType.BlockStatement,
+          body: bodyExprs,
+        },
       } as IR.IRWhileExpression;
     },
     "transformWhile",
     TransformError,
-    [list]
+    [list],
   );
 }
 
@@ -2515,43 +2505,5 @@ function transformComparisonOp(op: string, args: IR.IRNode[]): IR.IRNode {
     `transformComparisonOp '${op}'`,
     TransformError,
     [op, args],
-  );
-}
-
-function transformSet(list: ListNode, currentDir: string): IR.IRNode {
-  return perform(
-    () => {
-      if (list.elements.length !== 3) {
-        throw new ValidationError(
-          "set! requires exactly 2 arguments: target and value",
-          "set! expression"
-        );
-      }
-
-      const target = transformNode(list.elements[1], currentDir);
-      if (!target) {
-        throw new ValidationError(
-          "Target transformed to null",
-          "set! target"
-        );
-      }
-
-      const value = transformNode(list.elements[2], currentDir);
-      if (!value) {
-        throw new ValidationError(
-          "Value transformed to null",
-          "set! value"
-        );
-      }
-
-      return {
-        type: IR.IRNodeType.SetExpression,
-        target,
-        value
-      } as IR.IRSetExpression;
-    },
-    "transformSet",
-    TransformError,
-    [list]
   );
 }
