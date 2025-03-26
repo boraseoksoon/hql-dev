@@ -16,7 +16,12 @@ export type Value = string | number | boolean | null | SExp | Function | Record<
 /**
  * Type definition for macro functions
  */
-export type MacroFn = (args: SExp[], env: Environment) => SExp;
+export type MacroFn = ((args: SExp[], env: Environment) => SExp) & {
+  isMacro?: boolean;
+  macroName?: string;
+  sourceFile?: string;
+  isUserMacro?: boolean;
+};
 
 /**
  * Unified Environment class that combines runtime and macro-expansion environments
