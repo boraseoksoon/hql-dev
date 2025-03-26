@@ -1,5 +1,5 @@
 // src/macro-registry.ts - Enhanced to be the single source of truth for macros
-
+import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { Logger } from "./logger.ts";
 import { MacroFn } from "./environment.ts";
 import { MacroError } from "./transpiler/errors.ts";
@@ -145,64 +145,133 @@ export class MacroRegistry {
     }
   }
 
-  /**
-   * Export a macro from a module
-   */
-  exportMacro(filePath: string, name: string): void {
-    try {
-      // Validate inputs
-      if (!filePath) {
-        throw new MacroError(
-          "File path required for exporting macro",
-          name,
-          undefined,
-        );
-      }
+  // Enhanced exportMacro in src/macro-registry.ts for better export tracking
 
-      if (!name) {
-        throw new MacroError(
-          "Cannot export macro with empty name",
-          "export-macro",
-          filePath,
-        );
-      }
-
-      // Verify the macro exists
-      if (!this.hasModuleMacro(filePath, name)) {
-        this.logger.warn(
-          `Cannot export non-existent macro ${name} from ${filePath}`,
-        );
-        throw new MacroError(
-          `Cannot export non-existent macro ${name}`,
-          name,
-          filePath,
-        );
-      }
-
-      this.logger.debug(`Exporting macro ${name} from ${filePath}`);
-
-      // Get or create the file's export registry
-      if (!this.exportedMacros.has(filePath)) {
-        this.exportedMacros.set(filePath, new Set<string>());
-      }
-
-      // Mark the macro as exported
-      this.exportedMacros.get(filePath)!.add(name);
-    } catch (error) {
-      if (error instanceof MacroError) {
-        throw error; // Re-throw MacroError directly
-      }
-
-      // Wrap other errors in a MacroError
+/**
+ * Export a macro from a module
+ */
+exportMacro(filePath: string, macroName: string): void {
+  try {
+    // Validate inputs
+    if (!filePath) {
       throw new MacroError(
-        `Failed to export macro ${name}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        name,
+        "File path required for exporting macro",
+        macroName,
+        undefined,
+      );
+    }
+
+    if (!macroName) {
+      throw new MacroError(
+        "Cannot export macro with empty name",
+        "export-macro",
         filePath,
       );
     }
+
+    // Verify the macro exists
+    if (!this.hasModuleMacro(filePath, macroName)) {
+      this.logger.warn(
+        `Cannot export non-existent macro ${macroName} from ${filePath}`,
+      );
+      throw new MacroError(
+        `Cannot export non-existent macro ${macroName}`,
+        macroName,
+        filePath,
+      );
+    }
+
+    this.logger.debug(`Exporting macro ${macroName} from ${filePath}`);
+
+    // Get or create the file's export registry
+    if (!this.exportedMacros.has(filePath)) {
+      this.exportedMacros.set(filePath, new Set<string>());
+    }
+
+    // Mark the macro as exported
+    this.exportedMacros.get(filePath)!.add(macroName);
+    
+    // Register in a persistent store keyed by full path
+    this.persistExport(filePath, macroName);
+  } catch (error) {
+    if (error instanceof MacroError) {
+      throw error; // Re-throw MacroError directly
+    }
+
+    // Wrap other errors in a MacroError
+    throw new MacroError(
+      `Failed to export macro ${macroName}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      macroName,
+      filePath,
+    );
   }
+}
+
+// Add a persistent export registry to improve tracking
+private persistentExports = new Map<string, Set<string>>();
+
+/**
+ * Register an export persistently
+ */
+private persistExport(filePath: string, exportName: string): void {
+  const absolutePath = this.resolveFullPath(filePath);
+  
+  if (!this.persistentExports.has(absolutePath)) {
+    this.persistentExports.set(absolutePath, new Set<string>());
+  }
+  
+  this.persistentExports.get(absolutePath)!.add(exportName);
+  this.logger.debug(`Registered persistent export: ${exportName} from ${absolutePath}`);
+}
+
+/**
+ * Get exported macros for a file with better path resolution
+ * This method enhances the original getExportedMacros with more robust path matching
+ */
+getExportedMacros(filePath: string): Set<string> | undefined {
+  // Try direct lookup first
+  const directExports = this.exportedMacros.get(filePath);
+  if (directExports && directExports.size > 0) {
+    return directExports;
+  }
+  
+  // Try resolved path lookup
+  const absolutePath = this.resolveFullPath(filePath);
+  const persistentExports = this.persistentExports.get(absolutePath);
+  if (persistentExports && persistentExports.size > 0) {
+    return persistentExports;
+  }
+  
+  // Try path-based matching as fallback
+  for (const [path, exports] of this.persistentExports.entries()) {
+    if (path.endsWith(filePath) || filePath.endsWith(path)) {
+      return exports;
+    }
+  }
+  
+  // Finally, try path-based matching on the original exportedMacros map as well
+  for (const [path, exports] of this.exportedMacros.entries()) {
+    if (path.endsWith(filePath) || filePath.endsWith(path)) {
+      return exports;
+    }
+  }
+  
+  return undefined;
+}
+
+/**
+ * Helper to resolve a full path
+ */
+private resolveFullPath(filePath: string): string {
+  try {
+    // Simple resolution - in practice would use proper path resolution
+    return filePath.startsWith("/") ? filePath : path.resolve(Deno.cwd(), filePath);
+  } catch {
+    return filePath; // Fallback to original path
+  }
+}
 
   /**
    * Import a macro from one module to another
@@ -380,22 +449,6 @@ export class MacroRegistry {
         }`,
       );
       return false; // Safer to return false on error
-    }
-  }
-
-  /**
-   * Get all macros exported from a module
-   */
-  getExportedMacros(filePath: string): Set<string> | undefined {
-    try {
-      return this.exportedMacros.get(filePath);
-    } catch (error) {
-      this.logger.warn(
-        `Error getting exported macros for ${filePath}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return new Set(); // Return empty set on error
     }
   }
 

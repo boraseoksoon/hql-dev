@@ -645,38 +645,137 @@ export function evaluateForMacro(
   }
 }
 
-/**
- * Evaluate a symbol expression during macro expansion
- */
+// Modified evaluateSymbol in src/s-exp/macro.ts to validate module property access
+
 function evaluateSymbol(expr: SSymbol, env: Environment, logger: Logger): SExp {
   try {
     try {
-      const value = env.lookup(expr.name);
-
-      // Convert JS values to S-expressions
-      if (typeof value === "object" && value !== null && "type" in value) {
-        return value as SExp;
-      } else if (Array.isArray(value)) {
-        return createList(
-          ...value.map((item) =>
-            typeof item === "object" && item !== null && "type" in item
-              ? item as SExp
-              : createLiteral(item)
-          ),
-        );
-      } else {
-        return createLiteral(value);
+      // Handle module property access (dot notation)
+      if (expr.name.includes(".") && !expr.name.startsWith(".")) {
+        const parts = expr.name.split(".");
+        const moduleName = parts[0];
+        const propertyPath = parts.slice(1).join(".");
+        
+        try {
+          // Get the module
+          const moduleValue = env.lookup(moduleName);
+          
+          // If we're in a macro expansion context, do validation
+          const macroContext = env.getCurrentMacroContext();
+          const currentFile = env.getCurrentFile();
+          
+          if (macroContext && currentFile) {
+            // Get the module file path by matching moduleExports or moduleMacros
+            let moduleFilePath: string | null = null;
+            
+            // Check in moduleExports first (non-macro modules)
+            for (const [modPath, exports] of env.moduleExports.entries()) {
+              if (modPath === moduleName || modPath.endsWith(`/${moduleName}`)) {
+                moduleFilePath = modPath;
+                break;
+              }
+            }
+            
+            // If not found, check in moduleMacros (macro modules)
+            if (!moduleFilePath) {
+              for (const [path, exportedMacros] of env.moduleMacros.entries()) {
+                if (path.endsWith(moduleName + ".hql") || path.includes(`/${moduleName}.hql`)) {
+                  moduleFilePath = path;
+                  break;
+                }
+              }
+            }
+            
+            // If this is accessing a known module, validate exports
+            if (moduleFilePath) {
+              // Try to get exported properties using getExportedModuleProps
+              const exportedProps = env.getExportedModuleProps?.(moduleFilePath);
+              
+              if (exportedProps && !exportedProps.has(propertyPath)) {
+                logger.warn(
+                  `Warning: Macro '${macroContext}' accessing non-exported property '${propertyPath}' from module '${moduleName}' (${moduleFilePath})`
+                );
+                // We'll allow it but warn for now to maintain compatibility
+              }
+            } else {
+              // Module filepath couldn't be determined, but access is allowed
+              logger.debug(
+                `Module file path for '${moduleName}' couldn't be determined for export validation`
+              );
+            }
+          }
+          
+          // If we get here, continue with the property access
+          let result = moduleValue;
+          
+          // Access the property
+          if (typeof result === "object" && result !== null && propertyPath in (result as Record<string, unknown>)) {
+            result = (result as Record<string, unknown>)[propertyPath];
+          } else {
+            // Property not found
+            logger.debug(`Property '${propertyPath}' not found in module '${moduleName}'`);
+            return expr; // Return the symbol as is
+          }
+          
+          // Convert to S-expression
+          if (typeof result === "object" && result !== null && "type" in result) {
+            return result as SExp;
+          } else if (Array.isArray(result)) {
+            return createList(
+              ...result.map((item) =>
+                typeof item === "object" && item !== null && "type" in item
+                  ? item as SExp
+                  : createLiteral(item)
+              ),
+            );
+          } else {
+            return createLiteral(result);
+          }
+        } catch (e) {
+          // For symbol lookup failures, provide more context in debug mode
+          logger.debug(
+            `Module property access failed: ${expr.name} during macro evaluation`
+          );
+          return expr; // Return symbol as is if not found
+        }
       }
-    } catch (e) {
-      // For symbol lookup failures, provide more context in debug mode
-      logger.debug(
-        `Symbol lookup failed for '${expr.name}' during macro evaluation`,
+
+      // Handle regular symbol lookups (unchanged)
+      try {
+        const value = env.lookup(expr.name);
+
+        // Convert JS values to S-expressions
+        if (typeof value === "object" && value !== null && "type" in value) {
+          return value as SExp;
+        } else if (Array.isArray(value)) {
+          return createList(
+            ...value.map((item) =>
+              typeof item === "object" && item !== null && "type" in item
+                ? item as SExp
+                : createLiteral(item)
+            ),
+          );
+        } else {
+          return createLiteral(value);
+        }
+      } catch (e) {
+        // For symbol lookup failures, provide more context in debug mode
+        logger.debug(
+          `Symbol lookup failed for '${expr.name}' during macro evaluation`,
+        );
+        return expr; // Return symbol as is if not found
+      }
+    } catch (error) {
+      logger.warn(
+        `Error evaluating symbol ${expr.name}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
-      return expr; // Return symbol as is if not found
+      return expr;
     }
   } catch (error) {
     logger.warn(
-      `Error evaluating symbol ${expr.name}: ${
+      `Unhandled error evaluating symbol ${expr.name}: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

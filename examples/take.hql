@@ -15,5 +15,4 @@
 (console.log "Taking 5 elements:" (take 5 numbers))
 (console.log "Taking more than available:" (take 15 numbers))
 
-;; Export the result for verification
 (export "result" (take 3 numbers))

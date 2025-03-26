@@ -16,7 +16,7 @@ import { Environment, Value } from "../environment.ts";
 import { defineUserMacro, evaluateForMacro } from "./macro.ts";
 import { parse } from "./parser.ts";
 import { Logger } from "../logger.ts";
-import { ImportError, MacroError } from "../transpiler/errors.ts";
+import { ImportError, MacroError, ValidationError } from "../transpiler/errors.ts";
 import { checkForHqlImports, processHqlImportsInJs } from "../bundler.ts";
 import { registerTempFile } from "../temp-file-tracker.ts";
 import {
@@ -1178,9 +1178,8 @@ function processDefnDeclaration(
   }
 }
 
-/**
- * Process file exports and definitions, including user-level macros
- */
+// Enhanced export tracking in src/s-exp/imports.ts
+
 function processFileExportsAndDefinitions(
   expressions: SExp[],
   env: Environment,
@@ -1189,6 +1188,10 @@ function processFileExportsAndDefinitions(
   logger: Logger,
 ): void {
   try {
+    // First register all exports to collect them
+    const exportDefinitions: { name: string, value: SExp | null }[] = [];
+    
+    // Process macros first to make them available early
     for (const expr of expressions) {
       if (
         expr.type === "list" && expr.elements.length > 0 &&
@@ -1200,6 +1203,7 @@ function processFileExportsAndDefinitions(
           if (error instanceof MacroError) {
             throw error;
           }
+
           const macroName =
             expr.elements.length > 1 && isSymbol(expr.elements[1])
               ? expr.elements[1].name
@@ -1215,21 +1219,91 @@ function processFileExportsAndDefinitions(
         }
       }
     }
+    
+    // Collect all exports
     for (const expr of expressions) {
       if (
-        expr.type !== "list" || expr.elements.length === 0 ||
-        !isSymbol(expr.elements[0])
-      ) continue;
-      const op = expr.elements[0].name;
-      if (
-        op === "export" && expr.elements.length === 2 &&
-        expr.elements[1].type === "list"
+        expr.type === "list" && expr.elements.length > 0 &&
+        isSymbol(expr.elements[0]) && expr.elements[0].name === "export"
       ) {
+        // Handle vector exports: (export [symbol1, symbol2, ...])
+        if (expr.elements.length === 2 && expr.elements[1].type === "list") {
+          const vectorElements = (expr.elements[1] as SList).elements;
+          const elements = processVectorElements(vectorElements);
+          
+          for (const elem of elements) {
+            if (isSymbol(elem)) {
+              const symbolName = (elem as SSymbol).name;
+              exportDefinitions.push({ name: symbolName, value: null });
+              logger.debug(`Collected vector export: ${symbolName}`);
+            }
+          }
+        } 
+        // Handle string-based exports with expression: (export "name" expr)
+        else if (
+          expr.elements.length === 3 &&
+          expr.elements[1].type === "literal" &&
+          typeof (expr.elements[1] as SLiteral).value === "string"
+        ) {
+          const exportName = (expr.elements[1] as SLiteral).value as string;
+          const exportValue = expr.elements[2]; // Store the actual expression
+          
+          // Store both the name and expression for later evaluation
+          exportDefinitions.push({ name: exportName, value: exportValue });
+          logger.debug(`Collected string export with expression: "${exportName}"`);
+        }
+      }
+    }
+    
+    // Process all exports
+    for (const { name, value } of exportDefinitions) {
+      try {
+        // Handle macro exports
+        if (env.hasModuleMacro(filePath, name)) {
+          env.exportMacro(filePath, name);
+          logger.debug(`Marked macro ${name} as exported from ${filePath}`);
+          continue;
+        }
+        
+        // Handle exports with expressions
+        if (value) {
+          try {
+            // Evaluate the expression to get the result
+            const evaluatedValue = evaluateForMacro(value, env, logger);
+            moduleExports[name] = evaluatedValue;
+            logger.debug(`Added export "${name}" with evaluated expression`);
+            continue;
+          } catch (evalError) {
+            logger.debug(`Failed to evaluate expression for export "${name}": ${
+              evalError instanceof Error ? evalError.message : String(evalError)
+            }`);
+            // Fall through to symbol lookup as fallback
+          }
+        }
+        
+        // Fall back to symbol lookup for regular variables
         try {
-          processVectorExport(expr, env, moduleExports, filePath, logger);
-        } catch (error) {
+          const lookupValue = env.lookup(name);
+          moduleExports[name] = lookupValue;
+          logger.debug(`Added export "${name}" with looked-up value`);
+        } catch (lookupError) {
+          // If symbol doesn't exist in a .hql file, just log a warning
+          logger.warn(`Symbol not found for export: "${name}"`);
+          if (filePath.endsWith('.hql')) {
+            // Add a placeholder to maintain backward compatibility
+            moduleExports[name] = null;
+          } else {
+            throw lookupError;
+          }
+        }
+      } catch (error) {
+        // Only throw if we can't recover
+        if (!(error instanceof ValidationError && error.message.includes("Symbol not found"))) {
+          logger.debug(`Failed to export symbol "${name}": ${
+            error instanceof Error ? error.message : String(error)
+          }`);
           throw new ImportError(
-            `Error processing vector export: ${
+            `Failed to export symbol "${name}": ${
               error instanceof Error ? error.message : String(error)
             }`,
             filePath,
@@ -1250,65 +1324,51 @@ function processFileExportsAndDefinitions(
   }
 }
 
-/**
- * Process a vector-based export
- */
-function processVectorExport(
-  expr: SList,
-  env: Environment,
-  moduleExports: Record<string, Value>,
-  filePath: string,
+// Helper function to collect exported symbol names
+function collectExportedSymbols(
+  exportExpr: SList,
+  exportedSymbols: Set<string>,
   logger: Logger,
 ): void {
   try {
-    if (expr.elements.length !== 2 || expr.elements[1].type !== "list") {
-      throw new ImportError(
-        "Invalid export syntax, expected (export [symbol1, symbol2, ...])",
-        filePath,
-        filePath,
-      );
-    }
-    const exportVector = expr.elements[1] as SList;
-    const elements = processVectorElements(exportVector.elements);
-    for (const element of elements) {
-      if (!isSymbol(element)) {
-        throw new ImportError(
-          `Export vector can only contain symbols, got: ${element.type}`,
-          filePath,
-          filePath,
-        );
+    // Handle vector-based exports: (export [symbol1, symbol2, ...])
+    if (exportExpr.elements.length === 2 && exportExpr.elements[1].type === "list") {
+      const vectorElements = (exportExpr.elements[1] as SList).elements;
+      // Process the vector elements, filtering out commas
+      const elements = processVectorElements(vectorElements);
+      
+      for (const elem of elements) {
+        if (isSymbol(elem)) {
+          const symbolName = (elem as SSymbol).name;
+          exportedSymbols.add(symbolName);
+          logger.debug(`Collected vector export: ${symbolName}`);
+        }
       }
-      const symbolName = (element as SSymbol).name;
-      if (env.hasModuleMacro(filePath, symbolName)) {
-        env.exportMacro(filePath, symbolName);
-        logger.debug(
-          `Marked macro ${symbolName} as exported from ${filePath}`,
-        );
-        continue;
-      }
-      try {
-        const value = env.lookup(symbolName);
-        moduleExports[symbolName] = value;
-        logger.debug(`Added export "${symbolName}" with value`);
-      } catch (error) {
-        logger.debug(`Failed to lookup symbol "${symbolName}" for export`);
-        throw new ImportError(
-          `Failed to export symbol "${symbolName}": ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          filePath,
-          filePath,
-          error instanceof Error ? error : undefined,
-        );
+    } 
+    // Handle string-based exports: (export "name" value)
+    else if (
+      exportExpr.elements.length === 3 &&
+      exportExpr.elements[1].type === "literal" &&
+      typeof (exportExpr.elements[1] as SLiteral).value === "string"
+    ) {
+      const exportName = (exportExpr.elements[1] as SLiteral).value as string;
+      
+      // If the third element is a symbol, use its name
+      if (exportExpr.elements[2].type === "symbol") {
+        const symbolName = (exportExpr.elements[2] as SSymbol).name;
+        exportedSymbols.add(symbolName);
+        logger.debug(`Collected string export: "${exportName}" -> ${symbolName}`);
+      } else {
+        // Otherwise use the export name itself
+        exportedSymbols.add(exportName);
+        logger.debug(`Collected string export: ${exportName}`);
       }
     }
   } catch (error) {
-    throw new ImportError(
-      `Processing vector export: ${
+    logger.warn(
+      `Error collecting exported symbols: ${
         error instanceof Error ? error.message : String(error)
-      }`,
-      filePath,
-      filePath,
+      }`
     );
   }
 }

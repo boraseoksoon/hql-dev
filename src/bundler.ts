@@ -122,8 +122,6 @@ export async function processHqlImportsInJs(
       imports.push({ full: fullImport, path: importPath });
     }
 
-    console.log("imports : ", imports)
-
     logger.debug(`Found ${imports.length} HQL imports in JS file`);
 
     // Process each HQL import
