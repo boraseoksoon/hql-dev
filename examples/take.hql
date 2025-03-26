@@ -1,18 +1,25 @@
-;; take-test.hql - Simple test for the take function from stdlib.hql
+;; examples/take.hql - Test the range functionality
 
-;; Import the take function from stdlib
-(import [take] from "../lib/stdlib/stdlib.hql")
+(import [take, range] from "../lib/stdlib/stdlib.hql")
 
-;; Create a test array
-(def numbers [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+;; Test with infinite range - this would crash with an eager implementation
+(console.log "First 5 elements from infinite range:")
+(console.log (take 5 (range)))
 
-;; Test the take function
-(console.log "Original array:" numbers)
-(console.log "First 3 elements:" (take 3 numbers))
+;; Test with various range configurations
+(console.log "\nRange with end only:")
+(console.log (take 5 (range 10)))
 
-;; Test with different values
-(console.log "Taking 0 elements:" (take 0 numbers))
-(console.log "Taking 5 elements:" (take 5 numbers))
-(console.log "Taking more than available:" (take 15 numbers))
+(console.log "\nRange with start and end:")
+(console.log (take 5 (range 5 15)))
 
-(export "result" (take 3 numbers))
+(console.log "\nRange with start, end, and step:")
+(console.log (take 5 (range 0 20 4)))
+
+;; Test negative step
+(console.log "\nRange with negative step:")
+(console.log (take 5 (range 10 -10 -2)))
+
+;; Test large numbers that would be inefficient with eager evaluation
+(console.log "\nFirst 5 numbers after 10000:")
+(console.log (take 5 (range 10000 Infinity)))
