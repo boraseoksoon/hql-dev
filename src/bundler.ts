@@ -97,9 +97,6 @@ export function checkForHqlImports(jsSource: string, logger: Logger): boolean {
   return hasHqlImports;
 }
 
-/**
- * Process HQL imports in a JavaScript file
- */
 export async function processHqlImportsInJs(
   jsSource: string,
   jsFilePath: string,
@@ -125,16 +122,66 @@ export async function processHqlImportsInJs(
       imports.push({ full: fullImport, path: importPath });
     }
 
+    console.log("imports : ", imports)
+
     logger.debug(`Found ${imports.length} HQL imports in JS file`);
 
     // Process each HQL import
     for (const importInfo of imports) {
       const hqlPath = importInfo.path;
-      const resolvedHqlPath = path.resolve(baseDir, hqlPath);
-
-      logger.debug(
-        `Processing HQL import: ${hqlPath} (resolved: ${resolvedHqlPath})`,
-      );
+      
+      // Try multiple strategies to resolve the import
+      let resolvedHqlPath: string | null = null;
+      
+      // Strategy 1: Resolve relative to the JavaScript file
+      try {
+        const pathFromJs = path.resolve(baseDir, hqlPath);
+        await Deno.stat(pathFromJs);
+        resolvedHqlPath = pathFromJs;
+        logger.debug(`Resolved import relative to JS file: ${pathFromJs}`);
+      } catch {
+        // Failed to resolve relative to JS file, try other strategies
+      }
+      
+      // Strategy 2: If sourceDir is available, try resolving relative to it
+      if (!resolvedHqlPath && options.sourceDir) {
+        try {
+          const pathFromSource = path.resolve(options.sourceDir, hqlPath);
+          await Deno.stat(pathFromSource);
+          resolvedHqlPath = pathFromSource;
+          logger.debug(`Resolved import relative to source dir: ${pathFromSource}`);
+        } catch {
+          // Failed to resolve relative to source dir
+        }
+      }
+      
+      // Strategy 3: For relative paths, try resolving from lib directory
+      if (!resolvedHqlPath && (hqlPath.startsWith('./') || hqlPath.startsWith('../'))) {
+        try {
+          const pathFromLib = path.resolve(Deno.cwd(), "lib", hqlPath.replace(/^\.\//, ""));
+          await Deno.stat(pathFromLib);
+          resolvedHqlPath = pathFromLib;
+          logger.debug(`Resolved import relative to lib dir: ${pathFromLib}`);
+        } catch {
+          // Failed to resolve relative to lib directory
+        }
+      }
+      
+      // Strategy 4: Try resolving relative to CWD as last resort
+      if (!resolvedHqlPath) {
+        try {
+          const pathFromCwd = path.resolve(Deno.cwd(), hqlPath);
+          await Deno.stat(pathFromCwd);
+          resolvedHqlPath = pathFromCwd;
+          logger.debug(`Resolved import relative to CWD: ${pathFromCwd}`);
+        } catch {
+          // Failed to resolve relative to CWD
+        }
+      }
+      
+      if (!resolvedHqlPath) {
+        throw new Error(`Could not resolve import: ${hqlPath} from ${jsFilePath}`);
+      }
 
       // Generate output path for the transpiled HQL file
       const hqlOutputPath = resolvedHqlPath.replace(/\.hql$/, ".js");
