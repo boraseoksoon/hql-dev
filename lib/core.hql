@@ -72,17 +72,6 @@
           `(if ~test ~(first body) nil)
           `(if ~test (do ~@body) nil))))
 
-(defmacro let (bindings & body)
-  (if (= (length bindings) 0)
-      `(do ~@body)
-      `((fn (~(first bindings))
-           ~(if (> (length bindings) 2)
-                `(let ~(rest (rest bindings)) ~@body)
-                (if (= (length body) 1)
-                    (first body)
-                    `(do ~@body))))
-        ~(second bindings))))
-
 (defmacro if-let (binding then-expr else-expr)
   `(let (~(first binding) ~(second binding))
      (if ~(first binding)

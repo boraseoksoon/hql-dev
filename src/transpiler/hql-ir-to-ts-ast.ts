@@ -106,6 +106,10 @@ export function convertIRNode(
         return createExpressionStatement(
           convertInteropIIFE(node as IR.IRInteropIIFE),
         );
+      case IR.IRNodeType.AssignmentExpression:
+        return createExpressionStatement(
+          convertAssignmentExpression(node as IR.IRAssignmentExpression)
+        );
       case IR.IRNodeType.JsImportReference:
         return convertJsImportReference(node as IR.IRJsImportReference);
       case IR.IRNodeType.CommentBlock:
@@ -713,7 +717,9 @@ function convertVariableDeclaration(
   node: IR.IRVariableDeclaration,
 ): ts.VariableStatement {
   try {
+    // Get the correct node flags based on the kind
     const nodeFlags = getVariableNodeFlags(node.kind);
+    
     const declarations = node.declarations.map((decl) => {
       return ts.factory.createVariableDeclaration(
         convertIdentifier(decl.id),
@@ -722,6 +728,7 @@ function convertVariableDeclaration(
         convertIRExpr(decl.init),
       );
     });
+    
     return ts.factory.createVariableStatement(
       undefined,
       ts.factory.createVariableDeclarationList(declarations, nodeFlags),
@@ -1282,6 +1289,8 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
         return convertFunctionExpression(node as IR.IRFunctionExpression);
       case IR.IRNodeType.InteropIIFE:
         return convertInteropIIFE(node as IR.IRInteropIIFE);
+      case IR.IRNodeType.AssignmentExpression:
+        return convertAssignmentExpression(node as IR.IRAssignmentExpression);
       default:
         throw new CodeGenError(
           `Cannot convert node of type ${
@@ -1336,6 +1345,27 @@ function createModuleVariableName(source: string): string {
       }`,
       "module variable name creation",
       source,
+    );
+  }
+}
+
+/**
+ * Convert an assignment expression.
+ */
+function convertAssignmentExpression(node: IR.IRAssignmentExpression): ts.Expression {
+  try {
+    return ts.factory.createBinaryExpression(
+      convertIRExpr(node.left),
+      ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+      convertIRExpr(node.right)
+    );
+  } catch (error) {
+    throw new CodeGenError(
+      `Failed to convert assignment expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "assignment expression",
+      node,
     );
   }
 }

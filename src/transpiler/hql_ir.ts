@@ -52,6 +52,7 @@ export enum IRNodeType {
 
   // For representing a JS import reference from (js-import "module")
   JsImportReference,
+  AssignmentExpression
 }
 
 export interface IRNode {
@@ -257,4 +258,11 @@ export interface IRImportDeclaration extends IRNode {
   type: IRNodeType.ImportDeclaration;
   source: string;
   specifiers: IRImportSpecifier[];
+}
+
+export interface IRAssignmentExpression extends IRNode {
+  type: IRNodeType.AssignmentExpression;
+  operator: string;
+  left: IRNode;
+  right: IRNode;
 }
