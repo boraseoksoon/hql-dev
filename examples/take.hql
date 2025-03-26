@@ -2,6 +2,8 @@
 
 (import [take, range] from "../lib/stdlib/stdlib.hql")
 
+(take 5 (range 10))
+
 ;; Test with infinite range - this would crash with an eager implementation
 (console.log "First 5 elements from infinite range:")
 (console.log (take 5 (range)))

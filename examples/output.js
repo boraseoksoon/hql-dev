@@ -7,6 +7,4 @@ function minus(x, y) {
 function add(x, y) {
   return minus(x, y);
 }
-export {
-  add
-};
+export { add };

@@ -147,131 +147,135 @@ export class MacroRegistry {
 
   // Enhanced exportMacro in src/macro-registry.ts for better export tracking
 
-/**
- * Export a macro from a module
- */
-exportMacro(filePath: string, macroName: string): void {
-  try {
-    // Validate inputs
-    if (!filePath) {
-      throw new MacroError(
-        "File path required for exporting macro",
-        macroName,
-        undefined,
-      );
-    }
+  /**
+   * Export a macro from a module
+   */
+  exportMacro(filePath: string, macroName: string): void {
+    try {
+      // Validate inputs
+      if (!filePath) {
+        throw new MacroError(
+          "File path required for exporting macro",
+          macroName,
+          undefined,
+        );
+      }
 
-    if (!macroName) {
+      if (!macroName) {
+        throw new MacroError(
+          "Cannot export macro with empty name",
+          "export-macro",
+          filePath,
+        );
+      }
+
+      // Verify the macro exists
+      if (!this.hasModuleMacro(filePath, macroName)) {
+        this.logger.warn(
+          `Cannot export non-existent macro ${macroName} from ${filePath}`,
+        );
+        throw new MacroError(
+          `Cannot export non-existent macro ${macroName}`,
+          macroName,
+          filePath,
+        );
+      }
+
+      this.logger.debug(`Exporting macro ${macroName} from ${filePath}`);
+
+      // Get or create the file's export registry
+      if (!this.exportedMacros.has(filePath)) {
+        this.exportedMacros.set(filePath, new Set<string>());
+      }
+
+      // Mark the macro as exported
+      this.exportedMacros.get(filePath)!.add(macroName);
+
+      // Register in a persistent store keyed by full path
+      this.persistExport(filePath, macroName);
+    } catch (error) {
+      if (error instanceof MacroError) {
+        throw error; // Re-throw MacroError directly
+      }
+
+      // Wrap other errors in a MacroError
       throw new MacroError(
-        "Cannot export macro with empty name",
-        "export-macro",
+        `Failed to export macro ${macroName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        macroName,
         filePath,
       );
     }
+  }
 
-    // Verify the macro exists
-    if (!this.hasModuleMacro(filePath, macroName)) {
-      this.logger.warn(
-        `Cannot export non-existent macro ${macroName} from ${filePath}`,
-      );
-      throw new MacroError(
-        `Cannot export non-existent macro ${macroName}`,
-        macroName,
-        filePath,
-      );
+  // Add a persistent export registry to improve tracking
+  private persistentExports = new Map<string, Set<string>>();
+
+  /**
+   * Register an export persistently
+   */
+  private persistExport(filePath: string, exportName: string): void {
+    const absolutePath = this.resolveFullPath(filePath);
+
+    if (!this.persistentExports.has(absolutePath)) {
+      this.persistentExports.set(absolutePath, new Set<string>());
     }
 
-    this.logger.debug(`Exporting macro ${macroName} from ${filePath}`);
-
-    // Get or create the file's export registry
-    if (!this.exportedMacros.has(filePath)) {
-      this.exportedMacros.set(filePath, new Set<string>());
-    }
-
-    // Mark the macro as exported
-    this.exportedMacros.get(filePath)!.add(macroName);
-    
-    // Register in a persistent store keyed by full path
-    this.persistExport(filePath, macroName);
-  } catch (error) {
-    if (error instanceof MacroError) {
-      throw error; // Re-throw MacroError directly
-    }
-
-    // Wrap other errors in a MacroError
-    throw new MacroError(
-      `Failed to export macro ${macroName}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      macroName,
-      filePath,
+    this.persistentExports.get(absolutePath)!.add(exportName);
+    this.logger.debug(
+      `Registered persistent export: ${exportName} from ${absolutePath}`,
     );
   }
-}
 
-// Add a persistent export registry to improve tracking
-private persistentExports = new Map<string, Set<string>>();
+  /**
+   * Get exported macros for a file with better path resolution
+   * This method enhances the original getExportedMacros with more robust path matching
+   */
+  getExportedMacros(filePath: string): Set<string> | undefined {
+    // Try direct lookup first
+    const directExports = this.exportedMacros.get(filePath);
+    if (directExports && directExports.size > 0) {
+      return directExports;
+    }
 
-/**
- * Register an export persistently
- */
-private persistExport(filePath: string, exportName: string): void {
-  const absolutePath = this.resolveFullPath(filePath);
-  
-  if (!this.persistentExports.has(absolutePath)) {
-    this.persistentExports.set(absolutePath, new Set<string>());
-  }
-  
-  this.persistentExports.get(absolutePath)!.add(exportName);
-  this.logger.debug(`Registered persistent export: ${exportName} from ${absolutePath}`);
-}
+    // Try resolved path lookup
+    const absolutePath = this.resolveFullPath(filePath);
+    const persistentExports = this.persistentExports.get(absolutePath);
+    if (persistentExports && persistentExports.size > 0) {
+      return persistentExports;
+    }
 
-/**
- * Get exported macros for a file with better path resolution
- * This method enhances the original getExportedMacros with more robust path matching
- */
-getExportedMacros(filePath: string): Set<string> | undefined {
-  // Try direct lookup first
-  const directExports = this.exportedMacros.get(filePath);
-  if (directExports && directExports.size > 0) {
-    return directExports;
+    // Try path-based matching as fallback
+    for (const [path, exports] of this.persistentExports.entries()) {
+      if (path.endsWith(filePath) || filePath.endsWith(path)) {
+        return exports;
+      }
+    }
+
+    // Finally, try path-based matching on the original exportedMacros map as well
+    for (const [path, exports] of this.exportedMacros.entries()) {
+      if (path.endsWith(filePath) || filePath.endsWith(path)) {
+        return exports;
+      }
+    }
+
+    return undefined;
   }
-  
-  // Try resolved path lookup
-  const absolutePath = this.resolveFullPath(filePath);
-  const persistentExports = this.persistentExports.get(absolutePath);
-  if (persistentExports && persistentExports.size > 0) {
-    return persistentExports;
-  }
-  
-  // Try path-based matching as fallback
-  for (const [path, exports] of this.persistentExports.entries()) {
-    if (path.endsWith(filePath) || filePath.endsWith(path)) {
-      return exports;
+
+  /**
+   * Helper to resolve a full path
+   */
+  private resolveFullPath(filePath: string): string {
+    try {
+      // Simple resolution - in practice would use proper path resolution
+      return filePath.startsWith("/")
+        ? filePath
+        : path.resolve(Deno.cwd(), filePath);
+    } catch {
+      return filePath; // Fallback to original path
     }
   }
-  
-  // Finally, try path-based matching on the original exportedMacros map as well
-  for (const [path, exports] of this.exportedMacros.entries()) {
-    if (path.endsWith(filePath) || filePath.endsWith(path)) {
-      return exports;
-    }
-  }
-  
-  return undefined;
-}
-
-/**
- * Helper to resolve a full path
- */
-private resolveFullPath(filePath: string): string {
-  try {
-    // Simple resolution - in practice would use proper path resolution
-    return filePath.startsWith("/") ? filePath : path.resolve(Deno.cwd(), filePath);
-  } catch {
-    return filePath; // Fallback to original path
-  }
-}
 
   /**
    * Import a macro from one module to another
