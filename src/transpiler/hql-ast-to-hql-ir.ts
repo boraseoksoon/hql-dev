@@ -2322,136 +2322,125 @@ function transformComparisonOp(op: string, args: IR.IRNode[]): IR.IRNode {
  * 2. (let (name1 value1 name2 value2...) body...) - Local immutable binding block
  */
 function transformLet(list: ListNode, currentDir: string): IR.IRNode {
-  return perform(
-    () => {
-      // Handle global binding form: (let name value)
-      if (list.elements.length === 3 && list.elements[1].type === "symbol") {
-        const nameNode = list.elements[1] as SymbolNode;
-        const id = transformSymbol(nameNode) as IR.IRIdentifier;
-        const init = transformNode(list.elements[2], currentDir);
-        
-        if (!init) {
-          throw new ValidationError(
-            "Let value transformed to null",
-            "let value",
-            "valid expression",
-            "null",
-          );
-        }
-
-        return {
-          type: IR.IRNodeType.VariableDeclaration,
-          kind: "const", // Use 'const' for immutable bindings
-          declarations: [
-            {
-              type: IR.IRNodeType.VariableDeclarator,
-              id,
-              init,
-            },
-          ],
-        } as IR.IRVariableDeclaration;
-      }
-      
-      // Handle local binding form: (let (name1 value1 name2 value2...) body...)
-      if (list.elements.length >= 2 && list.elements[1].type === "list") {
-        const bindingsNode = list.elements[1] as ListNode;
-        const bodyExprs = list.elements.slice(2);
-        
-        // Process bindings as pairs
-        const bindings: Array<{name: string, value: IR.IRNode}> = [];
-        
-        for (let i = 0; i < bindingsNode.elements.length; i += 2) {
-          if (i + 1 >= bindingsNode.elements.length) {
-            throw new ValidationError(
-              "Incomplete binding pair in let",
-              "let binding",
-              "name-value pair",
-              "incomplete pair",
-            );
-          }
-          
-          const nameNode = bindingsNode.elements[i];
-          if (nameNode.type !== "symbol") {
-            throw new ValidationError(
-              "Binding name must be a symbol",
-              "let binding name",
-              "symbol",
-              nameNode.type,
-            );
-          }
-          
-          const name = (nameNode as SymbolNode).name;
-          const valueExpr = transformNode(bindingsNode.elements[i + 1], currentDir);
-          
-          if (!valueExpr) {
-            throw new ValidationError(
-              `Binding value for '${name}' transformed to null`,
-              "let binding value",
-              "valid expression",
-              "null",
-            );
-          }
-          
-          bindings.push({ name, value: valueExpr });
-        }
-        
-        // Create function parameters for each binding name
-        const paramNames: IR.IRIdentifier[] = bindings.map(b => ({
-          type: IR.IRNodeType.Identifier,
-          name: sanitizeIdentifier(b.name),
-        } as IR.IRIdentifier));
-        
-        // Create arguments for each binding value
-        const argumentValues: IR.IRNode[] = bindings.map(b => b.value);
-        
-        // Process body expressions
-        const bodyNodes: IR.IRNode[] = [];
-        
-        // Process all but the last body expression as statements
-        for (let i = 0; i < bodyExprs.length - 1; i++) {
-          const bodyNode = transformNode(bodyExprs[i], currentDir);
-          if (bodyNode) {
-            bodyNodes.push(bodyNode);
-          }
-        }
-        
-        // The last body expression becomes the return value
-        if (bodyExprs.length > 0) {
-          const lastExpr = transformNode(bodyExprs[bodyExprs.length - 1], currentDir);
-          if (lastExpr) {
-            bodyNodes.push({
-              type: IR.IRNodeType.ReturnStatement,
-              argument: lastExpr,
-            } as IR.IRReturnStatement);
-          }
-        }
-        
-        // Create IIFE (Immediately Invoked Function Expression)
-        return {
-          type: IR.IRNodeType.CallExpression,
-          callee: {
-            type: IR.IRNodeType.FunctionExpression,
-            id: null,
-            params: paramNames,
-            body: {
-              type: IR.IRNodeType.BlockStatement,
-              body: bodyNodes,
-            } as IR.IRBlockStatement,
-          } as IR.IRFunctionExpression,
-          arguments: argumentValues,
-        } as IR.IRCallExpression;
-      }
-      
+  // Handle global binding form: (let name value)
+  if (list.elements.length === 3 && list.elements[1].type === "symbol") {
+    const nameNode = list.elements[1] as SymbolNode;
+    const id = transformSymbol(nameNode) as IR.IRIdentifier;
+    const init = transformNode(list.elements[2], currentDir);
+    
+    if (!init) {
       throw new ValidationError(
-        "Invalid let form",
-        "let expression",
-        "(let name value) or (let (bindings...) body...)",
-        "invalid form",
+        "Let value transformed to null",
+        "let value",
+        "valid expression",
+        "null",
       );
-    },
-    "transformLet",
-    TransformError,
-    [list],
+    }
+
+    return {
+      type: IR.IRNodeType.VariableDeclaration,
+      kind: "const", // Use 'const' for immutable bindings
+      declarations: [
+        {
+          type: IR.IRNodeType.VariableDeclarator,
+          id,
+          init,
+        },
+      ],
+    } as IR.IRVariableDeclaration;
+  }
+  
+  // Handle local binding form: (let (name1 value1 name2 value2...) body...)
+  if (list.elements.length >= 2 && list.elements[1].type === "list") {
+    const bindingsNode = list.elements[1] as ListNode;
+    const bodyExprs = list.elements.slice(2);
+    
+    // Process bindings as pairs
+    const bindings: Array<{name: string, value: IR.IRNode}> = [];
+    
+    for (let i = 0; i < bindingsNode.elements.length; i += 2) {
+      if (i + 1 >= bindingsNode.elements.length) {
+        throw new ValidationError(
+          "Incomplete binding pair in let",
+          "let binding",
+          "name-value pair",
+          "incomplete pair",
+        );
+      }
+      
+      const nameNode = bindingsNode.elements[i];
+      if (nameNode.type !== "symbol") {
+        throw new ValidationError(
+          "Binding name must be a symbol",
+          "let binding name",
+          "symbol",
+          nameNode.type,
+        );
+      }
+      
+      const name = (nameNode as SymbolNode).name;
+      const valueExpr = transformNode(bindingsNode.elements[i + 1], currentDir);
+      
+      if (!valueExpr) {
+        throw new ValidationError(
+          `Binding value for '${name}' transformed to null`,
+          "let binding value",
+          "valid expression",
+          "null",
+        );
+      }
+      
+      bindings.push({ name, value: valueExpr });
+    }
+    
+    // Create variable declarations for all bindings
+    const variableDeclarations: IR.IRNode[] = bindings.map(b => ({
+      type: IR.IRNodeType.VariableDeclaration,
+      kind: "const", // Use 'const' for immutable bindings
+      declarations: [
+        {
+          type: IR.IRNodeType.VariableDeclarator,
+          id: {
+            type: IR.IRNodeType.Identifier,
+            name: sanitizeIdentifier(b.name),
+          } as IR.IRIdentifier,
+          init: b.value,
+        },
+      ],
+    } as IR.IRVariableDeclaration));
+    
+    // Process body expressions
+    const bodyStatements: IR.IRNode[] = [];
+    
+    // Process all body expressions
+    for (const bodyExpr of bodyExprs) {
+      const processedExpr = transformNode(bodyExpr, currentDir);
+      if (processedExpr) {
+        bodyStatements.push(processedExpr);
+      }
+    }
+    
+    // Create an IIFE to contain our block of code
+    return {
+      type: IR.IRNodeType.CallExpression,
+      callee: {
+        type: IR.IRNodeType.FunctionExpression,
+        id: null,
+        params: [],
+        body: {
+          type: IR.IRNodeType.BlockStatement,
+          body: [...variableDeclarations, ...bodyStatements],
+        } as IR.IRBlockStatement,
+      } as IR.IRFunctionExpression,
+      arguments: [],
+    } as IR.IRCallExpression;
+  }
+  
+  throw new ValidationError(
+    "Invalid let form",
+    "let expression",
+    "(let name value) or (let (bindings...) body...)",
+    "invalid form",
   );
 }
 
@@ -2462,160 +2451,125 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
  * 2. (var (name1 value1 name2 value2...) body...) - Local mutable binding block
  */
 function transformVar(list: ListNode, currentDir: string): IR.IRNode {
-  return perform(
-    () => {
-      // Handle global binding form: (var name value)
-      if (list.elements.length === 3 && list.elements[1].type === "symbol") {
-        const nameNode = list.elements[1] as SymbolNode;
-        const id = transformSymbol(nameNode) as IR.IRIdentifier;
-        const init = transformNode(list.elements[2], currentDir);
-        
-        if (!init) {
-          throw new ValidationError(
-            "Var value transformed to null",
-            "var value",
-            "valid expression",
-            "null",
-          );
-        }
-
-        return {
-          type: IR.IRNodeType.VariableDeclaration,
-          kind: "let", // Use 'let' for mutable bindings
-          declarations: [
-            {
-              type: IR.IRNodeType.VariableDeclarator,
-              id,
-              init,
-            },
-          ],
-        } as IR.IRVariableDeclaration;
-      }
-      
-      // Handle local binding form: (var (name1 value1 name2 value2...) body...)
-      if (list.elements.length >= 2 && list.elements[1].type === "list") {
-        const bindingsNode = list.elements[1] as ListNode;
-        const bodyExprs = list.elements.slice(2);
-        
-        // Process bindings as pairs
-        const bindings: Array<{name: string, value: IR.IRNode}> = [];
-        
-        for (let i = 0; i < bindingsNode.elements.length; i += 2) {
-          if (i + 1 >= bindingsNode.elements.length) {
-            throw new ValidationError(
-              "Incomplete binding pair in var",
-              "var binding",
-              "name-value pair",
-              "incomplete pair",
-            );
-          }
-          
-          const nameNode = bindingsNode.elements[i];
-          if (nameNode.type !== "symbol") {
-            throw new ValidationError(
-              "Binding name must be a symbol",
-              "var binding name",
-              "symbol",
-              nameNode.type,
-            );
-          }
-          
-          const name = (nameNode as SymbolNode).name;
-          const valueExpr = transformNode(bindingsNode.elements[i + 1], currentDir);
-          
-          if (!valueExpr) {
-            throw new ValidationError(
-              `Binding value for '${name}' transformed to null`,
-              "var binding value",
-              "valid expression",
-              "null",
-            );
-          }
-          
-          bindings.push({ name, value: valueExpr });
-        }
-        
-        // For var bindings, we need to:
-        // 1. Create an IIFE that receives the initial values
-        // 2. Create local mutable variables inside the function
-        // 3. Process the body with those variables in scope
-        
-        // Create function parameters for each binding name
-        const paramNames: IR.IRIdentifier[] = bindings.map((_, i) => ({
-          type: IR.IRNodeType.Identifier,
-          name: `param_${i}`,
-        } as IR.IRIdentifier));
-        
-        // Create arguments for each binding value
-        const argumentValues: IR.IRNode[] = bindings.map(b => b.value);
-        
-        // Create local variable declarations
-        const variableDeclarations: IR.IRNode[] = bindings.map((b, i) => ({
-          type: IR.IRNodeType.VariableDeclaration,
-          kind: "let", // Use 'let' for mutable bindings
-          declarations: [
-            {
-              type: IR.IRNodeType.VariableDeclarator,
-              id: {
-                type: IR.IRNodeType.Identifier,
-                name: sanitizeIdentifier(b.name),
-              } as IR.IRIdentifier,
-              init: {
-                type: IR.IRNodeType.Identifier,
-                name: `param_${i}`,
-              } as IR.IRIdentifier,
-            },
-          ],
-        } as IR.IRVariableDeclaration));
-        
-        // Process body expressions
-        const bodyNodes: IR.IRNode[] = [...variableDeclarations];
-        
-        // Process all but the last body expression as statements
-        for (let i = 0; i < bodyExprs.length - 1; i++) {
-          const bodyNode = transformNode(bodyExprs[i], currentDir);
-          if (bodyNode) {
-            bodyNodes.push(bodyNode);
-          }
-        }
-        
-        // The last body expression becomes the return value
-        if (bodyExprs.length > 0) {
-          const lastExpr = transformNode(bodyExprs[bodyExprs.length - 1], currentDir);
-          if (lastExpr) {
-            bodyNodes.push({
-              type: IR.IRNodeType.ReturnStatement,
-              argument: lastExpr,
-            } as IR.IRReturnStatement);
-          }
-        }
-        
-        // Create IIFE (Immediately Invoked Function Expression)
-        return {
-          type: IR.IRNodeType.CallExpression,
-          callee: {
-            type: IR.IRNodeType.FunctionExpression,
-            id: null,
-            params: paramNames,
-            body: {
-              type: IR.IRNodeType.BlockStatement,
-              body: bodyNodes,
-            } as IR.IRBlockStatement,
-          } as IR.IRFunctionExpression,
-          arguments: argumentValues,
-        } as IR.IRCallExpression;
-      }
-      
+  // Handle global binding form: (var name value)
+  if (list.elements.length === 3 && list.elements[1].type === "symbol") {
+    const nameNode = list.elements[1] as SymbolNode;
+    const id = transformSymbol(nameNode) as IR.IRIdentifier;
+    const init = transformNode(list.elements[2], currentDir);
+    
+    if (!init) {
       throw new ValidationError(
-        "Invalid var form",
-        "var expression",
-        "(var name value) or (var (bindings...) body...)",
-        "invalid form",
+        "Var value transformed to null",
+        "var value",
+        "valid expression",
+        "null",
       );
-    },
-    "transformVar",
-    TransformError,
-    [list],
+    }
+
+    return {
+      type: IR.IRNodeType.VariableDeclaration,
+      kind: "let", // Use 'let' for mutable bindings
+      declarations: [
+        {
+          type: IR.IRNodeType.VariableDeclarator,
+          id,
+          init,
+        },
+      ],
+    } as IR.IRVariableDeclaration;
+  }
+  
+  // Handle local binding form: (var (name1 value1 name2 value2...) body...)
+  if (list.elements.length >= 2 && list.elements[1].type === "list") {
+    const bindingsNode = list.elements[1] as ListNode;
+    const bodyExprs = list.elements.slice(2);
+    
+    // Process bindings as pairs
+    const bindings: Array<{name: string, value: IR.IRNode}> = [];
+    
+    for (let i = 0; i < bindingsNode.elements.length; i += 2) {
+      if (i + 1 >= bindingsNode.elements.length) {
+        throw new ValidationError(
+          "Incomplete binding pair in var",
+          "var binding",
+          "name-value pair",
+          "incomplete pair",
+        );
+      }
+      
+      const nameNode = bindingsNode.elements[i];
+      if (nameNode.type !== "symbol") {
+        throw new ValidationError(
+          "Binding name must be a symbol",
+          "var binding name",
+          "symbol",
+          nameNode.type,
+        );
+      }
+      
+      const name = (nameNode as SymbolNode).name;
+      const valueExpr = transformNode(bindingsNode.elements[i + 1], currentDir);
+      
+      if (!valueExpr) {
+        throw new ValidationError(
+          `Binding value for '${name}' transformed to null`,
+          "var binding value",
+          "valid expression",
+          "null",
+        );
+      }
+      
+      bindings.push({ name, value: valueExpr });
+    }
+    
+    // Create variable declarations for all bindings
+    const variableDeclarations: IR.IRNode[] = bindings.map(b => ({
+      type: IR.IRNodeType.VariableDeclaration,
+      kind: "let", // Use 'let' for mutable bindings
+      declarations: [
+        {
+          type: IR.IRNodeType.VariableDeclarator,
+          id: {
+            type: IR.IRNodeType.Identifier,
+            name: sanitizeIdentifier(b.name),
+          } as IR.IRIdentifier,
+          init: b.value,
+        },
+      ],
+    } as IR.IRVariableDeclaration));
+    
+    // Process body expressions
+    const bodyStatements: IR.IRNode[] = [];
+    
+    // Process all body expressions
+    for (const bodyExpr of bodyExprs) {
+      const processedExpr = transformNode(bodyExpr, currentDir);
+      if (processedExpr) {
+        bodyStatements.push(processedExpr);
+      }
+    }
+    
+    // Create an IIFE to contain our block of code
+    return {
+      type: IR.IRNodeType.CallExpression,
+      callee: {
+        type: IR.IRNodeType.FunctionExpression,
+        id: null,
+        params: [],
+        body: {
+          type: IR.IRNodeType.BlockStatement,
+          body: [...variableDeclarations, ...bodyStatements],
+        } as IR.IRBlockStatement,
+      } as IR.IRFunctionExpression,
+      arguments: [],
+    } as IR.IRCallExpression;
+  }
+  
+  throw new ValidationError(
+    "Invalid var form",
+    "var expression",
+    "(var name value) or (var (bindings...) body...)",
+    "invalid form",
   );
 }
 
