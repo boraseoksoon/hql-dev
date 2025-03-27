@@ -1,4 +1,4 @@
-(defmacro defn (name params & body)
+(defmacro fn (name params & body)
   `(let ~name (lambda ~params ~@body)))
   
 (defmacro or (a b)
@@ -25,10 +25,10 @@
 (defmacro cons (item lst)
   `(concat (list ~item) ~lst))
 
-(defn concat (arr1 arr2)
+(fn concat (arr1 arr2)
   (js-call arr1 "concat" arr2))
 
-(defn empty? (coll)
+(fn empty? (coll)
   (cond
     ((nil? coll) true)
     ((list? coll) (= (length coll) 0))

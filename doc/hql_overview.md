@@ -19,7 +19,7 @@ JavaScript | | Output | | Code Printer | | AST | | IR | +------------+
 +--------------+ +--------------+ +------------+ Let's dive into each component
 in detail:
 
-1. S-Expression Parsing (src/s-exp/parser.ts) CopyHQL Input: (defn add [a b] (+
+1. S-Expression Parsing (src/s-exp/parser.ts) CopyHQL Input: (fn add [a b] (+
    a b)) │ v Tokenization ┌─────────────────────────┐ │ LEFT_PAREN: ( │ │
    SYMBOL: defn │ │ SYMBOL: add │ │ LEFT_BRACKET: [ │ │ SYMBOL: a │ │ SYMBOL: b
    │ │ RIGHT_BRACKET: ] │ │ LEFT_PAREN: ( │ │ SYMBOL: + │ │ SYMBOL: a │ │
@@ -145,7 +145,7 @@ return notFound;
 
 // Handle objects (maps) return (key in obj) ? obj[key] : notFound; } These
 functions implement core HQL functionality in JavaScript. Overall Process Flow
-with Example Let's trace through an end-to-end example: CopyHQL Input: (defn
+with Example Let's trace through an end-to-end example: CopyHQL Input: (fn
 greet [name] (str "Hello, " name "!"))
 
 (let message (greet "World"))

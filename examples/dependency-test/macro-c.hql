@@ -1,9 +1,9 @@
 ;; macro-c.hql
 
-(defn minus-one (x)
+(fn minus-one (x)
   (- x 1))
 
-(defn minusguys (x)
+(fn minusguys (x)
     (minus-one x))
 
 (export [minusguys])

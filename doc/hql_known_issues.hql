@@ -29,5 +29,5 @@ The reason you get null is that (x_plus_one2 1) is being rewritten as (get x_plu
 To resolve this, you need to adjust your IR transformation logic so that function invocations are preserved as calls rather than misinterpreted as collection accesses.
 Would you like to explore how to adjust that transformation rule further?
 
-(defn x_plus_one2 (x) (inc x))
+(fn x_plus_one2 (x) (inc x))
 (console.log (x_plus_one2 1))    ;; null

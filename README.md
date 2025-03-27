@@ -48,7 +48,7 @@ changing the core parser.
    Example Transformation (fx): Input: (fx add (x y) (+ x y)) Macro Expansion
    may yield:
 
-(defn add (x y) (return (+ x y))) Outcome: The AST now includes constructs like
+(fn add (x y) (return (+ x y))) Outcome: The AST now includes constructs like
 standard function definitions, object literals, vectors, and sets—all built
 using macros. 3. Intermediate Representation (IR) What It Does: Once the AST is
 fully expanded, it is converted into an Intermediate Representation (IR). The IR
@@ -79,7 +79,7 @@ Basic Function Example
 
 (fx add (x y) (+ x y)) How It Works: The parser treats this as an S‑expression
 beginning with fx. The macro expander rewrites it into a standard function
-definition: (defn add (x y) (return (+ x y))) The IR and code generator then
+definition: (fn add (x y) (return (+ x y))) The IR and code generator then
 output executable JavaScript code. Function with Named and Typed Parameters
 
 (fx greet-user (name: String title: String) (str "Hello, " title " " name "!"))
@@ -92,7 +92,7 @@ resemble: function greetUser(params) { const { name, title } = params; return
 
 (fx add (x (y = 0)) (+ x y)) How It Works: The macro identifies that parameter y
 has a default value of 0. It rewrites the function definition to handle the
-default, for example: (defn add (x y) (if (nil? y) (set! y 0)) (return (+ x y)))
+default, for example: (fn add (x y) (if (nil? y) (set! y 0)) (return (+ x y)))
 This ensures that the function behaves correctly even if the second parameter
 isn’t provided. Literal Data Structures HQL supports literal data structures
 using familiar JSON‑like notation without complicating the parser.

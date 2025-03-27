@@ -1,15 +1,15 @@
 ;; module1.hql
 
-(defn add (x y)
+(fn add (x y)
   (+ x y))
 
-(defn subtract (x y)
+(fn subtract (x y)
   (- x y))
 
-(defn multiply (x y)
+(fn multiply (x y)
   (* x y))
 
-(defn divide (x y)
+(fn divide (x y)
   (/ x y))
 
 (export [add, subtract, multiply, divide])

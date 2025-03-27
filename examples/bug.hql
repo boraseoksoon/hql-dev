@@ -2,7 +2,7 @@
 
 (import [ _groupBy] from "../lib/stdlib/stdlib.js")
 
-(defn group-by (f coll)
+(fn group-by (f coll)
   (_groupBy f coll))
 
 ;; - is not supported in export.

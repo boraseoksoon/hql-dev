@@ -23,10 +23,10 @@
     (y nil))       ;; field with default nil (e.g. for dependency injection)
 
   (methods
-    (defn greet (self)
+    (fn greet (self)
       (+ "Hello, " self.name))
 
-    (defn celebrateBirthday (self newAge)
+    (fn celebrateBirthday (self newAge)
       (do
         (set! self.age newAge)
         self))))
@@ -60,7 +60,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Multi-condition number classification
-(defn classify-number (n)
+(fn classify-number (n)
   (cond
     ((> n 100) "large")
     ((> n 50) "medium")
@@ -70,7 +70,7 @@
     (true "negative")))  ;; Default case using "true" condition
 
 ;; HTTP status code handler
-(defn handle-status (code)
+(fn handle-status (code)
   (cond
     ((= code 200) "OK")
     ((= code 404) "Not Found")
@@ -78,7 +78,7 @@
     (true "Unknown status")))
 
 ;; Type-based formatting
-(defn format-value (value)
+(fn format-value (value)
   (cond
     ((nil? value) "N/A")
     ((number? value) (+ "$" value))

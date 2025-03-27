@@ -98,18 +98,18 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; --- Basic Function Definitions ---
-(defn square (x)
+(fn square (x)
   (* x x))
 
-(defn add-three (x y z)
+(fn add-three (x y z)
   (+ x (+ y z)))
 
-(defn abs (x)
+(fn abs (x)
   (if (< x 0)
       (- 0 x)
       x))
 
-(defn factorial (n)
+(fn factorial (n)
   (if (<= n 1)
       1
       (* n (factorial (- n 1)))))
@@ -119,13 +119,13 @@
 (export "square" square)
 
 ;; --- Expression Sequencing with 'do' ---
-(defn calculate-area (radius)
+(fn calculate-area (radius)
   (do
     (let r-squared (square radius))
     (let area (* pi r-squared))
     area))
 
-(defn complex-calculation (x y)
+(fn complex-calculation (x y)
   (do
     (let sum (+ x y))
     (do
@@ -134,24 +134,24 @@
       (list sum product difference))))
 
 ;; --- Conditionals and Logic ---
-(defn isLargerThan? (a b)
+(fn isLargerThan? (a b)
   (if (> a b) a b))
 
-(defn between (x min max)
+(fn between (x min max)
   (and (>= x min) (<= x max)))
 
-(defn outside (x min max)
+(fn outside (x min max)
   (or (< x min) (> x max)))
 
-(defn not-between (x min max)
+(fn not-between (x min max)
   (not (between x min max)))
 
-(defn validate-range (x)
+(fn validate-range (x)
   (cond
     ((and (>= x 0) (< x 10)) "single digit")
     ((and (>= x 10) (< x 100)) "double digit")))
 
-(defn classify-number (x)
+(fn classify-number (x)
   (cond
     ((< x 0) "negative")
     ((= x 0) "zero")
@@ -163,7 +163,7 @@
 (console.log (classify-number 100))
 
 ;; --- Arithmetic and Comparison Operators ---
-(defn arithmetic-demo (a b)
+(fn arithmetic-demo (a b)
   (list
     (+ a b)  ;; addition
     (- a b)  ;; subtraction
@@ -171,7 +171,7 @@
     (/ a b)  ;; division
   ))
 
-(defn comparison-demo (a b)
+(fn comparison-demo (a b)
   (list
     (= a b)   ;; equality
     (!= a b)  ;; inequality
@@ -187,22 +187,22 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; --- Higher-Order Functions ---
-(defn apply-twice (f x)
+(fn apply-twice (f x)
   (f (f x)))
 
-(defn make-multiplier (n)
+(fn make-multiplier (n)
   (lambda (x) (* x n)))
 
-(defn demonstration ()
+(fn demonstration ()
   (do
     (let double (make-multiplier 2))
     (double 10)))  ;; Should return 20
 
 ;; --- Rest Parameters ---
-(defn log-all (& items)
+(fn log-all (& items)
   (console.log items))
 
-(defn with-prefix (prefix & rest)
+(fn with-prefix (prefix & rest)
   (console.log prefix rest))
 
 ;; Example calls
@@ -214,7 +214,7 @@
 ;; 4. Comprehensive Showcase
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn showcase (n)
+(fn showcase (n)
   (do
     (let result
       (cond
@@ -308,7 +308,7 @@
 (let user-part (db-part.user))
 (let admin-name (user-part.name))
 
-(defn get-user () {"id": 1, "name": "John"})
+(fn get-user () {"id": 1, "name": "John"})
 (let user-obj (get-user))
 (let user-name (user-obj.name))
 
@@ -369,7 +369,7 @@
 (unless (< macro_x 5)
   (console.log "macro_x is not less than 5")) ;; x is not less than 5
 
-(defn hql-unless (x)
+(fn hql-unless (x)
   (unless x
     (not x)))
 
@@ -452,7 +452,7 @@
   (list sum product))
 
 ;; Using let inside a function definition
-(defn calculate (base)
+(fn calculate (base)
   (let (squared (* base base)
         cubed (* squared base))
     (+ squared cubed)))
@@ -464,41 +464,41 @@
 ;;-------------------------------------------------
 ;; Helper Functions
 ;;-------------------------------------------------
-(defn get-number () 42)
-(defn get-nothing () nil)
-(defn get-zero () 0)
-(defn get-string () "Hello")
+(fn get-number () 42)
+(fn get-nothing () nil)
+(fn get-zero () 0)
+(fn get-string () "Hello")
 
 ;;-------------------------------------------------
 ;; if-let Tests
 ;;-------------------------------------------------
 ;; Test 1: if-let with a truthy number (42)
-(defn test-if-let-truthy-number ()
+(fn test-if-let-truthy-number ()
   (if-let (x (get-number))
     (str "Got number: " x)
     "No number"))
 
 ;; Test 2: if-let with a nil value
-(defn test-if-let-nil ()
+(fn test-if-let-nil ()
   (if-let (x (get-nothing))
     (str "Got something: " x)
     "Got nothing"))
 
 ;; Test 3: if-let with zero (0 is falsy in JS/HQL)
-(defn test-if-let-zero ()
+(fn test-if-let-zero ()
   (if-let (x (get-zero))
     (str "Got zero: " x)
     "Zero is considered falsy"))
 
 ;; Test 4: if-let with a non-empty string (truthy)
-(defn test-if-let-string ()
+(fn test-if-let-string ()
   (if-let (x (get-string))
     (str "Got string: " x)
     "No string"))
 
 ;; Test 5: Nested if-let:
 ;; First binding x from get-number; then, if x > 40, bind y from get-string.
-(defn test-if-let-nested ()
+(fn test-if-let-nested ()
   (if-let (x (get-number))
     (if-let (y (if (> x 40) (get-string) nil))
       (str "Nested test: x = " x ", y = " y)

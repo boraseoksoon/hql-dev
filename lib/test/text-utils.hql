@@ -1,4 +1,4 @@
-(defn wrap_text (text)
+(fn wrap_text (text)
   (str "<<< " text " >>>"))
   
 (export [wrap_text])

@@ -18,7 +18,7 @@ MODULE IMPORT & EXPORT
 
 `(console.log "LOG:" ~@args))
 
-(defn add (x y)
+(fn add (x y)
 
 (+ x y))
 
@@ -132,7 +132,7 @@ module in contrast to defmacro (system global macro we have already)
 
 ;; other exportable symbols follow the same vector export style.)
 
-(defn add (x y)
+(fn add (x y)
 
 (+ x y))
 

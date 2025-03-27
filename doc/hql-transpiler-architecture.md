@@ -55,11 +55,11 @@ Converts HQL source code into an abstract syntax tree (AST).
 // Example of parsing HQL code
 import { parse } from "./parser.ts";
 
-const source = `(defn greet (name) (+ "Hello, " name "!"))`;
+const source = `(fn greet (name) (+ "Hello, " name "!"))`;
 const astNodes = parse(source);
 
 // astNodes represents:
-// (defn greet (name) (+ "Hello, " name "!"))
+// (fn greet (name) (+ "Hello, " name "!"))
 ```
 
 ### 2. Macro Expansion (`macro-expander.ts`)
@@ -161,7 +161,7 @@ Here's a complete example of how HQL code transforms through the pipeline:
 ### HQL Source
 
 ```
-(defn greet (name)
+(fn greet (name)
   (+ "Hello, " name "!"))
 ```
 

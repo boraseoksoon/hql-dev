@@ -100,7 +100,7 @@ migration.
    operations, and equality primitives. Implement the Macro System: Implement
    defmacro to register macro definitions. Write a recursive macro expander that
    processes the AST and expands all macros into core forms. Refactor Built‑Ins
-   as Macros: Gradually refactor high-level constructs (defn, import, export,
+   as Macros: Gradually refactor high-level constructs (fn, import, export,
    print, etc.) so that they are defined as macros over the minimal kernel.
    Integrate the Transpiler Pipeline: Parsing: Convert HQL source to AST. Macro
    Expansion: Expand macros in the AST. IR Generation: Transform the expanded
@@ -192,7 +192,7 @@ Everything is Lazy evaluation:
 Everything is an Expression: Every language construct, from control forms to
 bindings, returns a value. This uniformity is critical for enabling advanced
 macro expansion and for reasoning about code. Macro Everywhere: Redefine
-high‑level constructs (defn, import, export, printing, even JS interop if
+high‑level constructs (fn, import, export, printing, even JS interop if
 desired) as macros over the minimal kernel. Eventually, the entire surface
 language will be built by macros that expand into a tiny core consisting of only
 the essential primitives. Clean Transpiler Pipeline: Your pipeline should be
@@ -212,7 +212,7 @@ literals, symbols, and lists. Core Evaluator: Write a minimal evaluator that
 handles: quote: (quote exp) returns the expression unevaluated. if: (if cond
 then else) returns a value based on the condition. fn: (lambda [params] body...)
 returns a function where the last expression in the body is automatically
-returned. def: (let name value) binds a value globally. defn: (defn name
+returned. def: (let name value) binds a value globally. defn: (fn name
 [params] body...) is syntactic sugar for defining a function. Primitive
 Functions: Provide basic operations (arithmetic, list manipulation, equality).
 Example (simplified pseudocode):
@@ -292,7 +292,7 @@ of core constructs (like quote, if, fn, def, etc.), ensuring everything is an
 expression. Example: Suppose you have a macro defined for defn that expands into
 (let name (lambda [params] body...)). Before expansion, you might see:
 
-(defn ok () "OK") After macro expansion, it becomes something like:
+(fn ok () "OK") After macro expansion, it becomes something like:
 
 (let ok (lambda [] "OK")) In the AST, the macro-expander replaces the high-level
 defn form with the corresponding core expression. Macro-Expanded HQL AST → HQL
