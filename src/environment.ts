@@ -822,8 +822,8 @@ export class Environment {
   /**
    * Get the current file being processed
    */
-  getCurrentFile(): string | null {
-    return this.currentFilePath;
+  getCurrentFile(): string {
+    return this.currentFilePath ?? '';
   }
 
   /**
