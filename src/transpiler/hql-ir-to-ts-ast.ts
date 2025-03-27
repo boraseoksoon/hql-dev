@@ -154,7 +154,7 @@ function convertFxFunctionDeclaration(
   node: IR.IRFxFunctionDeclaration,
 ): ts.FunctionDeclaration | ts.Statement[] {
   try {
-    // Create parameters with default values and type annotations
+    // Create parameters with default values (but NO type annotations)
     const parameters: ts.ParameterDeclaration[] = [];
 
     // Track parameters that have default values for argument handling
@@ -165,41 +165,19 @@ function convertFxFunctionDeclaration(
 
     // Create a parameter for each declared parameter
     for (const param of node.params) {
-      // Get type annotation
-      let typeAnnotation: ts.TypeNode | undefined = undefined;
-
-      // Find type for this parameter
-      const paramTypeDef = node.paramTypes.find((pt) => pt.name === param.name);
-      if (paramTypeDef) {
-        // Currently we only support Int
-        if (paramTypeDef.type === "Int") {
-          typeAnnotation = ts.factory.createKeywordTypeNode(
-            ts.SyntaxKind.NumberKeyword,
-          );
-        }
-      }
-
       // Get default value if any
       const defaultValue = defaultParams.get(param.name);
 
-      // Create the parameter declaration
+      // Create the parameter declaration WITHOUT type annotation
       parameters.push(
         ts.factory.createParameterDeclaration(
           undefined,
           undefined,
           convertIdentifier(param),
           undefined,
-          typeAnnotation,
+          undefined, // No type annotation
           defaultValue,
         ),
-      );
-    }
-
-    // Create function return type annotation
-    let returnTypeAnnotation: ts.TypeNode | undefined = undefined;
-    if (node.returnType === "Int") {
-      returnTypeAnnotation = ts.factory.createKeywordTypeNode(
-        ts.SyntaxKind.NumberKeyword,
       );
     }
 
@@ -298,7 +276,7 @@ function convertFxFunctionDeclaration(
         ts.factory.createIdentifier(innerFuncName),
         undefined,
         parameters,
-        returnTypeAnnotation,
+        undefined, // No return type annotation
         ts.factory.createBlock(bodyStatements, true),
       );
 
@@ -481,7 +459,7 @@ function convertFxFunctionDeclaration(
         convertIdentifier(node.id),
         undefined,
         wrapperParams,
-        returnTypeAnnotation,
+        undefined, // No return type annotation
         wrapperBody,
       );
 
@@ -496,7 +474,7 @@ function convertFxFunctionDeclaration(
         convertIdentifier(node.id),
         undefined,
         parameters,
-        returnTypeAnnotation,
+        undefined, // No return type annotation
         ts.factory.createBlock(bodyStatements, true),
       );
     }
