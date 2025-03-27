@@ -1,37 +1,22 @@
-;; examples/fx.hql - Simple test for pure functions
+;; Simple test for deep copying in pure functions
 
-;; Basic pure function
-(fx add (x y)
-  (+ x y))
-
-;; Recursive pure function
-(fx factorial (n)
-  (if (< n 2)
-      1
-      (* n (factorial (- n 1)))))
-
-;; Pure function that uses js-call (should be allowed)
-(fx add-to-array (arr item)
-  (js-call arr "push" item)
-  arr)
-
-;; Pure function that uses js-set (should be allowed)
-(fx update-object (obj key value)
-  (js-set obj key value)
+;; Define a pure function that tries to modify a nested property
+(fx modify-nested (obj)
+  ;; Try to modify the nested property
+  (js-set (js-get obj "nested") "value" "modified")
+  ;; Return the object
   obj)
 
-;; Test execution
-(print "add(5, 10) =>" (add 5 10))
-(print "factorial(5) =>" (factorial 5))
+;; Create a test object with a nested object
+(let original {"nested": {"value": "original"}})
 
-;; Test array modification
-(let my-array [1, 2, 3])
-(let result (add-to-array my-array 4))
-(print "Original array:" my-array)
-(print "Result:" result)
+;; Call the pure function with our object
+(let result (modify-nested original))
 
-;; Test object modification
-(let my-object (hash-map "name" "John"))
-(let updated (update-object my-object "age" 30))
-(print "Original object:" my-object)
-(print "Updated object:" updated)
+;; Print the values to see if original was modified
+(print (str "Original nested value: " (js-get (js-get original "nested") "value")))
+(print (str "Result nested value: " (js-get (js-get result "nested") "value")))
+
+;; Check if they're actually different objects
+(print (str "Are objects identical? " (= original result)))
+(print (str "Are nested objects identical? " (= (js-get original "nested") (js-get result "nested"))))

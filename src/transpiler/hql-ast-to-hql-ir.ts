@@ -2751,8 +2751,8 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
 }
 
 /**
- * Generate statements to create shallow copies of parameters
- * This code is much simpler than before and avoids variable reference issues
+ * Generate statements to create deep copies of parameters
+ * This implementation inlines a more concise deep copy approach
  */
 function generateParameterCopies(
   params: IR.IRIdentifier[],
@@ -2760,148 +2760,120 @@ function generateParameterCopies(
 ): IR.IRNode[] {
   const statements: IR.IRNode[] = [];
   
-  // For each parameter, create a copy if it's an object
+  // For each parameter, create an inline deep copy
   for (const param of params) {
     const paramName = param.name;
-    
-    statements.push({
-      type: IR.IRNodeType.ExpressionStatement,
-      expression: {
-        type: IR.IRNodeType.AssignmentExpression,
-        operator: "=",
-        left: {
-          type: IR.IRNodeType.Identifier,
-          name: paramName
-        },
-        right: createConditionalCopy(paramName)
-      }
-    });
+    statements.push(createInlineDeepCopyStatement(paramName));
   }
   
   // Handle rest parameter if present
   if (restParam) {
     const restName = restParam.name.replace(/^\.\.\./, '');
-    
-    statements.push({
-      type: IR.IRNodeType.ExpressionStatement,
-      expression: {
-        type: IR.IRNodeType.AssignmentExpression,
-        operator: "=",
-        left: {
-          type: IR.IRNodeType.Identifier,
-          name: restName
-        },
-        right: createConditionalCopy(restName)
-      }
-    });
+    statements.push(createInlineDeepCopyStatement(restName));
   }
   
   return statements;
 }
 
 /**
- * Create a conditional expression that copies a value if it's an object
- * This is a simpler implementation that directly uses the parameter name
+ * Create a statement that performs a concise deep copy of a parameter
+ * Using JSON parse/stringify for simplicity while still handling most cases
  */
-function createConditionalCopy(paramName: string): IR.IRNode {
+function createInlineDeepCopyStatement(paramName: string): IR.IRNode {
   return {
-    type: IR.IRNodeType.ConditionalExpression,
-    test: {
-      // typeof param === 'object' && param !== null
-      type: IR.IRNodeType.BinaryExpression,
-      operator: "&&",
+    type: IR.IRNodeType.ExpressionStatement,
+    expression: {
+      type: IR.IRNodeType.AssignmentExpression,
+      operator: "=",
       left: {
-        type: IR.IRNodeType.BinaryExpression,
-        operator: "===",
-        left: {
+        type: IR.IRNodeType.Identifier,
+        name: paramName
+      },
+      right: {
+        // Use a conditional expression to only deep copy objects
+        type: IR.IRNodeType.ConditionalExpression,
+        test: {
+          // typeof param === 'object' && param !== null
+          type: IR.IRNodeType.BinaryExpression,
+          operator: "&&",
+          left: {
+            type: IR.IRNodeType.BinaryExpression,
+            operator: "===",
+            left: {
+              type: IR.IRNodeType.CallExpression,
+              callee: {
+                type: IR.IRNodeType.Identifier,
+                name: "typeof"
+              },
+              arguments: [
+                {
+                  type: IR.IRNodeType.Identifier,
+                  name: paramName
+                }
+              ]
+            },
+            right: {
+              type: IR.IRNodeType.StringLiteral,
+              value: "object"
+            }
+          },
+          right: {
+            type: IR.IRNodeType.BinaryExpression,
+            operator: "!==",
+            left: {
+              type: IR.IRNodeType.Identifier,
+              name: paramName
+            },
+            right: {
+              type: IR.IRNodeType.NullLiteral
+            }
+          }
+        },
+        // If it's an object, use JSON.parse(JSON.stringify()) for deep copying
+        consequent: {
           type: IR.IRNodeType.CallExpression,
           callee: {
-            type: IR.IRNodeType.Identifier,
-            name: "typeof"
+            type: IR.IRNodeType.MemberExpression,
+            object: {
+              type: IR.IRNodeType.Identifier,
+              name: "JSON"
+            },
+            property: {
+              type: IR.IRNodeType.Identifier,
+              name: "parse"
+            },
+            computed: false
           },
           arguments: [
             {
-              type: IR.IRNodeType.Identifier,
-              name: paramName
+              type: IR.IRNodeType.CallExpression,
+              callee: {
+                type: IR.IRNodeType.MemberExpression,
+                object: {
+                  type: IR.IRNodeType.Identifier,
+                  name: "JSON"
+                },
+                property: {
+                  type: IR.IRNodeType.Identifier,
+                  name: "stringify"
+                },
+                computed: false
+              },
+              arguments: [
+                {
+                  type: IR.IRNodeType.Identifier,
+                  name: paramName
+                }
+              ]
             }
           ]
         },
-        right: {
-          type: IR.IRNodeType.StringLiteral,
-          value: "object"
-        }
-      },
-      right: {
-        type: IR.IRNodeType.BinaryExpression,
-        operator: "!==",
-        left: {
+        // If not an object, return original value
+        alternate: {
           type: IR.IRNodeType.Identifier,
           name: paramName
-        },
-        right: {
-          type: IR.IRNodeType.NullLiteral
         }
       }
-    },
-    // If it's an object, check if it's an array
-    consequent: {
-      type: IR.IRNodeType.ConditionalExpression,
-      test: {
-        type: IR.IRNodeType.CallExpression,
-        callee: {
-          type: IR.IRNodeType.MemberExpression,
-          object: {
-            type: IR.IRNodeType.Identifier,
-            name: "Array"
-          },
-          property: {
-            type: IR.IRNodeType.Identifier,
-            name: "isArray"
-          },
-          computed: false
-        },
-        arguments: [
-          {
-            type: IR.IRNodeType.Identifier,
-            name: paramName
-          }
-        ]
-      },
-      // If array, use slice()
-      consequent: {
-        type: IR.IRNodeType.CallExpression,
-        callee: {
-          type: IR.IRNodeType.MemberExpression,
-          object: {
-            type: IR.IRNodeType.Identifier,
-            name: paramName
-          },
-          property: {
-            type: IR.IRNodeType.Identifier,
-            name: "slice"
-          },
-          computed: false
-        },
-        arguments: []
-      },
-      // If object, use object spread
-      alternate: {
-        type: IR.IRNodeType.ObjectExpression,
-        properties: [
-          {
-            type: IR.IRNodeType.SpreadAssignment,
-            expression: {
-              type: IR.IRNodeType.Identifier,
-              name: paramName
-            }
-          }
-        ]
-      }
-    },
-    // If not an object, use original value
-    alternate: {
-      type: IR.IRNodeType.Identifier,
-      name: paramName
     }
   };
 }
