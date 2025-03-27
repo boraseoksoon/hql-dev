@@ -710,16 +710,10 @@ function convertFunctionExpression(
   }
 }
 
-/**
- * Convert a variable declaration.
- */
 function convertVariableDeclaration(
   node: IR.IRVariableDeclaration,
 ): ts.VariableStatement {
   try {
-    // Get the correct node flags based on the kind
-    const nodeFlags = getVariableNodeFlags(node.kind);
-    
     const declarations = node.declarations.map((decl) => {
       return ts.factory.createVariableDeclaration(
         convertIdentifier(decl.id),
@@ -729,9 +723,23 @@ function convertVariableDeclaration(
       );
     });
     
+    // Create the variable declaration list with the appropriate flags
+    let flags;
+    switch (node.kind) {
+      case "const":
+        flags = ts.NodeFlags.Const;
+        break;
+      case "let":
+        flags = ts.NodeFlags.Let;
+        break;
+      case "var":
+      default:
+        flags = undefined; // For var declarations, pass undefined instead of NodeFlags.None
+    }
+    
     return ts.factory.createVariableStatement(
       undefined,
-      ts.factory.createVariableDeclarationList(declarations, nodeFlags),
+      ts.factory.createVariableDeclarationList(declarations, flags),
     );
   } catch (error) {
     throw new CodeGenError(
@@ -741,26 +749,6 @@ function convertVariableDeclaration(
       "variable declaration",
       node,
     );
-  }
-}
-
-/**
- * Helper to get node flags for variable declarations.
- */
-function getVariableNodeFlags(kind: string): ts.NodeFlags {
-  switch (kind) {
-    case "const":
-      return ts.NodeFlags.Const;
-    case "let":
-      return ts.NodeFlags.Let;
-    case "var":
-      return ts.NodeFlags.None;
-    default:
-      throw new CodeGenError(
-        `Unknown variable declaration kind: ${kind}`,
-        "variable declaration kind",
-        kind,
-      );
   }
 }
 

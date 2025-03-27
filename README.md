@@ -34,7 +34,7 @@ changing the core parser.
 1. Parsing What It Does: The parser reads the HQL source code and tokenizes it
    into S‑expressions. At this stage, HQL only “knows” the basic constructs:
    Symbols: e.g. x, +, fx Literals: numbers, strings, booleans, nil Lists: e.g.
-   (+ 1 2 3) Example Input: (def x 10) (fx add (x y) (+ x y)) Outcome: The
+   (+ 1 2 3) Example Input: (let x 10) (fx add (x y) (+ x y)) Outcome: The
    parser produces a raw AST composed entirely of S‑expressions. No “advanced”
    syntax (like object literals or extended function definitions) is built into
    this phase.
@@ -99,17 +99,17 @@ using familiar JSON‑like notation without complicating the parser.
 
 Object Literals (JSON‑Style)
 
-(def user {"name": "Alice", "age": 30}) How It Works: The parser converts the
+(let user {"name": "Alice", "age": 30}) How It Works: The parser converts the
 curly braces into an S‑expression with a hash-map marker: (hash-map (keyword
 "name") "Alice" (keyword "age") 30) The macro system and subsequent IR
 transformation generate a JavaScript object literal: const user = { name:
 "Alice", age: 30 }; Array (Vector) Literals
 
-(def numbers [1, 2, 3, 4, 5]) How It Works: Square brackets are parsed as a list
+(let numbers [1, 2, 3, 4, 5]) How It Works: Square brackets are parsed as a list
 beginning with the symbol vector: (vector 1 2 3 4 5) The code generator then
 produces a JavaScript array: const numbers = [1, 2, 3, 4, 5]; Set Literals
 
-(def unique-values #[1, 2, 3]) How It Works: The set literal syntax (#[...]) is
+(let unique-values #[1, 2, 3]) How It Works: The set literal syntax (#[...]) is
 recognized and parsed into a list beginning with the symbol set. The macro
 transforms this into a call to the Set constructor: (new Set (vector 1 2 3))
 Finally, the generated code looks like: const uniqueValues = new Set([1, 2, 3]);
@@ -148,7 +148,7 @@ Example: Defining a JavaScript Array Literal Macro
 (defmacro js-array (& elements) ;; Converts [1,2,3] into (vector 1 2 3) (concat
 (list 'vector) elements)) Usage:
 
-(def my-array (js-array 1 2 3 4)) This macro operates on the same level as the
+(let my-array (js-array 1 2 3 4)) This macro operates on the same level as the
 standard macros and is expanded during the macro expansion phase.
 
 Standard Library Helpers

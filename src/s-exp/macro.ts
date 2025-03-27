@@ -474,7 +474,6 @@ function evaluateList(expr: SList, env: Environment, logger: Logger): SExp {
       case "if": return evaluateIf(expr, env, logger);
       case "cond": return evaluateCond(expr, env, logger);
       case "let": return evaluateLet(expr, env, logger);
-      case "def":
       case "defn":
       case "fn": return createNilLiteral();
     }

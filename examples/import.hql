@@ -6,5 +6,5 @@
 
 ;; Test HTTP import
 (import path from "https://deno.land/std@0.170.0/path/mod.ts")
-(def joined-path (path.join "folder" "file.txt"))
+(let joined-path (path.join "folder" "file.txt"))
 (console.log (chalk.green "HTTP import working! Path:" joined-path))

@@ -33,7 +33,7 @@
 
 
 ;; Creating an instance:
-(def p (new Person "Alice" 30))
+(let p (new Person "Alice" 30))
 
 ;; Accessing a property:
 (p.name)

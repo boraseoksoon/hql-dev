@@ -5,6 +5,6 @@
 
 ;; Use the do macro
 (do
-  (def x 10)
-  (def y 20)
+  (let x 10)
+  (let y 20)
   (console.log "Sum:" (+ x y)))

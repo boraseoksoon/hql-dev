@@ -7,7 +7,6 @@ export const KERNEL_PRIMITIVES = new Set([
   "quote",
   "if",
   "fn",
-  "def",
   "let",
   "var",
   "set!",

@@ -73,7 +73,7 @@ import { expandMacros } from "../macro-expander.ts";
 const expandedNodes = await expandMacros(astNodes);
 
 // expandedNodes represents:
-// (def greet (fn (name) (+ "Hello, " name "!")))
+// (let greet (fn (name) (+ "Hello, " name "!")))
 ```
 
 ### 3. IR Generation (`hql-to-ir.ts`)

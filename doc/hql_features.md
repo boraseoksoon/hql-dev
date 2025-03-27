@@ -163,7 +163,7 @@ into expressions, every language construct remains expression‑oriented. This
 gives you a consistent and uniform syntax that is easy to reason about and
 extend. Unified JavaScript Interop: Composite Member Access: You want to support
 natural expressions like (obj.member) which at runtime check if member is
-callable and, if so, invoke it with the proper binding. Example: (def upper
+callable and, if so, invoke it with the proper binding. Example: (let upper
 (message.toUpperCase)) expands to an expression that returns the result of
 calling toUpperCase on message (if it’s a function) or its property value
 otherwise. Self-Contained Output: Transpiler Pipeline: The pipeline must parse
@@ -212,7 +212,7 @@ literals, symbols, and lists. Core Evaluator: Write a minimal evaluator that
 handles: quote: (quote exp) returns the expression unevaluated. if: (if cond
 then else) returns a value based on the condition. fn: (fn [params] body...)
 returns a function where the last expression in the body is automatically
-returned. def: (def name value) binds a value globally. defn: (defn name
+returned. def: (let name value) binds a value globally. defn: (defn name
 [params] body...) is syntactic sugar for defining a function. Primitive
 Functions: Provide basic operations (arithmetic, list manipulation, equality).
 Example (simplified pseudocode):
@@ -281,7 +281,7 @@ parsed into an abstract syntax tree (AST) composed of basic nodes: Literals
 (numbers, strings, booleans, nil) Symbols (identifiers) Lists (S‑expressions)
 Example: HQL source:
 
-(def greeting "Hello, HQL!") might parse into an AST like:
+(let greeting "Hello, HQL!") might parse into an AST like:
 
 { "type": "list", "elements": [ { "type": "symbol", "name": "def" }, { "type":
 "symbol", "name": "greeting" }, { "type": "literal", "value": "Hello, HQL!" } ]
@@ -290,11 +290,11 @@ AST recursively. It looks for lists where the first element is a macro (as
 defined via defmacro) and expands them. After expansion, the AST consists solely
 of core constructs (like quote, if, fn, def, etc.), ensuring everything is an
 expression. Example: Suppose you have a macro defined for defn that expands into
-(def name (fn [params] body...)). Before expansion, you might see:
+(let name (fn [params] body...)). Before expansion, you might see:
 
 (defn ok () "OK") After macro expansion, it becomes something like:
 
-(def ok (fn [] "OK")) In the AST, the macro-expander replaces the high-level
+(let ok (fn [] "OK")) In the AST, the macro-expander replaces the high-level
 defn form with the corresponding core expression. Macro-Expanded HQL AST → HQL
 IR IR Generation: The macro-expanded AST is transformed into an intermediate
 representation (IR) that normalizes the structure of the program. The IR uses a

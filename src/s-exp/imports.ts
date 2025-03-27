@@ -1056,23 +1056,7 @@ function processFileDefinitions(
         !isSymbol(expr.elements[0])
       ) continue;
       const op = expr.elements[0].name;
-      if (op === "def" && expr.elements.length === 3) {
-        try {
-          processDefDeclaration(expr, env, logger);
-        } catch (error) {
-          const symbolName = isSymbol(expr.elements[1])
-            ? expr.elements[1].name
-            : "unknown";
-          throw new MacroError(
-            `Error processing def declaration for '${symbolName}': ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            symbolName,
-            env.getCurrentFile(),
-            error instanceof Error ? error : undefined,
-          );
-        }
-      } else if (op === "defn" && expr.elements.length >= 4) {
+      if (op === "defn" && expr.elements.length >= 4) {
         try {
           processDefnDeclaration(expr, env, logger);
         } catch (error) {

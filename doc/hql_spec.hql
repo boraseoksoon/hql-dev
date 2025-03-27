@@ -7,7 +7,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Creating JS objects
-(def numbers (new Array))
+(let numbers (new Array))
 (numbers.push 1)
 (numbers.push 2)
 (numbers.push 3)
@@ -18,14 +18,14 @@
 (print numbers)
 
 ;; --- Basic Values and Definitions ---
-(def pi 3.14159)
-(def greeting "Hello, HQL World!")
-(def is-awesome true)
+(let pi 3.14159)
+(let greeting "Hello, HQL World!")
+(let is-awesome true)
 
 ;; --- Quote Syntax ---
-(def symbol-x 'x)
-(def quoted-list '(1 2 3))
-(def quoted-expression '(+ 1 (* 2 3)))
+(let symbol-x 'x)
+(let quoted-list '(1 2 3))
+(let quoted-expression '(+ 1 (* 2 3)))
 
 ;; --- Data Structure Literals ---
 
@@ -34,11 +34,11 @@
 { "key" : "value" } ;; map
 '(1 2 3 4 5)        ;; list
 
-(def json { items : [1, 2, 3, 4, 5] })
+(let json { items : [1, 2, 3, 4, 5] })
 
 (json.items)
 
-(def data {
+(let data {
   "items": [5, 10, 15, 20, 25, 30, 35, 40],
   "factor": 2,
   "prefix": "Value: "
@@ -46,48 +46,48 @@
 
 (data.items)
 
-(def empty-vector [])
-(def mixed-types ["string", 42, true, nil])
-(def nested-vectors [[1, 2], [3, 4]])
+(let empty-vector [])
+(let mixed-types ["string", 42, true, nil])
+(let nested-vectors [[1, 2], [3, 4]])
 
-(def empty-map {})
-(def user {"name": "John", "age": 30})
-(def nested-map {"profile": {"id": 1, "settings": {"theme": "dark"}}})
+(let empty-map {})
+(let user {"name": "John", "age": 30})
+(let nested-map {"profile": {"id": 1, "settings": {"theme": "dark"}}})
 
-(def empty-set #[])
-(def unique-numbers #[1, 2, 3, 4, 5])
-(def unique-strings #["apple", "banana", "cherry"])
+(let empty-set #[])
+(let unique-numbers #[1, 2, 3, 4, 5])
+(let unique-strings #["apple", "banana", "cherry"])
 
-(def empty-list '())
-(def simple-list '(1 2 3 4 5))
-(def mixed-list '("hello" 42 true))
+(let empty-list '())
+(let simple-list '(1 2 3 4 5))
+(let mixed-list '("hello" 42 true))
 
 ;; --- Data Structure Operations ---
-(def vec-item (get numbers 2))
-(def map-value (get user "name"))
-(def first-item (get numbers 0))
-(def second-item (get numbers 1))
+(let vec-item (get numbers 2))
+(let map-value (get user "name"))
+(let first-item (get numbers 0))
+(let second-item (get numbers 1))
 
-(def my-vector [1, 2, 3, 4, 5])
-(def element2 (get my-vector 2))  
-(def element3 (nth my-vector 2))
-(def element4 (my-vector 2))
+(let my-vector [1, 2, 3, 4, 5])
+(let element2 (get my-vector 2))  
+(let element3 (nth my-vector 2))
+(let element4 (my-vector 2))
 
 ;; look up
-(def user2 {"name": "Alice", "status": "active"})
+(let user2 {"name": "Alice", "status": "active"})
 (print (get user2 "name"))  ; returns "Alice"
 (print (user2.name))  ; also returns "Alice"
 (print (user2["name"]))  ; returns "Alice"
 
-(def my-list (list "a" "b" "c"))
+(let my-list (list "a" "b" "c"))
 (nth my-list 1)  ;; returns "b"
 (print (my-list 1)) ;; b
 
-(def my-vector2 (vector 10 20 30))
+(let my-vector2 (vector 10 20 30))
 (nth my-vector2 2)  ;; returns 30
 (print (my-vector2 2)) ;; 30
 
-(def my-set #[1, 2, 3])
+(let my-set #[1, 2, 3])
 (print (my-set 2))  ;; 2
 (print (js-call my-set "has" 2))  ;; true
 
@@ -121,16 +121,16 @@
 ;; --- Expression Sequencing with 'do' ---
 (defn calculate-area (radius)
   (do
-    (def r-squared (square radius))
-    (def area (* pi r-squared))
+    (let r-squared (square radius))
+    (let area (* pi r-squared))
     area))
 
 (defn complex-calculation (x y)
   (do
-    (def sum (+ x y))
+    (let sum (+ x y))
     (do
-      (def product (* x y))
-      (def difference (- x y))
+      (let product (* x y))
+      (let difference (- x y))
       (list sum product difference))))
 
 ;; --- Conditionals and Logic ---
@@ -195,7 +195,7 @@
 
 (defn demonstration ()
   (do
-    (def double (make-multiplier 2))
+    (let double (make-multiplier 2))
     (double 10)))  ;; Should return 20
 
 ;; --- Rest Parameters ---
@@ -216,15 +216,15 @@
 
 (defn showcase (n)
   (do
-    (def result
+    (let result
       (cond
         ((< n 0) "Cannot compute for negative numbers")
         ((= n 0) "Identity element for factorial")))
     (if result
         result
         (do
-          (def fact (factorial n))
-          (def msg (+ "Factorial of " (+ n " is " fact)))
+          (let fact (factorial n))
+          (let msg (+ "Factorial of " (+ n " is " fact)))
           (console.log msg)
           (list n fact)))))
 (export "showcase" showcase)
@@ -239,42 +239,42 @@
 
 ;; --- JavaScript Interoperability ---
 ;; Accessing JS properties with dot notation
-(def pi-value (Math.PI))
-(def max-int-value (Number.MAX_SAFE_INTEGER))
+(let pi-value (Math.PI))
+(let max-int-value (Number.MAX_SAFE_INTEGER))
 
 ;; Calling JS methods
-(def random-number (Math.random))
-(def current-timestamp (Date.now))
+(let random-number (Math.random))
+(let current-timestamp (Date.now))
 
 ;; Console methods
 (console.log "Hello from HQL!")
 (console.warn "This is a warning")
 
 ;; Working with dates
-(def date (new Date))
-(def current-year (date.getFullYear))
-(def month (date.getMonth))
-(def formatted-date (date.toLocaleDateString))
+(let date (new Date))
+(let current-year (date.getFullYear))
+(let month (date.getMonth))
+(let formatted-date (date.toLocaleDateString))
 
 ;; Math methods
-(def abs-value (Math.abs -42))
-(def rounded (Math.round 3.7))
-(def max-value (Math.max 1 2 3 4 5))
+(let abs-value (Math.abs -42))
+(let rounded (Math.round 3.7))
+(let max-value (Math.max 1 2 3 4 5))
 
 ;; (Optional) DOM manipulation (when in browser context)
-;; (def element (document.getElementById "myElement"))
+;; (let element (document.getElementById "myElement"))
 ;; (element.addEventListener "click" (fn (event) (console.log "Clicked!")))
 
 ;; --- Imports ---
 (import path from "https://deno.land/std@0.170.0/path/mod.ts")
-(def joined-path (path.join "folder" "file.txt"))
+(let joined-path (path.join "folder" "file.txt"))
 
 (import file from "https://deno.land/std@0.170.0/fs/mod.ts")
-(def exists (file.existsSync "example-dir"))
+(let exists (file.existsSync "example-dir"))
 
 (import express from "npm:express")
-(def app (express))                ;; Using default export
-(def router (express.Router))      ;; Using named export
+(let app (express))                ;; Using default export
+(let router (express.Router))      ;; Using named export
 (app.use (express.json))           ;; Using named export)
 
 
@@ -283,69 +283,69 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; --- Dot Notation Access ---
-(def message "Hello, World!")
-(def upper-message (message.toUpperCase))
-(def message-parts (message.split " "))
+(let message "Hello, World!")
+(let upper-message (message.toUpperCase))
+(let message-parts (message.split " "))
 
-(def array [1, 2, 3])
+(let array [1, 2, 3])
 (array.push 4)
 (array.push 5)
 (console.log array)
 
 ;; --- Chained Property Access ---
-(def year (date.getFullYear))
-(def date-string (date.toISOString))
+(let year (date.getFullYear))
+(let date-string (date.toISOString))
 
 ;; --- Chained Function Calls ---
-(def nums [1, 2, 3, 4, 5])
-(def filtered (nums.filter (fn (x) (> x 2))))
-(def doubled (filtered.map (fn (x) (* x 2))))
-(def sum (nums.reduce (fn (a b) (+ a b)) 0))
-(def max-sum (Math.max sum 10))
+(let nums [1, 2, 3, 4, 5])
+(let filtered (nums.filter (fn (x) (> x 2))))
+(let doubled (filtered.map (fn (x) (* x 2))))
+(let sum (nums.reduce (fn (a b) (+ a b)) 0))
+(let max-sum (Math.max sum 10))
 
-(def config {"db": {"user": {"name": "admin"}}})
-(def db-part (config.db))
-(def user-part (db-part.user))
-(def admin-name (user-part.name))
+(let config {"db": {"user": {"name": "admin"}}})
+(let db-part (config.db))
+(let user-part (db-part.user))
+(let admin-name (user-part.name))
 
 (defn get-user () {"id": 1, "name": "John"})
-(def user-obj (get-user))
-(def user-name (user-obj.name))
+(let user-obj (get-user))
+(let user-name (user-obj.name))
 
 ;; --- Multiple Property Access Patterns ---
-(def window-width (window.innerWidth))
-(def array-length (array.length))
-(def string-upper (message.toUpperCase))
-(def substring (message.substring 0 5))
-(def replaced (message.replace "Hello" "Hi"))
+(let window-width (window.innerWidth))
+(let array-length (array.length))
+(let string-upper (message.toUpperCase))
+(let substring (message.substring 0 5))
+(let replaced (message.replace "Hello" "Hi"))
 
 ;; --- Test 4: Basic Method Chaining ---
 ;; Approach 1: Store intermediate results
-(def even-numbers (numbers.filter (fn (n) (= (% n 2) 0))))
-(def doubled-evens (even-numbers.map (fn (n) (* n 2))))
+(let even-numbers (numbers.filter (fn (n) (= (% n 2) 0))))
+(let doubled-evens (even-numbers.map (fn (n) (* n 2))))
 (console.log "Doubled evens (step by step):" doubled-evens)
 
 (([1, 2, 3, 4, 5, 6, 7, 8].filter (fn (n) (> n 5))).length)
 
 ;; Approach 2: Use do block with temporary variables
-(def chained-result 
+(let chained-result 
   (do
-    (def filtered (numbers.filter (fn (n) (> n 5))))
-    (def mapped (filtered.map (fn (n) (* n 2))))
+    (let filtered (numbers.filter (fn (n) (> n 5))))
+    (let mapped (filtered.map (fn (n) (* n 2))))
     (mapped.reduce (fn (acc n) (+ acc n)) 0)))
 (console.log "Sum of doubled numbers > 5:" chained-result)
 
 ;; Approach 3: Direct method chaining with parentheses
-(def direct-chain ((numbers.filter (fn (n) (= (% n 2) 0))).map (fn (n) (* n 2))))
+(let direct-chain ((numbers.filter (fn (n) (= (% n 2) 0))).map (fn (n) (* n 2))))
 (console.log "Direct chain result:" direct-chain)
 
 ;; --- Test 5: Complex Method Chaining ---
 (console.log "\n----- Test 5: Complex Method Chaining -----")
-(def complex-chain 
+(let complex-chain 
   (((numbers.filter (fn (n) (> n 3))).map (fn (n) (* n 3))).slice 0 3))
 (console.log "Complex chain result:" complex-chain)
 
-(def sum-chain 
+(let sum-chain 
   ((((numbers.filter (fn (n) (> n 5))).map (fn (n) (* n 2)))
      .filter (fn (n) (= (% n 4) 0)))
     .reduce (fn (acc n) (+ acc n)) 0))
@@ -359,7 +359,7 @@
 ;; Assume core macros (including when/unless) are already loaded.
 
 ;; Define a variable
-(def macro_x 10)
+(let macro_x 10)
 
 ;; Use 'when' to log a message if x is greater than 5.
 (when (> macro_x 5)
@@ -376,54 +376,54 @@
 (export "unless" hql-unless)
 
 ;; Use 'inc' to compute x+1.
-(def x_plus_one (inc macro_x))
+(let x_plus_one (inc macro_x))
 
 ;; Use 'dec' to compute x-1.
-(def x_minus_one (dec macro_x))
+(let x_minus_one (dec macro_x))
 
 (console.log x_plus_one)  ;; 11
 (console.log x_minus_one) ;; 9
 
 ;; Type predicate examples
-(def symb 'hello)
-(def lst '(1 2 3))
-(def mp {"name" : "John"})
+(let symb 'hello)
+(let lst '(1 2 3))
+(let mp {"name" : "John"})
 
 ;; Sequence operation examples
-(def list-numbers '(1 2 3 4 5))
+(let list-numbers '(1 2 3 4 5))
 
 ;; Collection manipulation examples
-(def xs '(1 2 3))
-(def ys '(4 5 6))
+(let xs '(1 2 3))
+(let ys '(4 5 6))
 
 ;; Collection manipulation examples
-(def xs2 '(1 2 3))
-(def ys2 '(4 5 6))
+(let xs2 '(1 2 3))
+(let ys2 '(4 5 6))
 
 ;; str
 
 ;; Basic string concatenation
-(def first-name "John")
-(def last-name "Doe")
-(def full-name (str first-name " " last-name))
+(let first-name "John")
+(let last-name "Doe")
+(let full-name (str first-name " " last-name))
 (console.log full-name)  ;; "John Doe"
 
 ;; Mixing strings and numbers
-(def age 30)
-(def bio (str full-name " is " age " years old"))
+(let age 30)
+(let bio (str full-name " is " age " years old"))
 (console.log bio)  ;; "John Doe is 30 years old"
 
 ;; Creating a formatted message
-(def score 95)
-(def max-score 100)
-(def percentage (* (/ score max-score) 100))
-(def result-message (str "Score: " score "/" max-score " (" percentage "%)"))
+(let score 95)
+(let max-score 100)
+(let percentage (* (/ score max-score) 100))
+(let result-message (str "Score: " score "/" max-score " (" percentage "%)"))
 (console.log result-message)  ;; "Score: 95/100 (95%)"
 
 ;; Using with other expressions
-(def items ["apple", "banana", "orange"])
-(def item-count (items.length))
-(def summary (str "Found " item-count " items: " (get items 0) ", " (get items 1) ", " (get items 2)))
+(let items ["apple", "banana", "orange"])
+(let item-count (items.length))
+(let summary (str "Found " item-count " items: " (get items 0) ", " (get items 1) ", " (get items 2)))
 (console.log summary)  ;; "Found 3 items: apple, banana, orange"
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

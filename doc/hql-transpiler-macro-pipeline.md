@@ -69,10 +69,10 @@ integration: Leverages TypeScript's ecosystem for the final stages
    ┌───────────────────────────────────────────────────────────────────────────┐
    │ Input: (defn square (x) (* x x)) │ │ │ │ Phase 1: Parse to S-expressions │
    │ (defn square (x) (* x x)) │ │ │ │ Phase 2: Identify "defn" as macro │ │
-   Macro definition: │ │ (defmacro defn (name params & body) │ │ `(def ~name (fn
-   ~params ~@body))) │ │ │ │ Phase 3: Apply macro transformation │ │ (def square
+   Macro definition: │ │ (defmacro defn (name params & body) │ │ `(let ~name (fn
+   ~params ~@body))) │ │ │ │ Phase 3: Apply macro transformation │ │ (let square
    (fn (x) (* x x))) │ │ │ │ Phase 4: Check if further expansions needed │ │ No
-   more macros to expand │ │ │ │ Output: (def square (fn (x) (* x x))) │
+   more macros to expand │ │ │ │ Output: (let square (fn (x) (* x x))) │
    └───────────────────────────────────────────────────────────────────────────┘
    HQL vs Other Lisps: The Verdict Based on the codebase I've analyzed, I'd say
    HQL embodies many of the elegant aspects of Lisp while offering practical

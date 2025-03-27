@@ -17,12 +17,12 @@
 (print (str "hello" " " "world"))
 
 
-(def my-set #[1, 2, 3, 4, 5])
+(let my-set #[1, 2, 3, 4, 5])
 (print "Should be true:" (contains? my-set 3))
 (print "Should be false:" (contains? my-set 42))
 
 ;; Create a vector for testing
-(def my-vector [10, 20, 30, 40, 50])
+(let my-vector [10, 20, 30, 40, 50])
 
 ;; Retrieve elements using nth
 (print "Element at index 0 (should be 10):" (nth my-vector 0))
@@ -153,7 +153,7 @@
 
 ;; Test with multiple body forms
 (defn calculate-area (radius)
-  (def square (* radius radius))
+  (let square (* radius radius))
   (* 3.14 square))
 
 (print "Area of circle with radius 5:" (calculate-area 5))

@@ -84,10 +84,6 @@ export function isImport(exp: SExp): boolean {
   return isForm(exp, "import");
 }
 
-export function isDef(exp: SExp): boolean {
-  return isForm(exp, "def");
-}
-
 export function isDefn(exp: SExp): boolean {
   return isForm(exp, "defn");
 }

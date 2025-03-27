@@ -131,7 +131,6 @@ function initializeTransformFactory(): void {
       transformFactory.set("quote", transformQuote);
       transformFactory.set("if", transformIf);
       transformFactory.set("fn", transformFn);
-      transformFactory.set("def", transformDef);
       transformFactory.set("quasiquote", transformQuasiquote);
       transformFactory.set("unquote", transformUnquote);
       transformFactory.set("unquote-splicing", transformUnquoteSplicing);
@@ -2163,60 +2162,6 @@ function processFunctionBody(
     "processFunctionBody",
     TransformError,
     [bodyExprs],
-  );
-}
-
-/**
- * Transform a definition.
- */
-function transformDef(list: ListNode, currentDir: string): IR.IRNode {
-  return perform(
-    () => {
-      if (list.elements.length !== 3) {
-        throw new ValidationError(
-          `def requires exactly 2 arguments, got ${list.elements.length - 1}`,
-          "def expression",
-          "2 arguments",
-          `${list.elements.length - 1} arguments`,
-        );
-      }
-
-      const nameNode = list.elements[1];
-      if (nameNode.type !== "symbol") {
-        throw new ValidationError(
-          "def requires a symbol name",
-          "def name",
-          "symbol",
-          nameNode.type,
-        );
-      }
-
-      const id = transformSymbol(nameNode as SymbolNode) as IR.IRIdentifier;
-      const init = transformNode(list.elements[2], currentDir);
-      if (!init) {
-        throw new ValidationError(
-          "Definition value transformed to null",
-          "def value",
-          "valid expression",
-          "null",
-        );
-      }
-
-      return {
-        type: IR.IRNodeType.VariableDeclaration,
-        kind: "const",
-        declarations: [
-          {
-            type: IR.IRNodeType.VariableDeclarator,
-            id,
-            init,
-          },
-        ],
-      } as IR.IRVariableDeclaration;
-    },
-    "transformDef",
-    TransformError,
-    [list],
   );
 }
 

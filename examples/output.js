@@ -8,5 +8,5 @@ function add(x, y) {
   return minus(x, y);
 }
 export {
-  add
+  add as add3
 };
