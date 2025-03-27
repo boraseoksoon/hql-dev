@@ -210,7 +210,7 @@ layer. Step-by-Step Action Plan
 Step 1: Define the Minimal Core (Kernel) AST Types: Create data types for
 literals, symbols, and lists. Core Evaluator: Write a minimal evaluator that
 handles: quote: (quote exp) returns the expression unevaluated. if: (if cond
-then else) returns a value based on the condition. fn: (fn [params] body...)
+then else) returns a value based on the condition. fn: (lambda [params] body...)
 returns a function where the last expression in the body is automatically
 returned. def: (let name value) binds a value globally. defn: (defn name
 [params] body...) is syntactic sugar for defining a function. Primitive
@@ -290,11 +290,11 @@ AST recursively. It looks for lists where the first element is a macro (as
 defined via defmacro) and expands them. After expansion, the AST consists solely
 of core constructs (like quote, if, fn, def, etc.), ensuring everything is an
 expression. Example: Suppose you have a macro defined for defn that expands into
-(let name (fn [params] body...)). Before expansion, you might see:
+(let name (lambda [params] body...)). Before expansion, you might see:
 
 (defn ok () "OK") After macro expansion, it becomes something like:
 
-(let ok (fn [] "OK")) In the AST, the macro-expander replaces the high-level
+(let ok (lambda [] "OK")) In the AST, the macro-expander replaces the high-level
 defn form with the corresponding core expression. Macro-Expanded HQL AST → HQL
 IR IR Generation: The macro-expanded AST is transformed into an intermediate
 representation (IR) that normalizes the structure of the program. The IR uses a

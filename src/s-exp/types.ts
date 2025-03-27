@@ -66,58 +66,16 @@ export function isForm(exp: SExp, formName: string): boolean {
     exp.elements[0].name === formName;
 }
 
-/**
- * Helpers for specific forms
- */
 export function isDefMacro(exp: SExp): boolean {
   return isForm(exp, "defmacro");
 }
 
-/**
- * Check if an S-expression is a user-level macro definition
- */
 export function isUserMacro(exp: SExp): boolean {
   return isForm(exp, "macro");
 }
 
 export function isImport(exp: SExp): boolean {
   return isForm(exp, "import");
-}
-
-export function isDefn(exp: SExp): boolean {
-  return isForm(exp, "defn");
-}
-
-export function isExport(exp: SExp): boolean {
-  return isForm(exp, "export");
-}
-
-export function isQuote(exp: SExp): boolean {
-  return isForm(exp, "quote");
-}
-
-export function isUnquote(exp: SExp): boolean {
-  return isForm(exp, "unquote");
-}
-
-export function isUnquoteSplicing(exp: SExp): boolean {
-  return isForm(exp, "unquote-splicing");
-}
-
-export function isQuasiquote(exp: SExp): boolean {
-  return isForm(exp, "quasiquote");
-}
-
-export function isJsCall(exp: SExp): boolean {
-  return isForm(exp, "js-call");
-}
-
-export function isJsGet(exp: SExp): boolean {
-  return isForm(exp, "js-get");
-}
-
-export function isLambda(exp: SExp): boolean {
-  return isForm(exp, "fn");
 }
 
 /**

@@ -1,4 +1,4 @@
-──────────────────────────── Part 1: Function Model (fx, fn, lambda) ────────────────────────────
+──────────────────────────── Part 2: Function Model (fx, fn, lambda) ────────────────────────────
 
 Overview
 We distinguish functions by both their naming and their purity:
@@ -113,6 +113,3 @@ Anonymous functions are defined using lambda. They are not split into separate p
 Purity Enforcement:
 Pure functions (fx) must not capture any external state or perform side effects.
 If a lambda passed to an fx function is impure, the system should flag an error.
-This simplified model—using let, var, fx, fn, and lambda—strikes a balance between explicit purity enforcement for named functions and a unified approach for anonymous functions, all while keeping the binding model straightforward.
-
-Does this comprehensive split overview and full syntax showcase capture your vision for HQL’s design while reducing complexity?

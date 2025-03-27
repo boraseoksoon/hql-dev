@@ -191,7 +191,7 @@
   (f (f x)))
 
 (defn make-multiplier (n)
-  (fn (x) (* x n)))
+  (lambda (x) (* x n)))
 
 (defn demonstration ()
   (do
@@ -263,7 +263,7 @@
 
 ;; (Optional) DOM manipulation (when in browser context)
 ;; (let element (document.getElementById "myElement"))
-;; (element.addEventListener "click" (fn (event) (console.log "Clicked!")))
+;; (element.addEventListener "click" (lambda (event) (console.log "Clicked!")))
 
 ;; --- Imports ---
 (import path from "https://deno.land/std@0.170.0/path/mod.ts")
@@ -298,9 +298,9 @@
 
 ;; --- Chained Function Calls ---
 (let nums [1, 2, 3, 4, 5])
-(let filtered (nums.filter (fn (x) (> x 2))))
-(let doubled (filtered.map (fn (x) (* x 2))))
-(let sum (nums.reduce (fn (a b) (+ a b)) 0))
+(let filtered (nums.filter (lambda (x) (> x 2))))
+(let doubled (filtered.map (lambda (x) (* x 2))))
+(let sum (nums.reduce (lambda (a b) (+ a b)) 0))
 (let max-sum (Math.max sum 10))
 
 (let config {"db": {"user": {"name": "admin"}}})
@@ -321,34 +321,34 @@
 
 ;; --- Test 4: Basic Method Chaining ---
 ;; Approach 1: Store intermediate results
-(let even-numbers (numbers.filter (fn (n) (= (% n 2) 0))))
-(let doubled-evens (even-numbers.map (fn (n) (* n 2))))
+(let even-numbers (numbers.filter (lambda (n) (= (% n 2) 0))))
+(let doubled-evens (even-numbers.map (lambda (n) (* n 2))))
 (console.log "Doubled evens (step by step):" doubled-evens)
 
-(([1, 2, 3, 4, 5, 6, 7, 8].filter (fn (n) (> n 5))).length)
+(([1, 2, 3, 4, 5, 6, 7, 8].filter (lambda (n) (> n 5))).length)
 
 ;; Approach 2: Use do block with temporary variables
 (let chained-result 
   (do
-    (let filtered (numbers.filter (fn (n) (> n 5))))
-    (let mapped (filtered.map (fn (n) (* n 2))))
-    (mapped.reduce (fn (acc n) (+ acc n)) 0)))
+    (let filtered (numbers.filter (lambda (n) (> n 5))))
+    (let mapped (filtered.map (lambda (n) (* n 2))))
+    (mapped.reduce (lambda (acc n) (+ acc n)) 0)))
 (console.log "Sum of doubled numbers > 5:" chained-result)
 
 ;; Approach 3: Direct method chaining with parentheses
-(let direct-chain ((numbers.filter (fn (n) (= (% n 2) 0))).map (fn (n) (* n 2))))
+(let direct-chain ((numbers.filter (lambda (n) (= (% n 2) 0))).map (lambda (n) (* n 2))))
 (console.log "Direct chain result:" direct-chain)
 
 ;; --- Test 5: Complex Method Chaining ---
 (console.log "\n----- Test 5: Complex Method Chaining -----")
 (let complex-chain 
-  (((numbers.filter (fn (n) (> n 3))).map (fn (n) (* n 3))).slice 0 3))
+  (((numbers.filter (lambda (n) (> n 3))).map (lambda (n) (* n 3))).slice 0 3))
 (console.log "Complex chain result:" complex-chain)
 
 (let sum-chain 
-  ((((numbers.filter (fn (n) (> n 5))).map (fn (n) (* n 2)))
-     .filter (fn (n) (= (% n 4) 0)))
-    .reduce (fn (acc n) (+ acc n)) 0))
+  ((((numbers.filter (lambda (n) (> n 5))).map (lambda (n) (* n 2)))
+     .filter (lambda (n) (= (% n 4) 0)))
+    .reduce (lambda (acc n) (+ acc n)) 0))
 (console.log "Sum from complex chain:" sum-chain)
 
 

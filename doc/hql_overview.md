@@ -116,7 +116,7 @@ orchestrator of the entire pipeline: Copyfunction processHql(source, options) {
 8. Generate JavaScript code
 9. Return the final JavaScript } Handling Core.hql The system loads a core
    library (lib/core.hql) that contains standard macros and functions:
-   Copy(defmacro defn (name params & body) `(let ~name (fn ~params ~@body)))
+   Copy(defmacro defn (name params & body) `(let ~name (lambda ~params ~@body)))
 
 (defmacro or (a b) `(if ~a ~a ~b))
 
@@ -151,7 +151,7 @@ greet [name] (str "Hello, " name "!"))
 (let message (greet "World"))
 
 Parsing: Create S-expression tree Import Processing: Load any imports (none in
-this example) Macro Expansion: Expand defn macro to (let greet (fn [name] ...))
+this example) Macro Expansion: Expand defn macro to (let greet (lambda [name] ...))
 AST Conversion: Convert to HQL AST representation IR Generation: Convert to
 JavaScript-oriented IR with function declarations TypeScript AST: Convert to
 TypeScript AST with function expression Code Generation: Output final JavaScript

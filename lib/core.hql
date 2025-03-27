@@ -1,5 +1,5 @@
 (defmacro defn (name params & body)
-  `(let ~name (fn ~params ~@body)))
+  `(let ~name (lambda ~params ~@body)))
   
 (defmacro or (a b)
   `(if ~a ~a ~b))
@@ -45,7 +45,7 @@
 (defmacro do (& body)
   (if (= (length body) 0)
       nil
-      `(let (temp (fn () ~@body))
+      `(let (temp (lambda () ~@body))
          (temp))))
 
 (defmacro contains? (coll key)
@@ -73,10 +73,13 @@
           `(if ~test (do ~@body) nil))))
 
 (defmacro if-let (binding then-expr else-expr)
-  `(let (~(first binding) ~(second binding))
-     (if ~(first binding)
-         ~then-expr
-         ~else-expr)))
+  (let (var-name (first binding)
+        var-value (second binding))
+    `((lambda (~var-name)
+         (if ~var-name
+             ~then-expr
+             ~else-expr))
+       ~var-value)))
 
 ;; no distinction between list and vector now.
 (defmacro list (& items)

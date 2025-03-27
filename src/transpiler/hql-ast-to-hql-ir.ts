@@ -130,7 +130,7 @@ function initializeTransformFactory(): void {
       // Register kernel primitive handlers
       transformFactory.set("quote", transformQuote);
       transformFactory.set("if", transformIf);
-      transformFactory.set("fn", transformFn);
+      transformFactory.set("lambda", transformLambda);
       transformFactory.set("quasiquote", transformQuasiquote);
       transformFactory.set("unquote", transformUnquote);
       transformFactory.set("unquote-splicing", transformUnquoteSplicing);
@@ -2019,13 +2019,13 @@ function transformIf(list: ListNode, currentDir: string): IR.IRNode {
 /**
  * Transform a function definition.
  */
-function transformFn(list: ListNode, currentDir: string): IR.IRNode {
+function transformLambda(list: ListNode, currentDir: string): IR.IRNode {
   return perform(
     () => {
       if (list.elements.length < 3) {
         throw new ValidationError(
-          "fn requires parameters and body",
-          "fn expression",
+          "lambda requires parameters and body",
+          "lambda expression",
           "parameters and body",
           `${list.elements.length - 1} arguments`,
         );
@@ -2034,8 +2034,8 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
       const paramsNode = list.elements[1];
       if (paramsNode.type !== "list") {
         throw new ValidationError(
-          "fn parameters must be a list",
-          "fn parameters",
+          "lambda parameters must be a list",
+          "lambda parameters",
           "list",
           paramsNode.type,
         );
@@ -2053,7 +2053,7 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
         body: { type: IR.IRNodeType.BlockStatement, body: bodyNodes },
       } as IR.IRFunctionExpression;
     },
-    "transformFn",
+    "transformLambda",
     TransformError,
     [list],
   );
