@@ -127,10 +127,10 @@ HQL’s for macro supports both list comprehension and imperative-style loops.
 List Comprehension Style: (for [(i 0) (< i 10) (+ i 1)] (print i)) This form may
 be rewritten to something like:
 
-(map (lambda (i) (print i)) (range 10)) Imperative Style: The macro can also support
-a binding vector, test, and update expressions to build a recursive loop.
-Threading Macros Inspired by Clojure, HQL includes threading macros that make
-nested function calls more readable.
+(map (lambda (i) (print i)) (range 10)) Imperative Style: The macro can also
+support a binding vector, test, and update expressions to build a recursive
+loop. Threading Macros Inspired by Clojure, HQL includes threading macros that
+make nested function calls more readable.
 
 Left-Threading (->)
 

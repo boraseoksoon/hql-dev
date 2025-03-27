@@ -52,9 +52,10 @@ export enum IRNodeType {
 
   // For representing a JS import reference from (js-import "module")
   JsImportReference,
-  AssignmentExpression, 
+  AssignmentExpression,
   SpreadAssignment,
-  ExpressionStatement
+  ExpressionStatement,
+  FxFunctionDeclaration,
 }
 
 export interface IRNode {
@@ -278,4 +279,17 @@ export interface IRAssignmentExpression extends IRNode {
   operator: string;
   left: IRNode;
   right: IRNode;
+}
+
+/**
+ * IR node for fx function declarations with type information
+ */
+export interface IRFxFunctionDeclaration extends IRNode {
+  type: IRNodeType.FxFunctionDeclaration;
+  id: IRIdentifier;
+  params: IRIdentifier[];
+  defaults: { name: string; value: IRNode }[];
+  paramTypes: { name: string; type: string }[];
+  returnType: string;
+  body: IRBlockStatement;
 }

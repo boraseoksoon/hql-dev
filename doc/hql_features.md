@@ -192,19 +192,19 @@ Everything is Lazy evaluation:
 Everything is an Expression: Every language construct, from control forms to
 bindings, returns a value. This uniformity is critical for enabling advanced
 macro expansion and for reasoning about code. Macro Everywhere: Redefine
-high‑level constructs (fn, import, export, printing, even JS interop if
-desired) as macros over the minimal kernel. Eventually, the entire surface
-language will be built by macros that expand into a tiny core consisting of only
-the essential primitives. Clean Transpiler Pipeline: Your pipeline should be
-well‑structured into distinct phases: Parsing: Convert HQL source into an AST
-(literals, symbols, lists). Macro Expansion: Recursively expand all macro
-invocations so that the final AST consists only of core forms. IR Generation:
-Transform the expanded AST into a normalized intermediate representation that
-preserves the expression‑oriented nature. TS/JS AST Conversion: Convert the IR
-into a JavaScript/TypeScript AST. Code Generation and Bundling: Generate a
-single, self-contained JS file, inlining all modules so no external dependencies
-remain. Platform-Agnostic Core: Although initially targeting Deno, your design
-will allow future migration to other platforms through the platform abstraction
+high‑level constructs (fn, import, export, printing, even JS interop if desired)
+as macros over the minimal kernel. Eventually, the entire surface language will
+be built by macros that expand into a tiny core consisting of only the essential
+primitives. Clean Transpiler Pipeline: Your pipeline should be well‑structured
+into distinct phases: Parsing: Convert HQL source into an AST (literals,
+symbols, lists). Macro Expansion: Recursively expand all macro invocations so
+that the final AST consists only of core forms. IR Generation: Transform the
+expanded AST into a normalized intermediate representation that preserves the
+expression‑oriented nature. TS/JS AST Conversion: Convert the IR into a
+JavaScript/TypeScript AST. Code Generation and Bundling: Generate a single,
+self-contained JS file, inlining all modules so no external dependencies remain.
+Platform-Agnostic Core: Although initially targeting Deno, your design will
+allow future migration to other platforms through the platform abstraction
 layer. Step-by-Step Action Plan
 
 Step 1: Define the Minimal Core (Kernel) AST Types: Create data types for
@@ -212,10 +212,10 @@ literals, symbols, and lists. Core Evaluator: Write a minimal evaluator that
 handles: quote: (quote exp) returns the expression unevaluated. if: (if cond
 then else) returns a value based on the condition. fn: (lambda [params] body...)
 returns a function where the last expression in the body is automatically
-returned. def: (let name value) binds a value globally. defn: (fn name
-[params] body...) is syntactic sugar for defining a function. Primitive
-Functions: Provide basic operations (arithmetic, list manipulation, equality).
-Example (simplified pseudocode):
+returned. def: (let name value) binds a value globally. defn: (fn name [params]
+body...) is syntactic sugar for defining a function. Primitive Functions:
+Provide basic operations (arithmetic, list manipulation, equality). Example
+(simplified pseudocode):
 
 ;; AST: literal, symbol, list ;; Evaluator: every expression returns a value ;;
 Core built-ins: quote, if, fn, def, defn, +, -, *, /, cons, car, cdr, eq? Step

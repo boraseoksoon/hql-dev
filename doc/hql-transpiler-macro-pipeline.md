@@ -67,12 +67,12 @@ integration: Leverages TypeScript's ecosystem for the final stages
 3. Macro Expansion Process: True to Lisp Tradition The HQL macro expansion
    process follows the traditional Lisp approach: CopyMacro Expansion Example:
    ┌───────────────────────────────────────────────────────────────────────────┐
-   │ Input: (fn square (x) (* x x)) │ │ │ │ Phase 1: Parse to S-expressions │
-   │ (fn square (x) (* x x)) │ │ │ │ Phase 2: Identify "defn" as macro │ │
-   Macro definition: │ │ (defmacro defn (name params & body) │ │ `(let ~name (lambda
+   │ Input: (fn square (x) (* x x)) │ │ │ │ Phase 1: Parse to S-expressions │ │
+   (fn square (x) (* x x)) │ │ │ │ Phase 2: Identify "defn" as macro │ │ Macro
+   definition: │ │ (defmacro defn (name params & body) │ │ `(let ~name (lambda
    ~params ~@body))) │ │ │ │ Phase 3: Apply macro transformation │ │ (let square
-   (lambda (x) (* x x))) │ │ │ │ Phase 4: Check if further expansions needed │ │ No
-   more macros to expand │ │ │ │ Output: (let square (lambda (x) (* x x))) │
+   (lambda (x) (* x x))) │ │ │ │ Phase 4: Check if further expansions needed │ │
+   No more macros to expand │ │ │ │ Output: (let square (lambda (x) (* x x))) │
    └───────────────────────────────────────────────────────────────────────────┘
    HQL vs Other Lisps: The Verdict Based on the codebase I've analyzed, I'd say
    HQL embodies many of the elegant aspects of Lisp while offering practical

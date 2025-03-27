@@ -19,12 +19,12 @@ JavaScript | | Output | | Code Printer | | AST | | IR | +------------+
 +--------------+ +--------------+ +------------+ Let's dive into each component
 in detail:
 
-1. S-Expression Parsing (src/s-exp/parser.ts) CopyHQL Input: (fn add [a b] (+
-   a b)) │ v Tokenization ┌─────────────────────────┐ │ LEFT_PAREN: ( │ │
-   SYMBOL: defn │ │ SYMBOL: add │ │ LEFT_BRACKET: [ │ │ SYMBOL: a │ │ SYMBOL: b
-   │ │ RIGHT_BRACKET: ] │ │ LEFT_PAREN: ( │ │ SYMBOL: + │ │ SYMBOL: a │ │
-   SYMBOL: b │ │ RIGHT_PAREN: ) │ │ RIGHT_PAREN: ) │ └─────────────────────────┘
-   │ v S-Expression Tree ┌─────────────────────────┐ │ { │ │ type: 'list', │ │
+1. S-Expression Parsing (src/s-exp/parser.ts) CopyHQL Input: (fn add [a b] (+ a
+   b)) │ v Tokenization ┌─────────────────────────┐ │ LEFT_PAREN: ( │ │ SYMBOL:
+   defn │ │ SYMBOL: add │ │ LEFT_BRACKET: [ │ │ SYMBOL: a │ │ SYMBOL: b │ │
+   RIGHT_BRACKET: ] │ │ LEFT_PAREN: ( │ │ SYMBOL: + │ │ SYMBOL: a │ │ SYMBOL: b
+   │ │ RIGHT_PAREN: ) │ │ RIGHT_PAREN: ) │ └─────────────────────────┘ │ v
+   S-Expression Tree ┌─────────────────────────┐ │ { │ │ type: 'list', │ │
    elements: [ │ │ {type: 'symbol', │ │ name: 'defn'}, │ │ {type: 'symbol', │ │
    name: 'add'}, │ │ {type: 'list', │ │ elements: [...]}, │ │ {type: 'list', │ │
    elements: [...]} │ │ ] │ │ } │ └─────────────────────────┘
@@ -145,15 +145,15 @@ return notFound;
 
 // Handle objects (maps) return (key in obj) ? obj[key] : notFound; } These
 functions implement core HQL functionality in JavaScript. Overall Process Flow
-with Example Let's trace through an end-to-end example: CopyHQL Input: (fn
-greet [name] (str "Hello, " name "!"))
+with Example Let's trace through an end-to-end example: CopyHQL Input: (fn greet
+[name] (str "Hello, " name "!"))
 
 (let message (greet "World"))
 
 Parsing: Create S-expression tree Import Processing: Load any imports (none in
-this example) Macro Expansion: Expand defn macro to (let greet (lambda [name] ...))
-AST Conversion: Convert to HQL AST representation IR Generation: Convert to
-JavaScript-oriented IR with function declarations TypeScript AST: Convert to
+this example) Macro Expansion: Expand defn macro to (let greet (lambda [name]
+...)) AST Conversion: Convert to HQL AST representation IR Generation: Convert
+to JavaScript-oriented IR with function declarations TypeScript AST: Convert to
 TypeScript AST with function expression Code Generation: Output final JavaScript
 
 javascriptCopy// Final JavaScript Output: function str(...args) { return

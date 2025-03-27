@@ -4,7 +4,7 @@
 
 import * as IR from "./hql_ir.ts";
 import { HQLNode, ListNode, LiteralNode, SymbolNode } from "./hql_ast.ts";
-import { verifyFunctionPurity, registerPureFunction } from "./purity.ts";
+import { registerPureFunction, verifyFunctionPurity } from "./purity.ts";
 import {
   KERNEL_PRIMITIVES,
   PRIMITIVE_CLASS,
@@ -17,7 +17,7 @@ import * as path from "../platform/platform.ts";
 import { TransformError, ValidationError } from "./errors.ts";
 import { Logger } from "../logger.ts";
 import { perform } from "./error-utils.ts";
-import { macroCache, isUserLevelMacro } from "../s-exp/macro.ts";
+import { isUserLevelMacro, macroCache } from "../s-exp/macro.ts";
 import {
   isNamespaceImport,
   isVectorExport,
@@ -144,7 +144,7 @@ function initializeTransformFactory(): void {
       transformFactory.set("js-call", transformJsCall);
       transformFactory.set("js-get-invoke", transformJsGetInvoke);
       transformFactory.set("js-set", transformJsSet);
-      
+
       // Register data structure handlers
       transformFactory.set("vector", transformVector);
       transformFactory.set("hash-map", transformHashMap);
@@ -307,88 +307,83 @@ function isDotNotation(op: string): boolean {
  * Transform a list node to its IR representation.
  */
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
-  return perform(
-    () => {
-      if (list.elements.length === 0) {
-        return transformEmptyList();
-      }
+  // Handle empty list
+  if (list.elements.length === 0) {
+    return transformEmptyList();
+  }
 
-      const jsGetInvokeResult = transformJsGetInvokeSpecialCase(
-        list,
-        currentDir,
+  // Special case for js-get-invoke
+  const jsGetInvokeResult = transformJsGetInvokeSpecialCase(list, currentDir);
+  if (jsGetInvokeResult) return jsGetInvokeResult;
+
+  const first = list.elements[0];
+
+  if (first.type === "symbol") {
+    const op = (first as SymbolNode).name;
+
+    // Skip macro definitions
+    if (op === "defmacro" || op === "macro") {
+      logger.debug(`Skipping macro definition: ${op}`);
+      return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+    }
+
+    // Handle import/export forms
+    if (isVectorExport(list)) {
+      return transformVectorExport(list, currentDir);
+    }
+
+    if (isVectorImport(list)) {
+      return transformVectorImport(list, currentDir);
+    }
+
+    if (isNamespaceImport(list)) {
+      return transformNamespaceImport(list, currentDir);
+    }
+
+    if (isDotNotation(op)) {
+      return transformDotNotation(list, op, currentDir);
+    }
+
+    // Check for named arguments in function call
+    if (hasNamedArguments(list)) {
+      return transformNamedArgumentCall(list, currentDir);
+    }
+
+    // Handle built-in operations via the transform factory
+    const handler = transformFactory.get(op);
+    if (handler) {
+      return perform(
+        () => handler(list, currentDir),
+        `handler for '${op}'`,
+        TransformError,
+        [list],
       );
-      if (jsGetInvokeResult) return jsGetInvokeResult;
+    }
 
-      const first = list.elements[0];
+    // Handle primitive operations
+    if (PRIMITIVE_OPS.has(op)) {
+      return transformPrimitiveOp(list, currentDir);
+    }
 
-      if (first.type === "symbol") {
-        const op = (first as SymbolNode).name;
+    // Handle collection access syntax
+    if (
+      list.elements.length === 2 &&
+      !KERNEL_PRIMITIVES.has(op) &&
+      !PRIMITIVE_DATA_STRUCTURE.has(op) &&
+      !PRIMITIVE_CLASS.has(op) &&
+      !op.startsWith("js-")
+    ) {
+      return transformCollectionAccess(list, op, currentDir);
+    }
+  }
 
-        if (op === "defmacro" || op === "macro") {
-          logger.debug(`Skipping macro definition: ${op}`);
-          return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
-        }
+  // Handle nested lists
+  if (first.type === "list") {
+    return transformNestedList(list, currentDir);
+  }
 
-        // Handle special import/export forms
-        if (isVectorExport(list)) {
-          logger.debug("Transforming vector export");
-          return transformVectorExport(list, currentDir);
-        }
-
-        if (isVectorImport(list)) {
-          logger.debug("Transforming vector import");
-          return transformVectorImport(list, currentDir);
-        }
-
-        if (isNamespaceImport(list)) {
-          logger.debug("Transforming namespace import");
-          return transformNamespaceImport(list, currentDir);
-        }
-
-        if (isDotNotation(op)) {
-          logger.debug(`Transforming dot notation: ${op}`);
-          return transformDotNotation(list, op, currentDir);
-        }
-
-        const handler = transformFactory.get(op);
-        if (handler) {
-          return perform(
-            () => handler(list, currentDir),
-            `handler for '${op}'`,
-            TransformError,
-            [list],
-          );
-        }
-
-        if (PRIMITIVE_OPS.has(op)) {
-          logger.debug(`Transforming primitive operation: ${op}`);
-          return transformPrimitiveOp(list, currentDir);
-        }
-
-        if (
-          list.elements.length === 2 &&
-          !KERNEL_PRIMITIVES.has(op) &&
-          !PRIMITIVE_DATA_STRUCTURE.has(op) &&
-          !PRIMITIVE_CLASS.has(op) &&
-          !op.startsWith("js-")
-        ) {
-          logger.debug(`Transforming collection access: ${op}`);
-          return transformCollectionAccess(list, op, currentDir);
-        }
-      }
-
-      if (first.type === "list") {
-        logger.debug("Transforming nested list");
-        return transformNestedList(list, currentDir);
-      }
-
-      logger.debug("Transforming standard function call");
-      return transformStandardFunctionCall(list, currentDir);
-    },
-    "transformList",
-    TransformError,
-    [list],
-  );
+  // Default case: standard function call
+  return transformStandardFunctionCall(list, currentDir);
 }
 
 /**
@@ -716,9 +711,6 @@ function transformCollectionAccess(
   );
 }
 
-/**
- * Transform a standard function call.
- */
 function transformStandardFunctionCall(
   list: ListNode,
   currentDir: string,
@@ -726,8 +718,39 @@ function transformStandardFunctionCall(
   return perform(
     () => {
       const first = list.elements[0];
+
       if (first.type === "symbol") {
         const op = (first as SymbolNode).name;
+
+        // Check if we're calling an fx function
+        const fxDef = fxFunctionRegistry.get(op);
+
+        // Check if we have any named arguments
+        const hasNamed = hasNamedArguments(list);
+
+        if (fxDef && hasNamed) {
+          // We found an fx function with named arguments
+          logger.debug(`Processing call to fx function ${op} with named arguments`);
+          return transformNamedArgumentCall(list, currentDir);
+        } 
+        else if (fxDef) {
+          // Process as a regular call to an fx function with positional args
+          logger.debug(`Processing call to fx function ${op} with positional arguments`);
+          return processFxFunctionCall(
+            op,
+            fxDef,
+            list.elements.slice(1),
+            currentDir,
+          );
+        }
+        else if (hasNamed) {
+          // Handle named arguments for regular functions
+          logger.debug(`Processing call to function ${op} with named arguments`);
+          return transformNamedArgumentCall(list, currentDir);
+        }
+
+        // Handle regular positional args call
+        logger.debug(`Processing standard function call to ${op}`);
         const args = list.elements.slice(1).map((arg) => {
           const transformed = transformNode(arg, currentDir);
           if (!transformed) {
@@ -740,6 +763,7 @@ function transformStandardFunctionCall(
           }
           return transformed;
         });
+
         return {
           type: IR.IRNodeType.CallExpression,
           callee: {
@@ -750,6 +774,7 @@ function transformStandardFunctionCall(
         } as IR.IRCallExpression;
       }
 
+      // Handle function expression calls
       const callee = transformNode(list.elements[0], currentDir);
       if (!callee) {
         throw new ValidationError(
@@ -2065,65 +2090,48 @@ function transformLambda(list: ListNode, currentDir: string): IR.IRNode {
 /**
  * Process function parameters, handling rest parameters
  */
-function processFunctionParams(paramsNode: ListNode): {
+function processFunctionParams(paramNodes: SymbolNode[]): {
   params: IR.IRIdentifier[];
   restParam: IR.IRIdentifier | null;
 } {
-  return perform(
-    () => {
-      const params: IR.IRIdentifier[] = [];
-      let restParam: IR.IRIdentifier | null = null;
-      let restMode = false;
+  const params: IR.IRIdentifier[] = [];
+  let restParam: IR.IRIdentifier | null = null;
+  let restMode = false;
 
-      for (let i = 0; i < paramsNode.elements.length; i++) {
-        const param = paramsNode.elements[i];
-        if (param.type !== "symbol") {
-          throw new ValidationError(
-            `fn parameters must be symbols, got: ${param.type} at position ${i}`,
-            "function parameter",
-            "symbol",
-            param.type,
-          );
-        }
+  for (let i = 0; i < paramNodes.length; i++) {
+    const paramNode = paramNodes[i];
+    const paramName = paramNode.name;
 
-        const paramName = (param as SymbolNode).name;
-        if (paramName === "&") {
-          restMode = true;
-          continue;
-        }
+    if (paramName === "&") {
+      restMode = true;
+      continue;
+    }
 
-        if (restMode) {
-          if (restParam !== null) {
-            throw new ValidationError(
-              `Multiple rest parameters not allowed: found '${
-                restParam.name.slice(
-                  3,
-                )
-              }' and '${paramName}'`,
-              "rest parameter",
-              "single rest parameter",
-              "multiple rest parameters",
-            );
-          }
-
-          restParam = {
-            type: IR.IRNodeType.Identifier,
-            name: `...${sanitizeIdentifier(paramName)}`,
-          } as IR.IRIdentifier;
-        } else {
-          params.push({
-            type: IR.IRNodeType.Identifier,
-            name: sanitizeIdentifier(paramName),
-          } as IR.IRIdentifier);
-        }
+    if (restMode) {
+      if (restParam !== null) {
+        throw new ValidationError(
+          `Multiple rest parameters not allowed: found '${
+            restParam.name.slice(3)
+          }' and '${paramName}'`,
+          "rest parameter",
+          "single rest parameter",
+          "multiple rest parameters",
+        );
       }
 
-      return { params, restParam };
-    },
-    "processFunctionParams",
-    TransformError,
-    [paramsNode],
-  );
+      restParam = {
+        type: IR.IRNodeType.Identifier,
+        name: `...${sanitizeIdentifier(paramName)}`,
+      } as IR.IRIdentifier;
+    } else {
+      params.push({
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(paramName),
+      } as IR.IRIdentifier);
+    }
+  }
+
+  return { params, restParam };
 }
 
 /**
@@ -2330,7 +2338,7 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
     const nameNode = list.elements[1] as SymbolNode;
     const id = transformSymbol(nameNode) as IR.IRIdentifier;
     const init = transformNode(list.elements[2], currentDir);
-    
+
     if (!init) {
       throw new ValidationError(
         "Let value transformed to null",
@@ -2352,15 +2360,15 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
       ],
     } as IR.IRVariableDeclaration;
   }
-  
+
   // Handle local binding form: (let (name1 value1 name2 value2...) body...)
   if (list.elements.length >= 2 && list.elements[1].type === "list") {
     const bindingsNode = list.elements[1] as ListNode;
     const bodyExprs = list.elements.slice(2);
-    
+
     // Process bindings as pairs
-    const bindings: Array<{name: string, value: IR.IRNode}> = [];
-    
+    const bindings: Array<{ name: string; value: IR.IRNode }> = [];
+
     for (let i = 0; i < bindingsNode.elements.length; i += 2) {
       if (i + 1 >= bindingsNode.elements.length) {
         throw new ValidationError(
@@ -2370,7 +2378,7 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
           "incomplete pair",
         );
       }
-      
+
       const nameNode = bindingsNode.elements[i];
       if (nameNode.type !== "symbol") {
         throw new ValidationError(
@@ -2380,10 +2388,10 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
           nameNode.type,
         );
       }
-      
+
       const name = (nameNode as SymbolNode).name;
       const valueExpr = transformNode(bindingsNode.elements[i + 1], currentDir);
-      
+
       if (!valueExpr) {
         throw new ValidationError(
           `Binding value for '${name}' transformed to null`,
@@ -2392,12 +2400,12 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
           "null",
         );
       }
-      
+
       bindings.push({ name, value: valueExpr });
     }
-    
+
     // Create variable declarations for all bindings
-    const variableDeclarations: IR.IRNode[] = bindings.map(b => ({
+    const variableDeclarations: IR.IRNode[] = bindings.map((b) => ({
       type: IR.IRNodeType.VariableDeclaration,
       kind: "const", // Use 'const' for immutable bindings
       declarations: [
@@ -2411,10 +2419,10 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
         },
       ],
     } as IR.IRVariableDeclaration));
-    
+
     // Process body expressions
     const bodyStatements: IR.IRNode[] = [];
-    
+
     // Process all body expressions
     for (const bodyExpr of bodyExprs) {
       const processedExpr = transformNode(bodyExpr, currentDir);
@@ -2422,7 +2430,7 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
         bodyStatements.push(processedExpr);
       }
     }
-    
+
     // Create an IIFE to contain our block of code
     return {
       type: IR.IRNodeType.CallExpression,
@@ -2438,7 +2446,7 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
       arguments: [],
     } as IR.IRCallExpression;
   }
-  
+
   throw new ValidationError(
     "Invalid let form",
     "let expression",
@@ -2459,7 +2467,7 @@ function transformVar(list: ListNode, currentDir: string): IR.IRNode {
     const nameNode = list.elements[1] as SymbolNode;
     const id = transformSymbol(nameNode) as IR.IRIdentifier;
     const init = transformNode(list.elements[2], currentDir);
-    
+
     if (!init) {
       throw new ValidationError(
         "Var value transformed to null",
@@ -2481,15 +2489,15 @@ function transformVar(list: ListNode, currentDir: string): IR.IRNode {
       ],
     } as IR.IRVariableDeclaration;
   }
-  
+
   // Handle local binding form: (var (name1 value1 name2 value2...) body...)
   if (list.elements.length >= 2 && list.elements[1].type === "list") {
     const bindingsNode = list.elements[1] as ListNode;
     const bodyExprs = list.elements.slice(2);
-    
+
     // Process bindings as pairs
-    const bindings: Array<{name: string, value: IR.IRNode}> = [];
-    
+    const bindings: Array<{ name: string; value: IR.IRNode }> = [];
+
     for (let i = 0; i < bindingsNode.elements.length; i += 2) {
       if (i + 1 >= bindingsNode.elements.length) {
         throw new ValidationError(
@@ -2499,7 +2507,7 @@ function transformVar(list: ListNode, currentDir: string): IR.IRNode {
           "incomplete pair",
         );
       }
-      
+
       const nameNode = bindingsNode.elements[i];
       if (nameNode.type !== "symbol") {
         throw new ValidationError(
@@ -2509,10 +2517,10 @@ function transformVar(list: ListNode, currentDir: string): IR.IRNode {
           nameNode.type,
         );
       }
-      
+
       const name = (nameNode as SymbolNode).name;
       const valueExpr = transformNode(bindingsNode.elements[i + 1], currentDir);
-      
+
       if (!valueExpr) {
         throw new ValidationError(
           `Binding value for '${name}' transformed to null`,
@@ -2521,12 +2529,12 @@ function transformVar(list: ListNode, currentDir: string): IR.IRNode {
           "null",
         );
       }
-      
+
       bindings.push({ name, value: valueExpr });
     }
-    
+
     // Create variable declarations for all bindings
-    const variableDeclarations: IR.IRNode[] = bindings.map(b => ({
+    const variableDeclarations: IR.IRNode[] = bindings.map((b) => ({
       type: IR.IRNodeType.VariableDeclaration,
       kind: "let", // Use 'let' for mutable bindings
       declarations: [
@@ -2540,10 +2548,10 @@ function transformVar(list: ListNode, currentDir: string): IR.IRNode {
         },
       ],
     } as IR.IRVariableDeclaration));
-    
+
     // Process body expressions
     const bodyStatements: IR.IRNode[] = [];
-    
+
     // Process all body expressions
     for (const bodyExpr of bodyExprs) {
       const processedExpr = transformNode(bodyExpr, currentDir);
@@ -2551,7 +2559,7 @@ function transformVar(list: ListNode, currentDir: string): IR.IRNode {
         bodyStatements.push(processedExpr);
       }
     }
-    
+
     // Create an IIFE to contain our block of code
     return {
       type: IR.IRNodeType.CallExpression,
@@ -2567,7 +2575,7 @@ function transformVar(list: ListNode, currentDir: string): IR.IRNode {
       arguments: [],
     } as IR.IRCallExpression;
   }
-  
+
   throw new ValidationError(
     "Invalid var form",
     "var expression",
@@ -2581,16 +2589,18 @@ function transformSet(list: ListNode, currentDir: string): IR.IRNode {
     () => {
       if (list.elements.length !== 3) {
         throw new ValidationError(
-          `set! requires exactly 2 arguments: target and value, got ${list.elements.length - 1}`,
+          `set! requires exactly 2 arguments: target and value, got ${
+            list.elements.length - 1
+          }`,
           "set! expression",
           "2 arguments",
           `${list.elements.length - 1} arguments`,
         );
       }
-      
+
       const targetNode = list.elements[1];
       const valueNode = list.elements[2];
-      
+
       if (targetNode.type !== "symbol") {
         throw new ValidationError(
           "Assignment target must be a symbol",
@@ -2599,10 +2609,10 @@ function transformSet(list: ListNode, currentDir: string): IR.IRNode {
           targetNode.type,
         );
       }
-      
+
       const target = transformSymbol(targetNode as SymbolNode);
       const value = transformNode(valueNode, currentDir);
-      
+
       if (!value) {
         throw new ValidationError(
           "Assignment value transformed to null",
@@ -2611,7 +2621,7 @@ function transformSet(list: ListNode, currentDir: string): IR.IRNode {
           "null",
         );
       }
-      
+
       // Create an assignment expression
       return {
         type: IR.IRNodeType.AssignmentExpression,
@@ -2671,17 +2681,364 @@ function transformJsSet(list: ListNode, currentDir: string): IR.IRNode {
 }
 
 /**
+ * Check if a function call has named arguments
+ */
+function hasNamedArguments(list: ListNode): boolean {
+  for (let i = 1; i < list.elements.length; i++) {
+    const elem = list.elements[i];
+    if (elem.type === "symbol" && (elem as SymbolNode).name.endsWith(":")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function transformNamedArgumentCall(
+  list: ListNode,
+  currentDir: string,
+): IR.IRNode {
+  try {
+    const functionName = (list.elements[0] as SymbolNode).name;
+    console.log(`Processing named argument call to ${functionName}`);
+    
+    // Build a single object with all named arguments
+    const objProperties: IR.IRObjectProperty[] = [];
+    
+    // Process all arguments
+    for (let i = 1; i < list.elements.length; i++) {
+      const current = list.elements[i];
+      
+      // Check if this is a named argument (param: value)
+      if (current.type === "symbol" && (current as SymbolNode).name.endsWith(":")) {
+        // Get parameter name without colon
+        const paramName = (current as SymbolNode).name.slice(0, -1);
+        console.log(`Found named parameter: ${paramName}`);
+        
+        // Ensure a value follows
+        if (i + 1 >= list.elements.length) {
+          throw new ValidationError(
+            `Named argument '${paramName}:' requires a value`,
+            "named argument",
+            "value",
+            "missing value",
+          );
+        }
+        
+        // Transform the value
+        const valueNode = transformNode(list.elements[i + 1], currentDir);
+        if (!valueNode) {
+          throw new ValidationError(
+            `Value for named argument '${paramName}:' transformed to null`,
+            "named argument value",
+            "valid expression",
+            "null",
+          );
+        }
+        
+        // Add as a property to the argument object
+        objProperties.push({
+          type: IR.IRNodeType.ObjectProperty,
+          key: {
+            type: IR.IRNodeType.Identifier,
+            name: sanitizeIdentifier(paramName), 
+          } as IR.IRIdentifier,
+          value: valueNode,
+        });
+        
+        i++; // Skip the value
+      } else {
+        throw new ValidationError(
+          "Mixed positional and named arguments are not allowed",
+          "function call",
+          "all named or all positional arguments",
+          "mixed arguments",
+        );
+      }
+    }
+    
+    // Create an object with all the named arguments
+    const namedArgsObj = {
+      type: IR.IRNodeType.ObjectExpression,
+      properties: objProperties,
+    } as IR.IRObjectExpression;
+    
+    // Create the function call with the object as a single argument
+    return {
+      type: IR.IRNodeType.CallExpression,
+      callee: {
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(functionName),
+      },
+      arguments: [namedArgsObj],
+    } as IR.IRCallExpression;
+  } catch (error) {
+    throw new TransformError(
+      `Failed to transform named argument call: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "named argument function call",
+      "transformation",
+      list,
+    );
+  }
+}
+
+// Registry for fx functions to enable access during call site processing
+const fxFunctionRegistry = new Map<string, IR.IRFxFunctionDeclaration>();
+
+/**
+ * Register an fx function in the registry for call site handling
+ */
+function registerFxFunction(name: string, def: IR.IRFxFunctionDeclaration): void {
+  fxFunctionRegistry.set(name, def);
+}
+
+/**
+ * Parse parameters with type annotations and default values
+ */
+function parseParametersWithTypes(
+  paramList: ListNode,
+  currentDir: string
+): { 
+  params: IR.IRIdentifier[]; 
+  types: Map<string, string>; 
+  defaults: Map<string, IR.IRNode>;
+} {
+  console.log("PARAM LIST:", JSON.stringify(paramList, null, 2));
+  
+  // Initialize result structures
+  const params: IR.IRIdentifier[] = [];
+  const types = new Map<string, string>();
+  const defaults = new Map<string, IR.IRNode>();
+  
+  // Process parameters
+  for (let i = 0; i < paramList.elements.length; i++) {
+    const elem = paramList.elements[i];
+    
+    if (elem.type === "symbol") {
+      const symbolName = (elem as SymbolNode).name;
+      
+      // If it's a parameter name with a colon
+      if (symbolName.endsWith(":")) {
+        // Extract parameter name (remove the colon)
+        const paramName = symbolName.slice(0, -1);
+        console.log(`Found parameter: ${paramName}`);
+        
+        // Add to params list - remove the colon from the parameter name
+        params.push({
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(paramName)
+        });
+        
+        // Look ahead for the type
+        if (i + 1 < paramList.elements.length && 
+            paramList.elements[i + 1].type === "symbol") {
+            
+          const typeName = (paramList.elements[i + 1] as SymbolNode).name;
+          console.log(`Setting type for ${paramName}: ${typeName}`);
+          
+          // Set the type for this parameter
+          types.set(paramName, typeName);
+          
+          // Check for default value
+          if (i + 2 < paramList.elements.length && 
+              paramList.elements[i + 2].type === "symbol" &&
+              (paramList.elements[i + 2] as SymbolNode).name === "=") {
+              
+            // Make sure we have a value after the equals sign
+            if (i + 3 < paramList.elements.length) {
+              const defaultValueNode = paramList.elements[i + 3];
+              console.log(`Found default value for ${paramName}:`, JSON.stringify(defaultValueNode));
+              
+              // Transform the default value
+              const defaultValue = transformNode(defaultValueNode, currentDir);
+              if (defaultValue) {
+                defaults.set(paramName, defaultValue);
+                console.log(`Set default value for ${paramName}`);
+              }
+              
+              i += 3; // Skip type, =, and default value
+            } else {
+              i += 1; // Just skip the type
+            }
+          } else {
+            i += 1; // Just skip the type
+          }
+        }
+      }
+    }
+  }
+  
+  console.log("FINAL PARSED PARAMETERS:");
+  console.log("Params:", params.map(p => p.name));
+  console.log("Types:", Array.from(types.entries()));
+  console.log("Defaults:", Array.from(defaults.entries()).map(([k, v]) => [k, JSON.stringify(v)]));
+  
+  // Validate that all parameters have types
+  for (const param of params) {
+    // Convert from sanitized name back to original for lookup
+    const originalName = param.name.replace(/_/g, "-");
+    
+    if (!types.has(originalName)) {
+      throw new ValidationError(
+        `Parameter '${originalName}' is missing a type annotation`,
+        "fx parameter",
+        "type annotation",
+        "missing type"
+      );
+    }
+  }
+  
+  return { params, types, defaults };
+}
+
+/**
+ * Extract raw parameter symbols from parameter list for purity verification
+ */
+function extractRawParams(paramList: ListNode): SymbolNode[] {
+  console.log("Extracting raw parameters...");
+  
+  const rawParams: SymbolNode[] = [];
+  
+  for (let i = 0; i < paramList.elements.length; i++) {
+    const elem = paramList.elements[i];
+    
+    if (elem.type === "symbol") {
+      const symbolName = (elem as SymbolNode).name;
+      
+      // Skip special tokens
+      if (symbolName === ":" || symbolName === "=") {
+        continue;
+      }
+      
+      // Handle parameter name with colon suffix
+      if (symbolName.endsWith(":")) {
+        // Create a cleaned symbol without the colon
+        const cleanName = symbolName.slice(0, -1);
+        console.log(`Found parameter with colon: ${symbolName}, cleaning to ${cleanName}`);
+        
+        // Create a new symbol node with the cleaned name
+        rawParams.push({
+          type: "symbol",
+          name: cleanName
+        });
+        
+        // Skip the type and possible default value
+        if (i + 1 < paramList.elements.length) {
+          i++; // Skip type
+          
+          // Check for default value
+          if (i + 1 < paramList.elements.length && 
+              i + 2 < paramList.elements.length &&
+              paramList.elements[i].type === "symbol" &&
+              (paramList.elements[i] as SymbolNode).name === "=") {
+            i += 2; // Skip = and default value
+          }
+        }
+      } else if (symbolName !== "Int" && !symbolName.includes("->")) {
+        // Regular symbol that isn't a type or arrow
+        rawParams.push(elem as SymbolNode);
+      }
+    }
+  }
+  
+  console.log("Extracted raw parameters:", rawParams.map(p => p.name));
+  return rawParams;
+}
+
+
+/**
+ * Process and transform a call to an fx function.
+ * Handles both positional and named arguments.
+ */
+/**
+ * Process and transform a call to an fx function.
+ * Handles both positional and named arguments.
+ */
+function processFxFunctionCall(
+  funcName: string,
+  funcDef: IR.IRFxFunctionDeclaration,
+  args: HQLNode[],
+  currentDir: string
+): IR.IRNode {
+  console.log(`Processing fx function call to ${funcName} with ${args.length} args`);
+  console.log("Function definition params:", funcDef.params.map(p => p.name));
+  
+  // Extract parameter info from the function definition
+  const paramNames = funcDef.params.map(p => p.name);
+  const paramTypes = new Map(funcDef.paramTypes.map(p => [p.name, p.type]));
+  const defaultValues = new Map(funcDef.defaults.map(d => [d.name, d.value]));
+  
+  // Process normal positional arguments
+  const positionalArgs: HQLNode[] = args;
+  
+  // Prepare the final argument list in the correct parameter order
+  const finalArgs: IR.IRNode[] = [];
+  let positionalIndex = 0;
+  
+  for (const paramName of paramNames) {
+    if (positionalIndex < positionalArgs.length) {
+      // Use the next positional argument
+      const argNode = positionalArgs[positionalIndex++];
+      const transformedArg = transformNode(argNode, currentDir);
+      if (!transformedArg) {
+        throw new ValidationError(
+          `Positional argument for parameter '${paramName}' transformed to null`,
+          "function call",
+          "valid expression",
+          "null",
+        );
+      }
+      
+      finalArgs.push(transformedArg);
+    } else if (defaultValues.has(paramName)) {
+      // Use the default value
+      finalArgs.push(defaultValues.get(paramName)!);
+    } else {
+      throw new ValidationError(
+        `Missing required argument for parameter '${paramName}' in call to function '${funcName}'`,
+        "function call",
+        "argument value",
+        "missing argument",
+      );
+    }
+  }
+  
+  // Check for extra positional arguments
+  if (positionalIndex < positionalArgs.length) {
+    throw new ValidationError(
+      `Too many positional arguments in call to function '${funcName}'`,
+      "function call",
+      `${paramNames.length} arguments`,
+      `${positionalArgs.length} arguments`,
+    );
+  }
+  
+  console.log(`Final arguments for ${funcName}:`, finalArgs.length);
+  
+  // Create the final call expression
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.Identifier,
+      name: sanitizeIdentifier(funcName),
+    },
+    arguments: finalArgs,
+  } as IR.IRCallExpression;
+}
+
+/**
  * Transform an fx (pure function) definition
  */
 function transformFx(list: ListNode, currentDir: string): IR.IRNode {
   return perform(
     () => {
-      logger.debug("Transforming fx (pure function) definition");
+      console.log("========== STARTING FX TRANSFORM ==========");
       
       // Validate syntax
       if (list.elements.length < 4) {
         throw new ValidationError(
-          "fx requires a name, parameter list, and at least one body expression",
+          "fx requires a name, parameter list with types, and at least one body expression",
           "fx definition",
           "name, params, body",
           `${list.elements.length - 1} arguments`,
@@ -2700,49 +3057,159 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
       }
       const funcName = (nameNode as SymbolNode).name;
       
-      // Extract parameter list
-      const paramsNode = list.elements[2];
-      if (paramsNode.type !== "list") {
+      // Extract parameter list and return type
+      const paramListNode = list.elements[2];
+      let returnTypeNode: HQLNode | null = null;
+      let bodyOffset = 3;
+      
+      // Determine which syntax style is being used
+      let paramList: ListNode;
+      
+      // Style 1: (fx add (x: Int y: Int) -> Int body...)
+      if (paramListNode.type === "list") {
+        // Check if there's a return type specified with ->
+        if (list.elements.length > 3 && 
+            list.elements[3].type === "symbol" && 
+            (list.elements[3] as SymbolNode).name === "->") {
+          
+          if (list.elements.length < 5) {
+            throw new ValidationError(
+              "Return type declaration with '->' must be followed by a type",
+              "fx return type",
+              "type after ->",
+              "missing type"
+            );
+          }
+          
+          returnTypeNode = list.elements[4];
+          bodyOffset = 5; // Body starts after return type
+        }
+        
+        paramList = paramListNode as ListNode;
+        
+        // Style 2: (fx add ((x: Int y: Int) -> Int) body...)
+        if (paramList.elements.length > 0 && 
+            paramList.elements[0].type === "list") {
+          
+          const wrappedSig = paramList as ListNode;
+          
+          // Extract the actual parameter list
+          paramList = wrappedSig.elements[0] as ListNode;
+          
+          // Check for return type with ->
+          if (wrappedSig.elements.length > 1 && 
+              wrappedSig.elements[1].type === "symbol" && 
+              (wrappedSig.elements[1] as SymbolNode).name === "->") {
+            
+            if (wrappedSig.elements.length < 3) {
+              throw new ValidationError(
+                "Return type declaration with '->' must be followed by a type",
+                "fx return type",
+                "type after ->",
+                "missing type"
+              );
+            }
+            
+            returnTypeNode = wrappedSig.elements[2];
+          }
+        }
+      }
+      else {
         throw new ValidationError(
-          "Function parameters must be a list",
+          "fx parameter list must be a list",
           "fx parameters",
           "list",
-          paramsNode.type,
+          paramListNode.type
         );
       }
       
-      // Collect parameter info
-      const params = paramsNode.elements as SymbolNode[];
-      const bodyExpressions = list.elements.slice(3);
+      // Parse parameters with types and defaults
+      const paramsInfo = parseParametersWithTypes(paramList, currentDir);
+      
+      // Validate return type if specified
+      let returnType = "Int"; // Default return type is Int
+      if (returnTypeNode) {
+        if (returnTypeNode.type !== "symbol") {
+          throw new ValidationError(
+            "Return type must be a symbol",
+            "fx return type",
+            "symbol",
+            returnTypeNode.type
+          );
+        }
+        
+        returnType = (returnTypeNode as SymbolNode).name;
+        if (returnType !== "Int") {
+          throw new ValidationError(
+            "Only 'Int' type is currently supported",
+            "fx return type",
+            "Int",
+            returnType
+          );
+        }
+      }
+      
+      // Extract params and body
+      const params = paramsInfo.params;
+      const paramTypes = paramsInfo.types;
+      const defaultValues = paramsInfo.defaults;
+      const bodyExpressions = list.elements.slice(bodyOffset);
+      
+      // Check that all parameters have type 'Int'
+      for (const [paramName, paramType] of paramTypes.entries()) {
+        if (paramType !== "Int") {
+          throw new ValidationError(
+            `Parameter '${paramName}' has unsupported type '${paramType}'. Only 'Int' is currently supported.`,
+            "fx parameter type",
+            "Int",
+            paramType
+          );
+        }
+      }
+      
+      // Extract raw parameter symbols for purity verification
+      const rawParams = extractRawParams(paramList);
       
       // Verify function purity using our purity verification system
-      verifyFunctionPurity(funcName, params, bodyExpressions);
-      
-      // After verification, process parameters like normal functions
-      const { params: processedParams, restParam } = processFunctionParams(paramsNode as ListNode);
+      verifyFunctionPurity(funcName, rawParams, bodyExpressions);
       
       // Process the body expressions like a regular function
-      const bodyNodes = processFunctionBody(list.elements.slice(3), currentDir);
+      const bodyNodes = processFunctionBody(bodyExpressions, currentDir);
       
       // Generate parameter copy statements
-      const paramCopyStatements = generateParameterCopies(processedParams, restParam);
+      const paramCopyStatements = generateParameterCopies(params);
       
       // Register as pure function
       registerPureFunction(funcName);
       
-      // Return the function with copy statements integrated at the beginning
-      return {
-        type: IR.IRNodeType.FunctionDeclaration,
+      // Create the FxFunctionDeclaration node
+      const fxFuncDecl = {
+        type: IR.IRNodeType.FxFunctionDeclaration,
         id: {
           type: IR.IRNodeType.Identifier,
           name: sanitizeIdentifier(funcName)
         },
-        params: [...processedParams, ...(restParam ? [restParam] : [])],
+        params,
+        defaults: Array.from(defaultValues.entries()).map(([name, value]) => ({
+          name,
+          value
+        })),
+        paramTypes: Array.from(paramTypes.entries()).map(([name, type]) => ({
+          name, 
+          type
+        })),
+        returnType,
         body: {
           type: IR.IRNodeType.BlockStatement,
           body: [...paramCopyStatements, ...bodyNodes]
         }
-      };
+      } as IR.IRFxFunctionDeclaration;
+      
+      // Register this function in our registry for call site handling
+      registerFxFunction(funcName, fxFuncDecl);
+      
+      console.log("========== COMPLETED FX TRANSFORM ==========");
+      return fxFuncDecl;
     },
     "transformFx",
     TransformError,
@@ -2752,128 +3219,112 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
 
 /**
  * Generate statements to create deep copies of parameters
- * This implementation inlines a more concise deep copy approach
  */
-function generateParameterCopies(
-  params: IR.IRIdentifier[],
-  restParam: IR.IRIdentifier | null
-): IR.IRNode[] {
+function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
   const statements: IR.IRNode[] = [];
   
   // For each parameter, create an inline deep copy
   for (const param of params) {
     const paramName = param.name;
-    statements.push(createInlineDeepCopyStatement(paramName));
-  }
-  
-  // Handle rest parameter if present
-  if (restParam) {
-    const restName = restParam.name.replace(/^\.\.\./, '');
-    statements.push(createInlineDeepCopyStatement(restName));
+    
+    // Create an assignment expression for deep copying the parameter
+    statements.push({
+      type: IR.IRNodeType.ExpressionStatement,
+      expression: {
+        type: IR.IRNodeType.AssignmentExpression,
+        operator: "=",
+        left: {
+          type: IR.IRNodeType.Identifier,
+          name: paramName
+        },
+        right: {
+          // Use a conditional expression to only deep copy objects
+          type: IR.IRNodeType.ConditionalExpression,
+          test: {
+            // typeof param === 'object' && param !== null
+            type: IR.IRNodeType.BinaryExpression,
+            operator: "&&",
+            left: {
+              type: IR.IRNodeType.BinaryExpression,
+              operator: "===",
+              left: {
+                type: IR.IRNodeType.CallExpression,
+                callee: {
+                  type: IR.IRNodeType.Identifier,
+                  name: "typeof"
+                },
+                arguments: [
+                  {
+                    type: IR.IRNodeType.Identifier,
+                    name: paramName
+                  }
+                ]
+              },
+              right: {
+                type: IR.IRNodeType.StringLiteral,
+                value: "object"
+              }
+            },
+            right: {
+              type: IR.IRNodeType.BinaryExpression,
+              operator: "!==",
+              left: {
+                type: IR.IRNodeType.Identifier,
+                name: paramName
+              },
+              right: {
+                type: IR.IRNodeType.NullLiteral
+              }
+            }
+          },
+          // If it's an object, use JSON.parse(JSON.stringify()) for deep copying
+          consequent: {
+            type: IR.IRNodeType.CallExpression,
+            callee: {
+              type: IR.IRNodeType.MemberExpression,
+              object: {
+                type: IR.IRNodeType.Identifier,
+                name: "JSON"
+              },
+              property: {
+                type: IR.IRNodeType.Identifier,
+                name: "parse"
+              },
+              computed: false
+            },
+            arguments: [
+              {
+                type: IR.IRNodeType.CallExpression,
+                callee: {
+                  type: IR.IRNodeType.MemberExpression,
+                  object: {
+                    type: IR.IRNodeType.Identifier,
+                    name: "JSON"
+                  },
+                  property: {
+                    type: IR.IRNodeType.Identifier,
+                    name: "stringify"
+                  },
+                  computed: false
+                },
+                arguments: [
+                  {
+                    type: IR.IRNodeType.Identifier,
+                    name: paramName
+                  }
+                ]
+              }
+            ]
+          },
+          // If not an object, return original value
+          alternate: {
+            type: IR.IRNodeType.Identifier,
+            name: paramName
+          }
+        }
+      }
+    });
   }
   
   return statements;
-}
-
-/**
- * Create a statement that performs a concise deep copy of a parameter
- * Using JSON parse/stringify for simplicity while still handling most cases
- */
-function createInlineDeepCopyStatement(paramName: string): IR.IRNode {
-  return {
-    type: IR.IRNodeType.ExpressionStatement,
-    expression: {
-      type: IR.IRNodeType.AssignmentExpression,
-      operator: "=",
-      left: {
-        type: IR.IRNodeType.Identifier,
-        name: paramName
-      },
-      right: {
-        // Use a conditional expression to only deep copy objects
-        type: IR.IRNodeType.ConditionalExpression,
-        test: {
-          // typeof param === 'object' && param !== null
-          type: IR.IRNodeType.BinaryExpression,
-          operator: "&&",
-          left: {
-            type: IR.IRNodeType.BinaryExpression,
-            operator: "===",
-            left: {
-              type: IR.IRNodeType.CallExpression,
-              callee: {
-                type: IR.IRNodeType.Identifier,
-                name: "typeof"
-              },
-              arguments: [
-                {
-                  type: IR.IRNodeType.Identifier,
-                  name: paramName
-                }
-              ]
-            },
-            right: {
-              type: IR.IRNodeType.StringLiteral,
-              value: "object"
-            }
-          },
-          right: {
-            type: IR.IRNodeType.BinaryExpression,
-            operator: "!==",
-            left: {
-              type: IR.IRNodeType.Identifier,
-              name: paramName
-            },
-            right: {
-              type: IR.IRNodeType.NullLiteral
-            }
-          }
-        },
-        // If it's an object, use JSON.parse(JSON.stringify()) for deep copying
-        consequent: {
-          type: IR.IRNodeType.CallExpression,
-          callee: {
-            type: IR.IRNodeType.MemberExpression,
-            object: {
-              type: IR.IRNodeType.Identifier,
-              name: "JSON"
-            },
-            property: {
-              type: IR.IRNodeType.Identifier,
-              name: "parse"
-            },
-            computed: false
-          },
-          arguments: [
-            {
-              type: IR.IRNodeType.CallExpression,
-              callee: {
-                type: IR.IRNodeType.MemberExpression,
-                object: {
-                  type: IR.IRNodeType.Identifier,
-                  name: "JSON"
-                },
-                property: {
-                  type: IR.IRNodeType.Identifier,
-                  name: "stringify"
-                },
-                computed: false
-              },
-              arguments: [
-                {
-                  type: IR.IRNodeType.Identifier,
-                  name: paramName
-                }
-              ]
-            }
-          ]
-        },
-        // If not an object, return original value
-        alternate: {
-          type: IR.IRNodeType.Identifier,
-          name: paramName
-        }
-      }
-    }
-  };
 }
