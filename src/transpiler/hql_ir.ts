@@ -52,7 +52,9 @@ export enum IRNodeType {
 
   // For representing a JS import reference from (js-import "module")
   JsImportReference,
-  AssignmentExpression
+  AssignmentExpression, 
+  SpreadAssignment,
+  ExpressionStatement
 }
 
 export interface IRNode {
@@ -164,9 +166,20 @@ export interface IRObjectProperty extends IRNode {
   computed?: boolean;
 }
 
+export interface IRSpreadAssignment extends IRNode {
+  type: IRNodeType.SpreadAssignment;
+  expression: IRNode;
+}
+
+export interface IRExpressionStatement extends IRNode {
+  type: IRNodeType.ExpressionStatement;
+  expression: IRNode;
+}
+
+// Update the ObjectExpression interface:
 export interface IRObjectExpression extends IRNode {
   type: IRNodeType.ObjectExpression;
-  properties: IRObjectProperty[];
+  properties: (IRObjectProperty | IRSpreadAssignment)[];
 }
 
 // Statements/Declarations

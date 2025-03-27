@@ -4,6 +4,7 @@
 
 import * as IR from "./hql_ir.ts";
 import { HQLNode, ListNode, LiteralNode, SymbolNode } from "./hql_ast.ts";
+import { verifyFunctionPurity, registerPureFunction } from "./purity.ts";
 import {
   KERNEL_PRIMITIVES,
   PRIMITIVE_CLASS,
@@ -142,7 +143,8 @@ function initializeTransformFactory(): void {
       transformFactory.set("js-get", transformJsGet);
       transformFactory.set("js-call", transformJsCall);
       transformFactory.set("js-get-invoke", transformJsGetInvoke);
-
+      transformFactory.set("js-set", transformJsSet);
+      
       // Register data structure handlers
       transformFactory.set("vector", transformVector);
       transformFactory.set("hash-map", transformHashMap);
@@ -155,9 +157,10 @@ function initializeTransformFactory(): void {
       transformFactory.set("get", transformGet);
       transformFactory.set("new", transformNew);
 
-      transformFactory.set("let", transformLet); // Add let
-      transformFactory.set("var", transformVar); // Add var
-      transformFactory.set("set!", transformSet); // Add set!
+      transformFactory.set("fx", transformFx);
+      transformFactory.set("let", transformLet);
+      transformFactory.set("var", transformVar);
+      transformFactory.set("set!", transformSet);
 
       // Register import/export handlers
       transformFactory.set("export", null);
@@ -2621,4 +2624,284 @@ function transformSet(list: ListNode, currentDir: string): IR.IRNode {
     TransformError,
     [list],
   );
+}
+
+function transformJsSet(list: ListNode, currentDir: string): IR.IRNode {
+  return perform(
+    () => {
+      if (list.elements.length !== 4) {
+        throw new ValidationError(
+          "js-set requires exactly 3 arguments: object, key, and value",
+          "js-set",
+          "3 arguments",
+          `${list.elements.length - 1} arguments`,
+        );
+      }
+
+      const obj = transformNode(list.elements[1], currentDir);
+      const key = transformNode(list.elements[2], currentDir);
+      const value = transformNode(list.elements[3], currentDir);
+
+      if (!obj || !key || !value) {
+        throw new ValidationError(
+          "js-set arguments cannot be null",
+          "js-set",
+          "valid arguments",
+          "null arguments",
+        );
+      }
+
+      // Create a property assignment directly, not a function call
+      return {
+        type: IR.IRNodeType.AssignmentExpression,
+        operator: "=",
+        left: {
+          type: IR.IRNodeType.MemberExpression,
+          object: obj,
+          property: key,
+          computed: true,
+        },
+        right: value,
+      };
+    },
+    "transformJsSet",
+    TransformError,
+    [list],
+  );
+}
+
+/**
+ * Transform an fx (pure function) definition
+ */
+function transformFx(list: ListNode, currentDir: string): IR.IRNode {
+  return perform(
+    () => {
+      logger.debug("Transforming fx (pure function) definition");
+      
+      // Validate syntax
+      if (list.elements.length < 4) {
+        throw new ValidationError(
+          "fx requires a name, parameter list, and at least one body expression",
+          "fx definition",
+          "name, params, body",
+          `${list.elements.length - 1} arguments`,
+        );
+      }
+      
+      // Extract function name
+      const nameNode = list.elements[1];
+      if (nameNode.type !== "symbol") {
+        throw new ValidationError(
+          "Function name must be a symbol",
+          "fx name",
+          "symbol",
+          nameNode.type,
+        );
+      }
+      const funcName = (nameNode as SymbolNode).name;
+      
+      // Extract parameter list
+      const paramsNode = list.elements[2];
+      if (paramsNode.type !== "list") {
+        throw new ValidationError(
+          "Function parameters must be a list",
+          "fx parameters",
+          "list",
+          paramsNode.type,
+        );
+      }
+      
+      // Collect parameter info
+      const params = paramsNode.elements as SymbolNode[];
+      const bodyExpressions = list.elements.slice(3);
+      
+      // Verify function purity using our purity verification system
+      verifyFunctionPurity(funcName, params, bodyExpressions);
+      
+      // After verification, process parameters like normal functions
+      const { params: processedParams, restParam } = processFunctionParams(paramsNode as ListNode);
+      
+      // Process the body expressions like a regular function
+      const bodyNodes = processFunctionBody(list.elements.slice(3), currentDir);
+      
+      // Generate parameter copy statements
+      const paramCopyStatements = generateParameterCopies(processedParams, restParam);
+      
+      // Register as pure function
+      registerPureFunction(funcName);
+      
+      // Return the function with copy statements integrated at the beginning
+      return {
+        type: IR.IRNodeType.FunctionDeclaration,
+        id: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(funcName)
+        },
+        params: [...processedParams, ...(restParam ? [restParam] : [])],
+        body: {
+          type: IR.IRNodeType.BlockStatement,
+          body: [...paramCopyStatements, ...bodyNodes]
+        }
+      };
+    },
+    "transformFx",
+    TransformError,
+    [list],
+  );
+}
+
+/**
+ * Generate statements to create shallow copies of parameters
+ * This code is much simpler than before and avoids variable reference issues
+ */
+function generateParameterCopies(
+  params: IR.IRIdentifier[],
+  restParam: IR.IRIdentifier | null
+): IR.IRNode[] {
+  const statements: IR.IRNode[] = [];
+  
+  // For each parameter, create a copy if it's an object
+  for (const param of params) {
+    const paramName = param.name;
+    
+    statements.push({
+      type: IR.IRNodeType.ExpressionStatement,
+      expression: {
+        type: IR.IRNodeType.AssignmentExpression,
+        operator: "=",
+        left: {
+          type: IR.IRNodeType.Identifier,
+          name: paramName
+        },
+        right: createConditionalCopy(paramName)
+      }
+    });
+  }
+  
+  // Handle rest parameter if present
+  if (restParam) {
+    const restName = restParam.name.replace(/^\.\.\./, '');
+    
+    statements.push({
+      type: IR.IRNodeType.ExpressionStatement,
+      expression: {
+        type: IR.IRNodeType.AssignmentExpression,
+        operator: "=",
+        left: {
+          type: IR.IRNodeType.Identifier,
+          name: restName
+        },
+        right: createConditionalCopy(restName)
+      }
+    });
+  }
+  
+  return statements;
+}
+
+/**
+ * Create a conditional expression that copies a value if it's an object
+ * This is a simpler implementation that directly uses the parameter name
+ */
+function createConditionalCopy(paramName: string): IR.IRNode {
+  return {
+    type: IR.IRNodeType.ConditionalExpression,
+    test: {
+      // typeof param === 'object' && param !== null
+      type: IR.IRNodeType.BinaryExpression,
+      operator: "&&",
+      left: {
+        type: IR.IRNodeType.BinaryExpression,
+        operator: "===",
+        left: {
+          type: IR.IRNodeType.CallExpression,
+          callee: {
+            type: IR.IRNodeType.Identifier,
+            name: "typeof"
+          },
+          arguments: [
+            {
+              type: IR.IRNodeType.Identifier,
+              name: paramName
+            }
+          ]
+        },
+        right: {
+          type: IR.IRNodeType.StringLiteral,
+          value: "object"
+        }
+      },
+      right: {
+        type: IR.IRNodeType.BinaryExpression,
+        operator: "!==",
+        left: {
+          type: IR.IRNodeType.Identifier,
+          name: paramName
+        },
+        right: {
+          type: IR.IRNodeType.NullLiteral
+        }
+      }
+    },
+    // If it's an object, check if it's an array
+    consequent: {
+      type: IR.IRNodeType.ConditionalExpression,
+      test: {
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.MemberExpression,
+          object: {
+            type: IR.IRNodeType.Identifier,
+            name: "Array"
+          },
+          property: {
+            type: IR.IRNodeType.Identifier,
+            name: "isArray"
+          },
+          computed: false
+        },
+        arguments: [
+          {
+            type: IR.IRNodeType.Identifier,
+            name: paramName
+          }
+        ]
+      },
+      // If array, use slice()
+      consequent: {
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.MemberExpression,
+          object: {
+            type: IR.IRNodeType.Identifier,
+            name: paramName
+          },
+          property: {
+            type: IR.IRNodeType.Identifier,
+            name: "slice"
+          },
+          computed: false
+        },
+        arguments: []
+      },
+      // If object, use object spread
+      alternate: {
+        type: IR.IRNodeType.ObjectExpression,
+        properties: [
+          {
+            type: IR.IRNodeType.SpreadAssignment,
+            expression: {
+              type: IR.IRNodeType.Identifier,
+              name: paramName
+            }
+          }
+        ]
+      }
+    },
+    // If not an object, use original value
+    alternate: {
+      type: IR.IRNodeType.Identifier,
+      name: paramName
+    }
+  };
 }

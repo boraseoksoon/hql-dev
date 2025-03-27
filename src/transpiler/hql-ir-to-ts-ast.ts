@@ -116,6 +116,8 @@ export function convertIRNode(
         return convertCommentBlock(node as IR.IRCommentBlock);
       case IR.IRNodeType.Raw:
         return convertRaw(node as IR.IRRaw);
+      case IR.IRNodeType.ExpressionStatement:
+        return convertExpressionStatement(node as IR.IRExpressionStatement);
       default:
         logger.warn(
           `Cannot convert node of type ${node.type} (${
@@ -143,20 +145,41 @@ export function convertIRNode(
   }
 }
 
+function convertExpressionStatement(node: IR.IRExpressionStatement): ts.ExpressionStatement {
+  try {
+    const expression = convertIRExpr(node.expression);
+    return ts.factory.createExpressionStatement(expression);
+  } catch (error) {
+    throw new CodeGenError(
+      `Failed to convert expression statement: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "expression statement",
+      node,
+    );
+  }
+}
+
 /**
  * Convert an object expression.
  */
-function convertObjectExpression(
-  node: IR.IRObjectExpression,
-): ts.ObjectLiteralExpression {
+function convertObjectExpression(node: IR.IRObjectExpression): ts.ObjectLiteralExpression {
   try {
-    const properties: ts.PropertyAssignment[] = [];
+    const objectProperties: ts.ObjectLiteralElementLike[] = [];
+    
     for (const prop of node.properties) {
-      const key = convertObjectPropertyKey(prop.key);
-      const value = convertIRExpr(prop.value);
-      properties.push(ts.factory.createPropertyAssignment(key, value));
+      if (prop.type === IR.IRNodeType.ObjectProperty) {
+        const key = convertObjectPropertyKey(prop.key);
+        const value = convertIRExpr(prop.value);
+        objectProperties.push(ts.factory.createPropertyAssignment(key, value));
+      } 
+      else if (prop.type === IR.IRNodeType.SpreadAssignment) {
+        const expression = convertIRExpr(prop.expression);
+        objectProperties.push(ts.factory.createSpreadAssignment(expression));
+      }
     }
-    return ts.factory.createObjectLiteralExpression(properties, true);
+    
+    return ts.factory.createObjectLiteralExpression(objectProperties, true);
   } catch (error) {
     throw new CodeGenError(
       `Failed to convert object expression: ${
