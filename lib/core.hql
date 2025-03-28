@@ -1,6 +1,6 @@
 (defmacro fn (name params & body)
   `(let ~name (lambda ~params ~@body)))
-  
+    
 (defmacro or (a b)
   `(if ~a ~a ~b))
 
@@ -150,3 +150,7 @@
 
 ;; (import [formatText] from "./test/formatter.js")
 ;; (defmacro js-format-text (text) `(formatText ~text))
+
+;; TODO: replace syntax transformer
+;; (defmacro fx (name params return-type & body)
+;;  `(fx ~name ~params ~return-type ~@body))

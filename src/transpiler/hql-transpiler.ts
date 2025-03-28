@@ -1,4 +1,4 @@
-// src/transpiler/hql-transpiler.ts - Enhanced with better error handling and diagnostics
+// src/transpiler/hql-transpiler.ts - Enhanced with better error handling, diagnostics, and syntax transformation
 import * as path from "https://deno.land/std/path/mod.ts";
 import { sexpToString } from "../s-exp/types.ts";
 import { parse } from "../s-exp/parser.ts";
@@ -8,12 +8,14 @@ import { processImports } from "../s-exp/imports.ts";
 import { convertToHqlAst } from "../s-exp/macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
+import { transformSyntax } from "./syntax-transformer.ts";
 import {
   createErrorReport,
   ImportError,
   MacroError,
   ParseError,
   TranspilerError,
+  TransformError,
 } from "./errors.ts";
 
 // Environment singleton for consistent state
@@ -77,7 +79,35 @@ export async function processHql(
       logParsedExpressions(sexps, logger);
     }
 
-    // Step 2: Get or initialize the global environment
+    // Step 2: Apply syntax transformations to convert all sugar to canonical forms
+    logger.debug("Applying syntax transformations");
+    const startSyntaxTime = performance.now();
+
+    try {
+      sexps = transformSyntax(sexps, { verbose: options.verbose });
+      logger.debug(`Syntax transformation completed for ${sexps.length} expressions`);
+    } catch (error) {
+      if (error instanceof TransformError) {
+        throw error;
+      }
+      throw new TransformError(
+        `Failed to transform syntax: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        "syntax transformation",
+        "valid HQL expressions",
+        sexps
+      );
+    }
+
+    const syntaxTime = performance.now() - startSyntaxTime;
+    logger.debug(`Syntax transformation completed in ${syntaxTime.toFixed(2)}ms`);
+
+    if (options.verbose) {
+      logTransformedExpressions(sexps, logger);
+    }
+
+    // Step 3: Get or initialize the global environment
     logger.debug("Getting global environment with macros");
     const startEnvTime = performance.now();
 
@@ -95,7 +125,7 @@ export async function processHql(
       env.setCurrentFile(currentFile);
     }
 
-    // Step 3: Process imports in the user code
+    // Step 4: Process imports in the user code
     logger.debug("Processing imports in user code");
     const startImportTime = performance.now();
 
@@ -123,7 +153,7 @@ export async function processHql(
     const importTime = performance.now() - startImportTime;
     logger.debug(`Import processing completed in ${importTime.toFixed(2)}ms`);
 
-    // Step 4: Expand macros in the user code
+    // Step 5: Expand macros in the user code
     logger.debug("Expanding macros in user code");
     const startMacroTime = performance.now();
 
@@ -155,7 +185,8 @@ export async function processHql(
       logExpandedExpressions(expanded, logger);
     }
 
-    // Step 5: Convert to HQL AST
+    // Step 6: Convert to HQL AST
+    // Step 6: Convert to HQL AST
     logger.debug("Converting to HQL AST");
     const startAstTime = performance.now();
 
@@ -168,7 +199,7 @@ export async function processHql(
       }ms with ${hqlAst.length} nodes`,
     );
 
-    // Step 6: Transform to JavaScript using existing pipeline
+    // Step 7: Transform to JavaScript using existing pipeline
     logger.debug("Transforming to JavaScript");
     const startTransformTime = performance.now();
 
@@ -200,6 +231,11 @@ export async function processHql(
       console.log(
         `  Parsing:             ${parseTime.toFixed(2)}ms (${
           (parseTime / totalTime * 100).toFixed(1)
+        }%)`,
+      );
+      console.log(
+        `  Syntax transform:    ${syntaxTime.toFixed(2)}ms (${
+          (syntaxTime / totalTime * 100).toFixed(1)
         }%)`,
       );
       console.log(
@@ -239,7 +275,8 @@ export async function processHql(
       error instanceof ParseError ||
       error instanceof MacroError ||
       error instanceof ImportError ||
-      error instanceof TranspilerError
+      error instanceof TranspilerError ||
+      error instanceof TransformError
     ) {
       // Use the formatMessage method for specific error types
       errorReport = error.formatMessage();
@@ -274,7 +311,8 @@ export async function processHql(
       error instanceof ParseError ||
       error instanceof MacroError ||
       error instanceof ImportError ||
-      error instanceof TranspilerError
+      error instanceof TranspilerError ||
+      error instanceof TransformError
     ) {
       throw error;
     } else {
@@ -297,6 +335,25 @@ function logParsedExpressions(sexps: any[], logger: Logger): void {
   const MAX_EXPRESSIONS_TO_LOG = 5;
   for (let i = 0; i < Math.min(sexps.length, MAX_EXPRESSIONS_TO_LOG); i++) {
     logger.debug(`Expression ${i + 1}: ${sexpToString(sexps[i])}`);
+  }
+
+  if (sexps.length > MAX_EXPRESSIONS_TO_LOG) {
+    logger.debug(
+      `...and ${sexps.length - MAX_EXPRESSIONS_TO_LOG} more expressions`,
+    );
+  }
+}
+
+/**
+ * Helper function to log syntax-transformed expressions when in verbose mode
+ */
+function logTransformedExpressions(sexps: any[], logger: Logger): void {
+  logger.debug(`Transformed to ${sexps.length} canonical expressions`);
+
+  // Only log the first few expressions to avoid overwhelming output
+  const MAX_EXPRESSIONS_TO_LOG = 5;
+  for (let i = 0; i < Math.min(sexps.length, MAX_EXPRESSIONS_TO_LOG); i++) {
+    logger.debug(`Transformed ${i + 1}: ${sexpToString(sexps[i])}`);
   }
 
   if (sexps.length > MAX_EXPRESSIONS_TO_LOG) {
@@ -403,6 +460,10 @@ async function loadCoreHql(
         );
       }
     }
+
+    // Apply syntax transformations to core.hql
+    logger.debug("Applying syntax transformations to core.hql");
+    coreExps = transformSyntax(coreExps, { verbose: options.verbose });
 
     // Process imports in core.hql
     await processImports(coreExps, env, {

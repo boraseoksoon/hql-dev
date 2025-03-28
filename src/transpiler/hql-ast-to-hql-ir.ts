@@ -3016,15 +3016,18 @@ function processFxFunctionCall(
 }
 
 /**
- * Transform an fx (pure function) definition
+ * Transform an fx function definition
  */
 /**
- * Transform an fx (pure function) definition
+ * Transform an fx function definition
+ * Format: (fx name (params...) (-> returnType) body...)
  */
 function transformFx(list: ListNode, currentDir: string): IR.IRNode {
   try {
-    // Validate syntax
-    if (list.elements.length < 5) {
+    logger.debug("Transforming fx function");
+    
+    // Validate fx syntax
+    if (list.elements.length < 4) {
       throw new ValidationError(
         "fx requires a name, parameter list, return type list, and at least one body expression",
         "fx definition",

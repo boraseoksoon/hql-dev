@@ -1,16 +1,6 @@
-;; currently implement 1: : (fx add ((x: Int = 100 y: Int = 200) -> Int) (+ x y))
-;; (fx add (x: Int = 100 y: Int = 200) -> Int (+ x y))
 
-;; let's update fx syntax to accpet this only
-;; (fx add (x: Int = 100 y: Int = 200) (-> Int) (+ x y))
-
-/*
-;; same but newline added
-(fx add (x: Int = 100 y: Int = 200) ; Parameter list
-        (-> Int)                    ; Return type list
+(fx add (x: Int = 100 y: Int = 200) (-> Int) 
   (+ x y))
-*/
-
 
 ;; Using defaults (omitting parameters)
 (print (add))   ;; 300
