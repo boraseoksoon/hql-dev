@@ -2048,6 +2048,8 @@ function transformIf(list: ListNode, currentDir: string): IR.IRNode {
   );
 }
 
+// Modified version of transformLambda function in src/transpiler/hql-ast-to-hql-ir.ts
+
 /**
  * Transform a function definition.
  */
@@ -2073,9 +2075,89 @@ function transformLambda(list: ListNode, currentDir: string): IR.IRNode {
         );
       }
 
-      const { params, restParam } = processFunctionParams(
-        paramsNode as ListNode,
-      );
+      // Get the parameter list elements
+      const paramElements = (paramsNode as ListNode).elements;
+      const params: IR.IRIdentifier[] = [];
+      let restParam: IR.IRIdentifier | null = null;
+      let restMode = false;
+
+      // Process parameters, handling both simple and typed parameters
+      for (let i = 0; i < paramElements.length; i++) {
+        const paramNode = paramElements[i];
+        
+        // Handle rest parameter indicator
+        if (paramNode.type === "symbol" && (paramNode as SymbolNode).name === "&") {
+          restMode = true;
+          continue;
+        }
+        
+        // Process parameter based on its type
+        if (paramNode.type === "symbol") {
+          const paramName = (paramNode as SymbolNode).name;
+          
+          // Handle typed parameters (param: Type format)
+          if (paramName.endsWith(":")) {
+            // Extract the actual parameter name without the colon
+            const actualParamName = paramName.slice(0, -1);
+            
+            // Skip the type annotation
+            if (i + 1 < paramElements.length) {
+              i++; // Skip the type
+              
+              // Skip default value if present
+              if (i + 2 < paramElements.length && 
+                  paramElements[i+1].type === "symbol" && 
+                  (paramElements[i+1] as SymbolNode).name === "=") {
+                i += 2; // Skip "=" and the default value
+              }
+            }
+            
+            // Add the parameter with the correct name
+            if (restMode) {
+              if (restParam !== null) {
+                throw new ValidationError(
+                  `Multiple rest parameters not allowed: found '${restParam.name.slice(3)}' and '${actualParamName}'`,
+                  "rest parameter",
+                  "single rest parameter",
+                  "multiple rest parameters",
+                );
+              }
+              restParam = {
+                type: IR.IRNodeType.Identifier,
+                name: `...${sanitizeIdentifier(actualParamName)}`,
+              } as IR.IRIdentifier;
+            } else {
+              params.push({
+                type: IR.IRNodeType.Identifier,
+                name: sanitizeIdentifier(actualParamName),
+              } as IR.IRIdentifier);
+            }
+          } 
+          // Handle simple parameter without type annotation
+          else {
+            if (restMode) {
+              if (restParam !== null) {
+                throw new ValidationError(
+                  `Multiple rest parameters not allowed: found '${restParam.name.slice(3)}' and '${paramName}'`,
+                  "rest parameter",
+                  "single rest parameter",
+                  "multiple rest parameters",
+                );
+              }
+              restParam = {
+                type: IR.IRNodeType.Identifier,
+                name: `...${sanitizeIdentifier(paramName)}`,
+              } as IR.IRIdentifier;
+            } else {
+              params.push({
+                type: IR.IRNodeType.Identifier,
+                name: sanitizeIdentifier(paramName),
+              } as IR.IRIdentifier);
+            }
+          }
+        }
+      }
+
       const bodyNodes = processFunctionBody(list.elements.slice(2), currentDir);
 
       return {
