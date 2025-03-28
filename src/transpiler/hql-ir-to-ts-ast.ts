@@ -471,7 +471,7 @@ function convertFxFunctionDeclaration(
         
         switch (typeName) {
           case "Int":
-            // Check if it's a number AND if it's an integer
+            // OPTIMIZATION: Simplified integer type checking
             typeCheckCondition = ts.factory.createBinaryExpression(
               ts.factory.createBinaryExpression(
                 ts.factory.createTypeOfExpression(convertIdentifier(param)),
@@ -480,39 +480,16 @@ function convertFxFunctionDeclaration(
               ),
               ts.factory.createToken(ts.SyntaxKind.BarBarToken),
               ts.factory.createBinaryExpression(
-                ts.factory.createBinaryExpression(
-                  convertIdentifier(param),
-                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
-                  ts.factory.createBinaryExpression(
-                    ts.factory.createCallExpression(
-                      ts.factory.createPropertyAccessExpression(
-                        ts.factory.createIdentifier("Math"),
-                        ts.factory.createIdentifier("floor")
-                      ),
-                      undefined,
-                      [convertIdentifier(param)]
-                    ),
-                    ts.factory.createToken(ts.SyntaxKind.BarBarToken),
-                    ts.factory.createBinaryExpression(
-                      ts.factory.createCallExpression(
-                        ts.factory.createPropertyAccessExpression(
-                          ts.factory.createIdentifier("Math"),
-                          ts.factory.createIdentifier("ceil")
-                        ),
-                        undefined,
-                        [convertIdentifier(param)]
-                      ),
-                      ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
-                      convertIdentifier(param)
-                    )
-                  )
+                ts.factory.createCallExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("Math"),
+                    ts.factory.createIdentifier("floor")
+                  ),
+                  undefined,
+                  [convertIdentifier(param)]
                 ),
-                ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-                ts.factory.createBinaryExpression(
-                  ts.factory.createTypeOfExpression(convertIdentifier(param)),
-                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                  ts.factory.createStringLiteral("number")
-                )
+                ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                convertIdentifier(param)
               )
             );
             break;
@@ -574,7 +551,7 @@ function convertFxFunctionDeclaration(
       }
     });
     
-    // 4. Add parameter deep copying for fx functions
+    // 4. Add parameter deep copying for fx functions - OPTIMIZATION: only once per parameter
     node.params.forEach(param => {
       bodyStatements.push(
         ts.factory.createExpressionStatement(
@@ -646,7 +623,6 @@ function convertFxFunctionDeclaration(
     );
   }
 }
-
 
 function convertExpressionStatement(
   node: IR.IRExpressionStatement,
@@ -1806,9 +1782,7 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
       case IR.IRNodeType.UnaryExpression:
         return convertUnaryExpression(node as IR.IRUnaryExpression);
       case IR.IRNodeType.ConditionalExpression:
-        return convertConditionalExpression(
-          node as IR.IRConditionalExpression,
-        );
+        return convertConditionalExpression(node as IR.IRConditionalExpression);
       case IR.IRNodeType.ArrayExpression:
         return convertArrayExpression(node as IR.IRArrayExpression);
       case IR.IRNodeType.FunctionExpression:
@@ -1817,7 +1791,7 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
         return convertInteropIIFE(node as IR.IRInteropIIFE);
       case IR.IRNodeType.AssignmentExpression:
         return convertAssignmentExpression(node as IR.IRAssignmentExpression);
-      case IR.IRNodeType.ReturnStatement:{
+      case IR.IRNodeType.ReturnStatement: {
         const returnArg = (node as IR.IRReturnStatement).argument;
         return ts.factory.createCallExpression(
           ts.factory.createParenthesizedExpression(
