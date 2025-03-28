@@ -120,6 +120,8 @@ export function convertIRNode(
         return convertExpressionStatement(node as IR.IRExpressionStatement);
       case IR.IRNodeType.FxFunctionDeclaration:
         return convertFxFunctionDeclaration(node as IR.IRFxFunctionDeclaration);
+      case IR.IRNodeType.FnFunctionDeclaration:
+        return convertFnFunctionDeclaration(node as IR.IRFnFunctionDeclaration);
       default:
         logger.warn(
           `Cannot convert node of type ${node.type} (${
@@ -148,71 +150,455 @@ export function convertIRNode(
 }
 
 /**
- * Convert fx function declaration to TypeScript
+ * Convert an fn function declaration to TypeScript
+ * This simplified implementation avoids parameter duplication issues
+ */
+function convertFnFunctionDeclaration(
+  node: IR.IRFnFunctionDeclaration,
+): ts.FunctionDeclaration {
+  try {
+    // Get default parameter values
+    const defaultValues = new Map(
+      node.defaults.map((d) => [d.name, convertIRExpr(d.value)]),
+    );
+    
+    // Create a simple wrapper function that takes variadic args
+    const parameters = [
+      ts.factory.createParameterDeclaration(
+        undefined,
+        ts.factory.createToken(ts.SyntaxKind.DotDotDotToken),
+        ts.factory.createIdentifier("args"),
+        undefined,
+        undefined,
+        undefined
+      )
+    ];
+    
+    // Create the function body statements
+    const bodyStatements: ts.Statement[] = [];
+    
+    // 1. First, set up variables for each parameter with its default value
+    const paramDeclarations = node.params.map((param, index) => {
+      const defaultValue = defaultValues.get(param.name) || 
+                          ts.factory.createIdentifier("undefined");
+      
+      return ts.factory.createVariableDeclaration(
+        convertIdentifier(param),
+        undefined,
+        undefined,
+        defaultValue
+      );
+    });
+    
+    // Create the variable declarations statement
+    bodyStatements.push(
+      ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          paramDeclarations,
+          ts.NodeFlags.Let
+        )
+      )
+    );
+    
+    // 2. Handle named arguments (passed as a single object)
+    bodyStatements.push(
+      ts.factory.createIfStatement(
+        // if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0]))
+        ts.factory.createBinaryExpression(
+          ts.factory.createBinaryExpression(
+            ts.factory.createBinaryExpression(
+              ts.factory.createBinaryExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createIdentifier("args"),
+                  ts.factory.createIdentifier("length")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                ts.factory.createNumericLiteral("1")
+              ),
+              ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+              ts.factory.createBinaryExpression(
+                ts.factory.createTypeOfExpression(
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createNumericLiteral("0")
+                  )
+                ),
+                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                ts.factory.createStringLiteral("object")
+              )
+            ),
+            ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+            ts.factory.createBinaryExpression(
+              ts.factory.createElementAccessExpression(
+                ts.factory.createIdentifier("args"),
+                ts.factory.createNumericLiteral("0")
+              ),
+              ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+              ts.factory.createNull()
+            )
+          ),
+          ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+          ts.factory.createPrefixUnaryExpression(
+            ts.SyntaxKind.ExclamationToken,
+            ts.factory.createCallExpression(
+              ts.factory.createPropertyAccessExpression(
+                ts.factory.createIdentifier("Array"),
+                ts.factory.createIdentifier("isArray")
+              ),
+              undefined,
+              [
+                ts.factory.createElementAccessExpression(
+                  ts.factory.createIdentifier("args"),
+                  ts.factory.createNumericLiteral("0")
+                )
+              ]
+            )
+          )
+        ),
+        // Then block: handle named arguments
+        ts.factory.createBlock(
+          node.params.map((param) => {
+            // if (args[0].x !== undefined) x = args[0].x;
+            return ts.factory.createIfStatement(
+              ts.factory.createBinaryExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createNumericLiteral("0")
+                  ),
+                  convertIdentifier(param)
+                ),
+                ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                ts.factory.createIdentifier("undefined")
+              ),
+              ts.factory.createExpressionStatement(
+                ts.factory.createBinaryExpression(
+                  convertIdentifier(param),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral("0")
+                    ),
+                    convertIdentifier(param)
+                  )
+                )
+              ),
+              undefined
+            );
+          }),
+          true
+        ),
+        // Else block: handle positional arguments
+        ts.factory.createBlock(
+          node.params.map((param, index) => {
+            // Handle positional arguments and placeholders
+            // if (args[0] !== undefined && args[0] !== "_" && typeof args[0] !== "symbol") x = args[0];
+            return ts.factory.createIfStatement(
+              ts.factory.createBinaryExpression(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral(index.toString())
+                    ),
+                    ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                    ts.factory.createIdentifier("undefined")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral(index.toString())
+                    ),
+                    ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                    ts.factory.createStringLiteral("_")
+                  )
+                ),
+                ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                ts.factory.createBinaryExpression(
+                  ts.factory.createTypeOfExpression(
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral(index.toString())
+                    )
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                  ts.factory.createStringLiteral("symbol")
+                )
+              ),
+              ts.factory.createExpressionStatement(
+                ts.factory.createBinaryExpression(
+                  convertIdentifier(param),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createNumericLiteral(index.toString())
+                  )
+                )
+              ),
+              undefined
+            );
+          }),
+          true
+        )
+      )
+    );
+    
+    // 3. Add the original function body expressions
+    // Convert the function body statements to use the parameters
+    const originalBodyStatements = convertBlockStatement(node.body).statements;
+    bodyStatements.push(...originalBodyStatements);
+    
+    // Create the function declaration
+    return ts.factory.createFunctionDeclaration(
+      undefined,
+      undefined,
+      convertIdentifier(node.id),
+      undefined,
+      parameters,
+      undefined,
+      ts.factory.createBlock(bodyStatements, true)
+    );
+  } catch (error) {
+    throw new CodeGenError(
+      `Failed to convert fn function declaration: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "fn function declaration",
+      node,
+    );
+  }
+}
+
+/**
+ * Also update the convertFxFunctionDeclaration similarly
+ * to use the same approach for consistency
  */
 function convertFxFunctionDeclaration(
   node: IR.IRFxFunctionDeclaration,
-): ts.FunctionDeclaration | ts.Statement[] {
+): ts.FunctionDeclaration {
   try {
-    // Create parameters with default values (but NO type annotations)
-    const parameters: ts.ParameterDeclaration[] = [];
-
-    // Track parameters that have default values for argument handling
-    const hasDefaults = node.defaults.length > 0;
-    const defaultParams = new Map(
+    // Get default parameter values
+    const defaultValues = new Map(
       node.defaults.map((d) => [d.name, convertIRExpr(d.value)]),
     );
-
-    // Create a parameter for each declared parameter
-    for (const param of node.params) {
-      // Get default value if any
-      const defaultValue = defaultParams.get(param.name);
-
-      // Create the parameter declaration WITHOUT type annotation
-      parameters.push(
-        ts.factory.createParameterDeclaration(
-          undefined,
-          undefined,
-          convertIdentifier(param),
-          undefined,
-          undefined, // No type annotation
-          defaultValue,
-        ),
-      );
-    }
-
-    // Generate body statements with parameter deep copies
+    
+    // Create a simple wrapper function that takes variadic args
+    const parameters = [
+      ts.factory.createParameterDeclaration(
+        undefined,
+        ts.factory.createToken(ts.SyntaxKind.DotDotDotToken),
+        ts.factory.createIdentifier("args"),
+        undefined,
+        undefined,
+        undefined
+      )
+    ];
+    
+    // Create the function body statements
     const bodyStatements: ts.Statement[] = [];
-
-    // Add runtime type checking for parameters
-    for (const param of node.params) {
-      // Add runtime type checking for Int type
-      const paramTypeDef = node.paramTypes.find((pt) => pt.name === param.name);
+    
+    // 1. First, set up variables for each parameter with its default value
+    const paramDeclarations = node.params.map((param, index) => {
+      const defaultValue = defaultValues.get(param.name) || 
+                          ts.factory.createIdentifier("undefined");
+      
+      return ts.factory.createVariableDeclaration(
+        convertIdentifier(param),
+        undefined,
+        undefined,
+        defaultValue
+      );
+    });
+    
+    // Create the variable declarations statement
+    bodyStatements.push(
+      ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          paramDeclarations,
+          ts.NodeFlags.Let
+        )
+      )
+    );
+    
+    // 2. Handle named arguments (passed as a single object)
+    bodyStatements.push(
+      ts.factory.createIfStatement(
+        // if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0]))
+        ts.factory.createBinaryExpression(
+          ts.factory.createBinaryExpression(
+            ts.factory.createBinaryExpression(
+              ts.factory.createBinaryExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createIdentifier("args"),
+                  ts.factory.createIdentifier("length")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                ts.factory.createNumericLiteral("1")
+              ),
+              ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+              ts.factory.createBinaryExpression(
+                ts.factory.createTypeOfExpression(
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createNumericLiteral("0")
+                  )
+                ),
+                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                ts.factory.createStringLiteral("object")
+              )
+            ),
+            ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+            ts.factory.createBinaryExpression(
+              ts.factory.createElementAccessExpression(
+                ts.factory.createIdentifier("args"),
+                ts.factory.createNumericLiteral("0")
+              ),
+              ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+              ts.factory.createNull()
+            )
+          ),
+          ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+          ts.factory.createPrefixUnaryExpression(
+            ts.SyntaxKind.ExclamationToken,
+            ts.factory.createCallExpression(
+              ts.factory.createPropertyAccessExpression(
+                ts.factory.createIdentifier("Array"),
+                ts.factory.createIdentifier("isArray")
+              ),
+              undefined,
+              [
+                ts.factory.createElementAccessExpression(
+                  ts.factory.createIdentifier("args"),
+                  ts.factory.createNumericLiteral("0")
+                )
+              ]
+            )
+          )
+        ),
+        // Then block: handle named arguments
+        ts.factory.createBlock(
+          node.params.map((param) => {
+            // if (args[0].x !== undefined) x = args[0].x;
+            return ts.factory.createIfStatement(
+              ts.factory.createBinaryExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createNumericLiteral("0")
+                  ),
+                  convertIdentifier(param)
+                ),
+                ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                ts.factory.createIdentifier("undefined")
+              ),
+              ts.factory.createExpressionStatement(
+                ts.factory.createBinaryExpression(
+                  convertIdentifier(param),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral("0")
+                    ),
+                    convertIdentifier(param)
+                  )
+                )
+              ),
+              undefined
+            );
+          }),
+          true
+        ),
+        // Else block: handle positional arguments
+        ts.factory.createBlock(
+          node.params.map((param, index) => {
+            // Handle positional arguments and placeholders
+            // if (args[0] !== undefined && args[0] !== "_" && typeof args[0] !== "symbol") x = args[0];
+            return ts.factory.createIfStatement(
+              ts.factory.createBinaryExpression(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral(index.toString())
+                    ),
+                    ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                    ts.factory.createIdentifier("undefined")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral(index.toString())
+                    ),
+                    ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                    ts.factory.createStringLiteral("_")
+                  )
+                ),
+                ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                ts.factory.createBinaryExpression(
+                  ts.factory.createTypeOfExpression(
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral(index.toString())
+                    )
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                  ts.factory.createStringLiteral("symbol")
+                )
+              ),
+              ts.factory.createExpressionStatement(
+                ts.factory.createBinaryExpression(
+                  convertIdentifier(param),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createNumericLiteral(index.toString())
+                  )
+                )
+              ),
+              undefined
+            );
+          }),
+          true
+        )
+      )
+    );
+    
+    // 3. Add type checking for fx functions
+    node.params.forEach(param => {
+      const paramTypeDef = node.paramTypes.find(pt => pt.name === param.name);
       if (paramTypeDef && paramTypeDef.type === "Int") {
         bodyStatements.push(
           ts.factory.createIfStatement(
             ts.factory.createBinaryExpression(
               ts.factory.createTypeOfExpression(convertIdentifier(param)),
-              ts.factory.createToken(
-                ts.SyntaxKind.ExclamationEqualsEqualsToken,
-              ),
-              ts.factory.createStringLiteral("number"),
+              ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+              ts.factory.createStringLiteral("number")
             ),
             ts.factory.createThrowStatement(
               ts.factory.createNewExpression(
                 ts.factory.createIdentifier("Error"),
                 undefined,
-                [ts.factory.createStringLiteral(
-                  `Parameter '${param.name}' must be a number (Int)`,
-                )],
-              ),
+                [
+                  ts.factory.createStringLiteral(
+                    `Parameter '${param.name}' must be a number (Int)`
+                  )
+                ]
+              )
             ),
-            undefined,
-          ),
+            undefined
+          )
         );
       }
-
-      // Create a deep copy statement
+    });
+    
+    // 4. Add parameter deep copying for fx functions
+    node.params.forEach(param => {
       bodyStatements.push(
         ts.factory.createExpressionStatement(
           ts.factory.createBinaryExpression(
@@ -223,261 +609,56 @@ function convertFxFunctionDeclaration(
                 ts.factory.createBinaryExpression(
                   ts.factory.createTypeOfExpression(convertIdentifier(param)),
                   ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                  ts.factory.createStringLiteral("object"),
+                  ts.factory.createStringLiteral("object")
                 ),
                 ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
                 ts.factory.createBinaryExpression(
                   convertIdentifier(param),
-                  ts.factory.createToken(
-                    ts.SyntaxKind.ExclamationEqualsEqualsToken,
-                  ),
-                  ts.factory.createNull(),
-                ),
+                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                  ts.factory.createNull()
+                )
               ),
               ts.factory.createToken(ts.SyntaxKind.QuestionToken),
               ts.factory.createCallExpression(
                 ts.factory.createPropertyAccessExpression(
                   ts.factory.createIdentifier("JSON"),
-                  ts.factory.createIdentifier("parse"),
+                  ts.factory.createIdentifier("parse")
                 ),
                 undefined,
                 [
                   ts.factory.createCallExpression(
                     ts.factory.createPropertyAccessExpression(
                       ts.factory.createIdentifier("JSON"),
-                      ts.factory.createIdentifier("stringify"),
+                      ts.factory.createIdentifier("stringify")
                     ),
                     undefined,
-                    [convertIdentifier(param)],
-                  ),
-                ],
+                    [convertIdentifier(param)]
+                  )
+                ]
               ),
               ts.factory.createToken(ts.SyntaxKind.ColonToken),
-              convertIdentifier(param),
-            ),
-          ),
-        ),
+              convertIdentifier(param)
+            )
+          )
+        )
       );
-    }
-
-    // Convert the function body statements
+    });
+    
+    // 5. Add the original function body expressions
+    // Convert the function body statements to use the parameters
     const originalBodyStatements = convertBlockStatement(node.body).statements;
-
-    // Add to our statements
     bodyStatements.push(...originalBodyStatements);
-
-    // If we have named arguments, we need to create a wrapper function
-    if (hasDefaults) {
-      // Create the inner function with the actual implementation
-      const innerFuncName = `_${node.id.name}_impl`;
-      const innerFunc = ts.factory.createFunctionDeclaration(
-        undefined,
-        undefined,
-        ts.factory.createIdentifier(innerFuncName),
-        undefined,
-        parameters,
-        undefined, // No return type annotation
-        ts.factory.createBlock(bodyStatements, true),
-      );
-
-      // Create the wrapper function that handles named arguments
-      const wrapperParams = [
-        ts.factory.createParameterDeclaration(
-          undefined,
-          ts.factory.createToken(ts.SyntaxKind.DotDotDotToken),
-          ts.factory.createIdentifier("args"),
-        ),
-      ];
-
-      // Create the named args condition
-      const namedArgsCondition = ts.factory.createBinaryExpression(
-        ts.factory.createBinaryExpression(
-          ts.factory.createBinaryExpression(
-            ts.factory.createBinaryExpression(
-              ts.factory.createBinaryExpression(
-                ts.factory.createPropertyAccessExpression(
-                  ts.factory.createIdentifier("args"),
-                  ts.factory.createIdentifier("length"),
-                ),
-                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                ts.factory.createNumericLiteral("1"),
-              ),
-              ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-              ts.factory.createBinaryExpression(
-                ts.factory.createTypeOfExpression(
-                  ts.factory.createElementAccessExpression(
-                    ts.factory.createIdentifier("args"),
-                    ts.factory.createNumericLiteral("0"),
-                  ),
-                ),
-                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                ts.factory.createStringLiteral("object"),
-              ),
-            ),
-            ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-            ts.factory.createBinaryExpression(
-              ts.factory.createElementAccessExpression(
-                ts.factory.createIdentifier("args"),
-                ts.factory.createNumericLiteral("0"),
-              ),
-              ts.factory.createToken(
-                ts.SyntaxKind.ExclamationEqualsEqualsToken,
-              ),
-              ts.factory.createNull(),
-            ),
-          ),
-          ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-          ts.factory.createPrefixUnaryExpression(
-            ts.SyntaxKind.ExclamationToken,
-            ts.factory.createCallExpression(
-              ts.factory.createPropertyAccessExpression(
-                ts.factory.createIdentifier("Array"),
-                ts.factory.createIdentifier("isArray"),
-              ),
-              undefined,
-              [
-                ts.factory.createElementAccessExpression(
-                  ts.factory.createIdentifier("args"),
-                  ts.factory.createNumericLiteral("0"),
-                ),
-              ],
-            ),
-          ),
-        ),
-        ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-        ts.factory.createBinaryExpression(
-          ts.factory.createPropertyAccessExpression(
-            ts.factory.createElementAccessExpression(
-              ts.factory.createIdentifier("args"),
-              ts.factory.createNumericLiteral("0"),
-            ),
-            ts.factory.createIdentifier("constructor"),
-          ),
-          ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-          ts.factory.createIdentifier("Object"),
-        ),
-      );
-
-      // Create the named args branch
-      const namedArgsBranch = ts.factory.createBlock([
-        // Declare opts variable
-        ts.factory.createVariableStatement(
-          undefined,
-          ts.factory.createVariableDeclarationList(
-            [
-              ts.factory.createVariableDeclaration(
-                ts.factory.createIdentifier("opts"),
-                undefined,
-                undefined,
-                ts.factory.createElementAccessExpression(
-                  ts.factory.createIdentifier("args"),
-                  ts.factory.createNumericLiteral("0"),
-                ),
-              ),
-            ],
-            ts.NodeFlags.Const,
-          ),
-        ),
-        // Return call to inner function
-        ts.factory.createReturnStatement(
-          ts.factory.createCallExpression(
-            ts.factory.createIdentifier(innerFuncName),
-            undefined,
-            node.params.map((param) => {
-              const defaultVal = defaultParams.get(param.name);
-              return ts.factory.createConditionalExpression(
-                ts.factory.createBinaryExpression(
-                  ts.factory.createPropertyAccessExpression(
-                    ts.factory.createIdentifier("opts"),
-                    convertIdentifier(param),
-                  ),
-                  ts.factory.createToken(
-                    ts.SyntaxKind.ExclamationEqualsEqualsToken,
-                  ),
-                  ts.factory.createIdentifier("undefined"),
-                ),
-                ts.factory.createToken(ts.SyntaxKind.QuestionToken),
-                ts.factory.createPropertyAccessExpression(
-                  ts.factory.createIdentifier("opts"),
-                  convertIdentifier(param),
-                ),
-                ts.factory.createToken(ts.SyntaxKind.ColonToken),
-                defaultVal || ts.factory.createIdentifier("undefined"),
-              );
-            }),
-          ),
-        ),
-      ], true);
-
-      // Create the positional args branch
-      const positionalArgsBranch = ts.factory.createBlock([
-        // Return call to inner function with args from array
-        ts.factory.createReturnStatement(
-          ts.factory.createCallExpression(
-            ts.factory.createIdentifier(innerFuncName),
-            undefined,
-            node.params.map((param, index) => {
-              const defaultVal = defaultParams.get(param.name);
-              return ts.factory.createConditionalExpression(
-                ts.factory.createBinaryExpression(
-                  ts.factory.createElementAccessExpression(
-                    ts.factory.createIdentifier("args"),
-                    ts.factory.createNumericLiteral(index.toString()),
-                  ),
-                  ts.factory.createToken(
-                    ts.SyntaxKind.ExclamationEqualsEqualsToken,
-                  ),
-                  ts.factory.createIdentifier("undefined"),
-                ),
-                ts.factory.createToken(ts.SyntaxKind.QuestionToken),
-                ts.factory.createElementAccessExpression(
-                  ts.factory.createIdentifier("args"),
-                  ts.factory.createNumericLiteral(index.toString()),
-                ),
-                ts.factory.createToken(ts.SyntaxKind.ColonToken),
-                defaultVal || ts.factory.createIdentifier("undefined"),
-              );
-            }),
-          ),
-        ),
-      ], true);
-
-      // Create the conditional expression
-      const wrapperBody = ts.factory.createBlock([
-        // If statement for named vs positional args
-        ts.factory.createIfStatement(
-          namedArgsCondition,
-          namedArgsBranch,
-          positionalArgsBranch,
-        ),
-      ], true);
-
-      // Create the wrapper function
-      const wrapperFunc = ts.factory.createFunctionDeclaration(
-        undefined,
-        undefined,
-        convertIdentifier(node.id),
-        undefined,
-        wrapperParams,
-        undefined, // No return type annotation
-        wrapperBody,
-      );
-
-      // Return an array of both functions
-      return [innerFunc, wrapperFunc];
-    } else {
-      // No default parameters or named arguments needed
-      // Simply return the function directly
-      return ts.factory.createFunctionDeclaration(
-        undefined,
-        undefined,
-        convertIdentifier(node.id),
-        undefined,
-        parameters,
-        undefined, // No return type annotation
-        ts.factory.createBlock(bodyStatements, true),
-      );
-    }
+    
+    // Create the function declaration
+    return ts.factory.createFunctionDeclaration(
+      undefined,
+      undefined,
+      convertIdentifier(node.id),
+      undefined,
+      parameters,
+      undefined,
+      ts.factory.createBlock(bodyStatements, true)
+    );
   } catch (error) {
     throw new CodeGenError(
       `Failed to convert fx function declaration: ${

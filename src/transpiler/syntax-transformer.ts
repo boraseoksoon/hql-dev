@@ -1,5 +1,5 @@
-// src/s-exp/syntax-transformer.ts
-// Centralized syntax transformation layer for HQL
+// src/transpiler/syntax-transformer.ts
+// Enhanced version with fn function parameter handling
 
 import {
   createList,
@@ -8,6 +8,7 @@ import {
   isSymbol,
   SExp,
   SList,
+  SSymbol,
 } from "../s-exp/types.ts";
 import { Logger } from "../logger.ts";
 import { TransformError } from "../transpiler/errors.ts";
@@ -61,15 +62,15 @@ function transformNode(node: SExp, logger: Logger): SExp {
       }
       
       // Get the operation name
-      const op = (first as SymbolNode).name;
+      const op = (first as SSymbol).name;
       
       // Handle specific syntactic transformations
       switch (op) {
         case "fx":
           return transformFxSyntax(list, logger);
+        case "fn":
+          return transformFnSyntax(list, logger);
         // Add other transformations here as needed
-        // case "some-other-syntax":
-        //   return transformOtherSyntax(list, logger);
         default:
           // Recursively transform elements for non-special forms
           return {
@@ -134,7 +135,7 @@ function transformFxSyntax(list: SList, logger: Logger): SExp {
       
       if (returnTypeList.elements.length < 2 || 
           returnTypeList.elements[0].type !== "symbol" ||
-          (returnTypeList.elements[0] as SymbolNode).name !== "->") {
+          (returnTypeList.elements[0] as SSymbol).name !== "->") {
         throw new TransformError(
           "Invalid fx syntax: return type must be a list starting with ->",
           "fx return type",
@@ -156,5 +157,66 @@ function transformFxSyntax(list: SList, logger: Logger): SExp {
     "transformFxSyntax",
     TransformError,
     ["fx syntax transformation"]
+  );
+}
+
+/**
+ * Transform fn function syntax
+ * 
+ * (fn add (x = 100 y = 200) (+ x y))
+ * 
+ * This handles the fn functions with default parameters
+ */
+function transformFnSyntax(list: SList, logger: Logger): SExp {
+  return perform(
+    () => {
+      logger.debug("Transforming fn syntax");
+      
+      // Validate the fn syntax
+      if (list.elements.length < 3) {
+        throw new TransformError(
+          "Invalid fn syntax: requires at least a name, parameter list, and body",
+          "fn syntax transformation",
+          "valid fn form",
+          list
+        );
+      }
+      
+      // Extract components
+      const name = list.elements[1];
+      const paramsList = list.elements[2] as SList;
+      const body = list.elements.slice(3);
+      
+      // Validate parameter list
+      if (paramsList.type !== "list") {
+        throw new TransformError(
+          "Invalid fn syntax: parameter list must be a list",
+          "fn parameter list",
+          "list",
+          paramsList
+        );
+      }
+
+      // Validate the name
+      if (!isSymbol(name)) {
+        throw new TransformError(
+          "Invalid fn syntax: function name must be a symbol",
+          "fn name",
+          "symbol",
+          name
+        );
+      }
+      
+      // Create a processed version with the original 'fn' operation
+      return createList(
+        createSymbol("fn"),
+        name,
+        paramsList,
+        ...body
+      );
+    },
+    "transformFnSyntax",
+    TransformError,
+    ["fn syntax transformation"]
   );
 }

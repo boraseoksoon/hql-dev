@@ -68,8 +68,8 @@ integration: Leverages TypeScript's ecosystem for the final stages
    process follows the traditional Lisp approach: CopyMacro Expansion Example:
    ┌───────────────────────────────────────────────────────────────────────────┐
    │ Input: (fn square (x) (* x x)) │ │ │ │ Phase 1: Parse to S-expressions │ │
-   (fn square (x) (* x x)) │ │ │ │ Phase 2: Identify "defn" as macro │ │ Macro
-   definition: │ │ (defmacro defn (name params & body) │ │ `(let ~name (lambda
+   (fn square (x) (* x x)) │ │ │ │ Phase 2: Identify "fn" as macro │ │ Macro
+   definition: │ │ (defmacro fn (name params & body) │ │ `(let ~name (lambda
    ~params ~@body))) │ │ │ │ Phase 3: Apply macro transformation │ │ (let square
    (lambda (x) (* x x))) │ │ │ │ Phase 4: Check if further expansions needed │ │
    No more macros to expand │ │ │ │ Output: (let square (lambda (x) (* x x))) │

@@ -35,6 +35,19 @@ const transformFactory = new Map<
   (list: ListNode, currentDir: string) => IR.IRNode | null
 >();
 
+// Registry for fx functions to enable access during call site processing
+const fxFunctionRegistry = new Map<string, IR.IRFxFunctionDeclaration>();
+
+/**
+ * Register an fx function in the registry for call site handling
+ */
+function registerFxFunction(
+  name: string,
+  def: IR.IRFxFunctionDeclaration,
+): void {
+  fxFunctionRegistry.set(name, def);
+}
+
 /**
  * Transform an array of HQL AST nodes into an IR program.
  * Enhanced with better error handling and logging, now wrapped in `perform`.
@@ -157,6 +170,7 @@ function initializeTransformFactory(): void {
       transformFactory.set("get", transformGet);
       transformFactory.set("new", transformNew);
 
+      transformFactory.set("fn", transformFn);
       transformFactory.set("fx", transformFx);
       transformFactory.set("let", transformLet);
       transformFactory.set("var", transformVar);
@@ -171,6 +185,249 @@ function initializeTransformFactory(): void {
     "initializeTransformFactory",
     TransformError,
   );
+}
+
+function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
+  // Handle empty list
+  if (list.elements.length === 0) {
+    return transformEmptyList();
+  }
+
+  // Special case for js-get-invoke
+  const jsGetInvokeResult = transformJsGetInvokeSpecialCase(list, currentDir);
+  if (jsGetInvokeResult) return jsGetInvokeResult;
+
+  const first = list.elements[0];
+
+  if (first.type === "symbol") {
+    const op = (first as SymbolNode).name;
+
+    // Skip macro definitions
+    if (op === "defmacro" || op === "macro") {
+      logger.debug(`Skipping macro definition: ${op}`);
+      return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+    }
+
+    // Handle import/export forms
+    if (isVectorExport(list)) {
+      return transformVectorExport(list, currentDir);
+    }
+
+    if (isVectorImport(list)) {
+      return transformVectorImport(list, currentDir);
+    }
+
+    if (isNamespaceImport(list)) {
+      return transformNamespaceImport(list, currentDir);
+    }
+
+    if (isDotNotation(op)) {
+      return transformDotNotation(list, op, currentDir);
+    }
+
+    // Check for named arguments in function call
+    if (hasNamedArguments(list)) {
+      return transformNamedArgumentCall(list, currentDir);
+    }
+
+    // Check if this is a call to an fn function
+    const fnDef = fnFunctionRegistry.get(op);
+    if (fnDef) {
+      logger.debug(`Processing call to fn function ${op}`);
+      return processFnFunctionCall(op, fnDef, list.elements.slice(1), currentDir);
+    }
+
+    // Check if this is a call to an fx function
+    const fxDef = fxFunctionRegistry.get(op);
+    if (fxDef) {
+      logger.debug(`Processing call to fx function ${op}`);
+      return processFxFunctionCall(op, fxDef, list.elements.slice(1), currentDir);
+    }
+
+    // Handle built-in operations via the transform factory
+    const handler = transformFactory.get(op);
+    if (handler) {
+      return perform(
+        () => handler(list, currentDir),
+        `handler for '${op}'`,
+        TransformError,
+        [list],
+      );
+    }
+
+    // Handle primitive operations
+    if (PRIMITIVE_OPS.has(op)) {
+      return transformPrimitiveOp(list, currentDir);
+    }
+
+    // Handle collection access syntax
+    if (
+      list.elements.length === 2 &&
+      !KERNEL_PRIMITIVES.has(op) &&
+      !PRIMITIVE_DATA_STRUCTURE.has(op) &&
+      !PRIMITIVE_CLASS.has(op) &&
+      !op.startsWith("js-")
+    ) {
+      return transformCollectionAccess(list, op, currentDir);
+    }
+  }
+
+  // Handle nested lists
+  if (first.type === "list") {
+    return transformNestedList(list, currentDir);
+  }
+
+  // Default case: standard function call
+  return transformStandardFunctionCall(list, currentDir);
+}
+
+/**
+ * Transform a fn function declaration.
+ * Format: (fn name (param1 = default1 param2) body...)
+ */
+function transformFn(list: ListNode, currentDir: string): IR.IRNode {
+  try {
+    logger.debug("Transforming fn function");
+    
+    // Validate fn syntax
+    if (list.elements.length < 3) {
+      throw new ValidationError(
+        "fn requires a name, parameter list, and at least one body expression",
+        "fn definition",
+        "name, params, body",
+        `${list.elements.length - 1} arguments`,
+      );
+    }
+
+    // Extract function name
+    const nameNode = list.elements[1];
+    if (nameNode.type !== "symbol") {
+      throw new ValidationError(
+        "Function name must be a symbol",
+        "fn name",
+        "symbol",
+        nameNode.type,
+      );
+    }
+    const funcName = (nameNode as SymbolNode).name;
+
+    // Extract parameter list
+    const paramListNode = list.elements[2];
+    if (paramListNode.type !== "list") {
+      throw new ValidationError(
+        "fn parameter list must be a list",
+        "fn parameters",
+        "list",
+        paramListNode.type,
+      );
+    }
+    const paramList = paramListNode as ListNode;
+
+    // Body expressions start from index 3
+    const bodyOffset = 3;
+    const bodyExpressions = list.elements.slice(bodyOffset);
+
+    // Parse parameters with defaults
+    const paramsInfo = parseParametersWithDefaults(paramList, currentDir);
+
+    // Extract params and body
+    const params = paramsInfo.params;
+    const defaultValues = paramsInfo.defaults;
+
+    // Process the body expressions like a regular function
+    const bodyNodes = processFunctionBody(bodyExpressions, currentDir);
+
+    // Create the FnFunctionDeclaration node
+    const fnFuncDecl = {
+      type: IR.IRNodeType.FnFunctionDeclaration,
+      id: {
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(funcName),
+      },
+      params,
+      defaults: Array.from(defaultValues.entries()).map(([name, value]) => ({
+        name,
+        value,
+      })),
+      body: {
+        type: IR.IRNodeType.BlockStatement,
+        body: bodyNodes,
+      },
+    } as IR.IRFnFunctionDeclaration;
+
+    // Register this function in our registry for call site handling
+    registerFnFunction(funcName, fnFuncDecl);
+    return fnFuncDecl;
+  } catch (error) {
+    throw new TransformError(
+      `Failed to transform fn function: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "fn function",
+      "transformation",
+      list,
+    );
+  }
+}
+
+
+/**
+ * Parse parameters with default values for fn functions
+ */
+function parseParametersWithDefaults(
+  paramList: ListNode,
+  currentDir: string,
+): {
+  params: IR.IRIdentifier[];
+  defaults: Map<string, IR.IRNode>;
+} {
+  // Initialize result structures
+  const params: IR.IRIdentifier[] = [];
+  const defaults = new Map<string, IR.IRNode>();
+
+  // Process parameters
+  for (let i = 0; i < paramList.elements.length; i++) {
+    const elem = paramList.elements[i];
+
+    if (elem.type === "symbol") {
+      const symbolName = (elem as SymbolNode).name;
+      
+      // Add parameter to the list
+      params.push({
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(symbolName),
+      });
+      
+      // Check for default value (=)
+      if (
+        i + 1 < paramList.elements.length &&
+        paramList.elements[i + 1].type === "symbol" &&
+        (paramList.elements[i + 1] as SymbolNode).name === "="
+      ) {
+        // Make sure we have a value after the equals sign
+        if (i + 2 < paramList.elements.length) {
+          const defaultValueNode = paramList.elements[i + 2];
+          
+          // Transform the default value
+          const defaultValue = transformNode(defaultValueNode, currentDir);
+          if (defaultValue) {
+            defaults.set(symbolName, defaultValue);
+          }
+          
+          i += 2; // Skip = and default value
+        } else {
+          throw new ValidationError(
+            `Missing default value after '=' for parameter '${symbolName}'`,
+            "fn parameter default",
+            "default value",
+            "missing value",
+          );
+        }
+      }
+    }
+  }
+
+  return { params, defaults };
 }
 
 /**
@@ -206,6 +463,116 @@ function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
     TransformError,
     [node],
   );
+}
+
+
+// Registry for fn functions to enable access during call site processing
+const fnFunctionRegistry = new Map<string, IR.IRFnFunctionDeclaration>();
+
+/**
+ * Register an fn function in the registry for call site handling
+ */
+function registerFnFunction(
+  name: string,
+  def: IR.IRFnFunctionDeclaration,
+): void {
+  fnFunctionRegistry.set(name, def);
+}
+
+/**
+ * Check if a node is a placeholder (_) symbol
+ */
+function isPlaceholder(node: HQLNode): boolean {
+  return node.type === "symbol" && (node as SymbolNode).name === "_";
+}
+
+/**
+ * Process and transform a call to an fn function.
+ * Handles both positional and named arguments.
+ */
+function processFnFunctionCall(
+  funcName: string,
+  funcDef: IR.IRFnFunctionDeclaration,
+  args: HQLNode[],
+  currentDir: string,
+): IR.IRNode {
+  // Extract parameter info from the function definition
+  const paramNames = funcDef.params.map((p) => p.name);
+  const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
+
+  // Check if we have placeholders (_)
+  const hasPlaceholders = args.some(isPlaceholder);
+
+  // Process normal positional arguments
+  const positionalArgs: HQLNode[] = args;
+
+  // Prepare the final argument list in the correct parameter order
+  const finalArgs: IR.IRNode[] = [];
+
+  // Process each parameter in the function definition
+  for (let i = 0; i < paramNames.length; i++) {
+    const paramName = paramNames[i];
+    
+    if (i < positionalArgs.length) {
+      const arg = positionalArgs[i];
+      
+      // If this argument is a placeholder, use default
+      if (isPlaceholder(arg)) {
+        if (defaultValues.has(paramName)) {
+          finalArgs.push(defaultValues.get(paramName)!);
+        } else {
+          throw new ValidationError(
+            `Placeholder used for parameter '${paramName}' but no default value is defined`,
+            "function call with placeholder",
+            "parameter with default value",
+            "parameter without default",
+          );
+        }
+      } else {
+        // Normal argument, transform it
+        const transformedArg = transformNode(arg, currentDir);
+        if (!transformedArg) {
+          throw new ValidationError(
+            `Argument for parameter '${paramName}' transformed to null`,
+            "function call",
+            "valid expression",
+            "null",
+          );
+        }
+        finalArgs.push(transformedArg);
+      }
+    } else if (defaultValues.has(paramName)) {
+      // Use default value for missing arguments
+      finalArgs.push(defaultValues.get(paramName)!);
+    } else {
+      throw new ValidationError(
+        `Missing required argument for parameter '${paramName}' in call to function '${funcName}'`,
+        "function call",
+        "argument value",
+        "missing argument",
+      );
+    }
+  }
+
+  // Check for extra positional arguments
+  if (positionalArgs.length > paramNames.length) {
+    throw new ValidationError(
+      `Too many positional arguments in call to function '${funcName}'`,
+      "function call",
+      `${paramNames.length} arguments`,
+      `${positionalArgs.length} arguments`,
+    );
+  }
+
+  // Create the final call expression
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.Identifier,
+      name: sanitizeIdentifier(funcName),
+    },
+    arguments: finalArgs,
+  } as IR.IRCallExpression;
 }
 
 /**
@@ -301,89 +668,6 @@ function processVectorElements(elements: HQLNode[]): HQLNode[] {
  */
 function isDotNotation(op: string): boolean {
   return op.includes(".") && !op.startsWith("js/");
-}
-
-/**
- * Transform a list node to its IR representation.
- */
-function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
-  // Handle empty list
-  if (list.elements.length === 0) {
-    return transformEmptyList();
-  }
-
-  // Special case for js-get-invoke
-  const jsGetInvokeResult = transformJsGetInvokeSpecialCase(list, currentDir);
-  if (jsGetInvokeResult) return jsGetInvokeResult;
-
-  const first = list.elements[0];
-
-  if (first.type === "symbol") {
-    const op = (first as SymbolNode).name;
-
-    // Skip macro definitions
-    if (op === "defmacro" || op === "macro") {
-      logger.debug(`Skipping macro definition: ${op}`);
-      return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
-    }
-
-    // Handle import/export forms
-    if (isVectorExport(list)) {
-      return transformVectorExport(list, currentDir);
-    }
-
-    if (isVectorImport(list)) {
-      return transformVectorImport(list, currentDir);
-    }
-
-    if (isNamespaceImport(list)) {
-      return transformNamespaceImport(list, currentDir);
-    }
-
-    if (isDotNotation(op)) {
-      return transformDotNotation(list, op, currentDir);
-    }
-
-    // Check for named arguments in function call
-    if (hasNamedArguments(list)) {
-      return transformNamedArgumentCall(list, currentDir);
-    }
-
-    // Handle built-in operations via the transform factory
-    const handler = transformFactory.get(op);
-    if (handler) {
-      return perform(
-        () => handler(list, currentDir),
-        `handler for '${op}'`,
-        TransformError,
-        [list],
-      );
-    }
-
-    // Handle primitive operations
-    if (PRIMITIVE_OPS.has(op)) {
-      return transformPrimitiveOp(list, currentDir);
-    }
-
-    // Handle collection access syntax
-    if (
-      list.elements.length === 2 &&
-      !KERNEL_PRIMITIVES.has(op) &&
-      !PRIMITIVE_DATA_STRUCTURE.has(op) &&
-      !PRIMITIVE_CLASS.has(op) &&
-      !op.startsWith("js-")
-    ) {
-      return transformCollectionAccess(list, op, currentDir);
-    }
-  }
-
-  // Handle nested lists
-  if (first.type === "list") {
-    return transformNestedList(list, currentDir);
-  }
-
-  // Default case: standard function call
-  return transformStandardFunctionCall(list, currentDir);
 }
 
 /**
@@ -2688,12 +2972,31 @@ function hasNamedArguments(list: ListNode): boolean {
   return false;
 }
 
+/**
+ * Transform a function call with named arguments (param: value)
+ * This enhanced version handles both fx and fn functions
+ */
 function transformNamedArgumentCall(
   list: ListNode,
   currentDir: string,
 ): IR.IRNode {
   try {
     const functionName = (list.elements[0] as SymbolNode).name;
+    
+    // Check if this is an fx or fn function
+    const fxDef = fxFunctionRegistry.get(functionName);
+    const fnDef = fnFunctionRegistry.get(functionName);
+    
+    // If it's a registered function, use the specialized processor
+    if (fxDef) {
+      // Process named arguments for fx functions
+      return processNamedArgumentsForFx(functionName, fxDef, list.elements.slice(1), currentDir);
+    } else if (fnDef) {
+      // Process named arguments for fn functions
+      return processNamedArgumentsForFn(functionName, fnDef, list.elements.slice(1), currentDir);
+    }
+    
+    // Default handling for functions without registry entries
     // Build a single object with all named arguments
     const objProperties: IR.IRObjectProperty[] = [];
 
@@ -2776,22 +3079,212 @@ function transformNamedArgumentCall(
   }
 }
 
-// Registry for fx functions to enable access during call site processing
-const fxFunctionRegistry = new Map<string, IR.IRFxFunctionDeclaration>();
-
 /**
- * Register an fx function in the registry for call site handling
+ * Process named arguments for an fx function
  */
-function registerFxFunction(
-  name: string,
-  def: IR.IRFxFunctionDeclaration,
-): void {
-  fxFunctionRegistry.set(name, def);
+function processNamedArgumentsForFx(
+  funcName: string,
+  funcDef: IR.IRFxFunctionDeclaration,
+  args: HQLNode[],
+  currentDir: string,
+): IR.IRNode {
+  // Extract parameter info
+  const paramNames = funcDef.params.map((p) => p.name);
+  const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
+  
+  // Create a map to track which parameters have been provided
+  const providedParams = new Map<string, IR.IRNode>();
+  
+  // Process named arguments
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    
+    // Check if it's a named argument (param: value)
+    if (arg.type === "symbol" && (arg as SymbolNode).name.endsWith(":")) {
+      // Get parameter name without colon
+      const paramName = (arg as SymbolNode).name.slice(0, -1);
+      
+      // Ensure the parameter exists in the function definition
+      if (!paramNames.includes(paramName)) {
+        throw new ValidationError(
+          `Unknown parameter '${paramName}' in call to function '${funcName}'`,
+          "function call",
+          "valid parameter name",
+          paramName,
+        );
+      }
+      
+      // Ensure a value follows
+      if (i + 1 >= args.length) {
+        throw new ValidationError(
+          `Named argument '${paramName}:' requires a value`,
+          "named argument",
+          "value",
+          "missing value",
+        );
+      }
+      
+      // Transform the value
+      const valueNode = transformNode(args[i + 1], currentDir);
+      if (!valueNode) {
+        throw new ValidationError(
+          `Value for named argument '${paramName}:' transformed to null`,
+          "named argument value",
+          "valid expression",
+          "null",
+        );
+      }
+      
+      // Add to provided parameters
+      providedParams.set(paramName, valueNode);
+      
+      // Skip the value
+      i++;
+    } else {
+      throw new ValidationError(
+        "Mixed positional and named arguments are not allowed",
+        "function call",
+        "all named or all positional arguments",
+        "mixed arguments",
+      );
+    }
+  }
+  
+  // Prepare the final argument list in the correct parameter order
+  const finalArgs: IR.IRNode[] = [];
+  
+  // Add arguments in the order defined in the function
+  for (const paramName of paramNames) {
+    if (providedParams.has(paramName)) {
+      // Use the provided value
+      finalArgs.push(providedParams.get(paramName)!);
+    } else if (defaultValues.has(paramName)) {
+      // Use the default value
+      finalArgs.push(defaultValues.get(paramName)!);
+    } else {
+      throw new ValidationError(
+        `Missing required argument for parameter '${paramName}' in call to function '${funcName}'`,
+        "function call",
+        "argument value",
+        "missing argument",
+      );
+    }
+  }
+  
+  // Create the final call expression
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.Identifier,
+      name: sanitizeIdentifier(funcName),
+    },
+    arguments: finalArgs,
+  } as IR.IRCallExpression;
 }
 
 /**
- * Parse parameters with type annotations and default values
+ * Process named arguments for an fn function
  */
+function processNamedArgumentsForFn(
+  funcName: string,
+  funcDef: IR.IRFnFunctionDeclaration,
+  args: HQLNode[],
+  currentDir: string,
+): IR.IRNode {
+  // Extract parameter info
+  const paramNames = funcDef.params.map((p) => p.name);
+  const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
+  
+  // Create a map to track which parameters have been provided
+  const providedParams = new Map<string, IR.IRNode>();
+  
+  // Process named arguments
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    
+    // Check if it's a named argument (param: value)
+    if (arg.type === "symbol" && (arg as SymbolNode).name.endsWith(":")) {
+      // Get parameter name without colon
+      const paramName = (arg as SymbolNode).name.slice(0, -1);
+      
+      // Ensure the parameter exists in the function definition
+      if (!paramNames.includes(paramName)) {
+        throw new ValidationError(
+          `Unknown parameter '${paramName}' in call to function '${funcName}'`,
+          "function call",
+          "valid parameter name",
+          paramName,
+        );
+      }
+      
+      // Ensure a value follows
+      if (i + 1 >= args.length) {
+        throw new ValidationError(
+          `Named argument '${paramName}:' requires a value`,
+          "named argument",
+          "value",
+          "missing value",
+        );
+      }
+      
+      // Transform the value
+      const valueNode = transformNode(args[i + 1], currentDir);
+      if (!valueNode) {
+        throw new ValidationError(
+          `Value for named argument '${paramName}:' transformed to null`,
+          "named argument value",
+          "valid expression",
+          "null",
+        );
+      }
+      
+      // Add to provided parameters
+      providedParams.set(paramName, valueNode);
+      
+      // Skip the value
+      i++;
+    } else {
+      throw new ValidationError(
+        "Mixed positional and named arguments are not allowed",
+        "function call",
+        "all named or all positional arguments",
+        "mixed arguments",
+      );
+    }
+  }
+  
+  // Prepare the final argument list in the correct parameter order
+  const finalArgs: IR.IRNode[] = [];
+  
+  // Add arguments in the order defined in the function
+  for (const paramName of paramNames) {
+    if (providedParams.has(paramName)) {
+      // Use the provided value
+      finalArgs.push(providedParams.get(paramName)!);
+    } else if (defaultValues.has(paramName)) {
+      // Use the default value
+      finalArgs.push(defaultValues.get(paramName)!);
+    } else {
+      throw new ValidationError(
+        `Missing required argument for parameter '${paramName}' in call to function '${funcName}'`,
+        "function call",
+        "argument value",
+        "missing argument",
+      );
+    }
+  }
+  
+  // Create the final call expression
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.Identifier,
+      name: sanitizeIdentifier(funcName),
+    },
+    arguments: finalArgs,
+  } as IR.IRCallExpression;
+}
+
 /**
  * Parse parameters with type annotations and default values
  */
@@ -2881,9 +3374,6 @@ function parseParametersWithTypes(
   return { params, types, defaults };
 }
 
-/**
- * Extract raw parameter symbols from parameter list for purity verification
- */
 /**
  * Extract raw parameter symbols from parameter list for purity verification
  */
