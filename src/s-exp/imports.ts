@@ -1082,6 +1082,7 @@ function processFileDefinitions(
       ) continue;
       const op = expr.elements[0].name;
       if (op === "let" && expr.elements.length === 3) {
+
         try {
           processLetDeclaration(expr, env, logger);
         } catch (error) {
@@ -1097,9 +1098,9 @@ function processFileDefinitions(
             error instanceof Error ? error : undefined,
           );
         }
-      } else if (op === "defn" && expr.elements.length >= 4) {
+      } else if (op === "fn" && expr.elements.length >= 4) {
         try {
-          processDefnDeclaration(expr, env, logger);
+          processFnDeclaration(expr, env, logger);
         } catch (error) {
           const symbolName = isSymbol(expr.elements[1])
             ? expr.elements[1].name
@@ -1164,7 +1165,7 @@ function processLetDeclaration(
 /**
  * Process a defn declaration
  */
-function processDefnDeclaration(
+function processFnDeclaration(
   expr: SList,
   env: Environment,
   logger: Logger,
