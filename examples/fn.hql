@@ -1,4 +1,6 @@
-(fx multiply (x: Int = 10 y: Int = 20) (-> Int)
+(print "============ fn test =============")
+
+(fn multiply (x = 10 y = 20)
   (* x y))
 
 ;; 1. Using defaults:
@@ -16,6 +18,6 @@
 ;; 5. Using a placeholder (if supported) to skip parameters:
 (print (multiply _ 7))              ;; Explicitly skip x: x remains 10, y becomes 7 → 10 * 7 = 70
 
-;; Not allowed (ambiguous):
-;; (print (multiply 5 y: 7))         ;; Mixing positional (5) with named (y: 7)
-;; (print (multiply x: 5 7))         ;; Mixing named (x: 5) with positional (7)
+;; not allowed (X)
+;; (multiply 5 y: 7)         ;; x from position (5), y from named (7) → Ambiguous
+;; (multiply x: 5 7)         ;; If allowed, x is named (5) and y is positional (7) → Ambiguous

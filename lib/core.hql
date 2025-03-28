@@ -1,6 +1,3 @@
-(defmacro fn (name params & body)
-  `(let ~name (lambda ~params ~@body)))
-    
 (defmacro or (a b)
   `(if ~a ~a ~b))
 

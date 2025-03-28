@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "test": "deno task test-new-front-end-transpiler && deno task full-macro-test && deno task test-import && deno task test-stdlib && deno task test-binding && deno task test-compile",
+    "test": "deno task test-function && deno task test-new-front-end-transpiler && deno task full-macro-test && deno task test-import && deno task test-stdlib && deno task test-binding && deno task test-compile",
     "transpile": "deno run -A cli/transpile.ts",
     "run": "deno run -A cli/run.ts",
     "test-hql-spec": "deno task run ./doc/hql_spec.hql",
@@ -10,6 +10,7 @@
     "test-stdlib": "deno run -A ./cli/run.ts ./examples/take.hql",
     "test-binding": "deno run -A ./cli/run.ts ./examples/binding.hql",
     "test-compile": "deno run -A ./cli/transpile.ts ./examples/dependency-test2/a.hql ./examples/output.js --run",
+    "test-function": "deno run -A ./cli/run.ts ./examples/fx.hql && deno run -A ./cli/run.ts ./examples/fn.hql",
     "test-bug": "deno run -A ./cli/run.ts ./examples/dependency-test/macro-a.hql"
   }
 }

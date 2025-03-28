@@ -241,7 +241,35 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     const fxDef = fxFunctionRegistry.get(op);
     if (fxDef) {
       logger.debug(`Processing call to fx function ${op}`);
-      return processFxFunctionCall(op, fxDef, list.elements.slice(1), currentDir);
+      
+      // Check if we have any placeholder symbols in the arguments
+      const hasPlaceholders = list.elements.slice(1).some(isPlaceholder);
+      
+      // If we have placeholders or named arguments, use our specialized processor
+      if (hasPlaceholders || hasNamedArguments(list)) {
+        return processFxFunctionCall(op, fxDef, list.elements.slice(1), currentDir);
+      }
+      
+      // Otherwise use the standard function call transformation
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee: { 
+          type: IR.IRNodeType.Identifier, 
+          name: sanitizeIdentifier(op) 
+        },
+        arguments: list.elements.slice(1).map(arg => {
+          const transformed = transformNode(arg, currentDir);
+          if (!transformed) {
+            throw new ValidationError(
+              `Argument transformed to null in call to ${op}`,
+              "function call",
+              "valid expression",
+              "null"
+            );
+          }
+          return transformed;
+        })
+      } as IR.IRCallExpression;
     }
 
     // Handle built-in operations via the transform factory
@@ -614,6 +642,15 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
     () => {
       let name = sym.name;
       let isJS = false;
+
+      // Special handling for placeholder symbol
+      if (name === "_") {
+        // Transform it to a string literal "_" instead of an identifier
+        return {
+          type: IR.IRNodeType.StringLiteral,
+          value: "_"
+        } as IR.IRStringLiteral;
+      }
 
       if (name.startsWith("js/")) {
         name = name.slice(3);
@@ -3445,25 +3482,41 @@ function processFxFunctionCall(
 
   // Prepare the final argument list in the correct parameter order
   const finalArgs: IR.IRNode[] = [];
-  let positionalIndex = 0;
 
-  for (const paramName of paramNames) {
-    if (positionalIndex < positionalArgs.length) {
-      // Use the next positional argument
-      const argNode = positionalArgs[positionalIndex++];
-      const transformedArg = transformNode(argNode, currentDir);
-      if (!transformedArg) {
-        throw new ValidationError(
-          `Positional argument for parameter '${paramName}' transformed to null`,
-          "function call",
-          "valid expression",
-          "null",
-        );
+  // Process each parameter in the function definition
+  for (let i = 0; i < paramNames.length; i++) {
+    const paramName = paramNames[i];
+    
+    if (i < positionalArgs.length) {
+      const arg = positionalArgs[i];
+      
+      // If this argument is a placeholder, use default
+      if (isPlaceholder(arg)) {
+        if (defaultValues.has(paramName)) {
+          finalArgs.push(defaultValues.get(paramName)!);
+        } else {
+          throw new ValidationError(
+            `Placeholder used for parameter '${paramName}' but no default value is defined`,
+            "function call with placeholder",
+            "parameter with default value",
+            "parameter without default",
+          );
+        }
+      } else {
+        // Normal argument, transform it
+        const transformedArg = transformNode(arg, currentDir);
+        if (!transformedArg) {
+          throw new ValidationError(
+            `Argument for parameter '${paramName}' transformed to null`,
+            "function call",
+            "valid expression",
+            "null",
+          );
+        }
+        finalArgs.push(transformedArg);
       }
-
-      finalArgs.push(transformedArg);
     } else if (defaultValues.has(paramName)) {
-      // Use the default value
+      // Use default value for missing arguments
       finalArgs.push(defaultValues.get(paramName)!);
     } else {
       throw new ValidationError(
@@ -3476,7 +3529,7 @@ function processFxFunctionCall(
   }
 
   // Check for extra positional arguments
-  if (positionalIndex < positionalArgs.length) {
+  if (positionalArgs.length > paramNames.length) {
     throw new ValidationError(
       `Too many positional arguments in call to function '${funcName}'`,
       "function call",
@@ -3495,6 +3548,7 @@ function processFxFunctionCall(
     arguments: finalArgs,
   } as IR.IRCallExpression;
 }
+
 
 /**
  * Transform an fx function definition
