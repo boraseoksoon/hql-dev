@@ -3,21 +3,6 @@
 /**
  * Primitive language forms built into the kernel.
  */
-export const KERNEL_PRIMITIVES = new Set([
-  "quote",
-  "if",
-  "lambda",
-  "let",
-  "var",
-  "set!",
-  "quasiquote",
-  "unquote",
-  "unquote-splicing",
-]);
-
-/**
- * Primitive operations.
- */
 export const PRIMITIVE_OPS = new Set([
   "+",
   "-",
@@ -35,6 +20,21 @@ export const PRIMITIVE_OPS = new Set([
   "js-export",
   "js-get",
   "js-call",
+  "return"
+]);
+
+// Also add to KERNEL_PRIMITIVES for completeness
+export const KERNEL_PRIMITIVES = new Set([
+  "quote",
+  "if",
+  "lambda",
+  "let",
+  "var",
+  "set!",
+  "quasiquote",
+  "unquote",
+  "unquote-splicing",
+  "return"
 ]);
 
 /**

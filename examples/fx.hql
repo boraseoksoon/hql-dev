@@ -1,35 +1,107 @@
-(print "============ fx test =============")
+;; test-types-enhanced-fixed.hql
+;; This file demonstrates practical pure functions using safe JavaScript globals
 
-(fx multiply (x: Int = 10 y: Int = 20) (-> Int)
-  (* x y))
+;; Basic Int type function
+(fx add-ints (a: Int b: Int) (-> Int)
+  (+ a b))
 
-;; 1. Using defaults:
-(print (multiply))                   ;; Uses both defaults: 10 * 20 = 200
+;; Example with default values
+(fx add-with-defaults (a: Int = 5 b: Int = 10) (-> Int)
+  (+ a b))
 
-;; 2. Positional arguments:
-(print (multiply 5))                 ;; Overrides x: 5 * 20 = 100
-(print (multiply 5 7))               ;; Overrides both: 5 * 7 = 35
+;; Function with Double type
+(fx multiply-doubles (a: Double b: Double) (-> Double)
+  (* a b))
 
-;; 3. Named arguments:
-(print (multiply x: 5))              ;; x overridden: 5 * 20 = 100
-(print (multiply y: 15))             ;; y overridden: 10 * 15 = 150
-(print (multiply x: 5 y: 7))         ;; Both overridden: 5 * 7 = 35
+;; Function with String type
+(fx concat-strings (a: String b: String) (-> String)
+  (+ a b))
 
-;; 5. Using a placeholder (if supported) to skip parameters:
-(print (multiply _ 7))              ;; Explicitly skip x: x remains 10, y becomes 7 → 10 * 7 = 70
+;; Function with Bool type - Using logical AND operation
+(fx logical-and (a: Bool b: Bool) (-> Bool)
+  (if a 
+      (if b true false)
+      false))
+
+;; Function with Any type - Using JSON for stringification
+;; Using explicit return to demonstrate the new syntax
+(fx stringify (value: Any) (-> String)
+  (return (js-call JSON "stringify" value)))
+
+;; Function using Math operations - FIXED with explicit return
+(fx calculate-distance (x1: Double y1: Double x2: Double y2: Double) (-> Double)
+  (let (dx (- x2 x1)
+        dy (- y2 y1))
+    ;; Make expression the last position to ensure proper return
+    (return (js-call Math "sqrt" (+ (* dx dx) (* dy dy))))))
+
+;; Function with mixed types - FIXED with explicit return
+(fx format-user (name: String age: Int active: Bool) (-> String)
+  (let (status (if active "active" "inactive"))
+    ;; Ensuring this is returned properly
+    (return (+ "User " name " is " (+ "" age) " years old and " status))))
+
+;; Function that takes Any type and returns specific type
+(fx convert-to-bool (value: Any) (-> Bool)
+  (if value true false))
 
 
-(fx with-prefix (prefix: String & rest: [Int])
-  (console.log prefix rest))
+;; Function that uses Object operations - FIXED
+(fx merge-objects (obj1: Any obj2: Any) (-> Any)
+  ;; Handle null inputs by providing empty objects as defaults
+  (let (
+    safe-obj1 (if (eq? obj1 null) {} obj1)
+    safe-obj2 (if (eq? obj2 null) {} obj2)
+  )
+    ;; Use explicit return for clarity
+    (return (js-call Object "assign" (js-call Object "create" {}) safe-obj1 safe-obj2))))
 
-(with-prefix "Numbers:" 1 2 3)
-
-;; Not allowed (ambiguous):
-;; (print (multiply 5 y: 7))         ;; Mixing positional (5) with named (y: 7)
-;; (print (multiply x: 5 7))         ;; Mixing named (x: 5) with positional (7)
-
-
-;; TODO: any
-;; TODO: void function
-;; TODO: type infererence - return
-;; TODO: more types (Int only now)
+;; Test implementation of all functions
+(let (
+  ;; Test Int functions
+  test1 (add-ints 5 7)
+  test2 (add-with-defaults)  ;; Uses defaults: 5 + 10 = 15
+  test3 (add-with-defaults 20)  ;; Uses one default: 20 + 10 = 30
+  test4 (add-with-defaults 3 4)  ;; No defaults: 3 + 4 = 7
+  
+  ;; Test Double functions
+  test5 (multiply-doubles 2.5 3.0)  ;; 7.5
+  
+  ;; Test String functions
+  test6 (concat-strings "Hello, " "World!")  ;; "Hello, World!"
+  
+  ;; Test Bool functions
+  test7 (logical-and true false)  ;; false
+  
+  ;; Test Any type functions
+  test8 (stringify {"name": "John", "age": 30})  ;; JSON string
+  
+  ;; Test Math operations
+  test9 (calculate-distance 0 0 3 4)  ;; 5.0
+  
+  ;; Test mixed type function
+  test10 (format-user "Alice" 25 true)  ;; "User Alice is 25 years old and active"
+  
+  ;; Test conversion function
+  test11 (convert-to-bool 0)  ;; false
+  
+  ;; Test object merging
+  test14 (merge-objects {"a": 1} {"b": 2})  ;; {"a": 1, "b": 2}
+  
+  ;; Test null handling in merge
+  test15 (merge-objects null {"key": "value"})  ;; {"key": "value"}
+)
+  (print "Test 1 (add-ints):" test1)
+  (print "Test 2 (add-with-defaults, no args):" test2)
+  (print "Test 3 (add-with-defaults, one arg):" test3)
+  (print "Test 4 (add-with-defaults, two args):" test4)
+  (print "Test 5 (multiply-doubles):" test5)
+  (print "Test 6 (concat-strings):" test6)
+  (print "Test 7 (logical-and):" test7)
+  (print "Test 8 (stringify):" test8)
+  (print "Test 9 (calculate-distance):" test9)
+  (print "Test 10 (format-user):" test10)
+  (print "Test 11 (convert-to-bool with 0):" test11)
+  (print "Test 14 (merge-objects):" test14)
+  (print "Test 15 (merge-objects with null):" test15)
+)

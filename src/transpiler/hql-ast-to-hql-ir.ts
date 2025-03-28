@@ -11,6 +11,7 @@ import {
   PRIMITIVE_DATA_STRUCTURE,
   PRIMITIVE_OPS,
 } from "./primitives.ts";
+import { PRIMITIVE_TYPES } from "./purity.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 import { Environment } from "../environment.ts";
 import * as path from "../platform/platform.ts";
@@ -180,10 +181,49 @@ function initializeTransformFactory(): void {
       transformFactory.set("export", null);
       transformFactory.set("import", null);
 
+      transformFactory.set("return", transformReturn);
+
       logger.debug(`Registered ${transformFactory.size} handler functions`);
     },
     "initializeTransformFactory",
     TransformError,
+  );
+}
+
+function transformReturn(list: ListNode, currentDir: string): IR.IRNode {
+  return perform(
+    () => {
+      // Verify we have at least one argument
+      if (list.elements.length < 2) {
+        throw new ValidationError(
+          "return requires an expression to return",
+          "return statement",
+          "expression to return",
+          "no expression provided"
+        );
+      }
+
+      // Get the value to return
+      const valueNode = transformNode(list.elements[1], currentDir);
+      
+      if (!valueNode) {
+        throw new ValidationError(
+          "Return value transformed to null",
+          "return value",
+          "valid expression",
+          "null"
+        );
+      }
+
+      // Create a return statement
+      return {
+        type: IR.IRNodeType.ReturnStatement,
+        argument: valueNode
+      } as IR.IRReturnStatement;
+    },
+    "transformReturn",
+    TransformError,
+    [list]
   );
 }
 
@@ -2501,39 +2541,57 @@ function processFunctionBody(
     () => {
       const bodyNodes: IR.IRNode[] = [];
 
+      // Check if there are any expressions
+      if (bodyExprs.length === 0) {
+        return bodyNodes;
+      }
+
       // Process all expressions except the last one
       for (let i = 0; i < bodyExprs.length - 1; i++) {
         const expr = transformNode(bodyExprs[i], currentDir);
-        if (expr) bodyNodes.push(expr);
+        if (!expr) continue;
+        
+        // Add each non-last expression to the body
+        bodyNodes.push(expr);
+        
+        // If we find an explicit return, stop processing (early return)
+        if (expr.type === IR.IRNodeType.ReturnStatement) {
+          return bodyNodes;
+        }
       }
 
-      // Return the last expression
-      if (bodyExprs.length > 0) {
-        const lastExpr = transformNode(
-          bodyExprs[bodyExprs.length - 1],
-          currentDir,
-        );
-        if (lastExpr) {
+      // Process the last expression
+      const lastExpr = transformNode(
+        bodyExprs[bodyExprs.length - 1],
+        currentDir,
+      );
+
+      if (lastExpr) {
+        // If the last expression is already a return statement, just add it
+        if (lastExpr.type === IR.IRNodeType.ReturnStatement) {
+          bodyNodes.push(lastExpr);
+        } else {
+          // Otherwise wrap it in a return statement (implicit return)
           bodyNodes.push({
             type: IR.IRNodeType.ReturnStatement,
             argument: lastExpr,
           } as IR.IRReturnStatement);
-        } else {
-          bodyNodes.push({
-            type: IR.IRNodeType.ReturnStatement,
-            argument: { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral,
-          } as IR.IRReturnStatement);
         }
+      } else {
+        // If last expression transforms to null, return null
+        bodyNodes.push({
+          type: IR.IRNodeType.ReturnStatement,
+          argument: { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral,
+        } as IR.IRReturnStatement);
       }
 
       return bodyNodes;
     },
     "processFunctionBody",
     TransformError,
-    [bodyExprs],
+    [bodyExprs]
   );
 }
-
 
 /**
  * Transform primitive operations (+, -, *, /, etc.).
@@ -3404,6 +3462,16 @@ function parseParametersWithTypes(
           paramList.elements[i + 1].type === "symbol"
         ) {
           const typeName = (paramList.elements[i + 1] as SymbolNode).name;
+          
+          // Validate the type
+          if (!PRIMITIVE_TYPES.has(typeName)) {
+            throw new ValidationError(
+              `Unsupported type '${typeName}'. Expected one of: ${Array.from(PRIMITIVE_TYPES).join(", ")}`,
+              "fx parameter type",
+              Array.from(PRIMITIVE_TYPES).join(", "),
+              typeName
+            );
+          }
 
           // Set the type for this parameter
           types.set(paramName, typeName);
@@ -3592,14 +3660,6 @@ function processFxFunctionCall(
   } as IR.IRCallExpression;
 }
 
-
-/**
- * Transform an fx function definition
- */
-/**
- * Transform an fx function definition
- * Format: (fx name (params...) (-> returnType) body...)
- */
 function transformFx(list: ListNode, currentDir: string): IR.IRNode {
   try {
     logger.debug("Transforming fx function");
@@ -3667,12 +3727,13 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
     }
 
     const returnType = (returnTypeSymbol as SymbolNode).name;
-    if (returnType !== "Int") {
+    // Validate return type is supported
+    if (!PRIMITIVE_TYPES.has(returnType)) {
       throw new ValidationError(
-        "Only 'Int' type is currently supported",
+        `Unsupported return type '${returnType}'. Expected one of: ${Array.from(PRIMITIVE_TYPES).join(", ")}`,
         "fx return type",
-        "Int",
-        returnType,
+        Array.from(PRIMITIVE_TYPES).join(", "),
+        returnType
       );
     }
 
@@ -3688,13 +3749,13 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
     const paramTypes = paramsInfo.types;
     const defaultValues = paramsInfo.defaults;
 
-    // Check that all parameters have type 'Int'
+    // Check that all parameter types are supported
     for (const [paramName, paramType] of paramTypes.entries()) {
-      if (paramType !== "Int") {
+      if (!PRIMITIVE_TYPES.has(paramType)) {
         throw new ValidationError(
-          `Parameter '${paramName}' has unsupported type '${paramType}'. Only 'Int' is currently supported.`,
+          `Parameter '${paramName}' has unsupported type '${paramType}'. Expected one of: ${Array.from(PRIMITIVE_TYPES).join(", ")}`,
           "fx parameter type",
-          "Int",
+          Array.from(PRIMITIVE_TYPES).join(", "),
           paramType,
         );
       }

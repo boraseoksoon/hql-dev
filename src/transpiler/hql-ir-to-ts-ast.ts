@@ -408,23 +408,114 @@ function convertFxFunctionDeclaration(
     );
     
     // 3. Add type checking for fx functions
-    node.params.forEach(param => {
-      const paramTypeDef = node.paramTypes.find(pt => pt.name === param.name);
-      if (paramTypeDef && paramTypeDef.type === "Int") {
-        bodyStatements.push(
-          ts.factory.createIfStatement(
-            ts.factory.createBinaryExpression(
+    node.paramTypes.forEach(paramDef => {
+      const paramName = paramDef.name;
+      const typeName = paramDef.type;
+      const param = node.params.find(p => p.name === paramName);
+      
+      if (param && typeName) {
+        if (typeName === "Any") {
+          return;
+        }
+        
+        // Generate type checking code based on the type
+        let typeCheckCondition: ts.Expression;
+        
+        switch (typeName) {
+          case "Int":
+            // Check if it's a number AND if it's an integer
+            typeCheckCondition = ts.factory.createBinaryExpression(
+              ts.factory.createBinaryExpression(
+                ts.factory.createTypeOfExpression(convertIdentifier(param)),
+                ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                ts.factory.createStringLiteral("number")
+              ),
+              ts.factory.createToken(ts.SyntaxKind.BarBarToken),
+              ts.factory.createBinaryExpression(
+                ts.factory.createBinaryExpression(
+                  convertIdentifier(param),
+                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createCallExpression(
+                      ts.factory.createPropertyAccessExpression(
+                        ts.factory.createIdentifier("Math"),
+                        ts.factory.createIdentifier("floor")
+                      ),
+                      undefined,
+                      [convertIdentifier(param)]
+                    ),
+                    ts.factory.createToken(ts.SyntaxKind.BarBarToken),
+                    ts.factory.createBinaryExpression(
+                      ts.factory.createCallExpression(
+                        ts.factory.createPropertyAccessExpression(
+                          ts.factory.createIdentifier("Math"),
+                          ts.factory.createIdentifier("ceil")
+                        ),
+                        undefined,
+                        [convertIdentifier(param)]
+                      ),
+                      ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                      convertIdentifier(param)
+                    )
+                  )
+                ),
+                ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                ts.factory.createBinaryExpression(
+                  ts.factory.createTypeOfExpression(convertIdentifier(param)),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                  ts.factory.createStringLiteral("number")
+                )
+              )
+            );
+            break;
+            
+          case "Double":
+            // Just check if it's a number
+            typeCheckCondition = ts.factory.createBinaryExpression(
               ts.factory.createTypeOfExpression(convertIdentifier(param)),
               ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
               ts.factory.createStringLiteral("number")
-            ),
+            );
+            break;
+            
+          case "String":
+            // Check if it's a string
+            typeCheckCondition = ts.factory.createBinaryExpression(
+              ts.factory.createTypeOfExpression(convertIdentifier(param)),
+              ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+              ts.factory.createStringLiteral("string")
+            );
+            break;
+            
+          case "Bool":
+            // Check if it's a boolean
+            typeCheckCondition = ts.factory.createBinaryExpression(
+              ts.factory.createTypeOfExpression(convertIdentifier(param)),
+              ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+              ts.factory.createStringLiteral("boolean")
+            );
+            break;
+          default:
+            // Default case for unknown types (shouldn't happen)
+            typeCheckCondition = ts.factory.createBinaryExpression(
+              ts.factory.createTypeOfExpression(convertIdentifier(param)),
+              ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+              ts.factory.createStringLiteral("object")
+            );
+            break;
+        }
+        
+        // Add type checking statement
+        bodyStatements.push(
+          ts.factory.createIfStatement(
+            typeCheckCondition,
             ts.factory.createThrowStatement(
               ts.factory.createNewExpression(
                 ts.factory.createIdentifier("Error"),
                 undefined,
                 [
                   ts.factory.createStringLiteral(
-                    `Parameter '${param.name}' must be a number (Int)`
+                    `Parameter '${paramName}' must be of type ${typeName}`
                   )
                 ]
               )
@@ -507,6 +598,7 @@ function convertFxFunctionDeclaration(
     );
   }
 }
+
 
 function convertExpressionStatement(
   node: IR.IRExpressionStatement,

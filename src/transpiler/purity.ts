@@ -1,4 +1,4 @@
-// src/transpiler/purity.ts - Fixed version
+// src/transpiler/purity.ts
 
 import { HQLNode, ListNode, SymbolNode } from "./hql_ast.ts";
 import { ValidationError } from "./errors.ts";
@@ -8,6 +8,29 @@ const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 // Registry to track pure functions
 const pureFunctions = new Set<string>();
+
+// Define safe globals that are allowed in pure functions
+// These are considered safe because they provide pure operations
+// that don't depend on or modify external state
+const SAFE_GLOBALS = new Set<string>([
+  // JavaScript globals that provide pure operations
+  "String",      // String operations are pure
+  "Number",      // Number operations are pure
+  "Boolean",     // Boolean operations are pure
+  "Object",      // Object operations like assign can be pure
+  "Array",       // Array operations can be pure
+  "JSON",        // JSON stringification is a pure operation
+  "Math",        // Math operations are pure
+  "Date",        // Creating dates without using current time can be pure
+]);
+
+// JavaScript literals that aren't actually variables
+const JS_LITERALS = new Set<string>([
+  "null",
+  "undefined", 
+  "NaN",
+  "Infinity"
+]);
 
 // Register built-in pure operations - include js interop operations that are ok in pure functions
 const builtInPure = new Set<string>([
@@ -44,6 +67,16 @@ const builtInPure = new Set<string>([
   "cond",
   "let",
   "lambda",
+  "return",
+]);
+
+// Define supported primitive types
+export const PRIMITIVE_TYPES = new Set([
+  "Int",
+  "Double",
+  "String",
+  "Bool",
+  "Any",
 ]);
 
 /**
@@ -134,6 +167,12 @@ function verifySymbolPurity(
   // Allow known pure functions
   if (pureFunctions.has(name)) return;
 
+  // Allow safe JavaScript globals
+  if (SAFE_GLOBALS.has(name)) return;
+  
+  // Allow JavaScript literals like null, undefined, etc.
+  if (JS_LITERALS.has(name)) return;
+
   // Otherwise, symbol is forbidden in a pure function
   throw new ValidationError(
     `Pure function '${funcName}' cannot reference external variable '${name}'`,
@@ -179,6 +218,21 @@ function verifyListPurity(
         "pure operation",
         `impure operation '${operator}'`,
       );
+    }
+
+    // Check for JavaScript method calls, which may be allowed if they're on safe objects
+    if (operator === "js-call" && elements.length >= 3) {
+      const objectSym = elements[1];
+      if (objectSym.type === "symbol") {
+        const objName = (objectSym as SymbolNode).name;
+        if (SAFE_GLOBALS.has(objName)) {
+          // This is a call to a safe global object method, verify all arguments
+          for (let i = 3; i < elements.length; i++) {
+            verifyExpressionPurity(elements[i], funcName, paramNames, localVars);
+          }
+          return;
+        }
+      }
     }
 
     // Verify the operator itself is allowed (built-in or pure function)
