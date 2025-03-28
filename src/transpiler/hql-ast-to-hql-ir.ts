@@ -355,7 +355,7 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
     const bodyOffset = 3;
     const bodyExpressions = list.elements.slice(bodyOffset);
 
-    // Parse parameters with defaults
+    // Parse parameters with defaults and rest params
     const paramsInfo = parseParametersWithDefaults(paramList, currentDir);
 
     // Extract params and body
@@ -412,6 +412,9 @@ function parseParametersWithDefaults(
   // Initialize result structures
   const params: IR.IRIdentifier[] = [];
   const defaults = new Map<string, IR.IRNode>();
+  
+  // Track if we're processing a rest parameter
+  let restMode = false;
 
   // Process parameters
   for (let i = 0; i < paramList.elements.length; i++) {
@@ -420,14 +423,28 @@ function parseParametersWithDefaults(
     if (elem.type === "symbol") {
       const symbolName = (elem as SymbolNode).name;
       
-      // Add parameter to the list
-      params.push({
-        type: IR.IRNodeType.Identifier,
-        name: sanitizeIdentifier(symbolName),
-      });
+      // Check if this is the rest parameter indicator
+      if (symbolName === "&") {
+        restMode = true;
+        continue;
+      }
+      
+      // Add parameter to the list, with special handling for rest parameters
+      if (restMode) {
+        params.push({
+          type: IR.IRNodeType.Identifier,
+          name: `...${sanitizeIdentifier(symbolName)}`,
+        });
+      } else {
+        params.push({
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(symbolName),
+        });
+      }
       
       // Check for default value (=)
       if (
+        !restMode && // Rest parameters can't have defaults
         i + 1 < paramList.elements.length &&
         paramList.elements[i + 1].type === "symbol" &&
         (paramList.elements[i + 1] as SymbolNode).name === "="
@@ -528,6 +545,12 @@ function processFnFunctionCall(
   const paramNames = funcDef.params.map((p) => p.name);
   const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
 
+  // Check if we have a rest parameter (name starts with "...")
+  const hasRestParam = paramNames.length > 0 && paramNames[paramNames.length - 1].startsWith("...");
+  
+  // Get the regular parameters (all except the last one if it's a rest parameter)
+  const regularParamNames = hasRestParam ? paramNames.slice(0, -1) : paramNames;
+  
   // Check if we have placeholders (_)
   const hasPlaceholders = args.some(isPlaceholder);
 
@@ -537,9 +560,9 @@ function processFnFunctionCall(
   // Prepare the final argument list in the correct parameter order
   const finalArgs: IR.IRNode[] = [];
 
-  // Process each parameter in the function definition
-  for (let i = 0; i < paramNames.length; i++) {
-    const paramName = paramNames[i];
+  // Process each regular parameter
+  for (let i = 0; i < regularParamNames.length; i++) {
+    const paramName = regularParamNames[i];
     
     if (i < positionalArgs.length) {
       const arg = positionalArgs[i];
@@ -582,8 +605,28 @@ function processFnFunctionCall(
     }
   }
 
-  // Check for extra positional arguments
-  if (positionalArgs.length > paramNames.length) {
+  // If we have a rest parameter, add any remaining arguments to an array
+  if (hasRestParam) {
+    const restArgStartIndex = regularParamNames.length;
+    
+    // Create an array for rest arguments
+    const restArgs: IR.IRNode[] = [];
+    
+    for (let i = restArgStartIndex; i < positionalArgs.length; i++) {
+      const arg = positionalArgs[i];
+      const transformedArg = transformNode(arg, currentDir);
+      if (transformedArg) {
+        restArgs.push(transformedArg);
+      }
+    }
+    
+    // No validation needed for missing rest args - it can be an empty array
+    finalArgs.push({
+      type: IR.IRNodeType.ArrayExpression,
+      elements: restArgs
+    } as IR.IRArrayExpression);
+  } else if (positionalArgs.length > paramNames.length) {
+    // Too many arguments without a rest parameter
     throw new ValidationError(
       `Too many positional arguments in call to function '${funcName}'`,
       "function call",

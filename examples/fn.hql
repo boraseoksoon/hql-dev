@@ -23,6 +23,11 @@
 
 (hello)
 
+(fn with-prefix (prefix & rest)
+  (console.log prefix rest))
+
+(with-prefix "Numbers:" 1 2 3)
+
 ;; not allowed (X)
 ;; (multiply 5 y: 7)         ;; x from position (5), y from named (7) → Ambiguous
 ;; (multiply x: 5 7)         ;; If allowed, x is named (5) and y is positional (7) → Ambiguous

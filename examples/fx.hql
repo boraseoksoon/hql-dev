@@ -18,6 +18,12 @@
 ;; 5. Using a placeholder (if supported) to skip parameters:
 (print (multiply _ 7))              ;; Explicitly skip x: x remains 10, y becomes 7 → 10 * 7 = 70
 
+
+(fx with-prefix (prefix: String & rest: [Int])
+  (console.log prefix rest))
+
+(with-prefix "Numbers:" 1 2 3)
+
 ;; Not allowed (ambiguous):
 ;; (print (multiply 5 y: 7))         ;; Mixing positional (5) with named (y: 7)
 ;; (print (multiply x: 5 7))         ;; Mixing named (x: 5) with positional (7)
