@@ -21,3 +21,9 @@
 ;; Not allowed (ambiguous):
 ;; (print (multiply 5 y: 7))         ;; Mixing positional (5) with named (y: 7)
 ;; (print (multiply x: 5 7))         ;; Mixing named (x: 5) with positional (7)
+
+
+;; TODO: any
+;; TODO: void function
+;; TODO: type infererence - return
+;; TODO: more types (Int only now)

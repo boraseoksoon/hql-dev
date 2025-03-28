@@ -149,20 +149,31 @@ export function convertIRNode(
   }
 }
 
-/**
- * Convert an fn function declaration to TypeScript
- * This simplified implementation avoids parameter duplication issues
- */
 function convertFnFunctionDeclaration(
   node: IR.IRFnFunctionDeclaration,
 ): ts.FunctionDeclaration {
   try {
-    // Get default parameter values
+    // If there are no parameters, we can emit a simple function.
+    if (node.params.length === 0) {
+      const originalBodyStatements = convertBlockStatement(node.body).statements;
+      return ts.factory.createFunctionDeclaration(
+        undefined,
+        undefined,
+        convertIdentifier(node.id),
+        undefined,
+        [], // No parameters
+        undefined,
+        ts.factory.createBlock(originalBodyStatements, true)
+      );
+    }
+    
+    // Otherwise, set up for functions with parameters.
+    // Map default values for each parameter.
     const defaultValues = new Map(
-      node.defaults.map((d) => [d.name, convertIRExpr(d.value)]),
+      node.defaults.map((d) => [d.name, convertIRExpr(d.value)])
     );
     
-    // Create a simple wrapper function that takes variadic args
+    // Use a single rest parameter "args" to capture all incoming arguments.
     const parameters = [
       ts.factory.createParameterDeclaration(
         undefined,
@@ -174,14 +185,12 @@ function convertFnFunctionDeclaration(
       )
     ];
     
-    // Create the function body statements
     const bodyStatements: ts.Statement[] = [];
     
-    // 1. First, set up variables for each parameter with its default value
-    const paramDeclarations = node.params.map((param, index) => {
-      const defaultValue = defaultValues.get(param.name) || 
-                          ts.factory.createIdentifier("undefined");
-      
+    // 1. Declare local variables for each parameter with its default value.
+    const paramDeclarations = node.params.map((param) => {
+      const defaultValue = defaultValues.get(param.name) ||
+                           ts.factory.createIdentifier("undefined");
       return ts.factory.createVariableDeclaration(
         convertIdentifier(param),
         undefined,
@@ -190,43 +199,42 @@ function convertFnFunctionDeclaration(
       );
     });
     
-    // Create the variable declarations statement
-    bodyStatements.push(
-      ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList(
-          paramDeclarations,
-          ts.NodeFlags.Let
+    if (paramDeclarations.length > 0) {
+      bodyStatements.push(
+        ts.factory.createVariableStatement(
+          undefined,
+          ts.factory.createVariableDeclarationList(paramDeclarations, ts.NodeFlags.Let)
         )
-      )
-    );
+      );
+    }
     
-    // 2. Handle named arguments (passed as a single object)
+    // 2. Add handling for named arguments vs. positional arguments.
     bodyStatements.push(
       ts.factory.createIfStatement(
-        // if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0]))
+        // if (args.length === 1 &&
+        //     typeof args[0] === 'object' &&
+        //     args[0] !== null &&
+        //     !Array.isArray(args[0]))
         ts.factory.createBinaryExpression(
           ts.factory.createBinaryExpression(
+            ts.factory.createPropertyAccessExpression(
+              ts.factory.createIdentifier("args"),
+              ts.factory.createIdentifier("length")
+            ),
+            ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+            ts.factory.createNumericLiteral("1")
+          ),
+          ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+          ts.factory.createBinaryExpression(
             ts.factory.createBinaryExpression(
-              ts.factory.createBinaryExpression(
-                ts.factory.createPropertyAccessExpression(
+              ts.factory.createTypeOfExpression(
+                ts.factory.createElementAccessExpression(
                   ts.factory.createIdentifier("args"),
-                  ts.factory.createIdentifier("length")
-                ),
-                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                ts.factory.createNumericLiteral("1")
+                  ts.factory.createNumericLiteral("0")
+                )
               ),
-              ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-              ts.factory.createBinaryExpression(
-                ts.factory.createTypeOfExpression(
-                  ts.factory.createElementAccessExpression(
-                    ts.factory.createIdentifier("args"),
-                    ts.factory.createNumericLiteral("0")
-                  )
-                ),
-                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                ts.factory.createStringLiteral("object")
-              )
+              ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+              ts.factory.createStringLiteral("object")
             ),
             ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
             ts.factory.createBinaryExpression(
@@ -237,30 +245,13 @@ function convertFnFunctionDeclaration(
               ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
               ts.factory.createNull()
             )
-          ),
-          ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-          ts.factory.createPrefixUnaryExpression(
-            ts.SyntaxKind.ExclamationToken,
-            ts.factory.createCallExpression(
-              ts.factory.createPropertyAccessExpression(
-                ts.factory.createIdentifier("Array"),
-                ts.factory.createIdentifier("isArray")
-              ),
-              undefined,
-              [
-                ts.factory.createElementAccessExpression(
-                  ts.factory.createIdentifier("args"),
-                  ts.factory.createNumericLiteral("0")
-                )
-              ]
-            )
           )
         ),
-        // Then block: handle named arguments
+        // Then block: use named arguments.
         ts.factory.createBlock(
-          node.params.map((param) => {
-            // if (args[0].x !== undefined) x = args[0].x;
-            return ts.factory.createIfStatement(
+          node.params.map((param) =>
+            ts.factory.createIfStatement(
+              // if (args[0].<param> !== undefined) <param> = args[0].<param>;
               ts.factory.createBinaryExpression(
                 ts.factory.createPropertyAccessExpression(
                   ts.factory.createElementAccessExpression(
@@ -286,16 +277,17 @@ function convertFnFunctionDeclaration(
                 )
               ),
               undefined
-            );
-          }),
+            )
+          ),
           true
         ),
-        // Else block: handle positional arguments
+        // Else block: handle positional arguments and placeholders.
         ts.factory.createBlock(
-          node.params.map((param, index) => {
-            // Handle positional arguments and placeholders
-            // if (args[0] !== undefined && args[0] !== "_" && typeof args[0] !== "symbol") x = args[0];
-            return ts.factory.createIfStatement(
+          node.params.map((param, index) =>
+            ts.factory.createIfStatement(
+              // if (args[index] !== undefined &&
+              //     args[index] !== "_" &&
+              //     typeof args[index] !== "symbol") <param> = args[index];
               ts.factory.createBinaryExpression(
                 ts.factory.createBinaryExpression(
                   ts.factory.createBinaryExpression(
@@ -339,19 +331,18 @@ function convertFnFunctionDeclaration(
                 )
               ),
               undefined
-            );
-          }),
+            )
+          ),
           true
         )
       )
     );
     
-    // 3. Add the original function body expressions
-    // Convert the function body statements to use the parameters
+    // 3. Append the original function body.
     const originalBodyStatements = convertBlockStatement(node.body).statements;
     bodyStatements.push(...originalBodyStatements);
     
-    // Create the function declaration
+    // Finally, create the function declaration.
     return ts.factory.createFunctionDeclaration(
       undefined,
       undefined,
@@ -371,6 +362,7 @@ function convertFnFunctionDeclaration(
     );
   }
 }
+
 
 /**
  * Also update the convertFxFunctionDeclaration similarly

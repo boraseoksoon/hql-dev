@@ -18,6 +18,12 @@
 ;; 5. Using a placeholder (if supported) to skip parameters:
 (print (multiply _ 7))              ;; Explicitly skip x: x remains 10, y becomes 7 → 10 * 7 = 70
 
+(fn hello ()
+  (print "hello"))
+
+(hello)
+
 ;; not allowed (X)
 ;; (multiply 5 y: 7)         ;; x from position (5), y from named (7) → Ambiguous
 ;; (multiply x: 5 7)         ;; If allowed, x is named (5) and y is positional (7) → Ambiguous
+
