@@ -11,6 +11,7 @@ import {
 } from "./types.ts";
 import { ParseError } from "../transpiler/errors.ts";
 import { perform } from "../transpiler/error-utils.ts";
+import globalLogger from "../logger.ts";
 
 // Token types for better categorization
 enum TokenType {
@@ -74,15 +75,8 @@ const TOKEN_PATTERNS = {
  * Parse HQL source into S-expressions with error location context
  */
 export function parse(input: string): SExp[] {
-  return perform(
-    () => {
-      const tokens = tokenize(input);
-      return parseTokens(tokens, input);
-    },
-    "Failed to parse input",
-    ParseError,
-    [{ line: 1, column: 1, offset: 0 }, input],
-  );
+  const tokens = tokenize(input);
+  return parseTokens(tokens, input);
 }
 
 /**
@@ -90,41 +84,34 @@ export function parse(input: string): SExp[] {
  * This is a major improvement over character-by-character processing.
  */
 function tokenize(input: string): Token[] {
-  return perform(
-    () => {
-      const tokens: Token[] = [];
-      let remaining = input;
-      let line = 1;
-      let column = 1;
-      let offset = 0;
+  const tokens: Token[] = [];
+  let remaining = input;
+  let line = 1;
+  let column = 1;
+  let offset = 0;
 
-      while (remaining.length > 0) {
-        const token = matchNextToken(remaining, line, column, offset);
+  while (remaining.length > 0) {
+    const token = matchNextToken(remaining, line, column, offset);
 
-        // Skip comments and whitespace
-        if (
-          token.type === TokenType.Comment ||
-          token.type === TokenType.Whitespace
-        ) {
-          // Update tracking info
-          updatePositionInfo(token.value, token.position);
-        } else {
-          tokens.push(token);
-        }
+    // Skip comments and whitespace
+    if (
+      token.type === TokenType.Comment ||
+      token.type === TokenType.Whitespace
+    ) {
+      // Update tracking info
+      updatePositionInfo(token.value, token.position);
+    } else {
+      tokens.push(token);
+    }
 
-        // Update position tracking and remaining input
-        offset += token.value.length;
-        remaining = remaining.substring(token.value.length);
-        line = token.position.line;
-        column = token.position.column + token.value.length;
-      }
+    // Update position tracking and remaining input
+    offset += token.value.length;
+    remaining = remaining.substring(token.value.length);
+    line = token.position.line;
+    column = token.position.column + token.value.length;
+  }
 
-      return tokens;
-    },
-    "Failed to tokenize input",
-    ParseError,
-    [{ line: 1, column: 1, offset: 0 }, input],
-  );
+  return tokens;
 }
 
 /**
@@ -313,72 +300,65 @@ function parseExpression(state: ParserState): SExp {
  * Parse an expression based on the token type
  */
 function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
-  return perform(
-    () => {
-      switch (token.type) {
-        case TokenType.LeftParen:
-          return parseList(state);
+  switch (token.type) {
+    case TokenType.LeftParen:
+      return parseList(state);
 
-        case TokenType.RightParen:
-          throw new ParseError("Unexpected ')'", token.position, state.input);
+    case TokenType.RightParen:
+      throw new ParseError("Unexpected ')'", token.position, state.input);
 
-        case TokenType.LeftBracket:
-          return parseVector(state);
+    case TokenType.LeftBracket:
+      return parseVector(state);
 
-        case TokenType.RightBracket:
-          throw new ParseError("Unexpected ']'", token.position, state.input);
+    case TokenType.RightBracket:
+      throw new ParseError("Unexpected ']'", token.position, state.input);
 
-        case TokenType.LeftBrace:
-          return parseMap(state);
+    case TokenType.LeftBrace:
+      return parseMap(state);
 
-        case TokenType.RightBrace:
-          throw new ParseError("Unexpected '}'", token.position, state.input);
+    case TokenType.RightBrace:
+      throw new ParseError("Unexpected '}'", token.position, state.input);
 
-        case TokenType.HashLeftBracket:
-          return parseSet(state);
+    case TokenType.HashLeftBracket:
+      return parseSet(state);
 
-        case TokenType.Quote:
-          return createList(createSymbol("quote"), parseExpression(state));
+    case TokenType.Quote:
+      return createList(createSymbol("quote"), parseExpression(state));
 
-        case TokenType.Backtick:
-          return createList(createSymbol("quasiquote"), parseExpression(state));
+    case TokenType.Backtick:
+      return createList(createSymbol("quasiquote"), parseExpression(state));
 
-        case TokenType.Unquote:
-          return createList(createSymbol("unquote"), parseExpression(state));
+    case TokenType.Unquote:
+      return createList(createSymbol("unquote"), parseExpression(state));
 
-        case TokenType.UnquoteSplicing:
-          return createList(
-            createSymbol("unquote-splicing"),
-            parseExpression(state),
-          );
+    case TokenType.UnquoteSplicing:
+      return createList(
+        createSymbol("unquote-splicing"),
+        parseExpression(state),
+      );
 
-        case TokenType.Comma:
-          return createSymbol(",");
+    case TokenType.Comma:
+      return createSymbol(",");
 
-        case TokenType.Dot:
-          return parseDotAccess(state, token);
+    case TokenType.Dot:
+      return parseDotAccess(state, token);
 
-        case TokenType.String:
-          return parseStringLiteral(token.value);
+    case TokenType.String:
+      return parseStringLiteral(token.value);
 
-        case TokenType.Number:
-          return createLiteral(Number(token.value));
+    case TokenType.Number:
+      return createLiteral(Number(token.value));
 
-        case TokenType.Symbol:
-          return parseSymbol(token.value);
+    case TokenType.Symbol:
+      return parseSymbol(token.value);
 
-        default:
-          throw new ParseError(
-            `Unexpected token type: ${token.type}`,
-            token.position,
-            state.input,
-          );
-      }
-    },
-    `Error parsing ${TokenType[token.type]}`,
-    ParseError,
-    [token.position, state.input],
-  );
+    default:
+      throw new ParseError(
+        `Unexpected token type: ${token.type}`,
+        token.position,
+        state.input,
+      );
+  }
 }
 
 /**
@@ -457,37 +437,30 @@ function parseDotNotation(tokenValue: string): SExp {
  * Parse a list expression: (element1 element2 ...)
  */
 function parseList(state: ParserState): SList {
-  return perform(
-    () => {
-      const listStartPos = state.tokens[state.currentPos - 1].position;
-      const elements: SExp[] = [];
+  const listStartPos = state.tokens[state.currentPos - 1].position;
+  const elements: SExp[] = [];
 
-      // Process the first token to see if it's a dot notation
-      if (
-        state.currentPos < state.tokens.length &&
-        state.tokens[state.currentPos].type !== TokenType.RightParen &&
-        isDotNotation(state.tokens[state.currentPos].value)
-      ) {
-        const dotElements = parseDotNotationCall(state);
-        elements.push(...dotElements);
-      } else {
-        // Standard list parsing
-        parseStandardList(state, elements);
-      }
+  // Process the first token to see if it's a dot notation
+  if (
+    state.currentPos < state.tokens.length &&
+    state.tokens[state.currentPos].type !== TokenType.RightParen &&
+    isDotNotation(state.tokens[state.currentPos].value)
+  ) {
+    const dotElements = parseDotNotationCall(state);
+    elements.push(...dotElements);
+  } else {
+    // Standard list parsing
+    parseStandardList(state, elements);
+  }
 
-      ensureClosingParenthesis(state, listStartPos);
+  ensureClosingParenthesis(state, listStartPos);
 
-      // Check if there's a dot after the list
-      if (hasDotAccess(state)) {
-        return parsePropertyAccessOnList(state, elements);
-      }
+  // Check if there's a dot after the list
+  if (hasDotAccess(state)) {
+    return parsePropertyAccessOnList(state, elements);
+  }
 
-      return createList(...elements);
-    },
-    "Error parsing list",
-    ParseError,
-    [state.tokens[state.currentPos - 1].position, state.input],
-  );
+  return createList(...elements);
 }
 
 /**
@@ -654,37 +627,30 @@ function parsePropertyAccessOnList(
  * Parse a vector: [element1, element2, ...]
  */
 function parseVector(state: ParserState): SList {
-  return perform(
-    () => {
-      const startPos = state.tokens[state.currentPos - 1].position;
-      const elements: SExp[] = [];
+  const startPos = state.tokens[state.currentPos - 1].position;
+  const elements: SExp[] = [];
 
-      // Parse vector elements, handling 'as' aliases
-      parseVectorElements(state, elements);
+  // Parse vector elements, handling 'as' aliases
+  parseVectorElements(state, elements);
 
-      // Ensure closing bracket
-      if (state.currentPos >= state.tokens.length) {
-        throw new ParseError(
-          "Unclosed vector",
-          startPos,
-          state.input,
-        );
-      }
+  // Ensure closing bracket
+  if (state.currentPos >= state.tokens.length) {
+    throw new ParseError(
+      "Unclosed vector",
+      startPos,
+      state.input,
+    );
+  }
 
-      state.currentPos++; // Skip the closing bracket
+  state.currentPos++; // Skip the closing bracket
 
-      // For empty vector, return a special empty array literal
-      if (elements.length === 0) {
-        return createList(createSymbol("empty-array"));
-      }
+  // For empty vector, return a special empty array literal
+  if (elements.length === 0) {
+    return createList(createSymbol("empty-array"));
+  }
 
-      // Return a vector with all elements
-      return createList(createSymbol("vector"), ...elements);
-    },
-    "Error parsing vector",
-    ParseError,
-    [state.tokens[state.currentPos - 1].position, state.input],
-  );
+  // Return a vector with all elements
+  return createList(createSymbol("vector"), ...elements);
 }
 
 /**
@@ -849,37 +815,30 @@ function parseMapEntries(
  * Parse a set: #[element1, element2, ...]
  */
 function parseSet(state: ParserState): SList {
-  return perform(
-    () => {
-      const startPos = state.tokens[state.currentPos - 1].position;
-      const elements: SExp[] = [];
+  const startPos = state.tokens[state.currentPos - 1].position;
+  const elements: SExp[] = [];
 
-      // Parse set elements
-      parseSetElements(state, elements);
+  // Parse set elements
+  parseSetElements(state, elements);
 
-      // Ensure closing bracket
-      if (state.currentPos >= state.tokens.length) {
-        throw new ParseError(
-          "Unclosed set",
-          startPos,
-          state.input,
-        );
-      }
+  // Ensure closing bracket
+  if (state.currentPos >= state.tokens.length) {
+    throw new ParseError(
+      "Unclosed set",
+      startPos,
+      state.input,
+    );
+  }
 
-      state.currentPos++; // Skip the closing bracket
+  state.currentPos++; // Skip the closing bracket
 
-      // For empty set, return a special empty set literal
-      if (elements.length === 0) {
-        return createList(createSymbol("empty-set"));
-      }
+  // For empty set, return a special empty set literal
+  if (elements.length === 0) {
+    return createList(createSymbol("empty-set"));
+  }
 
-      // For non-empty set, proceed with hash-set function
-      return createList(createSymbol("hash-set"), ...elements);
-    },
-    "Error parsing set",
-    ParseError,
-    [state.tokens[state.currentPos - 1].position, state.input],
-  );
+  // For non-empty set, proceed with hash-set function
+  return createList(createSymbol("hash-set"), ...elements);
 }
 
 /**

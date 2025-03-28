@@ -730,22 +730,26 @@ function transformStandardFunctionCall(
 
         if (fxDef && hasNamed) {
           // We found an fx function with named arguments
-          logger.debug(`Processing call to fx function ${op} with named arguments`);
+          logger.debug(
+            `Processing call to fx function ${op} with named arguments`,
+          );
           return transformNamedArgumentCall(list, currentDir);
-        } 
-        else if (fxDef) {
+        } else if (fxDef) {
           // Process as a regular call to an fx function with positional args
-          logger.debug(`Processing call to fx function ${op} with positional arguments`);
+          logger.debug(
+            `Processing call to fx function ${op} with positional arguments`,
+          );
           return processFxFunctionCall(
             op,
             fxDef,
             list.elements.slice(1),
             currentDir,
           );
-        }
-        else if (hasNamed) {
+        } else if (hasNamed) {
           // Handle named arguments for regular functions
-          logger.debug(`Processing call to function ${op} with named arguments`);
+          logger.debug(
+            `Processing call to function ${op} with named arguments`,
+          );
           return transformNamedArgumentCall(list, currentDir);
         }
 
@@ -2699,21 +2703,19 @@ function transformNamedArgumentCall(
 ): IR.IRNode {
   try {
     const functionName = (list.elements[0] as SymbolNode).name;
-    console.log(`Processing named argument call to ${functionName}`);
-    
     // Build a single object with all named arguments
     const objProperties: IR.IRObjectProperty[] = [];
-    
+
     // Process all arguments
     for (let i = 1; i < list.elements.length; i++) {
       const current = list.elements[i];
-      
+
       // Check if this is a named argument (param: value)
-      if (current.type === "symbol" && (current as SymbolNode).name.endsWith(":")) {
+      if (
+        current.type === "symbol" && (current as SymbolNode).name.endsWith(":")
+      ) {
         // Get parameter name without colon
         const paramName = (current as SymbolNode).name.slice(0, -1);
-        console.log(`Found named parameter: ${paramName}`);
-        
         // Ensure a value follows
         if (i + 1 >= list.elements.length) {
           throw new ValidationError(
@@ -2723,7 +2725,7 @@ function transformNamedArgumentCall(
             "missing value",
           );
         }
-        
+
         // Transform the value
         const valueNode = transformNode(list.elements[i + 1], currentDir);
         if (!valueNode) {
@@ -2734,17 +2736,17 @@ function transformNamedArgumentCall(
             "null",
           );
         }
-        
+
         // Add as a property to the argument object
         objProperties.push({
           type: IR.IRNodeType.ObjectProperty,
           key: {
             type: IR.IRNodeType.Identifier,
-            name: sanitizeIdentifier(paramName), 
+            name: sanitizeIdentifier(paramName),
           } as IR.IRIdentifier,
           value: valueNode,
         });
-        
+
         i++; // Skip the value
       } else {
         throw new ValidationError(
@@ -2755,13 +2757,13 @@ function transformNamedArgumentCall(
         );
       }
     }
-    
+
     // Create an object with all the named arguments
     const namedArgsObj = {
       type: IR.IRNodeType.ObjectExpression,
       properties: objProperties,
     } as IR.IRObjectExpression;
-    
+
     // Create the function call with the object as a single argument
     return {
       type: IR.IRNodeType.CallExpression,
@@ -2789,74 +2791,75 @@ const fxFunctionRegistry = new Map<string, IR.IRFxFunctionDeclaration>();
 /**
  * Register an fx function in the registry for call site handling
  */
-function registerFxFunction(name: string, def: IR.IRFxFunctionDeclaration): void {
+function registerFxFunction(
+  name: string,
+  def: IR.IRFxFunctionDeclaration,
+): void {
   fxFunctionRegistry.set(name, def);
 }
 
 /**
  * Parse parameters with type annotations and default values
  */
+/**
+ * Parse parameters with type annotations and default values
+ */
 function parseParametersWithTypes(
   paramList: ListNode,
-  currentDir: string
-): { 
-  params: IR.IRIdentifier[]; 
-  types: Map<string, string>; 
+  currentDir: string,
+): {
+  params: IR.IRIdentifier[];
+  types: Map<string, string>;
   defaults: Map<string, IR.IRNode>;
 } {
-  console.log("PARAM LIST:", JSON.stringify(paramList, null, 2));
-  
   // Initialize result structures
   const params: IR.IRIdentifier[] = [];
   const types = new Map<string, string>();
   const defaults = new Map<string, IR.IRNode>();
-  
+
   // Process parameters
   for (let i = 0; i < paramList.elements.length; i++) {
     const elem = paramList.elements[i];
-    
+
     if (elem.type === "symbol") {
       const symbolName = (elem as SymbolNode).name;
-      
+
       // If it's a parameter name with a colon
       if (symbolName.endsWith(":")) {
         // Extract parameter name (remove the colon)
         const paramName = symbolName.slice(0, -1);
-        console.log(`Found parameter: ${paramName}`);
-        
         // Add to params list - remove the colon from the parameter name
         params.push({
           type: IR.IRNodeType.Identifier,
-          name: sanitizeIdentifier(paramName)
+          name: sanitizeIdentifier(paramName),
         });
-        
+
         // Look ahead for the type
-        if (i + 1 < paramList.elements.length && 
-            paramList.elements[i + 1].type === "symbol") {
-            
+        if (
+          i + 1 < paramList.elements.length &&
+          paramList.elements[i + 1].type === "symbol"
+        ) {
           const typeName = (paramList.elements[i + 1] as SymbolNode).name;
-          console.log(`Setting type for ${paramName}: ${typeName}`);
-          
+
           // Set the type for this parameter
           types.set(paramName, typeName);
-          
+
           // Check for default value
-          if (i + 2 < paramList.elements.length && 
-              paramList.elements[i + 2].type === "symbol" &&
-              (paramList.elements[i + 2] as SymbolNode).name === "=") {
-              
+          if (
+            i + 2 < paramList.elements.length &&
+            paramList.elements[i + 2].type === "symbol" &&
+            (paramList.elements[i + 2] as SymbolNode).name === "="
+          ) {
             // Make sure we have a value after the equals sign
             if (i + 3 < paramList.elements.length) {
               const defaultValueNode = paramList.elements[i + 3];
-              console.log(`Found default value for ${paramName}:`, JSON.stringify(defaultValueNode));
-              
+
               // Transform the default value
               const defaultValue = transformNode(defaultValueNode, currentDir);
               if (defaultValue) {
                 defaults.set(paramName, defaultValue);
-                console.log(`Set default value for ${paramName}`);
               }
-              
+
               i += 3; // Skip type, =, and default value
             } else {
               i += 1; // Just skip the type
@@ -2868,70 +2871,67 @@ function parseParametersWithTypes(
       }
     }
   }
-  
-  console.log("FINAL PARSED PARAMETERS:");
-  console.log("Params:", params.map(p => p.name));
-  console.log("Types:", Array.from(types.entries()));
-  console.log("Defaults:", Array.from(defaults.entries()).map(([k, v]) => [k, JSON.stringify(v)]));
-  
+
   // Validate that all parameters have types
   for (const param of params) {
     // Convert from sanitized name back to original for lookup
     const originalName = param.name.replace(/_/g, "-");
-    
+
     if (!types.has(originalName)) {
       throw new ValidationError(
         `Parameter '${originalName}' is missing a type annotation`,
         "fx parameter",
         "type annotation",
-        "missing type"
+        "missing type",
       );
     }
   }
-  
+
   return { params, types, defaults };
 }
 
 /**
  * Extract raw parameter symbols from parameter list for purity verification
  */
+/**
+ * Extract raw parameter symbols from parameter list for purity verification
+ */
 function extractRawParams(paramList: ListNode): SymbolNode[] {
-  console.log("Extracting raw parameters...");
-  
   const rawParams: SymbolNode[] = [];
-  
+
   for (let i = 0; i < paramList.elements.length; i++) {
     const elem = paramList.elements[i];
-    
+
     if (elem.type === "symbol") {
       const symbolName = (elem as SymbolNode).name;
-      
+
       // Skip special tokens
       if (symbolName === ":" || symbolName === "=") {
         continue;
       }
-      
+
       // Handle parameter name with colon suffix
       if (symbolName.endsWith(":")) {
         // Create a cleaned symbol without the colon
         const cleanName = symbolName.slice(0, -1);
-        console.log(`Found parameter with colon: ${symbolName}, cleaning to ${cleanName}`);
-        
+
         // Create a new symbol node with the cleaned name
         rawParams.push({
           type: "symbol",
-          name: cleanName
+          name: cleanName,
         });
-        
+
         // Skip the type and possible default value
         if (i + 1 < paramList.elements.length) {
           i++; // Skip type
-          
+
           // Check for default value
-          if (i + 1 < paramList.elements.length && 
-              i + 2 < paramList.elements.length &&
-              paramList.elements[i].type === "symbol" &&
-              (paramList.elements[i] as SymbolNode).name === "=") {
+          if (
+            i + 1 < paramList.elements.length &&
+            i + 2 < paramList.elements.length &&
+            paramList.elements[i].type === "symbol" &&
+            (paramList.elements[i] as SymbolNode).name === "="
+          ) {
             i += 2; // Skip = and default value
           }
         }
@@ -2941,16 +2941,10 @@ function extractRawParams(paramList: ListNode): SymbolNode[] {
       }
     }
   }
-  
-  console.log("Extracted raw parameters:", rawParams.map(p => p.name));
+
   return rawParams;
 }
 
-
-/**
- * Process and transform a call to an fx function.
- * Handles both positional and named arguments.
- */
 /**
  * Process and transform a call to an fx function.
  * Handles both positional and named arguments.
@@ -2959,23 +2953,19 @@ function processFxFunctionCall(
   funcName: string,
   funcDef: IR.IRFxFunctionDeclaration,
   args: HQLNode[],
-  currentDir: string
+  currentDir: string,
 ): IR.IRNode {
-  console.log(`Processing fx function call to ${funcName} with ${args.length} args`);
-  console.log("Function definition params:", funcDef.params.map(p => p.name));
-  
   // Extract parameter info from the function definition
-  const paramNames = funcDef.params.map(p => p.name);
-  const paramTypes = new Map(funcDef.paramTypes.map(p => [p.name, p.type]));
-  const defaultValues = new Map(funcDef.defaults.map(d => [d.name, d.value]));
-  
+  const paramNames = funcDef.params.map((p) => p.name);
+  const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
+
   // Process normal positional arguments
   const positionalArgs: HQLNode[] = args;
-  
+
   // Prepare the final argument list in the correct parameter order
   const finalArgs: IR.IRNode[] = [];
   let positionalIndex = 0;
-  
+
   for (const paramName of paramNames) {
     if (positionalIndex < positionalArgs.length) {
       // Use the next positional argument
@@ -2989,7 +2979,7 @@ function processFxFunctionCall(
           "null",
         );
       }
-      
+
       finalArgs.push(transformedArg);
     } else if (defaultValues.has(paramName)) {
       // Use the default value
@@ -3003,7 +2993,7 @@ function processFxFunctionCall(
       );
     }
   }
-  
+
   // Check for extra positional arguments
   if (positionalIndex < positionalArgs.length) {
     throw new ValidationError(
@@ -3013,9 +3003,7 @@ function processFxFunctionCall(
       `${positionalArgs.length} arguments`,
     );
   }
-  
-  console.log(`Final arguments for ${funcName}:`, finalArgs.length);
-  
+
   // Create the final call expression
   return {
     type: IR.IRNodeType.CallExpression,
@@ -3030,191 +3018,158 @@ function processFxFunctionCall(
 /**
  * Transform an fx (pure function) definition
  */
+/**
+ * Transform an fx (pure function) definition
+ */
 function transformFx(list: ListNode, currentDir: string): IR.IRNode {
-  return perform(
-    () => {
-      console.log("========== STARTING FX TRANSFORM ==========");
-      
-      // Validate syntax
-      if (list.elements.length < 4) {
-        throw new ValidationError(
-          "fx requires a name, parameter list with types, and at least one body expression",
-          "fx definition",
-          "name, params, body",
-          `${list.elements.length - 1} arguments`,
-        );
-      }
-      
-      // Extract function name
-      const nameNode = list.elements[1];
-      if (nameNode.type !== "symbol") {
-        throw new ValidationError(
-          "Function name must be a symbol",
-          "fx name",
-          "symbol",
-          nameNode.type,
-        );
-      }
-      const funcName = (nameNode as SymbolNode).name;
-      
-      // Extract parameter list and return type
-      const paramListNode = list.elements[2];
-      let returnTypeNode: HQLNode | null = null;
-      let bodyOffset = 3;
-      
-      // Determine which syntax style is being used
-      let paramList: ListNode;
-      
-      // Style 1: (fx add (x: Int y: Int) -> Int body...)
-      if (paramListNode.type === "list") {
-        // Check if there's a return type specified with ->
-        if (list.elements.length > 3 && 
-            list.elements[3].type === "symbol" && 
-            (list.elements[3] as SymbolNode).name === "->") {
-          
-          if (list.elements.length < 5) {
-            throw new ValidationError(
-              "Return type declaration with '->' must be followed by a type",
-              "fx return type",
-              "type after ->",
-              "missing type"
-            );
-          }
-          
-          returnTypeNode = list.elements[4];
-          bodyOffset = 5; // Body starts after return type
-        }
-        
-        paramList = paramListNode as ListNode;
-        
-        // Style 2: (fx add ((x: Int y: Int) -> Int) body...)
-        if (paramList.elements.length > 0 && 
-            paramList.elements[0].type === "list") {
-          
-          const wrappedSig = paramList as ListNode;
-          
-          // Extract the actual parameter list
-          paramList = wrappedSig.elements[0] as ListNode;
-          
-          // Check for return type with ->
-          if (wrappedSig.elements.length > 1 && 
-              wrappedSig.elements[1].type === "symbol" && 
-              (wrappedSig.elements[1] as SymbolNode).name === "->") {
-            
-            if (wrappedSig.elements.length < 3) {
-              throw new ValidationError(
-                "Return type declaration with '->' must be followed by a type",
-                "fx return type",
-                "type after ->",
-                "missing type"
-              );
-            }
-            
-            returnTypeNode = wrappedSig.elements[2];
-          }
-        }
-      }
-      else {
-        throw new ValidationError(
-          "fx parameter list must be a list",
-          "fx parameters",
-          "list",
-          paramListNode.type
-        );
-      }
-      
-      // Parse parameters with types and defaults
-      const paramsInfo = parseParametersWithTypes(paramList, currentDir);
-      
-      // Validate return type if specified
-      let returnType = "Int"; // Default return type is Int
-      if (returnTypeNode) {
-        if (returnTypeNode.type !== "symbol") {
-          throw new ValidationError(
-            "Return type must be a symbol",
-            "fx return type",
-            "symbol",
-            returnTypeNode.type
-          );
-        }
-        
-        returnType = (returnTypeNode as SymbolNode).name;
-        if (returnType !== "Int") {
-          throw new ValidationError(
-            "Only 'Int' type is currently supported",
-            "fx return type",
-            "Int",
-            returnType
-          );
-        }
-      }
-      
-      // Extract params and body
-      const params = paramsInfo.params;
-      const paramTypes = paramsInfo.types;
-      const defaultValues = paramsInfo.defaults;
-      const bodyExpressions = list.elements.slice(bodyOffset);
-      
-      // Check that all parameters have type 'Int'
-      for (const [paramName, paramType] of paramTypes.entries()) {
-        if (paramType !== "Int") {
-          throw new ValidationError(
-            `Parameter '${paramName}' has unsupported type '${paramType}'. Only 'Int' is currently supported.`,
-            "fx parameter type",
-            "Int",
-            paramType
-          );
-        }
-      }
-      
-      // Extract raw parameter symbols for purity verification
-      const rawParams = extractRawParams(paramList);
-      
-      // Verify function purity using our purity verification system
-      verifyFunctionPurity(funcName, rawParams, bodyExpressions);
-      
-      // Process the body expressions like a regular function
-      const bodyNodes = processFunctionBody(bodyExpressions, currentDir);
-      
-      // Generate parameter copy statements
-      const paramCopyStatements = generateParameterCopies(params);
-      
-      // Register as pure function
-      registerPureFunction(funcName);
-      
-      // Create the FxFunctionDeclaration node
-      const fxFuncDecl = {
-        type: IR.IRNodeType.FxFunctionDeclaration,
-        id: {
-          type: IR.IRNodeType.Identifier,
-          name: sanitizeIdentifier(funcName)
-        },
-        params,
-        defaults: Array.from(defaultValues.entries()).map(([name, value]) => ({
-          name,
-          value
-        })),
-        paramTypes: Array.from(paramTypes.entries()).map(([name, type]) => ({
-          name, 
-          type
-        })),
+  try {
+    // Validate syntax
+    if (list.elements.length < 5) {
+      throw new ValidationError(
+        "fx requires a name, parameter list, return type list, and at least one body expression",
+        "fx definition",
+        "name, params, return type, body",
+        `${list.elements.length - 1} arguments`,
+      );
+    }
+
+    // Extract function name
+    const nameNode = list.elements[1];
+    if (nameNode.type !== "symbol") {
+      throw new ValidationError(
+        "Function name must be a symbol",
+        "fx name",
+        "symbol",
+        nameNode.type,
+      );
+    }
+    const funcName = (nameNode as SymbolNode).name;
+
+    // Extract parameter list
+    const paramListNode = list.elements[2];
+    if (paramListNode.type !== "list") {
+      throw new ValidationError(
+        "fx parameter list must be a list",
+        "fx parameters",
+        "list",
+        paramListNode.type,
+      );
+    }
+    const paramList = paramListNode as ListNode;
+
+    // Extract return type list: (-> Type)
+    const returnTypeNode = list.elements[3];
+    if (
+      returnTypeNode.type !== "list" ||
+      (returnTypeNode as ListNode).elements.length < 2 ||
+      (returnTypeNode as ListNode).elements[0].type !== "symbol" ||
+      ((returnTypeNode as ListNode).elements[0] as SymbolNode).name !== "->"
+    ) {
+      throw new ValidationError(
+        "fx return type must be a list starting with -> followed by a type",
+        "fx return type",
+        "(-> Type)",
+        returnTypeNode.type,
+      );
+    }
+    
+    const returnTypeList = returnTypeNode as ListNode;
+    const returnTypeSymbol = returnTypeList.elements[1];
+    
+    if (returnTypeSymbol.type !== "symbol") {
+      throw new ValidationError(
+        "Return type must be a symbol",
+        "fx return type",
+        "symbol",
+        returnTypeSymbol.type,
+      );
+    }
+
+    const returnType = (returnTypeSymbol as SymbolNode).name;
+    if (returnType !== "Int") {
+      throw new ValidationError(
+        "Only 'Int' type is currently supported",
+        "fx return type",
+        "Int",
         returnType,
-        body: {
-          type: IR.IRNodeType.BlockStatement,
-          body: [...paramCopyStatements, ...bodyNodes]
-        }
-      } as IR.IRFxFunctionDeclaration;
-      
-      // Register this function in our registry for call site handling
-      registerFxFunction(funcName, fxFuncDecl);
-      
-      console.log("========== COMPLETED FX TRANSFORM ==========");
-      return fxFuncDecl;
-    },
-    "transformFx",
-    TransformError,
-    [list],
-  );
+      );
+    }
+
+    // Body expressions start from index 4
+    const bodyOffset = 4;
+    const bodyExpressions = list.elements.slice(bodyOffset);
+
+    // Parse parameters with types and defaults
+    const paramsInfo = parseParametersWithTypes(paramList, currentDir);
+
+    // Extract params and body
+    const params = paramsInfo.params;
+    const paramTypes = paramsInfo.types;
+    const defaultValues = paramsInfo.defaults;
+
+    // Check that all parameters have type 'Int'
+    for (const [paramName, paramType] of paramTypes.entries()) {
+      if (paramType !== "Int") {
+        throw new ValidationError(
+          `Parameter '${paramName}' has unsupported type '${paramType}'. Only 'Int' is currently supported.`,
+          "fx parameter type",
+          "Int",
+          paramType,
+        );
+      }
+    }
+
+    // Extract raw parameter symbols for purity verification
+    const rawParams = extractRawParams(paramList);
+
+    // Verify function purity using our purity verification system
+    verifyFunctionPurity(funcName, rawParams, bodyExpressions);
+
+    // Process the body expressions like a regular function
+    const bodyNodes = processFunctionBody(bodyExpressions, currentDir);
+
+    // Generate parameter copy statements
+    const paramCopyStatements = generateParameterCopies(params);
+
+    // Register as pure function
+    registerPureFunction(funcName);
+
+    // Create the FxFunctionDeclaration node
+    const fxFuncDecl = {
+      type: IR.IRNodeType.FxFunctionDeclaration,
+      id: {
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(funcName),
+      },
+      params,
+      defaults: Array.from(defaultValues.entries()).map(([name, value]) => ({
+        name,
+        value,
+      })),
+      paramTypes: Array.from(paramTypes.entries()).map(([name, type]) => ({
+        name,
+        type,
+      })),
+      returnType,
+      body: {
+        type: IR.IRNodeType.BlockStatement,
+        body: [...paramCopyStatements, ...bodyNodes],
+      },
+    } as IR.IRFxFunctionDeclaration;
+
+    // Register this function in our registry for call site handling
+    registerFxFunction(funcName, fxFuncDecl);
+    return fxFuncDecl;
+  } catch (error) {
+    throw new TransformError(
+      `Failed to transform fx function: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "fx function",
+      "transformation",
+      list,
+    );
+  }
 }
 
 /**
@@ -3222,11 +3177,11 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
  */
 function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
   const statements: IR.IRNode[] = [];
-  
+
   // For each parameter, create an inline deep copy
   for (const param of params) {
     const paramName = param.name;
-    
+
     // Create an assignment expression for deep copying the parameter
     statements.push({
       type: IR.IRNodeType.ExpressionStatement,
@@ -3235,7 +3190,7 @@ function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
         operator: "=",
         left: {
           type: IR.IRNodeType.Identifier,
-          name: paramName
+          name: paramName,
         },
         right: {
           // Use a conditional expression to only deep copy objects
@@ -3251,31 +3206,31 @@ function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
                 type: IR.IRNodeType.CallExpression,
                 callee: {
                   type: IR.IRNodeType.Identifier,
-                  name: "typeof"
+                  name: "typeof",
                 },
                 arguments: [
                   {
                     type: IR.IRNodeType.Identifier,
-                    name: paramName
-                  }
-                ]
+                    name: paramName,
+                  },
+                ],
               },
               right: {
                 type: IR.IRNodeType.StringLiteral,
-                value: "object"
-              }
+                value: "object",
+              },
             },
             right: {
               type: IR.IRNodeType.BinaryExpression,
               operator: "!==",
               left: {
                 type: IR.IRNodeType.Identifier,
-                name: paramName
+                name: paramName,
               },
               right: {
-                type: IR.IRNodeType.NullLiteral
-              }
-            }
+                type: IR.IRNodeType.NullLiteral,
+              },
+            },
           },
           // If it's an object, use JSON.parse(JSON.stringify()) for deep copying
           consequent: {
@@ -3284,13 +3239,13 @@ function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
               type: IR.IRNodeType.MemberExpression,
               object: {
                 type: IR.IRNodeType.Identifier,
-                name: "JSON"
+                name: "JSON",
               },
               property: {
                 type: IR.IRNodeType.Identifier,
-                name: "parse"
+                name: "parse",
               },
-              computed: false
+              computed: false,
             },
             arguments: [
               {
@@ -3299,32 +3254,32 @@ function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
                   type: IR.IRNodeType.MemberExpression,
                   object: {
                     type: IR.IRNodeType.Identifier,
-                    name: "JSON"
+                    name: "JSON",
                   },
                   property: {
                     type: IR.IRNodeType.Identifier,
-                    name: "stringify"
+                    name: "stringify",
                   },
-                  computed: false
+                  computed: false,
                 },
                 arguments: [
                   {
                     type: IR.IRNodeType.Identifier,
-                    name: paramName
-                  }
-                ]
-              }
-            ]
+                    name: paramName,
+                  },
+                ],
+              },
+            ],
           },
           // If not an object, return original value
           alternate: {
             type: IR.IRNodeType.Identifier,
-            name: paramName
-          }
-        }
-      }
+            name: paramName,
+          },
+        },
+      },
     });
   }
-  
+
   return statements;
 }

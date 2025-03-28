@@ -5,6 +5,7 @@ import {
   registerExceptionTempFile,
 } from "../src/temp-file-tracker.ts";
 import { Logger } from "../src/logger.ts";
+import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
 
 function printHelp() {
   console.error(
@@ -13,6 +14,10 @@ function printHelp() {
   console.error("\nBasic Options:");
   console.error("  --run             Run the compiled output");
   console.error("  --verbose, -v     Enable verbose logging");
+  console.error("  --quiet           Disable console.log output");
+  console.error(
+    "  --log <namespaces>  Filter logging to specified namespaces (e.g., --log parser,cli)",
+  );
   console.error("  --print           Print final JS output directly in CLI");
   console.error("  --help, -h        Display this help message");
   console.error("\nExamples:");
@@ -22,6 +27,10 @@ function printHelp() {
 
 async function transpile(): Promise<void> {
   const args = Deno.args;
+
+  // Set up common console logging.
+  setupConsoleLogging(args);
+
   if (args.length < 1 || args.includes("--help") || args.includes("-h")) {
     printHelp();
     Deno.exit(1);
@@ -29,36 +38,39 @@ async function transpile(): Promise<void> {
 
   const inputPath = args[0];
   let outputPath: string | undefined = undefined;
-
-  // Basic options
   let verbose = false;
   let runAfter = false;
   const printOutput = args.includes("--print");
 
-  // Parse options
   if (args.length > 1 && !args[1].startsWith("--")) {
     outputPath = args[1];
     registerExceptionTempFile(outputPath);
   }
 
-  for (const arg of args) {
-    if (arg === "--verbose" || arg === "-v") verbose = true;
-    if (arg === "--run") runAfter = true;
-  }
+  // Process common logging options.
+  const loggingOptions = setupLoggingOptions(args);
+  verbose = loggingOptions.verbose;
+  const logNamespaces = loggingOptions.logNamespaces;
 
   if (verbose) {
     Deno.env.set("HQL_DEBUG", "1");
     console.log("Verbose logging enabled");
   }
 
+  // If log namespaces are provided, configure the logger accordingly.
   const logger = new Logger(verbose);
+  if (logNamespaces.length > 0) {
+    logger.allowedNamespaces = logNamespaces;
+    console.log(
+      `Logging restricted to namespaces: ${logNamespaces.join(", ")}`,
+    );
+  }
 
   try {
     const bundledPath = await transpileCLI(inputPath, outputPath, { verbose });
 
     if (printOutput) {
       try {
-        // Read and print the bundled file content to stdout.
         const finalOutput = await Deno.readTextFile(bundledPath);
         console.log(finalOutput);
       } catch (error) {
@@ -90,7 +102,7 @@ async function transpile(): Promise<void> {
       "Error during transpilation:",
       error instanceof Error ? error.message : error,
     );
-    Deno.exit(1); // Ensure we exit with an error code
+    Deno.exit(1);
   }
 }
 
