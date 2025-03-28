@@ -45,6 +45,25 @@
 (fx convert-to-bool (value: Any) (-> Bool)
   (if value true false))
 
+;; Function that demonstrates deep copying of parameters - FIXED
+(fx increment-counters (obj: Any) (-> Any)
+  ;; Make sure obj is not null or undefined 
+  (if (eq? obj null)
+      ;; Return a default object if input is null
+      (return {"count": 1})
+      ;; Process the object with explicit return
+      (let (
+        ;; Create a new object with the updated count
+        newObj (js-call Object "assign" (js-call Object "create" {}) obj)
+        ;; Get the current count or default to 0 if not present
+        currentCount (if (js-call Object "hasOwnProperty" obj "count")
+                        (js-get obj "count")
+                        0)
+      )
+        ;; Set the new count
+        (js-set newObj "count" (+ currentCount 1))
+        ;; Explicitly return the new object
+        (return newObj))))
 
 ;; Function that uses Object operations - FIXED
 (fx merge-objects (obj1: Any obj2: Any) (-> Any)
@@ -85,6 +104,12 @@
   ;; Test conversion function
   test11 (convert-to-bool 0)  ;; false
   
+  ;; Test object mutation/copying
+  test12 (increment-counters {"count": 5})  ;; {"count": 6}
+  
+  ;; Test null handling
+  test13 (increment-counters null)  ;; {"count": 1}
+  
   ;; Test object merging
   test14 (merge-objects {"a": 1} {"b": 2})  ;; {"a": 1, "b": 2}
   
@@ -102,6 +127,8 @@
   (print "Test 9 (calculate-distance):" test9)
   (print "Test 10 (format-user):" test10)
   (print "Test 11 (convert-to-bool with 0):" test11)
+  (print "Test 12 (increment-counters):" test12)
+  (print "Test 13 (increment-counters with null):" test13)
   (print "Test 14 (merge-objects):" test14)
   (print "Test 15 (merge-objects with null):" test15)
 )

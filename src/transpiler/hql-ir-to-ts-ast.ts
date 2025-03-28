@@ -88,8 +88,8 @@ export function convertIRNode(
         return convertVariableDeclaration(node as IR.IRVariableDeclaration);
       case IR.IRNodeType.FunctionDeclaration:
         return convertFunctionDeclaration(node as IR.IRFunctionDeclaration);
-      case IR.IRNodeType.ReturnStatement:
-        return convertReturnStatement(node as IR.IRReturnStatement);
+      case IR.IRNodeType.IfStatement:
+        return convertIfStatement(node as IR.IRIfStatement);
       case IR.IRNodeType.BlockStatement:
         return convertBlockStatement(node as IR.IRBlockStatement);
       case IR.IRNodeType.ImportDeclaration:
@@ -144,6 +144,54 @@ export function convertIRNode(
         error instanceof Error ? error.message : String(error)
       }`,
       node ? IR.IRNodeType[node.type] || String(node.type) : "unknown",
+      node,
+    );
+  }
+}
+
+function convertIfStatement(node: IR.IRIfStatement): ts.IfStatement {
+  try {
+    const test = convertIRExpr(node.test);
+    let consequentStatement: ts.Statement;
+    
+    // Handle the consequent based on its type
+    if (node.consequent.type === IR.IRNodeType.ReturnStatement) {
+      consequentStatement = convertReturnStatement(node.consequent as IR.IRReturnStatement);
+    } else if (node.consequent.type === IR.IRNodeType.BlockStatement) {
+      consequentStatement = convertBlockStatement(node.consequent as IR.IRBlockStatement);
+    } else {
+      // For other expression types, create an expression statement
+      consequentStatement = ts.factory.createExpressionStatement(
+        convertIRExpr(node.consequent)
+      );
+    }
+    
+    // Handle the alternate if it exists
+    let alternateStatement: ts.Statement | undefined = undefined;
+    if (node.alternate) {
+      if (node.alternate.type === IR.IRNodeType.ReturnStatement) {
+        alternateStatement = convertReturnStatement(node.alternate as IR.IRReturnStatement);
+      } else if (node.alternate.type === IR.IRNodeType.BlockStatement) {
+        alternateStatement = convertBlockStatement(node.alternate as IR.IRBlockStatement);
+      } else {
+        // For other expression types, create an expression statement
+        alternateStatement = ts.factory.createExpressionStatement(
+          convertIRExpr(node.alternate)
+        );
+      }
+    }
+    
+    return ts.factory.createIfStatement(
+      test,
+      consequentStatement,
+      alternateStatement
+    );
+  } catch (error) {
+    throw new CodeGenError(
+      `Failed to convert if statement: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "if statement",
       node,
     );
   }
@@ -1296,11 +1344,19 @@ function convertBlockStatement(node: IR.IRBlockStatement): ts.Block {
   try {
     const statements: ts.Statement[] = [];
     for (const stmt of node.body) {
-      const converted = convertIRNode(stmt);
-      if (Array.isArray(converted)) {
-        statements.push(...converted);
-      } else if (converted) {
-        statements.push(converted);
+      // Special handling for return statements
+      if (stmt.type === IR.IRNodeType.ReturnStatement) {
+        const returnStmt = convertReturnStatement(stmt as IR.IRReturnStatement);
+        statements.push(returnStmt);
+        // After a return statement, no further statements should be processed
+        break;
+      } else {
+        const converted = convertIRNode(stmt);
+        if (Array.isArray(converted)) {
+          statements.push(...converted);
+        } else if (converted) {
+          statements.push(converted);
+        }
       }
     }
     return ts.factory.createBlock(statements, true);
@@ -1761,6 +1817,23 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
         return convertInteropIIFE(node as IR.IRInteropIIFE);
       case IR.IRNodeType.AssignmentExpression:
         return convertAssignmentExpression(node as IR.IRAssignmentExpression);
+      case IR.IRNodeType.ReturnStatement:{
+        const returnArg = (node as IR.IRReturnStatement).argument;
+        return ts.factory.createCallExpression(
+          ts.factory.createParenthesizedExpression(
+            ts.factory.createArrowFunction(
+              undefined,
+              undefined,
+              [],
+              undefined,
+              ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+              returnArg ? convertIRExpr(returnArg) : ts.factory.createIdentifier("undefined")
+            )
+          ),
+          undefined,
+          []
+        );
+      }
       default:
         throw new CodeGenError(
           `Cannot convert node of type ${

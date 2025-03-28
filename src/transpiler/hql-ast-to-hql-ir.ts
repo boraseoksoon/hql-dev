@@ -239,6 +239,13 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
 
   const first = list.elements[0];
 
+  if (first.type === "symbol" && (first as SymbolNode).name === "if") {
+    // Process if-expression to check for return statements
+    const ifExpr = transformIf(list, currentDir);
+    // If this is a normal conditional, return it as is
+    return ifExpr;
+  }
+  
   if (first.type === "symbol") {
     const op = (first as SymbolNode).name;
 
@@ -2439,6 +2446,7 @@ function transformIf(list: ListNode, currentDir: string): IR.IRNode {
         );
       }
 
+      // Create conditional expression
       return {
         type: IR.IRNodeType.ConditionalExpression,
         test,
@@ -2546,43 +2554,33 @@ function processFunctionBody(
         return bodyNodes;
       }
 
-      // Process all expressions except the last one
-      for (let i = 0; i < bodyExprs.length - 1; i++) {
+      // Process all expressions 
+      for (let i = 0; i < bodyExprs.length; i++) {
         const expr = transformNode(bodyExprs[i], currentDir);
         if (!expr) continue;
         
-        // Add each non-last expression to the body
+        // Add the expression to the body
         bodyNodes.push(expr);
         
-        // If we find an explicit return, stop processing (early return)
+        // If we find a return statement, stop processing (early return)
         if (expr.type === IR.IRNodeType.ReturnStatement) {
           return bodyNodes;
         }
       }
 
-      // Process the last expression
-      const lastExpr = transformNode(
-        bodyExprs[bodyExprs.length - 1],
-        currentDir,
-      );
-
-      if (lastExpr) {
-        // If the last expression is already a return statement, just add it
-        if (lastExpr.type === IR.IRNodeType.ReturnStatement) {
-          bodyNodes.push(lastExpr);
-        } else {
-          // Otherwise wrap it in a return statement (implicit return)
-          bodyNodes.push({
+      // If no explicit return statement was found and we processed all expressions,
+      // we need to ensure the last expression is returned
+      if (bodyNodes.length > 0) {
+        const lastExpr = bodyNodes[bodyNodes.length - 1];
+        
+        // If the last expression isn't already a return statement,
+        // wrap it in one (implicit return)
+        if (lastExpr.type !== IR.IRNodeType.ReturnStatement) {
+          bodyNodes[bodyNodes.length - 1] = {
             type: IR.IRNodeType.ReturnStatement,
             argument: lastExpr,
-          } as IR.IRReturnStatement);
+          } as IR.IRReturnStatement;
         }
-      } else {
-        // If last expression transforms to null, return null
-        bodyNodes.push({
-          type: IR.IRNodeType.ReturnStatement,
-          argument: { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral,
-        } as IR.IRReturnStatement);
       }
 
       return bodyNodes;

@@ -56,7 +56,8 @@ export enum IRNodeType {
   SpreadAssignment,
   ExpressionStatement,
   FxFunctionDeclaration,
-  FnFunctionDeclaration
+  FnFunctionDeclaration, 
+  IfStatement
 }
 
 export interface IRNode {
@@ -304,4 +305,11 @@ export interface IRFnFunctionDeclaration extends IRNode {
   params: IRIdentifier[];
   defaults: { name: string; value: IRNode }[];
   body: IRBlockStatement;
+}
+
+export interface IRIfStatement extends IRNode {
+  type: IRNodeType.IfStatement;
+  test: IRNode;
+  consequent: IRNode;
+  alternate: IRNode | null;
 }
