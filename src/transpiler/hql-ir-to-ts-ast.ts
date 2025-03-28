@@ -1060,6 +1060,7 @@ function convertFunctionExpression(
         convertIdentifier(param),
       );
     });
+    
     return ts.factory.createFunctionExpression(
       undefined,
       undefined,
