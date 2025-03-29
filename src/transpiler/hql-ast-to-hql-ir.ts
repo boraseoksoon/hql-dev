@@ -2554,32 +2554,24 @@ function processFunctionBody(
         return bodyNodes;
       }
 
-      // Process all expressions 
-      for (let i = 0; i < bodyExprs.length; i++) {
+      // Process all expressions except the last one
+      for (let i = 0; i < bodyExprs.length - 1; i++) {
         const expr = transformNode(bodyExprs[i], currentDir);
-        if (!expr) continue;
-        
-        // Add the expression to the body
-        bodyNodes.push(expr);
-        
-        // If we find a return statement, stop processing (early return)
-        if (expr.type === IR.IRNodeType.ReturnStatement) {
-          return bodyNodes;
-        }
+        if (expr) bodyNodes.push(expr);
       }
 
-      // If no explicit return statement was found and we processed all expressions,
-      // we need to ensure the last expression is returned
-      if (bodyNodes.length > 0) {
-        const lastExpr = bodyNodes[bodyNodes.length - 1];
-        
-        // If the last expression isn't already a return statement,
-        // wrap it in one (implicit return)
-        if (lastExpr.type !== IR.IRNodeType.ReturnStatement) {
-          bodyNodes[bodyNodes.length - 1] = {
+      // Process the last expression specially - wrap it in a return statement
+      const lastExpr = transformNode(bodyExprs[bodyExprs.length - 1], currentDir);
+      if (lastExpr) {
+        // If it's already a return statement, use it as is
+        if (lastExpr.type === IR.IRNodeType.ReturnStatement) {
+          bodyNodes.push(lastExpr);
+        } else {
+          // Wrap in a return statement to ensure the value is returned
+          bodyNodes.push({
             type: IR.IRNodeType.ReturnStatement,
-            argument: lastExpr,
-          } as IR.IRReturnStatement;
+            argument: lastExpr
+          } as IR.IRReturnStatement);
         }
       }
 

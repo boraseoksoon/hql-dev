@@ -1,13 +1,10 @@
-;; Test NPM imports
-(import lodash from "npm:lodash")
+(fx complex-fx (x: Int y: Int) (-> Int)
+  (let (z (* x y))
+    (let (result (if (> z 10)
+                     (let (doubled (* z 2))
+                       doubled)
+                     (let (tripled (* z 3))
+                       tripled)))
+      (+ result 5))))
 
-;; Define a macro that uses lodash's capitalize function
-(defmacro capitalize-text (text)
-  `(js-call lodash "capitalize" ~text))
-
-;; Test HTTP imports using esm.sh CDN
-(import lodash from "https://esm.sh/lodash")
-
-;; Define a macro that uses lodash's uppercase function
-(defmacro uppercase-text (text)
-  `(js-call lodash "toUpper" ~text))
+(print "fx complex-fx: " (complex-fx 5))

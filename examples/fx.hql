@@ -1,3 +1,5 @@
+(print "============ fx test =============")
+
 (fx stringify (value: Any) (-> String)
   (return (js-call JSON "stringify" value)))
   

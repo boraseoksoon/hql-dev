@@ -258,6 +258,168 @@ function convertFnFunctionDeclaration(
   }
 }
 
+// A more comprehensive solution that also fixes nested IIFEs
+
+// Add this function to recursively fix all IIFEs in the AST
+function deepFixCallExpressions(node: ts.Node): ts.Node {
+  // Handle specific case for IIFE pattern
+  if (ts.isCallExpression(node) && 
+      ts.isFunctionExpression(node.expression) &&
+      node.expression.body) {
+    
+    // Get the body statements
+    const statements = node.expression.body.statements;
+    
+    // If there are statements, check the last one
+    if (statements.length > 0) {
+      const lastStatement = statements[statements.length - 1];
+      
+      // If it's another call expression (possibly another IIFE), fix it recursively
+      if (ts.isExpressionStatement(lastStatement) && ts.isCallExpression(lastStatement.expression)) {
+        const fixedCall = deepFixCallExpressions(lastStatement.expression) as ts.Expression;
+        
+        // Create new statements with the fixed call expression
+        const newStatements = [...statements];
+        newStatements[newStatements.length - 1] = ts.factory.createExpressionStatement(fixedCall);
+        
+        // Create a new function expression with fixed body
+        const newFn = ts.factory.createFunctionExpression(
+          node.expression.modifiers,
+          node.expression.asteriskToken,
+          node.expression.name,
+          node.expression.typeParameters,
+          node.expression.parameters,
+          node.expression.type,
+          ts.factory.createBlock(newStatements, true)
+        );
+        
+        // Create a new call expression with the fixed function
+        return ts.factory.createCallExpression(
+          newFn,
+          node.typeArguments,
+          node.arguments
+        );
+      }
+      // If it's an expression statement (not a return), convert it to a return statement
+      else if (ts.isExpressionStatement(lastStatement)) {
+        // Create new statements with the last one converted to a return
+        const newStatements = [...statements];
+        newStatements[newStatements.length - 1] = ts.factory.createReturnStatement(lastStatement.expression);
+        
+        // Create a new function expression with fixed body
+        const newFn = ts.factory.createFunctionExpression(
+          node.expression.modifiers,
+          node.expression.asteriskToken,
+          node.expression.name,
+          node.expression.typeParameters,
+          node.expression.parameters,
+          node.expression.type,
+          ts.factory.createBlock(newStatements, true)
+        );
+        
+        // Create a new call expression with the fixed function
+        return ts.factory.createCallExpression(
+          newFn,
+          node.typeArguments,
+          node.arguments
+        );
+      }
+    }
+  }
+  
+  // Recursively process all children
+  return ts.visitEachChild(node, deepFixCallExpressions, ts.nullTransformationContext);
+}
+
+function convertLetExpression(
+  node: IR.IRLetExpression,
+): ts.CallExpression {
+  try {
+    // Create variable declarations for bindings
+    const declarations: ts.Statement[] = node.bindings.map(binding => {
+      const id = convertIdentifier(binding.id);
+      const init = convertIRExpr(binding.init);
+      
+      return ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          [ts.factory.createVariableDeclaration(id, undefined, undefined, init)],
+          ts.NodeFlags.Const
+        )
+      );
+    });
+    
+    // Create body statements
+    let bodyStatements: ts.Statement[] = [];
+    
+    // Get all body statements except the last one
+    for (let i = 0; i < node.body.length - 1; i++) {
+      const stmt = node.body[i];
+      const converted = convertIRNode(stmt);
+      
+      if (Array.isArray(converted)) {
+        bodyStatements.push(...converted);
+      } else if (converted) {
+        bodyStatements.push(converted);
+      }
+    }
+    
+    // Handle the last statement specially - ensure it's returned
+    if (node.body.length > 0) {
+      const lastStmt = node.body[node.body.length - 1];
+      
+      // If it's already a return statement, use it
+      if (lastStmt.type === IR.IRNodeType.ReturnStatement) {
+        bodyStatements.push(convertReturnStatement(lastStmt as IR.IRReturnStatement));
+      } 
+      // If it's an expression, wrap it in a return
+      else if (isExpressionNode(lastStmt)) {
+        bodyStatements.push(ts.factory.createReturnStatement(
+          convertIRExpr(lastStmt)
+        ));
+      }
+      // Otherwise convert normally
+      else {
+        const converted = convertIRNode(lastStmt);
+        if (Array.isArray(converted)) {
+          bodyStatements.push(...converted);
+        } else if (converted) {
+          bodyStatements.push(converted);
+        }
+      }
+    }
+    
+    // Combine declarations and body statements
+    const allStatements = [...declarations, ...bodyStatements];
+    
+    // Create an IIFE to contain our block
+    return ts.factory.createCallExpression(
+      ts.factory.createFunctionExpression(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [],
+        undefined,
+        ts.factory.createBlock(allStatements, true)
+      ),
+      undefined,
+      []
+    );
+  } catch (error) {
+    throw new CodeGenError(
+      `Failed to convert let expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "let expression",
+      node,
+    );
+  }
+}
+
+/**
+ * Convert an fx function declaration
+ */
 function convertFxFunctionDeclaration(
   node: IR.IRFxFunctionDeclaration,
 ): ts.FunctionDeclaration {
@@ -517,10 +679,32 @@ function convertFxFunctionDeclaration(
         )
       );
     }
+
+    // Get the body block and make sure all expressions in it return their values
+    const bodyBlock = convertBlockStatement(node.body);
     
-    // Add the function body
-    const originalBodyStatements = convertBlockStatement(node.body).statements;
-    bodyStatements.push(...originalBodyStatements);
+    // Create a function expression for the function body
+    const functionExpression = ts.factory.createFunctionExpression(
+      undefined,    // modifiers
+      undefined,    // asterisk token
+      undefined,    // name
+      undefined,    // type parameters
+      [],           // parameters
+      undefined,    // return type
+      bodyBlock     // body
+    );
+    
+    // Create an immediately invoked function expression
+    const iife = ts.factory.createCallExpression(
+      functionExpression,
+      undefined,    // type arguments
+      []            // arguments
+    );
+    
+    // Add a return statement for the IIFE
+    bodyStatements.push(
+      ts.factory.createReturnStatement(iife)
+    );
     
     // Create the function declaration
     return ts.factory.createFunctionDeclaration(
@@ -1232,21 +1416,66 @@ function convertReturnStatement(
   }
 }
 
+// Add a new function to directly fix the IIFE in fx functions
+function ensureReturnInStatementList(statements: ts.Statement[]): ts.Statement[] {
+  // If there are no statements, return an empty array
+  if (statements.length === 0) return statements;
+  
+  // Get the last statement
+  const lastStatement = statements[statements.length - 1];
+  
+  // If the last statement is already a return statement, no change needed
+  if (ts.isReturnStatement(lastStatement)) {
+    return statements;
+  }
+  
+  // If the last statement is an expression statement, replace it with a return statement
+  if (ts.isExpressionStatement(lastStatement)) {
+    const newStatements = [...statements];
+    newStatements[newStatements.length - 1] = ts.factory.createReturnStatement(lastStatement.expression);
+    return newStatements;
+  }
+  
+  // Otherwise, keep the statements as they are
+  return statements;
+}
+
 /**
  * Convert a block statement.
  */
 function convertBlockStatement(node: IR.IRBlockStatement): ts.Block {
   try {
     const statements: ts.Statement[] = [];
-    for (const stmt of node.body) {
-      // Special handling for return statements
-      if (stmt.type === IR.IRNodeType.ReturnStatement) {
-        const returnStmt = convertReturnStatement(stmt as IR.IRReturnStatement);
-        statements.push(returnStmt);
-        // After a return statement, no further statements should be processed
-        break;
-      } else {
-        const converted = convertIRNode(stmt);
+    
+    // Process all statements except the last one
+    for (let i = 0; i < node.body.length - 1; i++) {
+      const stmt = node.body[i];
+      const converted = convertIRNode(stmt);
+      
+      if (Array.isArray(converted)) {
+        statements.push(...converted);
+      } else if (converted) {
+        statements.push(converted);
+      }
+    }
+    
+    // Handle the last statement specially for return value
+    if (node.body.length > 0) {
+      const lastStmt = node.body[node.body.length - 1];
+      
+      // If it's already a return statement, use it
+      if (lastStmt.type === IR.IRNodeType.ReturnStatement) {
+        statements.push(convertReturnStatement(lastStmt as IR.IRReturnStatement));
+      } 
+      // If it's an expression statement, convert to a return
+      else if (isExpressionNode(lastStmt)) {
+        statements.push(ts.factory.createReturnStatement(
+          convertIRExpr(lastStmt)
+        ));
+      }
+      // Otherwise convert normally
+      else {
+        const converted = convertIRNode(lastStmt);
         if (Array.isArray(converted)) {
           statements.push(...converted);
         } else if (converted) {
@@ -1254,6 +1483,7 @@ function convertBlockStatement(node: IR.IRBlockStatement): ts.Block {
         }
       }
     }
+    
     return ts.factory.createBlock(statements, true);
   } catch (error) {
     throw new CodeGenError(
@@ -1264,6 +1494,25 @@ function convertBlockStatement(node: IR.IRBlockStatement): ts.Block {
       node,
     );
   }
+}
+
+function isExpressionNode(node: IR.IRNode): boolean {
+  const expressionTypes = [
+    IR.IRNodeType.CallExpression,
+    IR.IRNodeType.BinaryExpression,
+    IR.IRNodeType.UnaryExpression,
+    IR.IRNodeType.ConditionalExpression,
+    IR.IRNodeType.MemberExpression,
+    IR.IRNodeType.ArrayExpression, 
+    IR.IRNodeType.ObjectExpression,
+    IR.IRNodeType.Identifier,
+    IR.IRNodeType.StringLiteral,
+    IR.IRNodeType.NumericLiteral,
+    IR.IRNodeType.BooleanLiteral,
+    IR.IRNodeType.NullLiteral
+  ];
+  
+  return expressionTypes.includes(node.type);
 }
 
 /**
