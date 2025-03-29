@@ -7,14 +7,29 @@
 (defmacro not (x)
   `(if ~x false true))
 
-(defmacro unless (test expr)
-  `(if ~test nil ~expr))
+(defmacro unless (test & body)
+  `(if ~test
+       nil
+       (do ~@body)))
 
 (defmacro inc (x)
   `(+ ~x 1))
 
 (defmacro dec (x)
   `(- ~x 1))
+
+(defmacro when (test & body)
+  `(if ~test
+       (do ~@body)
+       nil))
+
+(defmacro when-let (binding & body)
+  (let (var-name (first binding)
+        var-value (second binding))
+    `((lambda (~var-name)
+         (when ~var-name
+             ~@body))
+       ~var-value)))
 
 (defmacro print (& args)
   `(console.log ~@args))
@@ -38,12 +53,6 @@
       (if (= (length args) 1)
           `(+ "" ~(first args))
           `(+ ~@args))))
-
-(defmacro do (& body)
-  (if (= (length body) 0)
-      nil
-      `(let (temp (lambda () ~@body))
-         (temp))))
 
 (defmacro contains? (coll key)
   `(js-call ~coll "has" ~key))

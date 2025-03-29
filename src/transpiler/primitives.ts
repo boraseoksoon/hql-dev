@@ -35,6 +35,7 @@ export const KERNEL_PRIMITIVES = new Set([
   "unquote-splicing",
   "loop",
   "recur",
+  "do",
   "return",
 ]);
 

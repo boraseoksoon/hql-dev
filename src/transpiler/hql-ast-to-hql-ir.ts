@@ -184,7 +184,7 @@ function initializeTransformFactory(): void {
       transformFactory.set("export", null);
       transformFactory.set("import", null);
 
-      transformFactory.set("when", transformWhen);
+      transformFactory.set("do", transformDo);
       transformFactory.set("return", transformReturn);
 
       logger.debug(`Registered ${transformFactory.size} handler functions`);
@@ -192,6 +192,54 @@ function initializeTransformFactory(): void {
     "initializeTransformFactory",
     TransformError,
   );
+}
+
+function transformDo(list: ListNode, currentDir: string): IR.IRNode {
+  // Get body expressions (skip the 'do' symbol)
+  const bodyExprs = list.elements.slice(1);
+  
+  // If no body, return null
+  if (bodyExprs.length === 0) {
+    return { type: IR.IRNodeType.NullLiteral };
+  }
+  
+  // If only one expression, just transform it directly
+  if (bodyExprs.length === 1) {
+    const expr = transformNode(bodyExprs[0], currentDir);
+    return expr || { type: IR.IRNodeType.NullLiteral };
+  }
+  
+  // Multiple expressions - create a block statement
+  const bodyNodes: IR.IRNode[] = [];
+  
+  // Transform all except the last expression
+  for (let i = 0; i < bodyExprs.length - 1; i++) {
+    const transformedExpr = transformNode(bodyExprs[i], currentDir);
+    if (transformedExpr) {
+      // Add as a statement (not a return)
+      bodyNodes.push(transformedExpr);
+    }
+  }
+  
+  // Transform the last expression specially - it's the return value
+  const lastExpr = transformNode(bodyExprs[bodyExprs.length - 1], currentDir);
+  if (lastExpr) {
+    // Check if we need to wrap in a return statement
+    if (loopContextStack.length > 0 && 
+        lastExpr.type === IR.IRNodeType.ReturnStatement) {
+      // Already a return statement, just add it
+      bodyNodes.push(lastExpr);
+    } else {
+      // Not a return statement, add as is
+      bodyNodes.push(lastExpr);
+    }
+  }
+  
+  // Return a block statement
+  return {
+    type: IR.IRNodeType.BlockStatement,
+    body: bodyNodes
+  };
 }
 
 function transformReturn(list: ListNode, currentDir: string): IR.IRNode {
@@ -2700,62 +2748,75 @@ function transformQuote(list: ListNode, currentDir: string): IR.IRNode {
  * Transform an if expression.
  */
 function transformIf(list: ListNode, currentDir: string): IR.IRNode {
-  return perform(
-    () => {
-      if (list.elements.length < 3 || list.elements.length > 4) {
-        throw new ValidationError(
-          `if requires 2 or 3 arguments, got ${list.elements.length - 1}`,
-          "if expression",
-          "2 or 3 arguments",
-          `${list.elements.length - 1} arguments`,
-        );
-      }
+  try {
+    if (list.elements.length < 3 || list.elements.length > 4) {
+      throw new ValidationError(
+        `if requires 2 or 3 arguments, got ${list.elements.length - 1}`,
+        "if expression",
+        "2 or 3 arguments",
+        `${list.elements.length - 1} arguments`,
+      );
+    }
 
-      const test = transformNode(list.elements[1], currentDir);
-      if (!test) {
-        throw new ValidationError(
-          "Test condition transformed to null",
-          "if test",
-          "valid test expression",
-          "null",
-        );
-      }
+    const test = transformNode(list.elements[1], currentDir);
+    if (!test) {
+      throw new ValidationError(
+        "Test condition transformed to null",
+        "if test",
+        "valid test expression",
+        "null",
+      );
+    }
 
-      const consequent = transformNode(list.elements[2], currentDir);
-      if (!consequent) {
-        throw new ValidationError(
-          "Then branch transformed to null",
-          "if consequent",
-          "valid consequent expression",
-          "null",
-        );
-      }
+    const consequent = transformNode(list.elements[2], currentDir);
+    if (!consequent) {
+      throw new ValidationError(
+        "Then branch transformed to null",
+        "if consequent",
+        "valid consequent expression",
+        "null",
+      );
+    }
 
-      const alternate = list.elements.length > 3
-        ? transformNode(list.elements[3], currentDir)
-        : ({ type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral);
+    const alternate = list.elements.length > 3
+      ? transformNode(list.elements[3], currentDir)
+      : ({ type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral);
 
-      if (!alternate) {
-        throw new ValidationError(
-          "Else branch transformed to null",
-          "if alternate",
-          "valid alternate expression",
-          "null",
-        );
-      }
+    if (!alternate) {
+      throw new ValidationError(
+        "Else branch transformed to null",
+        "if alternate",
+        "valid alternate expression",
+        "null",
+      );
+    }
 
-      // Create conditional expression
+    // If we're in a loop context, we need to handle this differently
+    if (loopContextStack.length > 0) {
+      // Create an if statement rather than a conditional expression
       return {
-        type: IR.IRNodeType.ConditionalExpression,
+        type: IR.IRNodeType.IfStatement,
         test,
         consequent,
         alternate,
-      } as IR.IRConditionalExpression;
-    },
-    "transformIf",
-    TransformError,
-    [list],
-  );
+      } as IR.IRIfStatement;
+    }
+
+    // Regular case - create conditional expression
+    return {
+      type: IR.IRNodeType.ConditionalExpression,
+      test,
+      consequent,
+      alternate,
+    } as IR.IRConditionalExpression;
+  } catch (error) {
+    throw new TransformError(
+      `Failed to transform if: ${error instanceof Error ? error.message : String(error)}`,
+      "if transformation",
+      "valid if expression",
+      list
+    );
+  }
 }
 
 /**
@@ -4233,153 +4294,4 @@ function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
   }
 
   return statements;
-}
-
-
-/**
- * Transform a 'when' expression specially for loop/recur context
- * File: src/transpiler/hql-ast-to-hql-ir.ts
- */
-function transformWhen(list: ListNode, currentDir: string): IR.IRNode {
-  try {
-    if (list.elements.length < 2) {
-      throw new ValidationError(
-        "when requires a test condition",
-        "when expression",
-        "test condition",
-        `${list.elements.length - 1} elements`
-      );
-    }
-
-    // Transform the test condition
-    const testExpr = transformNode(list.elements[1], currentDir);
-    if (!testExpr) {
-      throw new ValidationError(
-        "Test condition in when transformed to null",
-        "when test",
-        "valid expression",
-        "null"
-      );
-    }
-
-    // Special handling for when inside a loop
-    const insideLoop = loopContextStack.length > 0;
-    
-    // No body expressions? Return null for the false branch
-    if (list.elements.length === 2) {
-      return {
-        type: IR.IRNodeType.ConditionalExpression,
-        test: testExpr,
-        consequent: { type: IR.IRNodeType.NullLiteral },
-        alternate: { type: IR.IRNodeType.NullLiteral }
-      };
-    }
-
-    // If there's only one body expression, it's simpler
-    if (list.elements.length === 3) {
-      const bodyExpr = transformNode(list.elements[2], currentDir);
-      if (!bodyExpr) {
-        throw new ValidationError(
-          "Body expression in when transformed to null",
-          "when body",
-          "valid expression",
-          "null"
-        );
-      }
-
-      // Check if this is a recur form that needs special handling
-      const isRecurForm = list.elements[2].type === "list" && 
-                         list.elements[2].elements.length > 0 &&
-                         list.elements[2].elements[0].type === "symbol" &&
-                         (list.elements[2].elements[0] as SymbolNode).name === "recur";
-      
-      if (insideLoop && isRecurForm) {
-        // Let the recur form be processed directly as a return statement
-        return {
-          type: IR.IRNodeType.IfStatement,
-          test: testExpr,
-          consequent: bodyExpr,
-          alternate: null
-        };
-      }
-
-      // Regular case
-      return {
-        type: IR.IRNodeType.ConditionalExpression,
-        test: testExpr,
-        consequent: bodyExpr,
-        alternate: { type: IR.IRNodeType.NullLiteral }
-      };
-    }
-
-    // Multiple body expressions - we'll need a block statement
-    const bodyExprs = list.elements.slice(2);
-    
-    // Check if the last expression is a recur
-    const lastExpr = bodyExprs[bodyExprs.length - 1];
-    const lastIsRecur = lastExpr.type === "list" &&
-                        lastExpr.elements.length > 0 &&
-                        lastExpr.elements[0].type === "symbol" &&
-                        (lastExpr.elements[0] as SymbolNode).name === "recur";
-    
-    if (insideLoop && lastIsRecur) {
-      // Transform all but the last expression
-      const bodyNodes: IR.IRNode[] = [];
-      
-      for (let i = 0; i < bodyExprs.length - 1; i++) {
-        const transformedExpr = transformNode(bodyExprs[i], currentDir);
-        if (transformedExpr) {
-          bodyNodes.push(transformedExpr);
-        }
-      }
-      
-      // Transform the recur expression separately
-      const recurExpr = transformNode(lastExpr, currentDir);
-      
-      // Create a block that contains all body expressions and ends with the recur
-      const bodyBlock: IR.IRBlockStatement = {
-        type: IR.IRNodeType.BlockStatement,
-        body: [...bodyNodes, recurExpr]
-      };
-      
-      // Create an if statement
-      return {
-        type: IR.IRNodeType.IfStatement,
-        test: testExpr,
-        consequent: bodyBlock,
-        alternate: null
-      };
-    }
-    
-    // Regular processing for multiple body expressions
-    const bodyNodes: IR.IRNode[] = [];
-    
-    for (const expr of bodyExprs) {
-      const transformedExpr = transformNode(expr, currentDir);
-      if (transformedExpr) {
-        bodyNodes.push(transformedExpr);
-      }
-    }
-    
-    // Create a block statement
-    const bodyBlock: IR.IRBlockStatement = {
-      type: IR.IRNodeType.BlockStatement,
-      body: bodyNodes
-    };
-    
-    // Return a conditional that executes the block if the test is true
-    return {
-      type: IR.IRNodeType.IfStatement,
-      test: testExpr,
-      consequent: bodyBlock,
-      alternate: null
-    };
-  } catch (error) {
-    throw new TransformError(
-      `Failed to transform when: ${error instanceof Error ? error.message : String(error)}`,
-      "when transformation",
-      "valid when expression",
-      list
-    );
-  }
 }
