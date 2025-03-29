@@ -1,3 +1,7 @@
+(fx stringify (value: Any) (-> String)
+  (return (js-call JSON "stringify" value)))
+  
+
 ;; test-types-enhanced-fixed.hql
 ;; This file demonstrates practical pure functions using safe JavaScript globals
 
@@ -25,8 +29,7 @@
 
 ;; Function with Any type - Using JSON for stringification
 ;; Using explicit return to demonstrate the new syntax
-(fx stringify (value: Any) (-> String)
-  (return (js-call JSON "stringify" value)))
+
 
 ;; Function using Math operations - FIXED with explicit return
 (fx calculate-distance (x1: Double y1: Double x2: Double y2: Double) (-> Double)
@@ -132,3 +135,13 @@
   (print "Test 14 (merge-objects):" test14)
   (print "Test 15 (merge-objects with null):" test15)
 )
+
+
+(let json {"name": "John", "age": 30})
+
+(fx stringify2 (value: Any) (-> String)
+  (return (js-call JSON "stringify" value)))
+
+(print (stringify2 value: json))
+(print (stringify2 value: {"name": "John", "age": 30}))
+(print (stringify2 {"name": "John", "age": 30}))

@@ -1,7 +1,7 @@
-(import _ from "npm:lodash")
+(import lodash from "npm:lodash")
 
 (defmacro capitalize-text (text)
-  `(js-call _.capitalize ~text))
+  `(js-call lodash.capitalize ~text))
 
 ;; Define a macro that uses lodash's uppercase function
 (defmacro uppercase-text (text)

@@ -122,18 +122,18 @@
   `(colorize "green" ~text))
 
 ;; Test NPM imports
-(import _ from "npm:lodash")
+(import lodash from "npm:lodash")
 
 ;; Define a macro that uses lodash's capitalize function
 (defmacro capitalize-text (text)
-  `(js-call _ "capitalize" ~text))
+  `(js-call lodash "capitalize" ~text))
 
 ;; Test HTTP imports using esm.sh CDN
-(import _ from "https://esm.sh/lodash")
+(import lodash from "https://esm.sh/lodash")
 
 ;; Define a macro that uses lodash's uppercase function
 (defmacro uppercase-text (text)
-  `(js-call _ "toUpper" ~text))
+  `(js-call lodash "toUpper" ~text))
 
 ;; Test HQL imports
 (import module from "../examples/dependency-test2/a.hql")
