@@ -258,165 +258,6 @@ function convertFnFunctionDeclaration(
   }
 }
 
-// A more comprehensive solution that also fixes nested IIFEs
-
-// Add this function to recursively fix all IIFEs in the AST
-function deepFixCallExpressions(node: ts.Node): ts.Node {
-  // Handle specific case for IIFE pattern
-  if (ts.isCallExpression(node) && 
-      ts.isFunctionExpression(node.expression) &&
-      node.expression.body) {
-    
-    // Get the body statements
-    const statements = node.expression.body.statements;
-    
-    // If there are statements, check the last one
-    if (statements.length > 0) {
-      const lastStatement = statements[statements.length - 1];
-      
-      // If it's another call expression (possibly another IIFE), fix it recursively
-      if (ts.isExpressionStatement(lastStatement) && ts.isCallExpression(lastStatement.expression)) {
-        const fixedCall = deepFixCallExpressions(lastStatement.expression) as ts.Expression;
-        
-        // Create new statements with the fixed call expression
-        const newStatements = [...statements];
-        newStatements[newStatements.length - 1] = ts.factory.createExpressionStatement(fixedCall);
-        
-        // Create a new function expression with fixed body
-        const newFn = ts.factory.createFunctionExpression(
-          node.expression.modifiers,
-          node.expression.asteriskToken,
-          node.expression.name,
-          node.expression.typeParameters,
-          node.expression.parameters,
-          node.expression.type,
-          ts.factory.createBlock(newStatements, true)
-        );
-        
-        // Create a new call expression with the fixed function
-        return ts.factory.createCallExpression(
-          newFn,
-          node.typeArguments,
-          node.arguments
-        );
-      }
-      // If it's an expression statement (not a return), convert it to a return statement
-      else if (ts.isExpressionStatement(lastStatement)) {
-        // Create new statements with the last one converted to a return
-        const newStatements = [...statements];
-        newStatements[newStatements.length - 1] = ts.factory.createReturnStatement(lastStatement.expression);
-        
-        // Create a new function expression with fixed body
-        const newFn = ts.factory.createFunctionExpression(
-          node.expression.modifiers,
-          node.expression.asteriskToken,
-          node.expression.name,
-          node.expression.typeParameters,
-          node.expression.parameters,
-          node.expression.type,
-          ts.factory.createBlock(newStatements, true)
-        );
-        
-        // Create a new call expression with the fixed function
-        return ts.factory.createCallExpression(
-          newFn,
-          node.typeArguments,
-          node.arguments
-        );
-      }
-    }
-  }
-  
-  // Recursively process all children
-  return ts.visitEachChild(node, deepFixCallExpressions, ts.nullTransformationContext);
-}
-
-function convertLetExpression(
-  node: IR.IRLetExpression,
-): ts.CallExpression {
-  try {
-    // Create variable declarations for bindings
-    const declarations: ts.Statement[] = node.bindings.map(binding => {
-      const id = convertIdentifier(binding.id);
-      const init = convertIRExpr(binding.init);
-      
-      return ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList(
-          [ts.factory.createVariableDeclaration(id, undefined, undefined, init)],
-          ts.NodeFlags.Const
-        )
-      );
-    });
-    
-    // Create body statements
-    let bodyStatements: ts.Statement[] = [];
-    
-    // Get all body statements except the last one
-    for (let i = 0; i < node.body.length - 1; i++) {
-      const stmt = node.body[i];
-      const converted = convertIRNode(stmt);
-      
-      if (Array.isArray(converted)) {
-        bodyStatements.push(...converted);
-      } else if (converted) {
-        bodyStatements.push(converted);
-      }
-    }
-    
-    // Handle the last statement specially - ensure it's returned
-    if (node.body.length > 0) {
-      const lastStmt = node.body[node.body.length - 1];
-      
-      // If it's already a return statement, use it
-      if (lastStmt.type === IR.IRNodeType.ReturnStatement) {
-        bodyStatements.push(convertReturnStatement(lastStmt as IR.IRReturnStatement));
-      } 
-      // If it's an expression, wrap it in a return
-      else if (isExpressionNode(lastStmt)) {
-        bodyStatements.push(ts.factory.createReturnStatement(
-          convertIRExpr(lastStmt)
-        ));
-      }
-      // Otherwise convert normally
-      else {
-        const converted = convertIRNode(lastStmt);
-        if (Array.isArray(converted)) {
-          bodyStatements.push(...converted);
-        } else if (converted) {
-          bodyStatements.push(converted);
-        }
-      }
-    }
-    
-    // Combine declarations and body statements
-    const allStatements = [...declarations, ...bodyStatements];
-    
-    // Create an IIFE to contain our block
-    return ts.factory.createCallExpression(
-      ts.factory.createFunctionExpression(
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        [],
-        undefined,
-        ts.factory.createBlock(allStatements, true)
-      ),
-      undefined,
-      []
-    );
-  } catch (error) {
-    throw new CodeGenError(
-      `Failed to convert let expression: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      "let expression",
-      node,
-    );
-  }
-}
-
 /**
  * Convert an fx function declaration
  */
@@ -447,8 +288,22 @@ function convertFxFunctionDeclaration(
     // Initialize parameters with defaults
     for (const param of node.params) {
       const paramName = param.name;
-      const defaultValue = defaultValues.get(paramName) || 
-                          ts.factory.createIdentifier("undefined");
+      // Create a proper default value - zero for numeric types, empty string for string, false for boolean
+      let defaultExpr: ts.Expression = ts.factory.createIdentifier("undefined");
+      
+      if (defaultValues.has(paramName)) {
+        defaultExpr = defaultValues.get(paramName)!;
+      } else {
+        // If no explicit default provided, use type-appropriate defaults
+        const paramType = node.paramTypes.find(pt => pt.name === paramName)?.type;
+        if (paramType === "Int" || paramType === "Double") {
+          defaultExpr = ts.factory.createNumericLiteral("0");
+        } else if (paramType === "String") {
+          defaultExpr = ts.factory.createStringLiteral("");
+        } else if (paramType === "Bool") {
+          defaultExpr = ts.factory.createFalse();
+        }
+      }
       
       bodyStatements.push(
         ts.factory.createVariableStatement(
@@ -458,7 +313,7 @@ function convertFxFunctionDeclaration(
               convertIdentifier(param),
               undefined,
               undefined,
-              defaultValue
+              defaultExpr
             )],
             ts.NodeFlags.Let
           )
@@ -468,9 +323,6 @@ function convertFxFunctionDeclaration(
     
     // Handle parameter assignment with special object handling
     if (node.params.length > 0) {
-      // Get the first parameter (most common case)
-      const firstParam = node.params[0];
-      
       // Create a conditional to check if the first argument is an object (for named params)
       bodyStatements.push(
         ts.factory.createIfStatement(
@@ -526,9 +378,9 @@ function convertFxFunctionDeclaration(
               )
             )
           ),
-          // Then: Check for named parameters and fallback to using the object itself
+          // Then: Handle named parameters
           ts.factory.createBlock([
-            // First try named parameters
+            // First check for named parameters 
             ...node.params.map(param => 
               ts.factory.createIfStatement(
                 ts.factory.createBinaryExpression(
@@ -558,16 +410,31 @@ function convertFxFunctionDeclaration(
                 undefined
               )
             ),
-            // If no named parameter was found for the first parameter, use the object itself
+            // This is the key fix: if first parameter didn't get set by a named parameter,
+            // and we're handling a single object argument, use the object itself as the first parameter
             ts.factory.createIfStatement(
               ts.factory.createBinaryExpression(
-                convertIdentifier(firstParam),
-                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                defaultValues.get(firstParam.name) || ts.factory.createIdentifier("undefined")
+                ts.factory.createBinaryExpression(
+                  ts.factory.createIdentifier(node.params[0].name),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                  // Check if it equals the default value (undefined or type-specific default)
+                  defaultValues.has(node.params[0].name) ? 
+                    defaultValues.get(node.params[0].name)! : 
+                    ts.factory.createIdentifier("undefined")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                ts.factory.createBinaryExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createIdentifier("length")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.GreaterThanToken), 
+                  ts.factory.createNumericLiteral("0")
+                )
               ),
               ts.factory.createExpressionStatement(
                 ts.factory.createBinaryExpression(
-                  convertIdentifier(firstParam),
+                  convertIdentifier(node.params[0]),
                   ts.factory.createToken(ts.SyntaxKind.EqualsToken),
                   ts.factory.createElementAccessExpression(
                     ts.factory.createIdentifier("args"),
@@ -578,7 +445,7 @@ function convertFxFunctionDeclaration(
               undefined
             )
           ], true),
-          // Else: Just use positional parameters
+          // Else: Handle positional parameters
           ts.factory.createBlock(
             node.params.map((param, index) => 
               ts.factory.createIfStatement(
@@ -633,7 +500,7 @@ function convertFxFunctionDeclaration(
       );
     }
     
-    // Handle parameter deep copying - now only done once after all parameter assignments
+    // Handle parameter deep copying - once after all parameter assignments
     for (const param of node.params) {
       bodyStatements.push(
         ts.factory.createExpressionStatement(
@@ -680,31 +547,13 @@ function convertFxFunctionDeclaration(
       );
     }
 
-    // Get the body block and make sure all expressions in it return their values
+    // Add all the body statements from the original function
     const bodyBlock = convertBlockStatement(node.body);
     
-    // Create a function expression for the function body
-    const functionExpression = ts.factory.createFunctionExpression(
-      undefined,    // modifiers
-      undefined,    // asterisk token
-      undefined,    // name
-      undefined,    // type parameters
-      [],           // parameters
-      undefined,    // return type
-      bodyBlock     // body
-    );
-    
-    // Create an immediately invoked function expression
-    const iife = ts.factory.createCallExpression(
-      functionExpression,
-      undefined,    // type arguments
-      []            // arguments
-    );
-    
-    // Add a return statement for the IIFE
-    bodyStatements.push(
-      ts.factory.createReturnStatement(iife)
-    );
+    // Add all the statements from the body
+    for (const statement of bodyBlock.statements) {
+      bodyStatements.push(statement);
+    }
     
     // Create the function declaration
     return ts.factory.createFunctionDeclaration(
