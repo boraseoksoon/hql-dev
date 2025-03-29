@@ -166,26 +166,95 @@
 
 (defmacro for (binding & body)
   (let (var (first binding))
-    (if (= (length binding) 2)
-      ; Simple case: (for (i n) body) - iterate from 0 to n-1
-      `(loop (~var 0)
-         (if (< ~var ~(second binding))
-           (do
-             ~@body
-             (recur (+ ~var 1)))
-           nil))
-      (if (= (length binding) 3)
-        ; Medium case: (for (i start end) body) - iterate from start to end-1
-        `(loop (~var ~(second binding))
-           (if (< ~var ~(get binding 2))
-             (do
-               ~@body
-               (recur (+ ~var 1)))
-             nil))
-        ; Full case: (for (i start end step) body) - iterate with custom step
-        `(loop (~var ~(second binding))
-           (if (< ~var ~(get binding 2))
-             (do
-               ~@body
-               (recur (+ ~var ~(get binding 3))))
-             nil))))))
+    (cond
+      ;; Case: (for (i to: 10) ...)
+      ((and (= (length binding) 3)
+            (= (name (nth binding 1)) "to:"))
+       `(loop (~var 0)
+          (if (< ~var ~(nth binding 2))
+            (do
+              ~@body
+              (recur (+ ~var 1)))
+            nil)))
+      
+      ;; Case: (for (i to: 10 by: 2) ...)
+      ((and (= (length binding) 5)
+            (= (name (nth binding 1)) "to:")
+            (= (name (nth binding 3)) "by:"))
+       `(loop (~var 0)
+          (if (< ~var ~(nth binding 2))
+            (do
+              ~@body
+              (recur (+ ~var ~(nth binding 4))))
+            nil)))
+      
+      ;; Case: (for (i from: 0 to: 10) ...)
+      ((and (= (length binding) 5)
+            (= (name (nth binding 1)) "from:")
+            (= (name (nth binding 3)) "to:"))
+       `(loop (~var ~(nth binding 2))
+          (if (< ~var ~(nth binding 4))
+            (do
+              ~@body
+              (recur (+ ~var 1)))
+            nil)))
+      
+      ;; Case: (for (i from: 0 to: 10 by: 2) ...)
+      ((and (= (length binding) 7)
+            (= (name (nth binding 1)) "from:")
+            (= (name (nth binding 3)) "to:")
+            (= (name (nth binding 5)) "by:"))
+       `(loop (~var ~(nth binding 2))
+          (if (< ~var ~(nth binding 4))
+            (do
+              ~@body
+              (recur (+ ~var ~(nth binding 6))))
+            nil)))
+      
+      ;; Original cases unchanged
+      ((= (length binding) 2)
+       `(loop (~var 0)
+          (if (< ~var ~(second binding))
+            (do
+              ~@body
+              (recur (+ ~var 1)))
+            nil)))
+      
+      ((= (length binding) 3)
+       `(loop (~var ~(second binding))
+          (if (< ~var ~(nth binding 2))
+            (do
+              ~@body
+              (recur (+ ~var 1)))
+            nil)))
+      
+      ((= (length binding) 4)
+       `(loop (~var ~(second binding))
+          (if (< ~var ~(nth binding 2))
+            (do
+              ~@body
+              (recur (+ ~var ~(nth binding 3))))
+            nil)))
+      
+      (true nil))))
+
+(defmacro for-loop (binding & body)
+  (let (var (first binding))
+    (if (= (length binding) 3)
+        ;; Case: (for-loop (i to: 10) ...)
+        `(for (~var ~(nth binding 2)) ~@body)
+        
+        (if (= (length binding) 5)
+            (if (= (nth binding 3) 'to:)
+                ;; Case: (for-loop (i from: 5 to: 10) ...)
+                `(for (~var ~(nth binding 2) ~(nth binding 4)) ~@body)
+                
+                ;; Case: (for-loop (i to: 10 by: 2) ...)
+                `(for (~var 0 ~(nth binding 2) ~(nth binding 4)) ~@body))
+            
+            (if (= (length binding) 7)
+                ;; Case: (for-loop (i from: 0 to: 10 by: 2) ...)
+                `(for (~var ~(nth binding 2) ~(nth binding 4) ~(nth binding 6)) ~@body)
+                
+                ;; Default case - just use a simple for loop
+                `(for (~var 10) ~@body))))))
