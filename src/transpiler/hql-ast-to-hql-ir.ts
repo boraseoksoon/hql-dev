@@ -652,26 +652,18 @@ function processFnFunctionCall(
     }
   }
 
-  // If we have a rest parameter, add any remaining arguments to an array
+  // If we have a rest parameter, add all remaining arguments individually
   if (hasRestParam) {
     const restArgStartIndex = regularParamNames.length;
     
-    // Create an array for rest arguments
-    const restArgs: IR.IRNode[] = [];
-    
+    // Process all remaining arguments individually
     for (let i = restArgStartIndex; i < positionalArgs.length; i++) {
       const arg = positionalArgs[i];
       const transformedArg = transformNode(arg, currentDir);
       if (transformedArg) {
-        restArgs.push(transformedArg);
+        finalArgs.push(transformedArg);
       }
     }
-    
-    // No validation needed for missing rest args - it can be an empty array
-    finalArgs.push({
-      type: IR.IRNodeType.ArrayExpression,
-      elements: restArgs
-    } as IR.IRArrayExpression);
   } else if (positionalArgs.length > paramNames.length) {
     // Too many arguments without a rest parameter
     throw new ValidationError(

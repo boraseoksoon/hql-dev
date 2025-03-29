@@ -783,21 +783,28 @@ function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
       return ts.factory.createCallExpression(
         innerCall,
         undefined,
-        node.arguments.map((arg) => convertIRExpr(arg)),
+        node.arguments.map(arg => unwrapRestArg(convertIRExpr(arg)))
       );
     }
     const callee = convertIRExpr(node.callee);
-    const args = node.arguments.map((arg) => convertIRExpr(arg));
+    const args = node.arguments.map(arg => unwrapRestArg(convertIRExpr(arg)));
     return ts.factory.createCallExpression(callee, undefined, args);
   } catch (error) {
     throw new CodeGenError(
-      `Failed to convert call expression: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `Failed to convert call expression: ${error instanceof Error ? error.message : String(error)}`,
       "call expression",
       node,
     );
   }
+}
+
+function unwrapRestArg(expr: ts.Expression): ts.Expression {
+  // If the expression is an array literal with exactly one element,
+  // assume it is the result of wrapping a rest parameter.
+  if (ts.isArrayLiteralExpression(expr) && expr.elements.length === 1) {
+    return expr.elements[0];
+  }
+  return expr;
 }
 
 /**
@@ -1265,42 +1272,17 @@ function convertReturnStatement(
   }
 }
 
-// Add a new function to directly fix the IIFE in fx functions
-function ensureReturnInStatementList(statements: ts.Statement[]): ts.Statement[] {
-  // If there are no statements, return an empty array
-  if (statements.length === 0) return statements;
-  
-  // Get the last statement
-  const lastStatement = statements[statements.length - 1];
-  
-  // If the last statement is already a return statement, no change needed
-  if (ts.isReturnStatement(lastStatement)) {
-    return statements;
-  }
-  
-  // If the last statement is an expression statement, replace it with a return statement
-  if (ts.isExpressionStatement(lastStatement)) {
-    const newStatements = [...statements];
-    newStatements[newStatements.length - 1] = ts.factory.createReturnStatement(lastStatement.expression);
-    return newStatements;
-  }
-  
-  // Otherwise, keep the statements as they are
-  return statements;
-}
-
 /**
  * Convert a block statement.
  */
 function convertBlockStatement(node: IR.IRBlockStatement): ts.Block {
   try {
-    const statements: ts.Statement[] = [];
+    let statements: ts.Statement[] = [];
     
-    // Process all statements except the last one
+    // Process all statements except the last one.
     for (let i = 0; i < node.body.length - 1; i++) {
       const stmt = node.body[i];
       const converted = convertIRNode(stmt);
-      
       if (Array.isArray(converted)) {
         statements.push(...converted);
       } else if (converted) {
@@ -1308,22 +1290,14 @@ function convertBlockStatement(node: IR.IRBlockStatement): ts.Block {
       }
     }
     
-    // Handle the last statement specially for return value
+    // Handle the last statement specially.
     if (node.body.length > 0) {
       const lastStmt = node.body[node.body.length - 1];
-      
-      // If it's already a return statement, use it
       if (lastStmt.type === IR.IRNodeType.ReturnStatement) {
         statements.push(convertReturnStatement(lastStmt as IR.IRReturnStatement));
-      } 
-      // If it's an expression statement, convert to a return
-      else if (isExpressionNode(lastStmt)) {
-        statements.push(ts.factory.createReturnStatement(
-          convertIRExpr(lastStmt)
-        ));
-      }
-      // Otherwise convert normally
-      else {
+      } else if (isExpressionNode(lastStmt)) {
+        statements.push(ts.factory.createReturnStatement(convertIRExpr(lastStmt)));
+      } else {
         const converted = convertIRNode(lastStmt);
         if (Array.isArray(converted)) {
           statements.push(...converted);
@@ -1333,12 +1307,30 @@ function convertBlockStatement(node: IR.IRBlockStatement): ts.Block {
       }
     }
     
+    // --- New code: Filter out type hint calls ---
+    // Remove any expression statement that is a call to get(_, ...)
+    statements = statements.filter(statement => {
+      if (ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)) {
+        const callExpr = statement.expression;
+        if (
+          ts.isIdentifier(callExpr.expression) &&
+          callExpr.expression.text === "get" &&
+          callExpr.arguments.length === 2 &&
+          ts.isIdentifier(callExpr.arguments[0]) &&
+          callExpr.arguments[0].text === "_"
+        ) {
+          // This is our type hint call (e.g. get(_, Int)) so skip it.
+          return false;
+        }
+      }
+      return true;
+    });
+    // --- End new code ---
+    
     return ts.factory.createBlock(statements, true);
   } catch (error) {
     throw new CodeGenError(
-      `Failed to convert block statement: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `Failed to convert block statement: ${error instanceof Error ? error.message : String(error)}`,
       "block statement",
       node,
     );
