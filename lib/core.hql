@@ -40,14 +40,6 @@
 (fn concat (arr1 arr2)
   (js-call arr1 "concat" arr2))
 
-(fn empty? (coll)
-  (cond
-    ((nil? coll) true)
-    ((list? coll) (= (length coll) 0))
-    ((js-call coll "size") (= (js-call coll "size") 0))
-    ((map? coll) (= (length (js-call Object "keys" coll)) 0))
-    (true false)))
-
 (defmacro str (& args)
   (if (empty? args)
       (if (= (length args) 1)
@@ -142,3 +134,28 @@
 ;; TODO: replace syntax transformer
 ;; (defmacro fx (name params return-type & body)
 ;;  `(fx ~name ~params ~return-type ~@body))
+
+
+;; ====================================================
+;; HQL Loop Constructs Library
+;; This library implements a series of looping constructs
+;; built on the fundamental loop/recur mechanism
+;; ====================================================
+
+;; ====================
+;; 1. While Loop
+;; ====================
+
+;; Simple while loop - repeats body as long as condition is true
+;; Example usage:
+;; (var count 0)
+;; (while (< count 5)
+;;   (print count)
+;;   (set! count (+ count 1)))
+(defmacro while (condition & body)
+  `(loop ()
+     (if ~condition
+       (do
+         ~@body
+         (recur))
+       nil)))
