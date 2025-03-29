@@ -164,31 +164,28 @@
          (recur))
        nil)))
 
-(defmacro range (& args)
-  (if (= (length args) 1)
-    `(loop (i 0 result [])
-       (if (< i ~(first args))
-         (recur (+ i 1) (js-call result "concat" [i]))
-         result))
-    (if (= (length args) 2)
-      `(loop (i ~(first args) result [])
-         (if (< i ~(second args))
-           (recur (+ i 1) (js-call result "concat" [i]))
-           result))
-      (if (= (length args) 3)
-        `(loop (i ~(first args) result [])
-           (if (< i ~(second args))
-             (recur (+ i ~(third args)) (js-call result "concat" [i]))
-             result))
-        (throw "range requires 1-3 arguments")))))
-
 (defmacro for (binding & body)
-  (let (var-name (first binding)
-        sequence (second binding))
-    `(let (seq-val ~sequence)
-       (loop (i 0)
-         (when (< i (length seq-val))
-           (let (~var-name (get seq-val i))
+  (let (var (first binding))
+    (if (= (length binding) 2)
+      ; Simple case: (for (i n) body) - iterate from 0 to n-1
+      `(loop (~var 0)
+         (if (< ~var ~(second binding))
+           (do
+             ~@body
+             (recur (+ ~var 1)))
+           nil))
+      (if (= (length binding) 3)
+        ; Medium case: (for (i start end) body) - iterate from start to end-1
+        `(loop (~var ~(second binding))
+           (if (< ~var ~(get binding 2))
              (do
                ~@body
-               (recur (+ i 1)))))))))
+               (recur (+ ~var 1)))
+             nil))
+        ; Full case: (for (i start end step) body) - iterate with custom step
+        `(loop (~var ~(second binding))
+           (if (< ~var ~(get binding 2))
+             (do
+               ~@body
+               (recur (+ ~var ~(get binding 3))))
+             nil))))))
