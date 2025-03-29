@@ -163,3 +163,32 @@
          ~@body
          (recur))
        nil)))
+
+(defmacro range (& args)
+  (if (= (length args) 1)
+    `(loop (i 0 result [])
+       (if (< i ~(first args))
+         (recur (+ i 1) (js-call result "concat" [i]))
+         result))
+    (if (= (length args) 2)
+      `(loop (i ~(first args) result [])
+         (if (< i ~(second args))
+           (recur (+ i 1) (js-call result "concat" [i]))
+           result))
+      (if (= (length args) 3)
+        `(loop (i ~(first args) result [])
+           (if (< i ~(second args))
+             (recur (+ i ~(third args)) (js-call result "concat" [i]))
+             result))
+        (throw "range requires 1-3 arguments")))))
+
+(defmacro for (binding & body)
+  (let (var-name (first binding)
+        sequence (second binding))
+    `(let (seq-val ~sequence)
+       (loop (i 0)
+         (when (< i (length seq-val))
+           (let (~var-name (get seq-val i))
+             (do
+               ~@body
+               (recur (+ i 1)))))))))
