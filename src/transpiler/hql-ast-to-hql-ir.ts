@@ -199,31 +199,31 @@ function transformReturn(list: ListNode, currentDir: string): IR.IRNode {
           "return requires an expression to return",
           "return statement",
           "expression to return",
-          "no expression provided"
+          "no expression provided",
         );
       }
 
       // Get the value to return
       const valueNode = transformNode(list.elements[1], currentDir);
-      
+
       if (!valueNode) {
         throw new ValidationError(
           "Return value transformed to null",
           "return value",
           "valid expression",
-          "null"
+          "null",
         );
       }
 
       // Create a return statement
       return {
         type: IR.IRNodeType.ReturnStatement,
-        argument: valueNode
+        argument: valueNode,
       } as IR.IRReturnStatement;
     },
     "transformReturn",
     TransformError,
-    [list]
+    [list],
   );
 }
 
@@ -239,13 +239,6 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
 
   const first = list.elements[0];
 
-  if (first.type === "symbol" && (first as SymbolNode).name === "if") {
-    // Process if-expression to check for return statements
-    const ifExpr = transformIf(list, currentDir);
-    // If this is a normal conditional, return it as is
-    return ifExpr;
-  }
-  
   if (first.type === "symbol") {
     const op = (first as SymbolNode).name;
 
@@ -253,6 +246,19 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     if (op === "defmacro" || op === "macro") {
       logger.debug(`Skipping macro definition: ${op}`);
       return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+    }
+
+    // Handle return statements
+    if (op === "return") {
+      return transformReturn(list, currentDir);
+    }
+
+    // Handle if-expression to check for return statements
+    if (op === "if") {
+      // Process if-expression to check for return statements
+      const ifExpr = transformIf(list, currentDir);
+      // If this is a normal conditional, return it as is
+      return ifExpr;
     }
 
     // Handle import/export forms
@@ -281,41 +287,51 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     const fnDef = fnFunctionRegistry.get(op);
     if (fnDef) {
       logger.debug(`Processing call to fn function ${op}`);
-      return processFnFunctionCall(op, fnDef, list.elements.slice(1), currentDir);
+      return processFnFunctionCall(
+        op,
+        fnDef,
+        list.elements.slice(1),
+        currentDir,
+      );
     }
 
     // Check if this is a call to an fx function
     const fxDef = fxFunctionRegistry.get(op);
     if (fxDef) {
       logger.debug(`Processing call to fx function ${op}`);
-      
+
       // Check if we have any placeholder symbols in the arguments
       const hasPlaceholders = list.elements.slice(1).some(isPlaceholder);
-      
+
       // If we have placeholders or named arguments, use our specialized processor
       if (hasPlaceholders || hasNamedArguments(list)) {
-        return processFxFunctionCall(op, fxDef, list.elements.slice(1), currentDir);
+        return processFxFunctionCall(
+          op,
+          fxDef,
+          list.elements.slice(1),
+          currentDir,
+        );
       }
-      
+
       // Otherwise use the standard function call transformation
       return {
         type: IR.IRNodeType.CallExpression,
-        callee: { 
-          type: IR.IRNodeType.Identifier, 
-          name: sanitizeIdentifier(op) 
+        callee: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(op),
         },
-        arguments: list.elements.slice(1).map(arg => {
+        arguments: list.elements.slice(1).map((arg) => {
           const transformed = transformNode(arg, currentDir);
           if (!transformed) {
             throw new ValidationError(
               `Argument transformed to null in call to ${op}`,
               "function call",
               "valid expression",
-              "null"
+              "null",
             );
           }
           return transformed;
-        })
+        }),
       } as IR.IRCallExpression;
     }
 
@@ -363,7 +379,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
 function transformFn(list: ListNode, currentDir: string): IR.IRNode {
   try {
     logger.debug("Transforming fn function");
-    
+
     // Validate fn syntax
     if (list.elements.length < 3) {
       throw new ValidationError(
@@ -445,7 +461,6 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
   }
 }
 
-
 /**
  * Parse parameters with default values for fn functions
  */
@@ -459,7 +474,7 @@ function parseParametersWithDefaults(
   // Initialize result structures
   const params: IR.IRIdentifier[] = [];
   const defaults = new Map<string, IR.IRNode>();
-  
+
   // Track if we're processing a rest parameter
   let restMode = false;
 
@@ -469,13 +484,13 @@ function parseParametersWithDefaults(
 
     if (elem.type === "symbol") {
       const symbolName = (elem as SymbolNode).name;
-      
+
       // Check if this is the rest parameter indicator
       if (symbolName === "&") {
         restMode = true;
         continue;
       }
-      
+
       // Add parameter to the list, with special handling for rest parameters
       if (restMode) {
         params.push({
@@ -488,7 +503,7 @@ function parseParametersWithDefaults(
           name: sanitizeIdentifier(symbolName),
         });
       }
-      
+
       // Check for default value (=)
       if (
         !restMode && // Rest parameters can't have defaults
@@ -499,13 +514,13 @@ function parseParametersWithDefaults(
         // Make sure we have a value after the equals sign
         if (i + 2 < paramList.elements.length) {
           const defaultValueNode = paramList.elements[i + 2];
-          
+
           // Transform the default value
           const defaultValue = transformNode(defaultValueNode, currentDir);
           if (defaultValue) {
             defaults.set(symbolName, defaultValue);
           }
-          
+
           i += 2; // Skip = and default value
         } else {
           throw new ValidationError(
@@ -557,7 +572,6 @@ function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
   );
 }
 
-
 // Registry for fn functions to enable access during call site processing
 const fnFunctionRegistry = new Map<string, IR.IRFnFunctionDeclaration>();
 
@@ -593,11 +607,12 @@ function processFnFunctionCall(
   const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
 
   // Check if we have a rest parameter (name starts with "...")
-  const hasRestParam = paramNames.length > 0 && paramNames[paramNames.length - 1].startsWith("...");
-  
+  const hasRestParam = paramNames.length > 0 &&
+    paramNames[paramNames.length - 1].startsWith("...");
+
   // Get the regular parameters (all except the last one if it's a rest parameter)
   const regularParamNames = hasRestParam ? paramNames.slice(0, -1) : paramNames;
-  
+
   // Check if we have placeholders (_)
   const hasPlaceholders = args.some(isPlaceholder);
 
@@ -610,10 +625,10 @@ function processFnFunctionCall(
   // Process each regular parameter
   for (let i = 0; i < regularParamNames.length; i++) {
     const paramName = regularParamNames[i];
-    
+
     if (i < positionalArgs.length) {
       const arg = positionalArgs[i];
-      
+
       // If this argument is a placeholder, use default
       if (isPlaceholder(arg)) {
         if (defaultValues.has(paramName)) {
@@ -655,7 +670,7 @@ function processFnFunctionCall(
   // If we have a rest parameter, add all remaining arguments individually
   if (hasRestParam) {
     const restArgStartIndex = regularParamNames.length;
-    
+
     // Process all remaining arguments individually
     for (let i = restArgStartIndex; i < positionalArgs.length; i++) {
       const arg = positionalArgs[i];
@@ -730,7 +745,7 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
         // Transform it to a string literal "_" instead of an identifier
         return {
           type: IR.IRNodeType.StringLiteral,
-          value: "_"
+          value: "_",
         } as IR.IRStringLiteral;
       }
 
@@ -2486,16 +2501,18 @@ function transformLambda(list: ListNode, currentDir: string): IR.IRNode {
       for (const param of paramList.elements) {
         if (param.type === "symbol") {
           const paramName = (param as SymbolNode).name;
-          
+
           if (paramName === "&") {
             restMode = true;
             continue;
           }
-          
+
           if (restMode) {
             if (restParam !== null) {
               throw new ValidationError(
-                `Multiple rest parameters not allowed: found '${restParam.name.slice(3)}' and '${paramName}'`,
+                `Multiple rest parameters not allowed: found '${
+                  restParam.name.slice(3)
+                }' and '${paramName}'`,
                 "rest parameter",
                 "single rest parameter",
                 "multiple rest parameters",
@@ -2553,7 +2570,10 @@ function processFunctionBody(
       }
 
       // Process the last expression specially - wrap it in a return statement
-      const lastExpr = transformNode(bodyExprs[bodyExprs.length - 1], currentDir);
+      const lastExpr = transformNode(
+        bodyExprs[bodyExprs.length - 1],
+        currentDir,
+      );
       if (lastExpr) {
         // If it's already a return statement, use it as is
         if (lastExpr.type === IR.IRNodeType.ReturnStatement) {
@@ -2562,7 +2582,7 @@ function processFunctionBody(
           // Wrap in a return statement to ensure the value is returned
           bodyNodes.push({
             type: IR.IRNodeType.ReturnStatement,
-            argument: lastExpr
+            argument: lastExpr,
           } as IR.IRReturnStatement);
         }
       }
@@ -2571,7 +2591,7 @@ function processFunctionBody(
     },
     "processFunctionBody",
     TransformError,
-    [bodyExprs]
+    [bodyExprs],
   );
 }
 
@@ -3102,20 +3122,30 @@ function transformNamedArgumentCall(
 ): IR.IRNode {
   try {
     const functionName = (list.elements[0] as SymbolNode).name;
-    
+
     // Check if this is an fx or fn function
     const fxDef = fxFunctionRegistry.get(functionName);
     const fnDef = fnFunctionRegistry.get(functionName);
-    
+
     // If it's a registered function, use the specialized processor
     if (fxDef) {
       // Process named arguments for fx functions
-      return processNamedArgumentsForFx(functionName, fxDef, list.elements.slice(1), currentDir);
+      return processNamedArgumentsForFx(
+        functionName,
+        fxDef,
+        list.elements.slice(1),
+        currentDir,
+      );
     } else if (fnDef) {
       // Process named arguments for fn functions
-      return processNamedArgumentsForFn(functionName, fnDef, list.elements.slice(1), currentDir);
+      return processNamedArgumentsForFn(
+        functionName,
+        fnDef,
+        list.elements.slice(1),
+        currentDir,
+      );
     }
-    
+
     // Default handling for functions without registry entries
     // Build a single object with all named arguments
     const objProperties: IR.IRObjectProperty[] = [];
@@ -3211,19 +3241,19 @@ function processNamedArgumentsForFx(
   // Extract parameter info
   const paramNames = funcDef.params.map((p) => p.name);
   const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
-  
+
   // Create a map to track which parameters have been provided
   const providedParams = new Map<string, IR.IRNode>();
-  
+
   // Process named arguments
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    
+
     // Check if it's a named argument (param: value)
     if (arg.type === "symbol" && (arg as SymbolNode).name.endsWith(":")) {
       // Get parameter name without colon
       const paramName = (arg as SymbolNode).name.slice(0, -1);
-      
+
       // Ensure the parameter exists in the function definition
       if (!paramNames.includes(paramName)) {
         throw new ValidationError(
@@ -3233,7 +3263,7 @@ function processNamedArgumentsForFx(
           paramName,
         );
       }
-      
+
       // Ensure a value follows
       if (i + 1 >= args.length) {
         throw new ValidationError(
@@ -3243,7 +3273,7 @@ function processNamedArgumentsForFx(
           "missing value",
         );
       }
-      
+
       // Transform the value
       const valueNode = transformNode(args[i + 1], currentDir);
       if (!valueNode) {
@@ -3254,10 +3284,10 @@ function processNamedArgumentsForFx(
           "null",
         );
       }
-      
+
       // Add to provided parameters
       providedParams.set(paramName, valueNode);
-      
+
       // Skip the value
       i++;
     } else {
@@ -3269,10 +3299,10 @@ function processNamedArgumentsForFx(
       );
     }
   }
-  
+
   // Prepare the final argument list in the correct parameter order
   const finalArgs: IR.IRNode[] = [];
-  
+
   // Add arguments in the order defined in the function
   for (const paramName of paramNames) {
     if (providedParams.has(paramName)) {
@@ -3290,7 +3320,7 @@ function processNamedArgumentsForFx(
       );
     }
   }
-  
+
   // Create the final call expression
   return {
     type: IR.IRNodeType.CallExpression,
@@ -3314,19 +3344,19 @@ function processNamedArgumentsForFn(
   // Extract parameter info
   const paramNames = funcDef.params.map((p) => p.name);
   const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
-  
+
   // Create a map to track which parameters have been provided
   const providedParams = new Map<string, IR.IRNode>();
-  
+
   // Process named arguments
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    
+
     // Check if it's a named argument (param: value)
     if (arg.type === "symbol" && (arg as SymbolNode).name.endsWith(":")) {
       // Get parameter name without colon
       const paramName = (arg as SymbolNode).name.slice(0, -1);
-      
+
       // Ensure the parameter exists in the function definition
       if (!paramNames.includes(paramName)) {
         throw new ValidationError(
@@ -3336,7 +3366,7 @@ function processNamedArgumentsForFn(
           paramName,
         );
       }
-      
+
       // Ensure a value follows
       if (i + 1 >= args.length) {
         throw new ValidationError(
@@ -3346,7 +3376,7 @@ function processNamedArgumentsForFn(
           "missing value",
         );
       }
-      
+
       // Transform the value
       const valueNode = transformNode(args[i + 1], currentDir);
       if (!valueNode) {
@@ -3357,10 +3387,10 @@ function processNamedArgumentsForFn(
           "null",
         );
       }
-      
+
       // Add to provided parameters
       providedParams.set(paramName, valueNode);
-      
+
       // Skip the value
       i++;
     } else {
@@ -3372,10 +3402,10 @@ function processNamedArgumentsForFn(
       );
     }
   }
-  
+
   // Prepare the final argument list in the correct parameter order
   const finalArgs: IR.IRNode[] = [];
-  
+
   // Add arguments in the order defined in the function
   for (const paramName of paramNames) {
     if (providedParams.has(paramName)) {
@@ -3393,7 +3423,7 @@ function processNamedArgumentsForFn(
       );
     }
   }
-  
+
   // Create the final call expression
   return {
     type: IR.IRNodeType.CallExpression,
@@ -3444,14 +3474,16 @@ function parseParametersWithTypes(
           paramList.elements[i + 1].type === "symbol"
         ) {
           const typeName = (paramList.elements[i + 1] as SymbolNode).name;
-          
+
           // Validate the type
           if (!PRIMITIVE_TYPES.has(typeName)) {
             throw new ValidationError(
-              `Unsupported type '${typeName}'. Expected one of: ${Array.from(PRIMITIVE_TYPES).join(", ")}`,
+              `Unsupported type '${typeName}'. Expected one of: ${
+                Array.from(PRIMITIVE_TYPES).join(", ")
+              }`,
               "fx parameter type",
               Array.from(PRIMITIVE_TYPES).join(", "),
-              typeName
+              typeName,
             );
           }
 
@@ -3579,10 +3611,10 @@ function processFxFunctionCall(
   // Process each parameter in the function definition
   for (let i = 0; i < paramNames.length; i++) {
     const paramName = paramNames[i];
-    
+
     if (i < positionalArgs.length) {
       const arg = positionalArgs[i];
-      
+
       // If this argument is a placeholder, use default
       if (isPlaceholder(arg)) {
         if (defaultValues.has(paramName)) {
@@ -3645,7 +3677,7 @@ function processFxFunctionCall(
 function transformFx(list: ListNode, currentDir: string): IR.IRNode {
   try {
     logger.debug("Transforming fx function");
-    
+
     // Validate fx syntax
     if (list.elements.length < 4) {
       throw new ValidationError(
@@ -3695,10 +3727,10 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
         returnTypeNode.type,
       );
     }
-    
+
     const returnTypeList = returnTypeNode as ListNode;
     const returnTypeSymbol = returnTypeList.elements[1];
-    
+
     if (returnTypeSymbol.type !== "symbol") {
       throw new ValidationError(
         "Return type must be a symbol",
@@ -3712,10 +3744,12 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
     // Validate return type is supported
     if (!PRIMITIVE_TYPES.has(returnType)) {
       throw new ValidationError(
-        `Unsupported return type '${returnType}'. Expected one of: ${Array.from(PRIMITIVE_TYPES).join(", ")}`,
+        `Unsupported return type '${returnType}'. Expected one of: ${
+          Array.from(PRIMITIVE_TYPES).join(", ")
+        }`,
         "fx return type",
         Array.from(PRIMITIVE_TYPES).join(", "),
-        returnType
+        returnType,
       );
     }
 
@@ -3735,7 +3769,9 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
     for (const [paramName, paramType] of paramTypes.entries()) {
       if (!PRIMITIVE_TYPES.has(paramType)) {
         throw new ValidationError(
-          `Parameter '${paramName}' has unsupported type '${paramType}'. Expected one of: ${Array.from(PRIMITIVE_TYPES).join(", ")}`,
+          `Parameter '${paramName}' has unsupported type '${paramType}'. Expected one of: ${
+            Array.from(PRIMITIVE_TYPES).join(", ")
+          }`,
           "fx parameter type",
           Array.from(PRIMITIVE_TYPES).join(", "),
           paramType,

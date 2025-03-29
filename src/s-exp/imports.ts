@@ -1082,7 +1082,6 @@ function processFileDefinitions(
       ) continue;
       const op = expr.elements[0].name;
       if (op === "let" && expr.elements.length === 3) {
-
         try {
           processLetDeclaration(expr, env, logger);
         } catch (error) {

@@ -212,6 +212,26 @@
 
 (print "sequential returns: " (sequential-returns 10))  ;; Should print 11
 
+
+
+;; 4. Multiple sequential returns (only first one matters)
+(fn sequential-returns2 (x)
+  ((+ x 1))
+  (return (+ x 2)) ;; return 
+  (+ x 3))
+
+(print "sequential returns: " (sequential-returns2 10))  ;; Should print 12
+
+
+
+;; 4. Multiple sequential returns (only first one matters)
+(fn sequential-returns3 (x)
+  ((+ x 1))
+  ((+ x 2))
+  (+ x 3)) ;; return (implicit. the last expression)
+
+(print "sequential returns: " (sequential-returns3 10))  ;; Should print 13
+
 ;; 5. Return from deeply nested condition
 (fn deep-conditional-return (x)
   (if (> x 10)

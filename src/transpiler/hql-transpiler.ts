@@ -14,8 +14,8 @@ import {
   ImportError,
   MacroError,
   ParseError,
-  TranspilerError,
   TransformError,
+  TranspilerError,
 } from "./errors.ts";
 
 // Environment singleton for consistent state
@@ -85,7 +85,9 @@ export async function processHql(
 
     try {
       sexps = transformSyntax(sexps, { verbose: options.verbose });
-      logger.debug(`Syntax transformation completed for ${sexps.length} expressions`);
+      logger.debug(
+        `Syntax transformation completed for ${sexps.length} expressions`,
+      );
     } catch (error) {
       if (error instanceof TransformError) {
         throw error;
@@ -96,12 +98,14 @@ export async function processHql(
         }`,
         "syntax transformation",
         "valid HQL expressions",
-        sexps
+        sexps,
       );
     }
 
     const syntaxTime = performance.now() - startSyntaxTime;
-    logger.debug(`Syntax transformation completed in ${syntaxTime.toFixed(2)}ms`);
+    logger.debug(
+      `Syntax transformation completed in ${syntaxTime.toFixed(2)}ms`,
+    );
 
     if (options.verbose) {
       logTransformedExpressions(sexps, logger);

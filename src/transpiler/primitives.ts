@@ -20,7 +20,7 @@ export const PRIMITIVE_OPS = new Set([
   "js-export",
   "js-get",
   "js-call",
-  "return"
+  "return",
 ]);
 
 // Also add to KERNEL_PRIMITIVES for completeness
@@ -34,7 +34,7 @@ export const KERNEL_PRIMITIVES = new Set([
   "quasiquote",
   "unquote",
   "unquote-splicing",
-  "return"
+  "return",
 ]);
 
 /**

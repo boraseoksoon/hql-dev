@@ -56,8 +56,8 @@ export enum IRNodeType {
   SpreadAssignment,
   ExpressionStatement,
   FxFunctionDeclaration,
-  FnFunctionDeclaration, 
-  IfStatement
+  FnFunctionDeclaration,
+  IfStatement,
 }
 
 export interface IRNode {

@@ -14,22 +14,22 @@ const pureFunctions = new Set<string>();
 // that don't depend on or modify external state
 const SAFE_GLOBALS = new Set<string>([
   // JavaScript globals that provide pure operations
-  "String",      // String operations are pure
-  "Number",      // Number operations are pure
-  "Boolean",     // Boolean operations are pure
-  "Object",      // Object operations like assign can be pure
-  "Array",       // Array operations can be pure
-  "JSON",        // JSON stringification is a pure operation
-  "Math",        // Math operations are pure
-  "Date",        // Creating dates without using current time can be pure
+  "String", // String operations are pure
+  "Number", // Number operations are pure
+  "Boolean", // Boolean operations are pure
+  "Object", // Object operations like assign can be pure
+  "Array", // Array operations can be pure
+  "JSON", // JSON stringification is a pure operation
+  "Math", // Math operations are pure
+  "Date", // Creating dates without using current time can be pure
 ]);
 
 // JavaScript literals that aren't actually variables
 const JS_LITERALS = new Set<string>([
   "null",
-  "undefined", 
+  "undefined",
   "NaN",
-  "Infinity"
+  "Infinity",
 ]);
 
 // Register built-in pure operations - include js interop operations that are ok in pure functions
@@ -169,7 +169,7 @@ function verifySymbolPurity(
 
   // Allow safe JavaScript globals
   if (SAFE_GLOBALS.has(name)) return;
-  
+
   // Allow JavaScript literals like null, undefined, etc.
   if (JS_LITERALS.has(name)) return;
 
@@ -228,7 +228,12 @@ function verifyListPurity(
         if (SAFE_GLOBALS.has(objName)) {
           // This is a call to a safe global object method, verify all arguments
           for (let i = 3; i < elements.length; i++) {
-            verifyExpressionPurity(elements[i], funcName, paramNames, localVars);
+            verifyExpressionPurity(
+              elements[i],
+              funcName,
+              paramNames,
+              localVars,
+            );
           }
           return;
         }

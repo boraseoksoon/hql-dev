@@ -1,7 +1,9 @@
-```markdown
+````markdown
 # HQL Syntactic Sugar
 
-Let's explore how to handle all syntactic sugar consistently and how macros could eventually replace the syntax transformer. This document uses ASCII diagrams and code examples to illustrate the concepts.
+Let's explore how to handle all syntactic sugar consistently and how macros
+could eventually replace the syntax transformer. This document uses ASCII
+diagrams and code examples to illustrate the concepts.
 
 ---
 
@@ -19,6 +21,7 @@ Let's explore how to handle all syntactic sugar consistently and how macros coul
            structure literals   transformations      (user-defined)    from canonical
                [1,2,3]            like 'fx'                             expressions
 ```
+````
 
 ---
 
@@ -26,14 +29,17 @@ Let's explore how to handle all syntactic sugar consistently and how macros coul
 
 ### Identify Syntactic Sugars
 
-- **Data Structure Literals**: Already handled at the parser level (e.g., `[1,2,3]`).
+- **Data Structure Literals**: Already handled at the parser level (e.g.,
+  `[1,2,3]`).
 - **Special Forms**: Such as `fx`.
-- **Other Shorthand Notations**: Any additional syntactic sugar that might be introduced.
+- **Other Shorthand Notations**: Any additional syntactic sugar that might be
+  introduced.
 
 ### Decide Where Each Belongs
 
 - **Parser Level**: For syntax that isn’t valid S-expressions (e.g., `[1,2,3]`).
-- **Syntax Transformer**: For valid S-expressions with special meaning (e.g., `fx`).
+- **Syntax Transformer**: For valid S-expressions with special meaning (e.g.,
+  `fx`).
 
 ### Updating the Syntax Transformer
 
@@ -89,7 +95,9 @@ function transformNode(node: SExp, logger: Logger): SExp {
 └──────────┴─────────────────┴──────────────────┴──────────────────┘
 ```
 
-The key difference is that the macro system allows the language to extend itself without requiring changes to the compiler, while the syntax transformer involves hard-coded logic.
+The key difference is that the macro system allows the language to extend itself
+without requiring changes to the compiler, while the syntax transformer involves
+hard-coded logic.
 
 ---
 
@@ -122,12 +130,12 @@ The key difference is that the macro system allows the language to extend itself
 
 ### Pipeline Transition
 
-- **Current**:  
+- **Current**:\
   `Parser → Syntax Transformer → Macro Expansion → IR Transformer → JS Output`
-  
-- **Potential Future**:  
-  `Parser → Macro Expansion → IR Transformer → JS Output`  
-  *(Moving the syntax transformer logic into macros)*
+
+- **Potential Future**:\
+  `Parser → Macro Expansion → IR Transformer → JS Output`\
+  _(Moving the syntax transformer logic into macros)_
 
 ---
 
@@ -135,7 +143,8 @@ The key difference is that the macro system allows the language to extend itself
 
 ### Macro Expansion Function
 
-The macro expansion logic in your codebase is located in `src/s-exp/macro.ts`. For example:
+The macro expansion logic in your codebase is located in `src/s-exp/macro.ts`.
+For example:
 
 ```typescript
 export function expandMacros(
@@ -147,7 +156,8 @@ export function expandMacros(
 }
 ```
 
-This function is called in your main transpiler function (e.g., in `src/transpiler/hql-transpiler.ts`):
+This function is called in your main transpiler function (e.g., in
+`src/transpiler/hql-transpiler.ts`):
 
 ```typescript
 // In processHql() function
@@ -172,7 +182,8 @@ expanded = expandMacros(sexps, env, { ... });
 └───────────────────────┴───────────────────────────┘
 ```
 
-- **System Macros**: Defined with `defmacro` and loaded from `core.hql` before any user code.
+- **System Macros**: Defined with `defmacro` and loaded from `core.hql` before
+  any user code.
 - **User Macros**: Defined with `macro` in user modules and scoped accordingly.
 
 ---
@@ -221,10 +232,10 @@ You can define the `fx` macro in `core.hql` like so:
 
 To transition from a hard-coded syntax transformer to a macro-based approach:
 
-1. **Define the Core Macro**:  
+1. **Define the Core Macro**:\
    Create the `fx` macro in `core.hql` as shown above.
 
-2. **Remove the Hard-Coded Case**:  
+2. **Remove the Hard-Coded Case**:\
    Remove or comment out the special case in your syntax transformer.
 
    ```typescript
@@ -234,6 +245,8 @@ To transition from a hard-coded syntax transformer to a macro-based approach:
      return transformFxSyntax(list, logger);
    ```
 
-This change shifts the responsibility of syntactic transformation from the compiler to the macro system, allowing for greater flexibility and extensibility.
+This change shifts the responsibility of syntactic transformation from the
+compiler to the macro system, allowing for greater flexibility and
+extensibility.
 
 ---
