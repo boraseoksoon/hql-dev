@@ -892,7 +892,7 @@ function processQuasiquotedExpr(
 }
 
 /**
- * Recursively expand a single S-expression.
+ * Modified version of expandMacroExpression with visualization support
  */
 function expandMacroExpression(
   expr: SExp,
@@ -900,32 +900,51 @@ function expandMacroExpression(
   options: MacroExpanderOptions,
   depth: number,
 ): SExp {
+  const logger = new Logger(options.verbose || false);
   const maxDepth = options.maxExpandDepth || 100;
+  
   if (depth > maxDepth) {
-    const logger = new Logger(options.verbose || false);
-    logger.warn(
-      `Reached maximum expansion depth (${maxDepth}). Possible recursive macro?`,
-    );
+    logger.warn(`Reached maximum expansion depth (${maxDepth}). Possible recursive macro?`, "macro");
     return expr;
   }
+  
   if (!isList(expr)) return expr;
+  
   const list = expr as SList;
   if (list.elements.length === 0) return list;
+  
   const first = list.elements[0];
   if (isSymbol(first)) {
     const op = (first as SSymbol).name;
     if (op === "defmacro" || op === "macro") return expr;
+    
     if (env.hasMacro(op)) {
       const macroFn = env.getMacro(op);
       if (!macroFn) return expr;
+      
       const args = list.elements.slice(1);
+      
+      // Capture the pre-expansion expression for visualization
+      const originalExpr = list;
+      
+      logger.debug(`Expanding macro ${op} at depth ${depth}`, "macro");
+      
+      // Expand the macro
       const expanded = macroFn(args, env);
+      
+      // Visualize the expansion
+      visualizeMacroExpansion(originalExpr, expanded, op, logger);
+      
+      // Continue expansion on the result
       return expandMacroExpression(expanded, env, options, depth + 1);
     }
   }
+  
+  // Recursively expand elements for non-special forms
   const expandedElements = list.elements.map((elem) =>
     expandMacroExpression(elem, env, options, depth + 1)
   );
+  
   return createList(...expandedElements);
 }
 
@@ -999,4 +1018,188 @@ function filterMacroDefinitions(exprs: SExp[], logger: Logger): SExp[] {
     }
     return true;
   });
+}
+
+/**
+ * Visualize the macro expansion process with ASCII graphics
+ * This function is designed for debugging macro expansions
+ */
+export function visualizeMacroExpansion(
+  original: SExp,
+  expanded: SExp,
+  macroName: string,
+  logger: Logger,
+): void {
+  if (!logger.isNamespaceEnabled("macro")) {
+    return; // Skip if macro namespace logging is not enabled
+  }
+
+  const originalStr = sexpToString(original);
+  const expandedStr = sexpToString(expanded);
+
+  // Create a clear visual separation
+  const separator = "=".repeat(80);
+  const header = `MACRO EXPANSION: ${macroName}`;
+  const headerLine = `== ${header} ${"=".repeat(Math.max(0, separator.length - header.length - 4))}`;
+
+  logger.log({
+    text: `\n${separator}\n${headerLine}\n${separator}\n`,
+    namespace: "macro"
+  });
+
+  // Original form
+  logger.log({
+    text: `ORIGINAL:\n${formatExpression(originalStr)}`,
+    namespace: "macro"
+  });
+
+  // Arrow visualization
+  logger.log({
+    text: `\n${"   |"}\n   V\n`,
+    namespace: "macro"
+  });
+
+  // Expanded form
+  logger.log({
+    text: `EXPANDED:\n${formatExpression(expandedStr)}\n`,
+    namespace: "macro"
+  });
+
+  logger.log({
+    text: separator,
+    namespace: "macro"
+  });
+}
+
+/**
+ * Format a potentially long S-expression string for better readability
+ */
+function formatExpression(expr: string): string {
+  // Simple indentation for nested expressions
+  let indentLevel = 0;
+  let result = "";
+  let inString = false;
+
+  for (let i = 0; i < expr.length; i++) {
+    const char = expr[i];
+
+    // Handle string literals to avoid formatting inside them
+    if (char === '"' && (i === 0 || expr[i - 1] !== '\\')) {
+      inString = !inString;
+      result += char;
+      continue;
+    }
+
+    if (inString) {
+      result += char;
+      continue;
+    }
+
+    switch (char) {
+      case '(':
+        result += char;
+        indentLevel++;
+        if (i + 1 < expr.length && expr[i + 1] !== ')') {
+          result += '\n' + ' '.repeat(indentLevel * 2);
+        }
+        break;
+      case ')':
+        indentLevel--;
+        if (result.endsWith(' ')) {
+          // Remove trailing space before closing parenthesis
+          result = result.trimEnd();
+        }
+        result += char;
+        break;
+      case ' ':
+        if (i > 0 && expr[i - 1] !== '(' && expr[i - 1] !== ' ') {
+          result += '\n' + ' '.repeat(indentLevel * 2);
+        }
+        break;
+      default:
+        result += char;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Log detailed information about the macro evaluation environment
+ */
+export function visualizeEnvironment(
+  env: Environment,
+  context: string,
+  logger: Logger,
+): void {
+  if (!logger.isNamespaceEnabled("macro")) {
+    return;
+  }
+
+  logger.log({
+    text: `\n== MACRO ENVIRONMENT: ${context} ==`,
+    namespace: "macro"
+  });
+
+  // Log variables in the environment
+  logger.log({
+    text: "Variables:",
+    namespace: "macro"
+  });
+  
+  if (env.variables.size === 0) {
+    logger.log({
+      text: "  (none)",
+      namespace: "macro"
+    });
+  } else {
+    for (const [key, value] of env.variables.entries()) {
+      logger.log({
+        text: `  ${key}: ${formatValue(value)}`,
+        namespace: "macro"
+      });
+    }
+  }
+
+  // Log local macros if available and if this is a module context
+  const currentFile = env.getCurrentFile();
+  if (currentFile && env.moduleMacros.has(currentFile)) {
+    logger.log({
+      text: "\nLocal Macros:",
+      namespace: "macro"
+    });
+    
+    const moduleMacros = env.moduleMacros.get(currentFile)!;
+    for (const [name, _] of moduleMacros.entries()) {
+      logger.log({
+        text: `  ${name}`,
+        namespace: "macro"
+      });
+    }
+  }
+}
+
+/**
+ * Format a value for display in a readable way
+ */
+function formatValue(value: any): string {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+  
+  if (typeof value === 'function') {
+    return '[Function]';
+  }
+  
+  if (typeof value === 'object') {
+    if (Array.isArray(value)) {
+      return `[Array: ${value.length} items]`;
+    }
+    if ('type' in value) {
+      return sexpToString(value);
+    }
+    return '[Object]';
+  }
+  
+  return String(value);
 }

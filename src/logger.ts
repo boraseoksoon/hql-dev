@@ -1,5 +1,5 @@
 /**
- * Common logger module for unified logging with configurable verbosity and namespaces
+ * Enhanced logger module with improved namespace support
  */
 export interface LogOptions {
   text: string;
@@ -31,53 +31,77 @@ export class Logger {
       console.log(namespace ? `[${namespace}] ${text}` : text);
       return;
     }
+    
     // If --log is provided with namespaces, only log if the namespace matches
-    if (
-      Logger.allowedNamespaces.length > 0 &&
-      namespace &&
-      Logger.allowedNamespaces.includes(namespace)
-    ) {
+    if (this.isNamespaceEnabled(namespace)) {
       console.log(`[${namespace}] ${text}`);
     }
   }
 
   /**
-   * Log a debug message if logging is enabled (for backward compatibility)
+   * Check if a given namespace is enabled for logging
    */
-  debug(message: string, ...args: unknown[]): void {
-    if (this.enabled) {
-      console.log(`[DEBUG] ${message}`, ...args);
+  isNamespaceEnabled(namespace?: string): boolean {
+    if (!namespace) return false;
+    
+    // If no allowed namespaces are specified, none are enabled
+    if (Logger.allowedNamespaces.length === 0) return false;
+    
+    // Check if the exact namespace is allowed
+    if (Logger.allowedNamespaces.includes(namespace)) return true;
+    
+    // Check for wildcard matches (e.g., "macro*" would match "macro-expansion")
+    for (const allowed of Logger.allowedNamespaces) {
+      if (allowed.endsWith('*') && 
+          namespace.startsWith(allowed.slice(0, -1))) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Log a debug message if logging is enabled or if namespace is enabled
+   */
+  debug(message: string, namespace?: string): void {
+    if (this.enabled || this.isNamespaceEnabled(namespace)) {
+      const prefix = namespace ? `[${namespace}] ` : '';
+      console.log(`${prefix}${message}`);
     }
   }
 
   /**
-   * Log an info message if logging is enabled (for backward compatibility)
+   * Log an info message if logging is enabled or if namespace is enabled
    */
-  info(message: string): void {
-    if (this.enabled) {
-      console.log(message);
+  info(message: string, namespace?: string): void {
+    if (this.enabled || this.isNamespaceEnabled(namespace)) {
+      const prefix = namespace ? `[${namespace}] ` : '';
+      console.log(`${prefix}${message}`);
     }
   }
 
   /**
-   * Log a warning message (always shown, unchanged from original)
+   * Log a warning message (always shown, can include namespace)
    */
-  warn(message: string): void {
-    console.warn(`⚠️ ${message}`);
+  warn(message: string, namespace?: string): void {
+    const prefix = namespace ? `[${namespace}] ` : '';
+    console.warn(`⚠️ ${prefix}${message}`);
   }
 
   /**
-   * Log an error message (always shown, unchanged from original)
+   * Log an error message (always shown, can include namespace)
    */
-  error(message: string, error?: unknown): void {
+  error(message: string, error?: unknown, namespace?: string): void {
     const errorDetails = error
       ? `: ${error instanceof Error ? error.message : String(error)}`
       : "";
-    console.error(`❌ ${message}${errorDetails}`);
+    const prefix = namespace ? `[${namespace}] ` : '';
+    console.error(`❌ ${prefix}${message}${errorDetails}`);
   }
 
   /**
-   * Enable or disable logging (for backward compatibility with --verbose)
+   * Enable or disable logging
    */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;

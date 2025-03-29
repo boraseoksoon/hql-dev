@@ -45,6 +45,10 @@
       (if (= (length args) 1)
           `(+ "" ~(first args))
           `(+ ~@args))))
+  
+(defmacro empty? (coll)
+  `(or (nil? ~coll)
+       (= (length ~coll) 0)))
 
 (defmacro contains? (coll key)
   `(js-call ~coll "has" ~key))
