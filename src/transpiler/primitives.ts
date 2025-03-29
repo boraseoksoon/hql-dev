@@ -23,7 +23,6 @@ export const PRIMITIVE_OPS = new Set([
   "return",
 ]);
 
-// Also add to KERNEL_PRIMITIVES for completeness
 export const KERNEL_PRIMITIVES = new Set([
   "quote",
   "if",
@@ -34,6 +33,8 @@ export const KERNEL_PRIMITIVES = new Set([
   "quasiquote",
   "unquote",
   "unquote-splicing",
+  "loop",
+  "recur",
   "return",
 ]);
 

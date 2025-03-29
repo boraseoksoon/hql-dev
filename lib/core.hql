@@ -62,13 +62,6 @@
                ~(second (first clauses))
                (cond ~@(rest clauses))))))
 
-(defmacro when (test & body)
-  (if (= (length body) 0)
-      `(if ~test nil nil)
-      (if (= (length body) 1)
-          `(if ~test ~(first body) nil)
-          `(if ~test (do ~@body) nil))))
-
 (defmacro if-let (binding then-expr else-expr)
   (let (var-name (first binding)
         var-value (second binding))
