@@ -145,6 +145,7 @@ function initializeTransformFactory(): void {
       // Register kernel primitive handlers
       transformFactory.set("quote", transformQuote);
       transformFactory.set("if", transformIf);
+      transformFactory.set("cond", transformCond);
       transformFactory.set("lambda", transformLambda);
       transformFactory.set("quasiquote", transformQuasiquote);
       transformFactory.set("unquote", transformUnquote);
@@ -209,36 +210,41 @@ function transformDo(list: ListNode, currentDir: string): IR.IRNode {
     return expr || { type: IR.IRNodeType.NullLiteral };
   }
   
-  // Multiple expressions - create a block statement
-  const bodyNodes: IR.IRNode[] = [];
+  // Multiple expressions - create statements for IIFE body
+  const bodyStatements: IR.IRNode[] = [];
   
   // Transform all except the last expression
   for (let i = 0; i < bodyExprs.length - 1; i++) {
     const transformedExpr = transformNode(bodyExprs[i], currentDir);
     if (transformedExpr) {
-      // Add as a statement (not a return)
-      bodyNodes.push(transformedExpr);
+      bodyStatements.push(transformedExpr);
     }
   }
   
-  // Transform the last expression specially - it's the return value
+  // Transform the last expression - it's the return value
   const lastExpr = transformNode(bodyExprs[bodyExprs.length - 1], currentDir);
+  
   if (lastExpr) {
-    // Check if we need to wrap in a return statement
-    if (loopContextStack.length > 0 && 
-        lastExpr.type === IR.IRNodeType.ReturnStatement) {
-      // Already a return statement, just add it
-      bodyNodes.push(lastExpr);
-    } else {
-      // Not a return statement, add as is
-      bodyNodes.push(lastExpr);
-    }
+    // Create a return statement for the last expression
+    bodyStatements.push({
+      type: IR.IRNodeType.ReturnStatement,
+      argument: lastExpr
+    });
   }
   
-  // Return a block statement
+  // Return an IIFE (Immediately Invoked Function Expression)
   return {
-    type: IR.IRNodeType.BlockStatement,
-    body: bodyNodes
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.FunctionExpression,
+      id: null,
+      params: [],
+      body: {
+        type: IR.IRNodeType.BlockStatement,
+        body: bodyStatements
+      }
+    },
+    arguments: []
   };
 }
 
@@ -4294,4 +4300,57 @@ function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
   }
 
   return statements;
+}
+
+function transformCond(list: ListNode, currentDir: string): IR.IRNode {
+  // Extract clauses (skip the 'cond' symbol)
+  const clauses = list.elements.slice(1);
+  
+  // If no clauses, return nil
+  if (clauses.length === 0) {
+    return { type: IR.IRNodeType.NullLiteral };
+  }
+  
+  // Process clauses in reverse to build nested conditional expressions
+  let result: IR.IRNode = { type: IR.IRNodeType.NullLiteral };
+  
+  for (let i = clauses.length - 1; i >= 0; i--) {
+    const clause = clauses[i];
+    
+    // Validate clause format
+    if (clause.type !== "list" || (clause as ListNode).elements.length < 2) {
+      throw new ValidationError(
+        "cond clause must be a list with test and result expressions",
+        "cond clause",
+        "list with test and result",
+        clause.type
+      );
+    }
+    
+    const clauseList = clause as ListNode;
+    const test = transformNode(clauseList.elements[0], currentDir);
+    const consequent = transformNode(clauseList.elements[1], currentDir);
+    
+    // Special case for 'else' or 'true' as the test condition
+    if (
+      clauseList.elements[0].type === "symbol" && 
+      (clauseList.elements[0] as SymbolNode).name === "else" ||
+      (clauseList.elements[0].type === "literal" && 
+       (clauseList.elements[0] as LiteralNode).value === true)
+    ) {
+      // This is the default case, just return the consequent
+      result = consequent;
+      break;
+    }
+    
+    // Build the conditional expression
+    result = {
+      type: IR.IRNodeType.ConditionalExpression,
+      test,
+      consequent,
+      alternate: result
+    };
+  }
+  
+  return result;
 }

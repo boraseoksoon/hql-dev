@@ -328,12 +328,14 @@
 (([1, 2, 3, 4, 5, 6, 7, 8].filter (lambda (n) (> n 5))).length)
 
 ;; Approach 2: Use do block with temporary variables
-(let chained-result 
-  (do
-    (let filtered (numbers.filter (lambda (n) (> n 5))))
-    (let mapped (filtered.map (lambda (n) (* n 2))))
-    (mapped.reduce (lambda (acc n) (+ acc n)) 0)))
-(console.log "Sum of doubled numbers > 5:" chained-result)
+;; UPDATED: Fixed the invalid do by wrapping both the let and console.log in a do block
+(do
+  (let chained-result 
+    (do
+      (let filtered (numbers.filter (lambda (n) (> n 5))))
+      (let mapped (filtered.map (lambda (n) (* n 2))))
+      (mapped.reduce (lambda (acc n) (+ acc n)) 0)))
+  (console.log "Sum of doubled numbers > 5:" chained-result))
 
 ;; Approach 3: Direct method chaining with parentheses
 (let direct-chain ((numbers.filter (lambda (n) (= (% n 2) 0))).map (lambda (n) (* n 2))))
