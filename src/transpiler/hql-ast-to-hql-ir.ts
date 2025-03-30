@@ -197,6 +197,7 @@ function initializeTransformFactory(): void {
 /**
  * Transform a class declaration to IR
  */
+// Updated transformClass function to handle fx methods in classes
 function transformClass(list: ListNode, currentDir: string): IR.IRNode {
   try {
     // Validate class syntax
@@ -250,6 +251,7 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
 
       // Process field declarations (var and let)
       if (elementType === "var" || elementType === "let") {
+        // Field handling - unchanged
         if (elementList.elements.length < 2) {
           throw new ValidationError(
             `${elementType} requires at least a name`,
@@ -284,8 +286,9 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
           initialValue,
         });
       }
-      // Process constructor - with special handling for 'do' blocks
+      // Process constructor
       else if (elementType === "constructor") {
+        // Constructor handling - unchanged
         if (elementList.elements.length < 3) {
           throw new ValidationError(
             "constructor requires parameters and body",
@@ -325,47 +328,45 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
           });
         }
 
-        // Handle constructor body specially
+        // Transform constructor body
+        let bodyBlock: IR.IRBlockStatement;
         const bodyNode = elementList.elements[2];
-        let bodyStatements: IR.IRNode[] = [];
         
-        // Special handling for 'do' blocks in constructor
+        // Special handling for do blocks
         if (bodyNode.type === "list" && 
-            (bodyNode as ListNode).elements.length > 0 && 
-            (bodyNode as ListNode).elements[0].type === "symbol" &&
-            ((bodyNode as ListNode).elements[0] as SymbolNode).name === "do") {
+            bodyNode.elements.length > 0 && 
+            bodyNode.elements[0].type === "symbol" && 
+            (bodyNode.elements[0] as SymbolNode).name === "do") {
           
           // Extract statements from do-block directly
           const doList = bodyNode as ListNode;
+          const statements: IR.IRNode[] = [];
           
-          // Transform each statement in the do-block
           for (let i = 1; i < doList.elements.length; i++) {
-            const transformedStmt = transformNode(doList.elements[i], currentDir);
-            if (transformedStmt) {
-              bodyStatements.push(transformedStmt);
-            }
+            const stmt = transformNode(doList.elements[i], currentDir);
+            if (stmt) statements.push(stmt);
           }
-        } 
-        // Handle single statement constructor
-        else {
-          // Transform the body expression
+          
+          bodyBlock = {
+            type: IR.IRNodeType.BlockStatement,
+            body: statements
+          };
+        } else {
+          // Handle single expression constructor body
           const transformedBody = transformNode(bodyNode, currentDir);
-          if (transformedBody) {
-            bodyStatements.push(transformedBody);
-          }
+          bodyBlock = {
+            type: IR.IRNodeType.BlockStatement,
+            body: transformedBody ? [transformedBody] : []
+          };
         }
 
-        // Create constructor node with extracted statements
         classConstructor = {
           type: IR.IRNodeType.ClassConstructor,
           params,
-          body: {
-            type: IR.IRNodeType.BlockStatement,
-            body: bodyStatements
-          },
+          body: bodyBlock,
         };
       }
-      // Process method definitions
+      // Process fn method definitions
       else if (elementType === "fn") {
         if (elementList.elements.length < 4) {
           throw new ValidationError(
@@ -437,6 +438,96 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
           body: bodyBlock,
         });
       }
+      // NEW: Process fx method definitions
+      else if (elementType === "fx") {
+        if (elementList.elements.length < 5) {
+          throw new ValidationError(
+            "fx method requires a name, parameter list, return type, and body",
+            "fx method definition",
+            "name, params, return type, body",
+            `${elementList.elements.length - 1} arguments`,
+          );
+        }
+
+        // Get method name
+        const methodNameNode = elementList.elements[1];
+        if (methodNameNode.type !== "symbol") {
+          throw new ValidationError(
+            "Method name must be a symbol",
+            "fx method name",
+            "symbol",
+            methodNameNode.type,
+          );
+        }
+        const methodName = (methodNameNode as SymbolNode).name;
+
+        // Get method parameters
+        const paramsNode = elementList.elements[2];
+        if (paramsNode.type !== "list") {
+          throw new ValidationError(
+            "fx parameters must be a list",
+            "fx method params",
+            "list",
+            paramsNode.type,
+          );
+        }
+
+        // Parse parameters with type annotations 
+        // (simplified for class methods - we'll just extract parameter names without types)
+        const paramsList = paramsNode as ListNode;
+        const params: IR.IRIdentifier[] = [];
+        
+        // Extract parameter names from typed parameters
+        for (let i = 0; i < paramsList.elements.length; i++) {
+          const elem = paramsList.elements[i];
+          
+          // Skip non-symbols and type annotations
+          if (elem.type !== "symbol") continue;
+          
+          const paramName = (elem as SymbolNode).name;
+          
+          // If it's a parameter name with a colon (indicating type)
+          if (paramName.endsWith(":")) {
+            // Extract parameter name (remove the colon)
+            const name = paramName.slice(0, -1);
+            params.push({
+              type: IR.IRNodeType.Identifier,
+              name: sanitizeIdentifier(name)
+            });
+            
+            // Skip the type annotation
+            i++;
+          } else if (![":", "="].includes(paramName)) {
+            // Regular parameter (not a special token)
+            params.push({
+              type: IR.IRNodeType.Identifier,
+              name: sanitizeIdentifier(paramName)
+            });
+          }
+        }
+
+        // Skip return type and get the body expressions 
+        const bodyExprs = elementList.elements.slice(4);
+        
+        // Transform body expressions
+        const bodyNodes = bodyExprs.map(node => 
+          transformNode(node, currentDir)
+        ).filter(node => node !== null) as IR.IRNode[];
+        
+        // Create a block statement
+        const bodyBlock: IR.IRBlockStatement = {
+          type: IR.IRNodeType.BlockStatement,
+          body: bodyNodes
+        };
+
+        // Add as a regular class method (fx is just for type checking)
+        methods.push({
+          type: IR.IRNodeType.ClassMethod,
+          name: methodName,
+          params,
+          body: bodyBlock,
+        });
+      }
     }
 
     // Create the ClassDeclaration IR node
@@ -461,7 +552,6 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
     );
   }
 }
-
 
 function transformDo(list: ListNode, currentDir: string): IR.IRNode {
   // Get body expressions (skip the 'do' symbol)
