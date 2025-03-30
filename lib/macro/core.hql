@@ -41,11 +41,11 @@
   (js-call arr1 "concat" arr2))
 
 (defmacro str (& args)
-  (if (empty? args)
-      (if (= (length args) 1)
-          `(+ "" ~(first args))
-          `(+ ~@args))))
-  
+  (cond
+    ((empty? args) `"")
+    ((= (length args) 1) `(+ "" ~(first args)))
+    (true `(+ ~@args))))
+
 (defmacro empty? (coll)
   `(or (nil? ~coll)
        (= (length ~coll) 0)))
