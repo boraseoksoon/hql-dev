@@ -4311,10 +4311,8 @@ function transformCond(list: ListNode, currentDir: string): IR.IRNode {
     return { type: IR.IRNodeType.NullLiteral };
   }
   
-  // Process clauses in reverse to build nested conditional expressions
-  let result: IR.IRNode = { type: IR.IRNodeType.NullLiteral };
-  
-  for (let i = clauses.length - 1; i >= 0; i--) {
+  // Process clauses from first to last
+  for (let i = 0; i < clauses.length; i++) {
     const clause = clauses[i];
     
     // Validate clause format
@@ -4328,29 +4326,40 @@ function transformCond(list: ListNode, currentDir: string): IR.IRNode {
     }
     
     const clauseList = clause as ListNode;
-    const test = transformNode(clauseList.elements[0], currentDir);
-    const consequent = transformNode(clauseList.elements[1], currentDir);
+    const testExpr = clauseList.elements[0];
     
-    // Special case for 'else' or 'true' as the test condition
-    if (
-      clauseList.elements[0].type === "symbol" && 
-      (clauseList.elements[0] as SymbolNode).name === "else" ||
-      (clauseList.elements[0].type === "literal" && 
-       (clauseList.elements[0] as LiteralNode).value === true)
-    ) {
-      // This is the default case, just return the consequent
-      result = consequent;
-      break;
+    // Handle 'else' or 'true' as the test condition
+    if (testExpr.type === "symbol" && (testExpr as SymbolNode).name === "else") {
+      const consequent = transformNode(clauseList.elements[1], currentDir);
+      return consequent;
     }
     
-    // Build the conditional expression
-    result = {
+    // Evaluate the condition
+    const test = transformNode(testExpr, currentDir);
+    const consequent = transformNode(clauseList.elements[1], currentDir);
+    
+    // If this is the last clause, it becomes the alternate for all previous conditions
+    if (i === clauses.length - 1) {
+      return {
+        type: IR.IRNodeType.ConditionalExpression,
+        test,
+        consequent,
+        alternate: { type: IR.IRNodeType.NullLiteral }
+      };
+    }
+    
+    // Build a nested conditional for each subsequent clause
+    const restClauses = list.elements.slice(0, 1).concat(clauses.slice(i + 1));
+    const alternate = transformCond({ type: "list", elements: restClauses }, currentDir);
+    
+    return {
       type: IR.IRNodeType.ConditionalExpression,
       test,
       consequent,
-      alternate: result
+      alternate
     };
   }
   
-  return result;
+  // Default case if no clauses match (should not reach here)
+  return { type: IR.IRNodeType.NullLiteral };
 }

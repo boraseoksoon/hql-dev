@@ -45,44 +45,6 @@
 
 ;;;;;;;;;;; For Loop Examples
 
-;; Imperative loop:
-(for (set i 0) (< i 10) (set i (+ i 1))
-  (print i))
-
 ;; Range loop:
 (for (i (range 0 10))
   (print i))
-
-;;;;;;;;;;;; bug fix 
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; 9. cond
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; Multi-condition number classification
-(fn classify-number (n)
-  (cond
-    ((> n 100) "large")
-    ((> n 50) "medium")
-    ((> n 10) "small")
-    ((> n 0) "tiny")
-    ((= n 0) "zero")
-    (true "negative")))  ;; Default case using "true" condition
-
-;; HTTP status code handler
-(fn handle-status (code)
-  (cond
-    ((= code 200) "OK")
-    ((= code 404) "Not Found")
-    ((= code 500) "Server Error")
-    (true "Unknown status")))
-
-;; Type-based formatting
-(fn format-value (value)
-  (cond
-    ((nil? value) "N/A")
-    ((number? value) (+ "$" value))
-    ((boolean? value) (if value "Yes" "No"))
-    (true (to-string value))))
-
-;; without () it could work.
