@@ -1,33 +1,3 @@
-(class Person
-  ;; Class fields
-  (var name)
-  (var age)
-
-  ;; Constructor that properly sets fields
-  (constructor (name age)
-    (do
-      (set! this.name name)
-      (set! this.age age)))
-
-  ;; Simple getter methods
-  (fn getName ()
-    this.name)
-    
-  (fn getAge ()
-    this.age)
-)
-
-;; Create an instance with name and age
-(let person (new Person "Alice" 30))
-
-;; Print attributes
-(print "  Name:" person.name)
-(print "  Age:" person.age)
-
-;; Call methods to get the values (note the parentheses after method name)
-(print "  getName():" (person.getName))
-(print "  getAge():" (person.getAge))
-
 ;; Example class with both fn and fx methods
 (class Calculator
   ;; Class fields
