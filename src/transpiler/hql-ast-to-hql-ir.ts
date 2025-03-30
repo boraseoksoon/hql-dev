@@ -177,16 +177,15 @@ function initializeTransformFactory(): void {
       transformFactory.set("let", transformLet);
       transformFactory.set("var", transformVar);
       transformFactory.set("set!", transformSet);
-
+      transformFactory.set("do", transformDo);
       transformFactory.set("loop", transformLoop);
       transformFactory.set("recur", transformRecur);
+      transformFactory.set("class", transformClass);
+      transformFactory.set("return", transformReturn);
 
       // Register import/export handlers
       transformFactory.set("export", null);
-      transformFactory.set("import", null);
-
-      transformFactory.set("do", transformDo);
-      transformFactory.set("return", transformReturn);
+      transformFactory.set("import", null);      
 
       logger.debug(`Registered ${transformFactory.size} handler functions`);
     },
@@ -194,6 +193,275 @@ function initializeTransformFactory(): void {
     TransformError,
   );
 }
+
+/**
+ * Transform a class declaration to IR
+ */
+function transformClass(list: ListNode, currentDir: string): IR.IRNode {
+  try {
+    // Validate class syntax
+    if (list.elements.length < 2) {
+      throw new ValidationError(
+        "class requires a name and body elements",
+        "class definition",
+        "name and body",
+        `${list.elements.length - 1} arguments`,
+      );
+    }
+
+    // Extract class name
+    const nameNode = list.elements[1];
+    if (nameNode.type !== "symbol") {
+      throw new ValidationError(
+        "Class name must be a symbol",
+        "class name",
+        "symbol",
+        nameNode.type,
+      );
+    }
+    const className = (nameNode as SymbolNode).name;
+
+    // Process class body elements
+    const bodyElements = list.elements.slice(2);
+    
+    // Extract fields, constructor, and methods
+    const fields: IR.IRClassField[] = [];
+    let classConstructor: IR.IRClassConstructor | null = null;
+    const methods: IR.IRClassMethod[] = [];
+
+    // Process each class body element
+    for (const element of bodyElements) {
+      if (element.type !== "list") {
+        throw new ValidationError(
+          "Class body elements must be lists",
+          "class body",
+          "list",
+          element.type,
+        );
+      }
+
+      const elementList = element as ListNode;
+      if (elementList.elements.length === 0) continue;
+
+      const firstElement = elementList.elements[0];
+      if (firstElement.type !== "symbol") continue;
+
+      const elementType = (firstElement as SymbolNode).name;
+
+      // Process field declarations (var and let)
+      if (elementType === "var" || elementType === "let") {
+        if (elementList.elements.length < 2) {
+          throw new ValidationError(
+            `${elementType} requires at least a name`,
+            "field declaration",
+            "name",
+            `${elementList.elements.length - 1} arguments`,
+          );
+        }
+
+        const fieldNameNode = elementList.elements[1];
+        if (fieldNameNode.type !== "symbol") {
+          throw new ValidationError(
+            "Field name must be a symbol",
+            "field name",
+            "symbol",
+            fieldNameNode.type,
+          );
+        }
+
+        const fieldName = (fieldNameNode as SymbolNode).name;
+        let initialValue: IR.IRNode | null = null;
+
+        // If there's an initial value, transform it
+        if (elementList.elements.length > 2) {
+          initialValue = transformNode(elementList.elements[2], currentDir);
+        }
+
+        fields.push({
+          type: IR.IRNodeType.ClassField,
+          name: fieldName,
+          mutable: elementType === "var",
+          initialValue,
+        });
+      }
+      // Process constructor - with special handling for 'do' blocks
+      else if (elementType === "constructor") {
+        if (elementList.elements.length < 3) {
+          throw new ValidationError(
+            "constructor requires parameters and body",
+            "constructor",
+            "params and body",
+            `${elementList.elements.length - 1} arguments`,
+          );
+        }
+
+        const paramsNode = elementList.elements[1];
+        if (paramsNode.type !== "list") {
+          throw new ValidationError(
+            "Constructor parameters must be a list",
+            "constructor params",
+            "list",
+            paramsNode.type,
+          );
+        }
+
+        // Extract parameter names
+        const paramsList = paramsNode as ListNode;
+        const params: IR.IRIdentifier[] = [];
+        
+        for (const param of paramsList.elements) {
+          if (param.type !== "symbol") {
+            throw new ValidationError(
+              "Constructor parameter must be a symbol",
+              "constructor param",
+              "symbol",
+              param.type,
+            );
+          }
+          
+          params.push({
+            type: IR.IRNodeType.Identifier,
+            name: sanitizeIdentifier((param as SymbolNode).name),
+          });
+        }
+
+        // Handle constructor body specially
+        const bodyNode = elementList.elements[2];
+        let bodyStatements: IR.IRNode[] = [];
+        
+        // Special handling for 'do' blocks in constructor
+        if (bodyNode.type === "list" && 
+            (bodyNode as ListNode).elements.length > 0 && 
+            (bodyNode as ListNode).elements[0].type === "symbol" &&
+            ((bodyNode as ListNode).elements[0] as SymbolNode).name === "do") {
+          
+          // Extract statements from do-block directly
+          const doList = bodyNode as ListNode;
+          
+          // Transform each statement in the do-block
+          for (let i = 1; i < doList.elements.length; i++) {
+            const transformedStmt = transformNode(doList.elements[i], currentDir);
+            if (transformedStmt) {
+              bodyStatements.push(transformedStmt);
+            }
+          }
+        } 
+        // Handle single statement constructor
+        else {
+          // Transform the body expression
+          const transformedBody = transformNode(bodyNode, currentDir);
+          if (transformedBody) {
+            bodyStatements.push(transformedBody);
+          }
+        }
+
+        // Create constructor node with extracted statements
+        classConstructor = {
+          type: IR.IRNodeType.ClassConstructor,
+          params,
+          body: {
+            type: IR.IRNodeType.BlockStatement,
+            body: bodyStatements
+          },
+        };
+      }
+      // Process method definitions
+      else if (elementType === "fn") {
+        if (elementList.elements.length < 4) {
+          throw new ValidationError(
+            "Method requires a name, parameters, and body",
+            "method definition",
+            "name, params, body",
+            `${elementList.elements.length - 1} arguments`,
+          );
+        }
+
+        // Get method name
+        const methodNameNode = elementList.elements[1];
+        if (methodNameNode.type !== "symbol") {
+          throw new ValidationError(
+            "Method name must be a symbol",
+            "method name",
+            "symbol",
+            methodNameNode.type,
+          );
+        }
+        const methodName = (methodNameNode as SymbolNode).name;
+
+        // Get method parameters
+        const paramsNode = elementList.elements[2];
+        if (paramsNode.type !== "list") {
+          throw new ValidationError(
+            "Method parameters must be a list",
+            "method params",
+            "list",
+            paramsNode.type,
+          );
+        }
+
+        // Extract parameter names
+        const paramsList = paramsNode as ListNode;
+        const params: IR.IRIdentifier[] = [];
+        
+        for (const param of paramsList.elements) {
+          if (param.type !== "symbol") {
+            throw new ValidationError(
+              "Method parameter must be a symbol",
+              "method param",
+              "symbol",
+              param.type,
+            );
+          }
+          
+          params.push({
+            type: IR.IRNodeType.Identifier,
+            name: sanitizeIdentifier((param as SymbolNode).name),
+          });
+        }
+
+        // Transform method body
+        const bodyNodes = elementList.elements.slice(3).map(node => 
+          transformNode(node, currentDir)
+        ).filter(node => node !== null) as IR.IRNode[];
+        
+        // Create a block statement
+        const bodyBlock: IR.IRBlockStatement = {
+          type: IR.IRNodeType.BlockStatement,
+          body: bodyNodes
+        };
+
+        methods.push({
+          type: IR.IRNodeType.ClassMethod,
+          name: methodName,
+          params,
+          body: bodyBlock,
+        });
+      }
+    }
+
+    // Create the ClassDeclaration IR node
+    return {
+      type: IR.IRNodeType.ClassDeclaration,
+      id: {
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(className),
+      },
+      fields,
+      constructor: classConstructor,
+      methods,
+    } as IR.IRClassDeclaration;
+  } catch (error) {
+    throw new TransformError(
+      `Failed to transform class declaration: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "class declaration",
+      "transformation",
+      list,
+    );
+  }
+}
+
 
 function transformDo(list: ListNode, currentDir: string): IR.IRNode {
   // Get body expressions (skip the 'do' symbol)
@@ -354,6 +622,14 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     if (op === "defmacro" || op === "macro") {
       logger.debug(`Skipping macro definition: ${op}`);
       return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+    }
+
+    if (
+      first.type === "symbol" && 
+      (first as SymbolNode).name === "class" &&
+      list.elements.length >= 2
+    ) {
+      return transformClass(list, currentDir);
     }
 
     // Handle return statements

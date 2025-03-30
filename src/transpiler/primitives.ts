@@ -37,6 +37,7 @@ export const KERNEL_PRIMITIVES = new Set([
   "recur",
   "do",
   "return",
+  "class"
 ]);
 
 /**

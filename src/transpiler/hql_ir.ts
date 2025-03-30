@@ -58,6 +58,11 @@ export enum IRNodeType {
   FxFunctionDeclaration,
   FnFunctionDeclaration,
   IfStatement,
+
+  ClassDeclaration,
+  ClassField,
+  ClassMethod,
+  ClassConstructor,
 }
 
 export interface IRNode {
@@ -312,4 +317,32 @@ export interface IRIfStatement extends IRNode {
   test: IRNode;
   consequent: IRNode;
   alternate: IRNode | null;
+}
+
+export interface IRClassDeclaration extends IRNode {
+  type: IRNodeType.ClassDeclaration;
+  id: IRIdentifier;
+  fields: IRClassField[];
+  constructor: IRClassConstructor | null;
+  methods: IRClassMethod[];
+}
+
+export interface IRClassField extends IRNode {
+  type: IRNodeType.ClassField;
+  name: string;
+  mutable: boolean;
+  initialValue: IRNode | null;
+}
+
+export interface IRClassMethod extends IRNode {
+  type: IRNodeType.ClassMethod;
+  name: string;
+  params: IRIdentifier[];
+  body: IRBlockStatement;
+}
+
+export interface IRClassConstructor extends IRNode {
+  type: IRNodeType.ClassConstructor;
+  params: IRIdentifier[];
+  body: IRBlockStatement;
 }
