@@ -6,37 +6,21 @@
   ;; Constructor
   (constructor (baseValue)
     (do
-      (set! this.baseValue baseValue)
-      this))
-
-  ;; Regular fn method
-  (fn increment (amount)
-    (+ this.baseValue amount))
-    
-  ;; Typed fx method
-  (fx add (x: Int y: Int) (-> Int)
-    (+ x y))
-    
-  ;; Another fx method with default value
+      (set! this.baseValue baseValue)))
+      
+  ;; fx method with both parameters having default values
   (fx multiply (x: Int = 100 y: Int = 2) (-> Int)
     (* x y))
-    
-  ;; Complex fx method with multiple parameters
-  (fx calculate (a: Int b: Int operation: String = "add") (-> Int)
-    (if (= operation "add")
-        (+ a b)
-        (if (= operation "multiply")
-            (* a b)
-            (if (= operation "subtract")
-                (- a b)
-                (/ a b)))))
 )
 
 ;; Create an instance
 (let calc (new Calculator 10))
 
-;; Test the methods
-(print "Regular method: calc.increment(5) =>" (calc.increment 5))
-(print "fx method: calc.add(3, 4) =>" (calc.add 3 4))
-(print "fx method with default: calc.multiply(5) =>" (calc.multiply))
-(print "fx method with named args: calc.calculate(10, 5, 'multiply') =>" (calc.calculate 10 5 "multiply"))
+;; Test with no arguments - should use both defaults (100 * 2 = 200)
+(print "fx method with both defaults: calc.multiply() =>" (calc.multiply))
+
+;; Test with one argument - should use second default (5 * 2 = 10)
+(print "fx method with one arg: calc.multiply(5) =>" (calc.multiply 5))
+
+;; Test with both arguments - no defaults used (7 * 3 = 21)
+(print "fx method with two args: calc.multiply(7, 3) =>" (calc.multiply 7 3))

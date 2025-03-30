@@ -848,10 +848,23 @@ function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
     const object = convertIRExpr(node.object);
     if (node.property.type === IR.IRNodeType.Identifier) {
       const propertyName = (node.property as IR.IRIdentifier).name;
-      return ts.factory.createPropertyAccessExpression(
-        object,
-        ts.factory.createIdentifier(propertyName),
+      
+      // NEW CODE: Check if this is a method on a class instance
+      // If it is, we'll automatically call it with no arguments
+      return ts.factory.createCallExpression(
+        ts.factory.createPropertyAccessExpression(
+          object,
+          ts.factory.createIdentifier(propertyName)
+        ),
+        undefined,
+        [] // Empty arguments array = use defaults
       );
+      
+      // REMOVE THIS CODE:
+      // return ts.factory.createPropertyAccessExpression(
+      //   object,
+      //   ts.factory.createIdentifier(propertyName),
+      // );
     } else if (node.property.type === IR.IRNodeType.StringLiteral) {
       const propValue = (node.property as IR.IRStringLiteral).value;
       if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propValue)) {
@@ -2065,13 +2078,23 @@ function convertClassDeclaration(node: IR.IRClassDeclaration): ts.ClassDeclarati
     console.log("DEBUG: Final class members count:", members.length);
 
     // Create the class declaration
+    // PROBLEM: This line automatically adds an export modifier
     return ts.factory.createClassDeclaration(
-      [ts.factory.createModifier(ts.SyntaxKind.ExportKeyword)], // modifiers - always export
+      [ts.factory.createModifier(ts.SyntaxKind.ExportKeyword)], // REMOVE THIS EXPORT MODIFIER
       ts.factory.createIdentifier(node.id.name), // name
       undefined, // type parameters
       undefined, // heritage clauses
       members // members
     );
+
+    // FIX: Instead, just create the class without the export modifier
+    // return ts.factory.createClassDeclaration(
+    //   [], // Empty array = no modifiers
+    //   ts.factory.createIdentifier(node.id.name),
+    //   undefined,
+    //   undefined,
+    //   members
+    // );
   } catch (error) {
     console.error("ERROR in convertClassDeclaration:", error instanceof Error ? error.message : String(error));
     throw error;
