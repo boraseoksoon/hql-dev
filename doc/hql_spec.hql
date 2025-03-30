@@ -36,7 +36,8 @@
 
 (let json { items : [1, 2, 3, 4, 5] })
 
-(json.items)
+(print "json : " json.items)
+;; (print "json : " (json.items)) ;; (json.items) is not allowed - it is function call. it is not property access. 
 
 (let data {
   "items": [5, 10, 15, 20, 25, 30, 35, 40],
@@ -44,7 +45,8 @@
   "prefix": "Value: "
 })
 
-(data.items)
+(print "data.items : " data.items)
+;; (print "data.items : " (data.items)) ;; (data.items) is not allowed - it is function call. it is not property access. 
 
 (let empty-vector [])
 (let mixed-types ["string", 42, true, nil])
@@ -76,7 +78,7 @@
 ;; look up
 (let user2 {"name": "Alice", "status": "active"})
 (print (get user2 "name"))  ; returns "Alice"
-(print (user2.name))  ; also returns "Alice"
+(print user2.name)  ; also returns "Alice"
 (print (user2["name"]))  ; returns "Alice"
 
 (let my-list (list "a" "b" "c"))
@@ -239,8 +241,8 @@
 
 ;; --- JavaScript Interoperability ---
 ;; Accessing JS properties with dot notation
-(let pi-value (Math.PI))
-(let max-int-value (Number.MAX_SAFE_INTEGER))
+(let pi-value Math.PI)
+(let max-int-value Number.MAX_SAFE_INTEGER)
 
 ;; Calling JS methods
 (let random-number (Math.random))
@@ -304,17 +306,17 @@
 (let max-sum (Math.max sum 10))
 
 (let config {"db": {"user": {"name": "admin"}}})
-(let db-part (config.db))
-(let user-part (db-part.user))
-(let admin-name (user-part.name))
+(let db-part config.db)
+(let user-part db-part.user)
+(let admin-name user-part.name)
 
 (fn get-user () {"id": 1, "name": "John"})
 (let user-obj (get-user))
-(let user-name (user-obj.name))
+(let user-name user-obj.name)
 
 ;; --- Multiple Property Access Patterns ---
-(let window-width (window.innerWidth))
-(let array-length (array.length))
+(let window-width window.innerWidth)
+(let array-length array.length)
 (let string-upper (message.toUpperCase))
 (let substring (message.substring 0 5))
 (let replaced (message.replace "Hello" "Hi"))
@@ -324,8 +326,7 @@
 (let even-numbers (numbers.filter (lambda (n) (= (% n 2) 0))))
 (let doubled-evens (even-numbers.map (lambda (n) (* n 2))))
 (console.log "Doubled evens (step by step):" doubled-evens)
-
-(([1, 2, 3, 4, 5, 6, 7, 8].filter (lambda (n) (> n 5))).length)
+(print "collection length: " [1, 2, 3, 4, 5, 6, 7, 8].filter (lambda (n) (> n 5)).length)
 
 ;; Approach 2: Use do block with temporary variables
 ;; UPDATED: Fixed the invalid do by wrapping both the let and console.log in a do block
@@ -424,7 +425,7 @@
 
 ;; Using with other expressions
 (let items ["apple", "banana", "orange"])
-(let item-count (items.length))
+(let item-count items.length)
 (let summary (str "Found " item-count " items: " (get items 0) ", " (get items 1) ", " (get items 2)))
 (console.log summary)  ;; "Found 3 items: apple, banana, orange"
 
