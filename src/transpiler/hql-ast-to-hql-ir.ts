@@ -448,7 +448,7 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
             `${elementList.elements.length - 1} arguments`,
           );
         }
-
+      
         // Get method name
         const methodNameNode = elementList.elements[1];
         if (methodNameNode.type !== "symbol") {
@@ -460,7 +460,7 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
           );
         }
         const methodName = (methodNameNode as SymbolNode).name;
-
+      
         // Get method parameters
         const paramsNode = elementList.elements[2];
         if (paramsNode.type !== "list") {
@@ -471,41 +471,60 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
             paramsNode.type,
           );
         }
-
-        // Parse parameters with type annotations 
-        // (simplified for class methods - we'll just extract parameter names without types)
+      
+        // Parse parameters with type annotations - extract defaults as well
         const paramsList = paramsNode as ListNode;
         const params: IR.IRIdentifier[] = [];
+        const defaults: { name: string; value: IR.IRNode }[] = [];
         
-        // Extract parameter names from typed parameters
-        for (let i = 0; i < paramsList.elements.length; i++) {
+        // Process parameters to extract defaults
+        let i = 0;
+        while (i < paramsList.elements.length) {
           const elem = paramsList.elements[i];
           
-          // Skip non-symbols and type annotations
-          if (elem.type !== "symbol") continue;
-          
-          const paramName = (elem as SymbolNode).name;
-          
-          // If it's a parameter name with a colon (indicating type)
-          if (paramName.endsWith(":")) {
-            // Extract parameter name (remove the colon)
-            const name = paramName.slice(0, -1);
-            params.push({
-              type: IR.IRNodeType.Identifier,
-              name: sanitizeIdentifier(name)
-            });
+          if (elem.type === "symbol") {
+            const symbolName = (elem as SymbolNode).name;
             
-            // Skip the type annotation
+            // Handle parameter with type
+            if (symbolName.endsWith(":")) {
+              const paramName = symbolName.slice(0, -1);
+              params.push({
+                type: IR.IRNodeType.Identifier,
+                name: sanitizeIdentifier(paramName)
+              });
+              
+              // Skip type annotation
+              i += 2;
+              
+              // Check for default value
+              if (i < paramsList.elements.length && 
+                  paramsList.elements[i].type === "symbol" && 
+                  (paramsList.elements[i] as SymbolNode).name === "=") {
+                
+                // Process default value
+                if (i + 1 < paramsList.elements.length) {
+                  const defaultValue = transformNode(paramsList.elements[i + 1], currentDir);
+                  if (defaultValue) {
+                    defaults.push({ name: paramName, value: defaultValue });
+                  }
+                  i += 2; // Skip = and default value
+                } else {
+                  i++; // Skip =
+                }
+              }
+            } else {
+              // Regular parameter
+              params.push({
+                type: IR.IRNodeType.Identifier,
+                name: sanitizeIdentifier(symbolName)
+              });
+              i++;
+            }
+          } else {
             i++;
-          } else if (![":", "="].includes(paramName)) {
-            // Regular parameter (not a special token)
-            params.push({
-              type: IR.IRNodeType.Identifier,
-              name: sanitizeIdentifier(paramName)
-            });
           }
         }
-
+      
         // Skip return type and get the body expressions 
         const bodyExprs = elementList.elements.slice(4);
         
@@ -519,12 +538,13 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
           type: IR.IRNodeType.BlockStatement,
           body: bodyNodes
         };
-
-        // Add as a regular class method (fx is just for type checking)
+      
+        // Add as a regular class method but include defaults information
         methods.push({
           type: IR.IRNodeType.ClassMethod,
           name: methodName,
           params,
+          defaults: defaults.length > 0 ? defaults : undefined, // Include defaults
           body: bodyBlock,
         });
       }

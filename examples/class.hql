@@ -18,7 +18,7 @@
     (+ x y))
     
   ;; Another fx method with default value
-  (fx multiply (x: Int y: Int = 2) (-> Int)
+  (fx multiply (x: Int = 100 y: Int = 2) (-> Int)
     (* x y))
     
   ;; Complex fx method with multiple parameters
@@ -38,5 +38,5 @@
 ;; Test the methods
 (print "Regular method: calc.increment(5) =>" (calc.increment 5))
 (print "fx method: calc.add(3, 4) =>" (calc.add 3 4))
-(print "fx method with default: calc.multiply(5) =>" (calc.multiply 5))
+(print "fx method with default: calc.multiply(5) =>" (calc.multiply))
 (print "fx method with named args: calc.calculate(10, 5, 'multiply') =>" (calc.calculate 10 5 "multiply"))

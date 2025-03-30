@@ -338,6 +338,7 @@ export interface IRClassMethod extends IRNode {
   type: IRNodeType.ClassMethod;
   name: string;
   params: IRIdentifier[];
+  defaults?: { name: string, value: IRNode }[]; // Add this field to store defaults
   body: IRBlockStatement;
 }
 

@@ -276,8 +276,11 @@ function convertFnFunctionDeclaration(
 /**
  * Convert an fx function declaration
  */
+/**
+ * Convert an fx function declaration with proper default parameter handling
+ */
 function convertFxFunctionDeclaration(
-  node: IR.IRFxFunctionDeclaration,
+  node: IR.IRFxFunctionDeclaration
 ): ts.FunctionDeclaration {
   try {
     // Get default parameter values
@@ -465,49 +468,18 @@ function convertFxFunctionDeclaration(
               undefined,
             ),
           ], true),
-          // Else: Handle positional parameters
+          // Else: Handle positional parameters - THIS IS THE FIXED PART
           ts.factory.createBlock(
             node.params.map((param, index) =>
               ts.factory.createIfStatement(
+                // Simplified condition: if we have enough args to set this parameter
                 ts.factory.createBinaryExpression(
-                  ts.factory.createBinaryExpression(
-                    ts.factory.createBinaryExpression(
-                      ts.factory.createElementAccessExpression(
-                        ts.factory.createIdentifier("args"),
-                        ts.factory.createNumericLiteral(index.toString()),
-                      ),
-                      ts.factory.createToken(
-                        ts.SyntaxKind.ExclamationEqualsEqualsToken,
-                      ),
-                      ts.factory.createIdentifier("undefined"),
-                    ),
-                    ts.factory.createToken(
-                      ts.SyntaxKind.AmpersandAmpersandToken,
-                    ),
-                    ts.factory.createBinaryExpression(
-                      ts.factory.createElementAccessExpression(
-                        ts.factory.createIdentifier("args"),
-                        ts.factory.createNumericLiteral(index.toString()),
-                      ),
-                      ts.factory.createToken(
-                        ts.SyntaxKind.ExclamationEqualsEqualsToken,
-                      ),
-                      ts.factory.createStringLiteral("_"),
-                    ),
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createIdentifier("length"),
                   ),
-                  ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-                  ts.factory.createBinaryExpression(
-                    ts.factory.createTypeOfExpression(
-                      ts.factory.createElementAccessExpression(
-                        ts.factory.createIdentifier("args"),
-                        ts.factory.createNumericLiteral(index.toString()),
-                      ),
-                    ),
-                    ts.factory.createToken(
-                      ts.SyntaxKind.ExclamationEqualsEqualsToken,
-                    ),
-                    ts.factory.createStringLiteral("symbol"),
-                  ),
+                  ts.factory.createToken(ts.SyntaxKind.GreaterThanToken),
+                  ts.factory.createNumericLiteral(index.toString()),
                 ),
                 ts.factory.createExpressionStatement(
                   ts.factory.createBinaryExpression(
@@ -1937,20 +1909,27 @@ function convertAssignmentExpression(
   }
 }
 
-/**
- * Fix 3: Function to convert class methods - properly handle 'self' references
- */
 function convertClassMethod(node: IR.IRClassMethod): ts.MethodDeclaration {
   try {
-    // Create parameter declarations
+    // Create parameter declarations with defaults
     const parameters = node.params.map(param => {
+      // Find any default value for this parameter
+      let defaultValue: ts.Expression | undefined = undefined;
+      
+      if (node.defaults && node.defaults.length > 0) {
+        const defaultInfo = node.defaults.find(d => d.name === param.name);
+        if (defaultInfo) {
+          defaultValue = convertIRExpr(defaultInfo.value);
+        }
+      }
+      
       return ts.factory.createParameterDeclaration(
         undefined, // modifiers
         undefined, // dotDotDotToken
         ts.factory.createIdentifier(param.name), // name
         undefined, // questionToken
         undefined, // type
-        undefined // initializer
+        defaultValue // Include default value if any
       );
     });
 
@@ -2012,14 +1991,14 @@ function convertClassMethod(node: IR.IRClassMethod): ts.MethodDeclaration {
     // Create the method body
     const body = ts.factory.createBlock(bodyStatements, true);
 
-    // Create method declaration
+    // Create method declaration with parameters that have default values
     return ts.factory.createMethodDeclaration(
       undefined, // modifiers
       undefined, // asteriskToken
       ts.factory.createIdentifier(node.name), // name
       undefined, // questionToken
       undefined, // typeParameters
-      parameters, // parameters
+      parameters, // parameters with defaults
       undefined, // type
       body // body
     );
