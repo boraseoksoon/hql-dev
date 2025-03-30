@@ -16,3 +16,6 @@
 (let doubled-evens (even-numbers.map (lambda (n) (* n 2))))
 (console.log "Doubled evens (step by step):" doubled-evens)
 (print "collection length: " [1, 2, 3, 4, 5, 6, 7, 8].filter(lambda (n) (> n 5)))
+
+
+[1, 2, 3, 4, 5, 6, 7, 8].filter(lambda (n) (> n 5))
