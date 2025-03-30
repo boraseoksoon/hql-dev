@@ -1,6 +1,6 @@
 // src/s-exp/repl.ts - Interactive REPL for the S-expression frontend, updated to use core.hql
 
-import * as path from "https://deno.land/std/path/mod.ts";
+import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { parse } from "./parser.ts";
 import { Environment } from "../environment.ts";
 import { expandMacros } from "./macro.ts";
@@ -125,7 +125,9 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
   printBanner();
 
   // Initialize environment and load core.hql macros
-  logger.log("Initializing environment...");
+
+  logger.log({ text: "Initializing environment...", namespace: "repl"});
+
   const env = await Environment.initializeGlobalEnv({
     verbose: options.verbose,
   });
@@ -135,7 +137,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
   // Display available macros
   if (options.verbose) {
     const macroKeys = Array.from(env.macros.keys());
-    logger.log(`Available macros: ${macroKeys.join(", ")}`);
+    logger.log({ text: `Available macros: ${macroKeys.join(", ")}`, namespace: "repl"});
   }
 
   const history: string[] = [];

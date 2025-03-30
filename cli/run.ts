@@ -1,8 +1,6 @@
 import { transpileCLI } from "../src/bundler.ts";
-import { dirname, resolve } from "../src/platform/platform.ts";
+import { resolve } from "../src/platform/platform.ts";
 import logger, { Logger } from "../src/logger.ts";
-import { parse } from "../src/s-exp/parser.ts";
-import { processImports } from "../src/s-exp/imports.ts";
 import { Environment } from "../src/environment.ts";
 import { cleanupAllTempFiles } from "../src/temp-file-tracker.ts";
 import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
@@ -20,33 +18,6 @@ function printHelp() {
   console.error("  --performance     Apply performance optimizations");
   console.error("  --print           Print final JS output directly in CLI");
   console.error("  --help, -h        Display this help message");
-}
-
-// (parseLogNamespaces now exists in cliUtils.ts)
-
-async function loadCoreMacros(env: Environment): Promise<void> {
-  const corePath = resolve("lib/core.hql");
-  logger.log({
-    text: `Loading core macros from: ${corePath}`,
-    namespace: "cli",
-  });
-  try {
-    const coreSource = await Deno.readTextFile(corePath);
-    const coreSexps = parse(coreSource);
-    await processImports(coreSexps, env, {
-      verbose: logger.enabled,
-      baseDir: dirname(corePath),
-    });
-    logger.log({ text: "Core macros loaded successfully.", namespace: "cli" });
-  } catch (error) {
-    logger.error(
-      `Failed to load core.hql: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      error,
-    );
-    throw error;
-  }
 }
 
 // ... (runModule function remains unchanged)
@@ -94,15 +65,7 @@ async function run() {
     namespace: "cli",
   });
 
-  const env = await Environment.initializeGlobalEnv({ verbose });
-
-  try {
-    await loadCoreMacros(env);
-  } catch (error) {
-    logger.error("Error during core macro loading. Aborting.", error);
-    Deno.exit(1);
-  }
-
+  
   try {
     const PERFORMANCE_MODE = {
       minify: true,

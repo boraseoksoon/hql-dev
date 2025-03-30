@@ -1,5 +1,5 @@
-// src/transpiler/hql-transpiler.ts - Enhanced with better error handling, diagnostics, and syntax transformation
-import * as path from "https://deno.land/std/path/mod.ts";
+// src/transpiler/hql-transpiler.ts - Refactored to use system macros registry
+import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { sexpToString } from "../s-exp/types.ts";
 import { parse } from "../s-exp/parser.ts";
 import { Environment } from "../environment.ts";
@@ -9,6 +9,7 @@ import { convertToHqlAst } from "../s-exp/macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
 import { transformSyntax } from "./syntax-transformer.ts";
+import { getSystemMacroPaths } from "../s-exp/system-macros.ts";
 import {
   createErrorReport,
   ImportError,
@@ -20,10 +21,10 @@ import {
 
 // Environment singleton for consistent state
 let globalEnv: Environment | null = null;
-let coreHqlLoaded = false;
+let systemMacrosLoaded = false;
 
-// Cache for parsed core.hql to avoid re-parsing
-let cachedCoreExpressions: any[] | null = null;
+// Cache for parsed macro expressions to avoid re-parsing
+const macroExpressionsCache = new Map<string, any[]>();
 
 /**
  * Options for processing HQL source code
@@ -189,7 +190,6 @@ export async function processHql(
       logExpandedExpressions(expanded, logger);
     }
 
-    // Step 6: Convert to HQL AST
     // Step 6: Convert to HQL AST
     logger.debug("Converting to HQL AST");
     const startAstTime = performance.now();
@@ -387,109 +387,108 @@ function logExpandedExpressions(expanded: any[], logger: Logger): void {
 }
 
 /**
- * Load and process core.hql to establish the standard library
+ * Load and process system macro files to establish the standard library
+ * This replaces the previous loadCoreHql function with a more generic
+ * approach that loads all system macros defined in system-macros.ts
  */
-async function loadCoreHql(
+async function loadSystemMacros(
   env: Environment,
   options: ProcessOptions,
 ): Promise<void> {
   const logger = new Logger(options.verbose || false);
 
   // Skip if already loaded to prevent duplicate loading
-  if (coreHqlLoaded) {
-    logger.debug("core.hql already loaded, skipping");
+  if (systemMacrosLoaded) {
+    logger.debug("System macros already loaded, skipping");
     return;
   }
 
-  logger.debug("Loading core.hql standard library");
+  logger.debug("Loading system macro files");
 
   try {
-    // Look for lib/core.hql from the current directory
-    const cwd = Deno.cwd();
-    const corePath = path.join(cwd, "lib/core.hql");
+    // Get system macro paths from registry
+    const macroPaths = getSystemMacroPaths();
+    
+    logger.debug(`Found ${macroPaths.length} system macro files to load`);
 
-    logger.debug(`Looking for core.hql at: ${corePath}`);
-
-    // Check if we need to parse core.hql or if we can use cached expressions
-    let coreExps;
-    if (cachedCoreExpressions) {
-      logger.debug("Using cached core.hql expressions");
-      coreExps = cachedCoreExpressions;
-    } else {
-      // Use the environment's file tracking to avoid redundant processing
-      if (env.hasProcessedFile(corePath)) {
-        logger.debug(
-          `Core.hql already processed in this environment, skipping`,
-        );
-        coreHqlLoaded = true;
-        return;
+    // Process each macro file
+    for (const macroPath of macroPaths) {
+      // Skip if this file was already processed in this environment
+      if (env.hasProcessedFile(macroPath)) {
+        logger.debug(`Macro file already processed: ${macroPath}`);
+        continue;
       }
 
       // Read the file
-      let coreSource;
+      let macroSource;
       try {
-        coreSource = await Deno.readTextFile(corePath);
+        macroSource = await Deno.readTextFile(macroPath);
       } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));
-        logger.error(
-          `Could not find or read lib/core.hql at ${corePath}`,
-        );
+        logger.error(`Could not find or read macro file at ${macroPath}`);
 
         throw new ImportError(
-          `Could not find lib/core.hql at ${corePath}. Make sure you are running from the project root.`,
-          corePath,
+          `Could not find macro file at ${macroPath}. Make sure the file exists.`,
+          macroPath,
           undefined,
           error,
         );
       }
 
       logger.debug(
-        `Found core.hql at: ${corePath} (${coreSource.length} bytes)`,
+        `Found macro file at: ${macroPath} (${macroSource.length} bytes)`
       );
 
-      // Parse the core.hql file
+      // Parse the macro file
+      let macroExps;
       try {
-        coreExps = parse(coreSource);
-        cachedCoreExpressions = coreExps; // Cache for future use
-        logger.debug(
-          `Parsed core.hql and cached ${coreExps.length} expressions`,
-        );
+        // Use cached expressions if available
+        if (macroExpressionsCache.has(macroPath)) {
+          macroExps = macroExpressionsCache.get(macroPath);
+          logger.debug(`Using cached expressions for ${macroPath}`);
+        } else {
+          macroExps = parse(macroSource);
+          macroExpressionsCache.set(macroPath, macroExps);
+          logger.debug(`Parsed ${macroPath} with ${macroExps.length} expressions`);
+        }
       } catch (error) {
         throw new ParseError(
-          `Failed to parse core.hql: ${
+          `Failed to parse macro file ${macroPath}: ${
             error instanceof Error ? error.message : String(error)
           }`,
           { line: 1, column: 1, offset: 0 },
-          coreSource,
+          macroSource,
         );
       }
+
+      // Apply syntax transformations
+      logger.debug(`Applying syntax transformations to ${macroPath}`);
+      const transformedExps = transformSyntax(macroExps, { verbose: options.verbose });
+
+      // Process imports in the macro file
+      await processImports(transformedExps, env, {
+        verbose: options.verbose || false,
+        baseDir: path.dirname(macroPath),
+        currentFile: macroPath,
+      });
+
+      // Expand macros
+      expandMacros(transformedExps, env, {
+        verbose: options.verbose,
+        currentFile: macroPath,
+      });
+
+      // Mark the file as processed
+      env.markFileProcessed(macroPath);
+      logger.debug(`Successfully processed macro file: ${macroPath}`);
     }
 
-    // Apply syntax transformations to core.hql
-    logger.debug("Applying syntax transformations to core.hql");
-    coreExps = transformSyntax(coreExps, { verbose: options.verbose });
-
-    // Process imports in core.hql
-    await processImports(coreExps, env, {
-      verbose: options.verbose || false,
-      baseDir: path.dirname(corePath),
-      currentFile: corePath, // Set current file to the core.hql path
-    });
-
-    // Expand macros defined in core.hql
-    expandMacros(coreExps, env, {
-      verbose: options.verbose,
-      currentFile: corePath,
-    });
-
-    // Mark core as loaded and processed
-    coreHqlLoaded = true;
-    env.markFileProcessed(corePath);
-
-    logger.debug("Core.hql loaded and all macros registered successfully");
+    // Mark system macros as loaded
+    systemMacrosLoaded = true;
+    logger.debug("All system macro files loaded successfully");
   } catch (error) {
     throw new TranspilerError(
-      `Loading core.hql standard library: ${
+      `Loading system macro files: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -519,7 +518,8 @@ async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
       verbose: options.verbose,
     });
 
-    await loadCoreHql(globalEnv, options);
+    // Load system macros (replaces the previous loadCoreHql call)
+    await loadSystemMacros(globalEnv, options);
 
     const endTime = performance.now();
     logger.debug(
