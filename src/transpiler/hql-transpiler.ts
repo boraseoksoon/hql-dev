@@ -1,4 +1,4 @@
-// src/transpiler/hql-transpiler.ts - Refactored to use system macros registry
+// src/transpiler/hql-transpiler.ts - Refactored
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { sexpToString } from "../s-exp/types.ts";
 import { parse } from "../s-exp/parser.ts";
@@ -19,16 +19,10 @@ import {
   TranspilerError,
 } from "./errors.ts";
 
-// Environment singleton for consistent state
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
-
-// Cache for parsed macro expressions to avoid re-parsing
 const macroExpressionsCache = new Map<string, any[]>();
 
-/**
- * Options for processing HQL source code
- */
 interface ProcessOptions {
   verbose?: boolean;
   baseDir?: string;
@@ -36,9 +30,6 @@ interface ProcessOptions {
   tempDir?: string;
 }
 
-/**
- * Process HQL source code through the S-expression layer
- */
 export async function processHql(
   source: string,
   options: ProcessOptions = {},
@@ -46,494 +37,219 @@ export async function processHql(
   const logger = new Logger(options.verbose || false);
   logger.debug("Processing HQL source with S-expression layer");
 
-  const startTotalTime = performance.now();
-  const sourceFilename = options.baseDir
-    ? path.basename(options.baseDir)
-    : "unknown";
+  const timings = new Map<string, number>();
+  const start = () => performance.now();
+  const end = (label: string, s: number) => {
+    const t = performance.now() - s;
+    timings.set(label, t);
+    logger.debug(`${label} completed in ${t.toFixed(2)}ms`);
+  };
+
+  const sourceFilename = options.baseDir ? path.basename(options.baseDir) : "unknown";
 
   try {
-    // Step 1: Parse the source into S-expressions
-    logger.debug(`Parsing HQL source (${source.length} characters)`);
-    const startParseTime = performance.now();
+    // Step 1: Parse
+    const t0 = start();
+    const sexps = parseWithHandling(source, logger);
+    end("Parsing", t0);
+    if (options.verbose) logExpressions("Parsed", sexps, logger);
 
-    let sexps;
-    try {
-      sexps = parse(source);
-      logger.debug(`Successfully parsed ${sexps.length} S-expressions`);
-    } catch (error) {
-      if (error instanceof ParseError) {
-        throw error; // Re-throw ParseError with position info
-      }
-      throw new ParseError(
-        `Failed to parse HQL source: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        { line: 1, column: 1, offset: 0 },
-        source,
-      );
-    }
+    // Step 2: Syntax Transform
+    const t1 = start();
+    const canonicalSexps = transformWithHandling(sexps, options.verbose, logger);
+    end("Syntax transform", t1);
+    if (options.verbose) logExpressions("Transformed", canonicalSexps, logger);
 
-    const parseTime = performance.now() - startParseTime;
-    logger.debug(`Parsing completed in ${parseTime.toFixed(2)}ms`);
-
-    if (options.verbose) {
-      logParsedExpressions(sexps, logger);
-    }
-
-    // Step 2: Apply syntax transformations to convert all sugar to canonical forms
-    logger.debug("Applying syntax transformations");
-    const startSyntaxTime = performance.now();
-
-    try {
-      sexps = transformSyntax(sexps, { verbose: options.verbose });
-      logger.debug(
-        `Syntax transformation completed for ${sexps.length} expressions`,
-      );
-    } catch (error) {
-      if (error instanceof TransformError) {
-        throw error;
-      }
-      throw new TransformError(
-        `Failed to transform syntax: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        "syntax transformation",
-        "valid HQL expressions",
-        sexps,
-      );
-    }
-
-    const syntaxTime = performance.now() - startSyntaxTime;
-    logger.debug(
-      `Syntax transformation completed in ${syntaxTime.toFixed(2)}ms`,
-    );
-
-    if (options.verbose) {
-      logTransformedExpressions(sexps, logger);
-    }
-
-    // Step 3: Get or initialize the global environment
-    logger.debug("Getting global environment with macros");
-    const startEnvTime = performance.now();
-
+    // Step 3: Global Environment
+    const t2 = start();
     const env = await getGlobalEnv(options);
+    if (options.baseDir) env.setCurrentFile(options.baseDir);
+    end("Environment setup", t2);
 
-    const envTime = performance.now() - startEnvTime;
-    logger.debug(
-      `Environment initialization completed in ${envTime.toFixed(2)}ms`,
-    );
+    // Step 4: Imports
+    const t3 = start();
+    await processImportsWithHandling(canonicalSexps, env, options);
+    end("Import processing", t3);
 
-    // Set the current file if baseDir is provided
-    const currentFile = options.baseDir;
-    if (currentFile) {
-      logger.debug(`Setting current file to: ${currentFile}`);
-      env.setCurrentFile(currentFile);
-    }
+    // Step 5: Macro Expansion
+    const t4 = start();
+    const expanded = expandWithHandling(canonicalSexps, env, options, logger);
+    end("Macro expansion", t4);
+    if (options.verbose) logExpressions("Expanded", expanded, logger);
 
-    // Step 4: Process imports in the user code
-    logger.debug("Processing imports in user code");
-    const startImportTime = performance.now();
-
-    try {
-      await processImports(sexps, env, {
-        verbose: options.verbose,
-        baseDir: options.baseDir || Deno.cwd(),
-        tempDir: options.tempDir,
-        currentFile: currentFile,
-      });
-    } catch (error) {
-      if (error instanceof ImportError) {
-        throw error; // Re-throw ImportError with detailed info
-      }
-      throw new ImportError(
-        `Failed to process imports: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        "unknown",
-        currentFile,
-        error instanceof Error ? error : undefined,
-      );
-    }
-
-    const importTime = performance.now() - startImportTime;
-    logger.debug(`Import processing completed in ${importTime.toFixed(2)}ms`);
-
-    // Step 5: Expand macros in the user code
-    logger.debug("Expanding macros in user code");
-    const startMacroTime = performance.now();
-
-    let expanded;
-    try {
-      expanded = expandMacros(sexps, env, {
-        verbose: options.verbose,
-        currentFile: currentFile,
-        useCache: true, // Use macro expansion cache
-      });
-    } catch (error) {
-      if (error instanceof MacroError) {
-        throw error; // Re-throw MacroError with detailed info
-      }
-      throw new MacroError(
-        `Failed to expand macros: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        "",
-        currentFile,
-        error instanceof Error ? error : undefined,
-      );
-    }
-
-    const macroTime = performance.now() - startMacroTime;
-    logger.debug(`Macro expansion completed in ${macroTime.toFixed(2)}ms`);
-
-    if (options.verbose) {
-      logExpandedExpressions(expanded, logger);
-    }
-
-    // Step 6: Convert to HQL AST
-    logger.debug("Converting to HQL AST");
-    const startAstTime = performance.now();
-
+    // Step 6: Convert to AST
+    const t5 = start();
     const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
+    end("AST conversion", t5);
 
-    const astTime = performance.now() - startAstTime;
-    logger.debug(
-      `AST conversion completed in ${
-        astTime.toFixed(2)
-      }ms with ${hqlAst.length} nodes`,
-    );
+    // Step 7: Transform to JS
+    const t6 = start();
+    const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), { verbose: options.verbose });
+    end("JS transformation", t6);
 
-    // Step 7: Transform to JavaScript using existing pipeline
-    logger.debug("Transforming to JavaScript");
-    const startTransformTime = performance.now();
+    if (options.baseDir) env.setCurrentFile(null);
 
-    const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), {
-      verbose: options.verbose,
-    });
-
-    const transformTime = performance.now() - startTransformTime;
-    logger.debug(
-      `JavaScript transformation completed in ${transformTime.toFixed(2)}ms`,
-    );
-
-    // Clear current file when done
-    if (currentFile) {
-      env.setCurrentFile(null);
-    }
-
-    const totalTime = performance.now() - startTotalTime;
-    logger.debug(`Total processing completed in ${totalTime.toFixed(2)}ms`);
-
-    // Log performance metrics
-    if (options.verbose) {
-      console.log(
-        `✅ Successfully processed ${sourceFilename} in ${
-          totalTime.toFixed(2)
-        }ms`,
-      );
-      console.log("Performance metrics:");
-      console.log(
-        `  Parsing:             ${parseTime.toFixed(2)}ms (${
-          (parseTime / totalTime * 100).toFixed(1)
-        }%)`,
-      );
-      console.log(
-        `  Syntax transform:    ${syntaxTime.toFixed(2)}ms (${
-          (syntaxTime / totalTime * 100).toFixed(1)
-        }%)`,
-      );
-      console.log(
-        `  Environment setup:   ${envTime.toFixed(2)}ms (${
-          (envTime / totalTime * 100).toFixed(1)
-        }%)`,
-      );
-      console.log(
-        `  Import processing:   ${importTime.toFixed(2)}ms (${
-          (importTime / totalTime * 100).toFixed(1)
-        }%)`,
-      );
-      console.log(
-        `  Macro expansion:     ${macroTime.toFixed(2)}ms (${
-          (macroTime / totalTime * 100).toFixed(1)
-        }%)`,
-      );
-      console.log(
-        `  AST conversion:      ${astTime.toFixed(2)}ms (${
-          (astTime / totalTime * 100).toFixed(1)
-        }%)`,
-      );
-      console.log(
-        `  JS transformation:   ${transformTime.toFixed(2)}ms (${
-          (transformTime / totalTime * 100).toFixed(1)
-        }%)`,
-      );
-      console.log(`  Total:               ${totalTime.toFixed(2)}ms`);
-    }
-
+    if (options.verbose) logPerformance(timings, sourceFilename);
     return jsCode;
   } catch (error) {
-    // Create a comprehensive error report
-    let errorReport: string;
-
-    if (
-      error instanceof ParseError ||
-      error instanceof MacroError ||
-      error instanceof ImportError ||
-      error instanceof TranspilerError ||
-      error instanceof TransformError
-    ) {
-      // Use the formatMessage method for specific error types
-      errorReport = error.formatMessage();
-    } else {
-      // Create a generic error report for unknown errors
-      errorReport = createErrorReport(
-        error instanceof Error ? error : new Error(String(error)),
-        "HQL processing",
-        {
-          sourceLength: source.length,
-          options: options,
-          file: sourceFilename,
-        },
-      );
-    }
-
-    // Always log the error
-    logger.error(
-      `❌ Error processing HQL: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-
-    // Display detailed error report in verbose mode
-    if (options.verbose) {
-      console.error("Detailed error report:");
-      console.error(errorReport);
-    }
-
-    // Rethrow the original error or wrap it
-    if (
-      error instanceof ParseError ||
-      error instanceof MacroError ||
-      error instanceof ImportError ||
-      error instanceof TranspilerError ||
-      error instanceof TransformError
-    ) {
-      throw error;
-    } else {
-      throw new TranspilerError(
-        `Error processing HQL: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    handleProcessError(error, source, options, sourceFilename, logger);
   }
 }
 
-/**
- * Helper function to log parsed expressions when in verbose mode
- */
-function logParsedExpressions(sexps: any[], logger: Logger): void {
-  logger.debug(`Parsed ${sexps.length} expressions`);
-
-  // Only log the first few expressions to avoid overwhelming output
-  const MAX_EXPRESSIONS_TO_LOG = 5;
-  for (let i = 0; i < Math.min(sexps.length, MAX_EXPRESSIONS_TO_LOG); i++) {
-    logger.debug(`Expression ${i + 1}: ${sexpToString(sexps[i])}`);
-  }
-
-  if (sexps.length > MAX_EXPRESSIONS_TO_LOG) {
-    logger.debug(
-      `...and ${sexps.length - MAX_EXPRESSIONS_TO_LOG} more expressions`,
-    );
+function parseWithHandling(source: string, logger: Logger) {
+  try {
+    const sexps = parse(source);
+    logger.debug(`Parsed ${sexps.length} S-expressions`);
+    return sexps;
+  } catch (error) {
+    if (error instanceof ParseError) throw error;
+    throw new ParseError(`Failed to parse HQL source: ${error.message}`, { line: 1, column: 1, offset: 0 }, source);
   }
 }
 
-/**
- * Helper function to log syntax-transformed expressions when in verbose mode
- */
-function logTransformedExpressions(sexps: any[], logger: Logger): void {
-  logger.debug(`Transformed to ${sexps.length} canonical expressions`);
-
-  // Only log the first few expressions to avoid overwhelming output
-  const MAX_EXPRESSIONS_TO_LOG = 5;
-  for (let i = 0; i < Math.min(sexps.length, MAX_EXPRESSIONS_TO_LOG); i++) {
-    logger.debug(`Transformed ${i + 1}: ${sexpToString(sexps[i])}`);
-  }
-
-  if (sexps.length > MAX_EXPRESSIONS_TO_LOG) {
-    logger.debug(
-      `...and ${sexps.length - MAX_EXPRESSIONS_TO_LOG} more expressions`,
-    );
+function transformWithHandling(sexps: any[], verbose: boolean | undefined, logger: Logger) {
+  try {
+    const result = transformSyntax(sexps, { verbose });
+    logger.debug(`Transformed ${result.length} expressions`);
+    return result;
+  } catch (error) {
+    if (error instanceof TransformError) throw error;
+    throw new TransformError(`Failed to transform syntax: ${error.message}`, "syntax transformation", "valid HQL expressions", sexps);
   }
 }
 
-/**
- * Helper function to log expanded expressions when in verbose mode
- */
-function logExpandedExpressions(expanded: any[], logger: Logger): void {
-  logger.debug(`Expanded to ${expanded.length} expressions`);
-
-  // Only log the first few expressions to avoid overwhelming output
-  const MAX_EXPRESSIONS_TO_LOG = 5;
-  for (let i = 0; i < Math.min(expanded.length, MAX_EXPRESSIONS_TO_LOG); i++) {
-    logger.debug(`Expanded ${i + 1}: ${sexpToString(expanded[i])}`);
-  }
-
-  if (expanded.length > MAX_EXPRESSIONS_TO_LOG) {
-    logger.debug(
-      `...and ${expanded.length - MAX_EXPRESSIONS_TO_LOG} more expressions`,
-    );
+async function processImportsWithHandling(sexps: any[], env: Environment, options: ProcessOptions) {
+  try {
+    await processImports(sexps, env, {
+      verbose: options.verbose,
+      baseDir: options.baseDir || Deno.cwd(),
+      tempDir: options.tempDir,
+      currentFile: options.baseDir,
+    });
+  } catch (error) {
+    if (error instanceof ImportError) throw error;
+    throw new ImportError(`Failed to process imports: ${error.message}`, "unknown", options.baseDir, error);
   }
 }
 
-/**
- * Load and process system macro files to establish the standard library
- * This replaces the previous loadCoreHql function with a more generic
- * approach that loads all system macros defined in system-macros.ts
- */
-async function loadSystemMacros(
-  env: Environment,
+function expandWithHandling(sexps: any[], env: Environment, options: ProcessOptions, logger: Logger) {
+  try {
+    return expandMacros(sexps, env, {
+      verbose: options.verbose,
+      currentFile: options.baseDir,
+      useCache: true,
+    });
+  } catch (error) {
+    if (error instanceof MacroError) throw error;
+    throw new MacroError(`Failed to expand macros: ${error.message}`, "", options.baseDir, error);
+  }
+}
+
+function logExpressions(label: string, sexps: any[], logger: Logger) {
+  const maxLog = 5;
+  logger.debug(`${label} ${sexps.length} expressions`);
+  sexps.slice(0, maxLog).forEach((s, i) => logger.debug(`${label} ${i + 1}: ${sexpToString(s)}`));
+  if (sexps.length > maxLog) logger.debug(`...and ${sexps.length - maxLog} more expressions`);
+}
+
+function logPerformance(timings: Map<string, number>, file: string) {
+  const total = Array.from(timings.values()).reduce((a, b) => a + b, 0);
+  console.log(`✅ Successfully processed ${file} in ${total.toFixed(2)}ms`);
+  console.log("Performance metrics:");
+  for (const [label, time] of timings.entries()) {
+    console.log(`  ${label.padEnd(20)} ${time.toFixed(2)}ms (${((time / total) * 100).toFixed(1)}%)`);
+  }
+  console.log(`  Total                ${total.toFixed(2)}ms`);
+}
+
+function handleProcessError(
+  error: unknown,
+  source: string,
   options: ProcessOptions,
-): Promise<void> {
-  const logger = new Logger(options.verbose || false);
+  sourceFilename: string,
+  logger: Logger,
+) {
+  let report;
+  if (
+    error instanceof ParseError ||
+    error instanceof MacroError ||
+    error instanceof ImportError ||
+    error instanceof TranspilerError ||
+    error instanceof TransformError
+  ) {
+    report = error.formatMessage();
+  } else {
+    report = createErrorReport(
+      error instanceof Error ? error : new Error(String(error)),
+      "HQL processing",
+      { sourceLength: source.length, options, file: sourceFilename },
+    );
+  }
 
-  // Skip if already loaded to prevent duplicate loading
+  logger.error(`❌ Error processing HQL: ${error instanceof Error ? error.message : String(error)}`);
+  if (options.verbose) console.error("Detailed error report:\n" + report);
+
+  if (
+    error instanceof ParseError ||
+    error instanceof MacroError ||
+    error instanceof ImportError ||
+    error instanceof TranspilerError ||
+    error instanceof TransformError
+  ) {
+    throw error;
+  } else {
+    throw new TranspilerError(`Error processing HQL: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function loadSystemMacros(env: Environment, options: ProcessOptions): Promise<void> {
+  const logger = new Logger(options.verbose || false);
   if (systemMacrosLoaded) {
     logger.debug("System macros already loaded, skipping");
     return;
   }
 
-  logger.debug("Loading system macro files");
-
   try {
-    // Get system macro paths from registry
     const macroPaths = getSystemMacroPaths();
-    
-    logger.debug(`Found ${macroPaths.length} system macro files to load`);
-
-    // Process each macro file
     for (const macroPath of macroPaths) {
-      // Skip if this file was already processed in this environment
-      if (env.hasProcessedFile(macroPath)) {
-        logger.debug(`Macro file already processed: ${macroPath}`);
-        continue;
-      }
+      if (env.hasProcessedFile(macroPath)) continue;
 
-      // Read the file
-      let macroSource;
-      try {
-        macroSource = await Deno.readTextFile(macroPath);
-      } catch (e) {
-        const error = e instanceof Error ? e : new Error(String(e));
-        logger.error(`Could not find or read macro file at ${macroPath}`);
+      const macroSource = await Deno.readTextFile(macroPath).catch(e => {
+        throw new ImportError(`Could not find macro file at ${macroPath}.`, macroPath, undefined, e);
+      });
 
-        throw new ImportError(
-          `Could not find macro file at ${macroPath}. Make sure the file exists.`,
-          macroPath,
-          undefined,
-          error,
-        );
-      }
+      const macroExps = macroExpressionsCache.get(macroPath) || parse(macroSource);
+      macroExpressionsCache.set(macroPath, macroExps);
 
-      logger.debug(
-        `Found macro file at: ${macroPath} (${macroSource.length} bytes)`
-      );
+      const transformed = transformSyntax(macroExps, { verbose: options.verbose });
 
-      // Parse the macro file
-      let macroExps;
-      try {
-        // Use cached expressions if available
-        if (macroExpressionsCache.has(macroPath)) {
-          macroExps = macroExpressionsCache.get(macroPath);
-          logger.debug(`Using cached expressions for ${macroPath}`);
-        } else {
-          macroExps = parse(macroSource);
-          macroExpressionsCache.set(macroPath, macroExps);
-          logger.debug(`Parsed ${macroPath} with ${macroExps.length} expressions`);
-        }
-      } catch (error) {
-        throw new ParseError(
-          `Failed to parse macro file ${macroPath}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          { line: 1, column: 1, offset: 0 },
-          macroSource,
-        );
-      }
-
-      // Apply syntax transformations
-      logger.debug(`Applying syntax transformations to ${macroPath}`);
-      const transformedExps = transformSyntax(macroExps, { verbose: options.verbose });
-
-      // Process imports in the macro file
-      await processImports(transformedExps, env, {
+      await processImports(transformed, env, {
         verbose: options.verbose || false,
         baseDir: path.dirname(macroPath),
         currentFile: macroPath,
       });
 
-      // Expand macros
-      expandMacros(transformedExps, env, {
-        verbose: options.verbose,
-        currentFile: macroPath,
-      });
-
-      // Mark the file as processed
+      expandMacros(transformed, env, { verbose: options.verbose, currentFile: macroPath });
       env.markFileProcessed(macroPath);
-      logger.debug(`Successfully processed macro file: ${macroPath}`);
     }
-
-    // Mark system macros as loaded
     systemMacrosLoaded = true;
-    logger.debug("All system macro files loaded successfully");
   } catch (error) {
-    throw new TranspilerError(
-      `Loading system macro files: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    throw new TranspilerError(`Loading system macro files: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-/**
- * Initialize the global environment once
- * Uses singleton pattern for consistency
- */
 async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
   const logger = new Logger(options.verbose);
-
-  try {
-    // If we already have a global environment, reuse it
-    if (globalEnv) {
-      logger.debug("Reusing existing global environment");
-      return globalEnv;
-    }
-
-    // Otherwise, initialize a new one
-    const startTime = performance.now();
-    logger.debug("Initializing new global environment");
-
-    // Create the environment
-    globalEnv = await Environment.initializeGlobalEnv({
-      verbose: options.verbose,
-    });
-
-    // Load system macros (replaces the previous loadCoreHql call)
-    await loadSystemMacros(globalEnv, options);
-
-    const endTime = performance.now();
-    logger.debug(
-      `Global environment initialization took ${
-        (endTime - startTime).toFixed(2)
-      }ms`,
-    );
-
+  if (globalEnv) {
+    logger.debug("Reusing existing global environment");
     return globalEnv;
-  } catch (error) {
-    throw new TranspilerError(
-      `Initializing global environment: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
   }
+
+  const t = performance.now();
+  logger.debug("Initializing new global environment");
+  globalEnv = await Environment.initializeGlobalEnv({ verbose: options.verbose });
+  await loadSystemMacros(globalEnv, options);
+  logger.debug(`Global environment initialization took ${(performance.now() - t).toFixed(2)}ms`);
+
+  return globalEnv;
 }
