@@ -4754,8 +4754,9 @@ function transformCond(list: ListNode, currentDir: string): IR.IRNode {
   return { type: IR.IRNodeType.NullLiteral };
 }
 
+
 /**
- * Handle method calls with dot notation: (.method object args...)
+ * Transform method calls with dot notation: (.method object args...)
  * This function detects and processes method calls where the first element
  * is a symbol starting with a dot.
  */
@@ -4778,8 +4779,8 @@ function transformMethodCall(list: ListNode, currentDir: string): IR.IRNode {
     // Remove the dot prefix to get the actual method name
     const methodName = methodSymbol.name.substring(1);
     
-    // Second element is the object the method is called on
-    const object = transformNode(list.elements[1], currentDir);
+    // Last element is the object the method is called on (in this syntax form)
+    const object = transformNode(list.elements[list.elements.length - 1], currentDir);
     if (!object) {
       throw new ValidationError(
         "Object in method call transformed to null",
@@ -4789,8 +4790,8 @@ function transformMethodCall(list: ListNode, currentDir: string): IR.IRNode {
       );
     }
     
-    // Remaining elements are the arguments to the method
-    const args = list.elements.slice(2).map(arg => {
+    // Middle elements are the arguments to the method (excluding the last element which is the object)
+    const args = list.elements.slice(1, list.elements.length - 1).map(arg => {
       const transformed = transformNode(arg, currentDir);
       if (!transformed) {
         throw new ValidationError(
@@ -4804,7 +4805,6 @@ function transformMethodCall(list: ListNode, currentDir: string): IR.IRNode {
     });
     
     // Create a CallExpression with a MemberExpression as the callee
-    // This is the key to getting method calls right
     return {
       type: IR.IRNodeType.CallExpression,
       callee: {

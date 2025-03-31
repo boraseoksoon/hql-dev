@@ -1,5 +1,5 @@
 // src/transpiler/syntax-transformer.ts
-// Enhanced version with fn function parameter handling
+// Enhanced version with dot-chain syntax transformation
 
 import {
   createList,
@@ -51,36 +51,12 @@ export function transformNode(node: SExp, logger: Logger): SExp {
         return list;
       }
 
-      if (list.elements.length > 1) {
-        const firstIsNotMethod = !isSymbol(list.elements[0]) || 
-                                !(list.elements[0] as SSymbol).name.startsWith('.');
-        
-        const hasMethodInRest = list.elements.slice(1).some(elem => 
-          isSymbol(elem) && (elem as SSymbol).name.startsWith('.')
-        );
-        
-        if (firstIsNotMethod && hasMethodInRest) {
-          return transformChainMethodInvocation(list, logger);
-        }
-      }
-      
-      // Check if this is a chain method invocation form
-      // Pattern: First element is not a method (doesn't start with .)
-      // AND there's at least one element that is a method (starts with .)
-      if (list.elements.length > 1) {
-        const firstIsNotMethod = !isSymbol(list.elements[0]) || 
-                                !(list.elements[0] as SSymbol).name.startsWith('.');
-        
-        const hasMethodInRest = list.elements.slice(1).some(elem => 
-          isSymbol(elem) && (elem as SSymbol).name.startsWith('.')
-        );
-        
-        if (firstIsNotMethod && hasMethodInRest) {
-          return transformChainMethodInvocation(list, logger);
-        }
+      // Check if this is a dot-chain method invocation form
+      if (isDotChainForm(list)) {
+        return transformDotChainForm(list, logger);
       }
 
-      // The rest of the existing transformNode function...
+      // Process standard list with recursion on elements
       const first = list.elements[0];
       if (!isSymbol(first)) {
         // If the first element isn't a symbol, recursively transform its children
@@ -99,7 +75,6 @@ export function transformNode(node: SExp, logger: Logger): SExp {
           return transformFxSyntax(list, logger);
         case "fn":
           return transformFnSyntax(list, logger);
-        // Add other transformations here as needed
         default:
           // Recursively transform elements for non-special forms
           return {
@@ -115,11 +90,99 @@ export function transformNode(node: SExp, logger: Logger): SExp {
 }
 
 /**
+ * Check if a list appears to be in dot-chain form
+ * The first element should not be a method (doesn't start with .)
+ * And there should be at least one method (element starting with .) elsewhere in the list
+ */
+function isDotChainForm(list: SList): boolean {
+  if (list.elements.length <= 1) {
+    return false;
+  }
+
+  // First element shouldn't be a method
+  const firstIsNotMethod = !isSymbol(list.elements[0]) || 
+                          !(list.elements[0] as SSymbol).name.startsWith('.');
+  
+  // Check for at least one method in the rest of the list
+  const hasMethodInRest = list.elements.slice(1).some(elem => 
+    isSymbol(elem) && (elem as SSymbol).name.startsWith('.')
+  );
+  
+  return firstIsNotMethod && hasMethodInRest;
+}
+
+/**
+ * Transform a dot-chain form into proper nested method calls
+ * Example: (obj .method1 arg1 .method2 arg2) becomes (.method2 arg2 (.method1 arg1 obj))
+ */
+function transformDotChainForm(list: SList, logger: Logger): SExp {
+  return perform(
+    () => {
+      logger.debug("Transforming dot-chain form");
+
+      // Start with the base object
+      let result = transformNode(list.elements[0], logger);
+      
+      // Group methods and their arguments
+      const methodGroups = [];
+      let currentMethod = null;
+      let currentArgs = [];
+      
+      for (let i = 1; i < list.elements.length; i++) {
+        const element = list.elements[i];
+        
+        // Check if this is a method indicator (symbol starting with '.')
+        if (isSymbol(element) && (element as SSymbol).name.startsWith('.')) {
+          // If we have a previous method, store it
+          if (currentMethod !== null) {
+            methodGroups.push({
+              method: currentMethod,
+              args: currentArgs
+            });
+            // Reset for next method
+            currentArgs = [];
+          }
+          
+          // Set current method
+          currentMethod = element as SSymbol;
+        } 
+        // If not a method indicator, it's an argument to the current method
+        else if (currentMethod !== null) {
+          // Transform the argument recursively
+          const transformedArg = transformNode(element, logger);
+          currentArgs.push(transformedArg);
+        }
+      }
+      
+      // Add the last method group if there is one
+      if (currentMethod !== null) {
+        methodGroups.push({
+          method: currentMethod,
+          args: currentArgs
+        });
+      }
+      
+      // Build the nested method calls from inside out
+      for (const { method, args } of methodGroups) {
+        // Create a method call with the object as the last argument
+        result = createList(
+          method,
+          ...args,
+          result
+        );
+      }
+      
+      return result;
+    },
+    "transformDotChainForm",
+    TransformError,
+    ["dot-chain form transformation"],
+  );
+}
+
+/**
  * Transform fx function syntax
- *
  * (fx add (x: Int = 100 y: Int = 200) (-> Int) (+ x y))
- *
- * We'll keep the same fx name but reorganize parameters for easier processing
  */
 function transformFxSyntax(list: SList, logger: Logger): SExp {
   return perform(
@@ -175,10 +238,9 @@ function transformFxSyntax(list: SList, logger: Logger): SExp {
         );
       }
 
-      // Simply create a processed version with the original 'fx' operation
-      // Just reusing existing components with minimal transformation
+      // Create a processed version with the original 'fx' operation
       return createList(
-        createSymbol("fx"), // Keep 'fx', don't change to 'fx-typed'
+        createSymbol("fx"),
         name,
         paramsList,
         returnTypeList,
@@ -193,10 +255,7 @@ function transformFxSyntax(list: SList, logger: Logger): SExp {
 
 /**
  * Transform fn function syntax
- *
  * (fn add (x = 100 y = 200) (+ x y))
- *
- * This handles the fn functions with default parameters
  */
 function transformFnSyntax(list: SList, logger: Logger): SExp {
   return perform(
@@ -249,73 +308,5 @@ function transformFnSyntax(list: SList, logger: Logger): SExp {
     "transformFnSyntax",
     TransformError,
     ["fn syntax transformation"],
-  );
-}
-
-/**
- * Transform chain method invocation syntax
- * Converts (obj .method1 arg1 .method2 arg2) to nested form
- * Result: (.method2 arg2 (.method1 arg1 obj))
- */
-function transformChainMethodInvocation(list: SList, logger: Logger): SExp {
-  return perform(
-    () => {
-      logger.debug("Transforming chain method invocation syntax");
-
-      // If list has no elements, return it unchanged
-      if (list.elements.length === 0) {
-        return list;
-      }
-
-      // Extract the initial object (first element)
-      let result = transformNode(list.elements[0], logger);
-      
-      // Process each element in the list to find .method patterns
-      let currentMethod: SSymbol | null = null;
-      let currentArgs: SExp[] = [];
-      
-      for (let i = 1; i < list.elements.length; i++) {
-        const element = list.elements[i];
-        
-        // Check if this is a method indicator (symbol starting with '.')
-        if (isSymbol(element) && (element as SSymbol).name.startsWith('.')) {
-          // If we have a previous method with arguments, create its call form
-          if (currentMethod !== null) {
-            // Create the method call with accumulated arguments
-            result = createList(
-              currentMethod,
-              ...currentArgs,
-              result
-            );
-            // Reset for the next method
-            currentArgs = [];
-          }
-          
-          // Set the current method
-          currentMethod = element as SSymbol;
-        } 
-        // If not a method indicator, it's an argument to the current method
-        else if (currentMethod !== null) {
-          // Transform the argument recursively
-          const transformedArg = transformNode(element, logger);
-          currentArgs.push(transformedArg);
-        }
-        // If we hit something unexpected when not in a method context, just skip it
-      }
-      
-      // Process the last method if there is one
-      if (currentMethod !== null) {
-        result = createList(
-          currentMethod,
-          ...currentArgs,
-          result
-        );
-      }
-      
-      return result;
-    },
-    "transformChainMethodInvocation",
-    TransformError,
-    ["chain method invocation transformation"],
   );
 }
