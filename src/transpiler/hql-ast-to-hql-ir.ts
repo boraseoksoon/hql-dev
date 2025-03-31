@@ -734,6 +734,10 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
     }
 
+    if (first.type === "symbol" && (first as SymbolNode).name.startsWith('.')) {
+      return transformMethodCall(list, currentDir);
+    }
+    
     if (
       first.type === "symbol" && 
       (first as SymbolNode).name === "class" &&
@@ -4748,4 +4752,78 @@ function transformCond(list: ListNode, currentDir: string): IR.IRNode {
   
   // Default case if no clauses match (should not reach here)
   return { type: IR.IRNodeType.NullLiteral };
+}
+
+/**
+ * Handle method calls with dot notation: (.method object args...)
+ * This function detects and processes method calls where the first element
+ * is a symbol starting with a dot.
+ */
+function transformMethodCall(list: ListNode, currentDir: string): IR.IRNode {
+  try {
+    logger.debug("Transforming method call");
+    
+    if (list.elements.length < 2) {
+      throw new ValidationError(
+        "Method call requires at least an object",
+        "method call",
+        "object",
+        `${list.elements.length - 1} arguments`
+      );
+    }
+
+    // First element is the method name (e.g., ".filter")
+    const methodSymbol = list.elements[0] as SymbolNode;
+    
+    // Remove the dot prefix to get the actual method name
+    const methodName = methodSymbol.name.substring(1);
+    
+    // Second element is the object the method is called on
+    const object = transformNode(list.elements[1], currentDir);
+    if (!object) {
+      throw new ValidationError(
+        "Object in method call transformed to null",
+        "method call object",
+        "valid object expression",
+        "null"
+      );
+    }
+    
+    // Remaining elements are the arguments to the method
+    const args = list.elements.slice(2).map(arg => {
+      const transformed = transformNode(arg, currentDir);
+      if (!transformed) {
+        throw new ValidationError(
+          `Method argument transformed to null: ${JSON.stringify(arg)}`,
+          "method argument",
+          "valid expression",
+          "null"
+        );
+      }
+      return transformed;
+    });
+    
+    // Create a CallExpression with a MemberExpression as the callee
+    // This is the key to getting method calls right
+    return {
+      type: IR.IRNodeType.CallExpression,
+      callee: {
+        type: IR.IRNodeType.MemberExpression,
+        object: object,
+        property: {
+          type: IR.IRNodeType.Identifier,
+          name: methodName
+        },
+        computed: false
+      },
+      arguments: args
+    } as IR.IRCallExpression;
+  } catch (error) {
+    throw new TransformError(
+      `Failed to transform method call: ${error instanceof Error ? error.message : String(error)}`,
+      "method call transformation",
+      "valid method call",
+      list
+    );
+  }
 }

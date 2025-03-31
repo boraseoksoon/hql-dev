@@ -1,4 +1,4 @@
-;; test-chain-invocation.hql
+;; dot-access-method-chain-invocation.hql
 ;; This program demonstrates both styles of method chaining in HQL
 
 ;; Define a simple array to work with

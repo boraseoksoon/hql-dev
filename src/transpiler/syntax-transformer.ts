@@ -51,6 +51,19 @@ export function transformNode(node: SExp, logger: Logger): SExp {
         return list;
       }
 
+      if (list.elements.length > 1) {
+        const firstIsNotMethod = !isSymbol(list.elements[0]) || 
+                                !(list.elements[0] as SSymbol).name.startsWith('.');
+        
+        const hasMethodInRest = list.elements.slice(1).some(elem => 
+          isSymbol(elem) && (elem as SSymbol).name.startsWith('.')
+        );
+        
+        if (firstIsNotMethod && hasMethodInRest) {
+          return transformChainMethodInvocation(list, logger);
+        }
+      }
+      
       // Check if this is a chain method invocation form
       // Pattern: First element is not a method (doesn't start with .)
       // AND there's at least one element that is a method (starts with .)
@@ -287,6 +300,7 @@ function transformChainMethodInvocation(list: SList, logger: Logger): SExp {
           const transformedArg = transformNode(element, logger);
           currentArgs.push(transformedArg);
         }
+        // If we hit something unexpected when not in a method context, just skip it
       }
       
       // Process the last method if there is one

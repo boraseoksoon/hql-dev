@@ -775,7 +775,7 @@ function convertIdentifier(node: IR.IRIdentifier): ts.Identifier {
  */
 function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
   try {
-    // Special case for method calls
+    // CRITICAL ADDITION: Special case for method calls
     if (node.callee.type === IR.IRNodeType.MemberExpression) {
       const memberExpr = node.callee as IR.IRMemberExpression;
       const object = convertIRExpr(memberExpr.object);
@@ -808,7 +808,7 @@ function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
         );
       }
       
-      // Create the call expression
+      // Create the method call expression - proper method call format
       return ts.factory.createCallExpression(
         methodAccess,
         undefined,
@@ -816,9 +816,9 @@ function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
       );
     }
     
-    // For other call expressions, use the existing logic
+    // For regular function calls - remain the same
     const callee = convertIRExpr(node.callee);
-    const args = node.arguments.map((arg) => unwrapRestArg(convertIRExpr(arg)));
+    const args = node.arguments.map((arg) => convertIRExpr(arg));
     return ts.factory.createCallExpression(callee, undefined, args);
   } catch (error) {
     throw new CodeGenError(
@@ -831,40 +831,21 @@ function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
   }
 }
 
-function unwrapRestArg(expr: ts.Expression): ts.Expression {
-  // If the expression is an array literal with exactly one element,
-  // assume it is the result of wrapping a rest parameter.
-  if (ts.isArrayLiteralExpression(expr) && expr.elements.length === 1) {
-    return expr.elements[0];
-  }
-  return expr;
-}
-
 /**
  * Convert a member expression.
  */
 function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
   try {
     const object = convertIRExpr(node.object);
+    
     if (node.property.type === IR.IRNodeType.Identifier) {
       const propertyName = (node.property as IR.IRIdentifier).name;
       
-      // NEW CODE: Check if this is a method on a class instance
-      // If it is, we'll automatically call it with no arguments
-      return ts.factory.createCallExpression(
-        ts.factory.createPropertyAccessExpression(
-          object,
-          ts.factory.createIdentifier(propertyName)
-        ),
-        undefined,
-        [] // Empty arguments array = use defaults
+      // FIXED: Just create a property access, don't auto-call it
+      return ts.factory.createPropertyAccessExpression(
+        object,
+        ts.factory.createIdentifier(propertyName)
       );
-      
-      // REMOVE THIS CODE:
-      // return ts.factory.createPropertyAccessExpression(
-      //   object,
-      //   ts.factory.createIdentifier(propertyName),
-      // );
     } else if (node.property.type === IR.IRNodeType.StringLiteral) {
       const propValue = (node.property as IR.IRStringLiteral).value;
       if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propValue)) {
