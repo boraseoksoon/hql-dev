@@ -1,5 +1,4 @@
-(var text "   The quick brown fox jumps over the lazy dog   ")
-(print (text
-  .trim
-  .toUpperCase
-  .split " "))
+;; look up
+(let user2 {"name": "Alice", "status": "active"})
+(print (get user2 "name"))  ; returns "Alice"
+(print user2.name)  ; also returns "Alice"
