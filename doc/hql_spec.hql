@@ -325,7 +325,22 @@
 (let even-numbers (numbers.filter (lambda (n) (= (% n 2) 0))))
 (let doubled-evens (even-numbers.map (lambda (n) (* n 2))))
 (console.log "Doubled evens (step by step):" doubled-evens)
-(print "collection length: " [1, 2, 3, 4, 5, 6, 7, 8].filter (lambda (n) (> n 5)).length)
+(print 
+  ([1, 2, 3, 4, 5, 6, 7, 8]
+    .filter (lambda (n) (> n 5))
+    .length
+  )
+)
+
+;; 3
+
+(print 
+  ([1, 2, 3, 4, 5, 6, 7, 8]
+    .filter (lambda (n) (= (% n 2) 0))
+    .map    (lambda (n) (* n 2)))
+)
+
+;; [ 4, 8, 12, 16 ]
 
 ;; Approach 2: Use do block with temporary variables
 ;; UPDATED: Fixed the invalid do by wrapping both the let and console.log in a do block

@@ -113,6 +113,8 @@ export function convertIRNode(
         return convertReturnStatement(node as IR.IRReturnStatement);
       case IR.IRNodeType.ClassDeclaration:
         return convertClassDeclaration(node as IR.IRClassDeclaration);
+      case IR.IRNodeType.GetAndCall:
+        return createExpressionStatement(convertGetAndCall(node as IR.IRGetAndCall));
       default:
         logger.warn(
           `Cannot convert node of type ${node.type} (${IR.IRNodeType[node.type]}) to expression`
@@ -1163,65 +1165,88 @@ export function convertIRExpr(node: IR.IRNode): ts.Expression {
 
 export function convertGetAndCall(node: IR.IRGetAndCall): ts.Expression {
   return execute(node, "GetAndCall", () => {
-    const objectVar = "_obj";
+    // Convert object and arguments
+    const object = convertIRExpr(node.object);
     const methodName = node.method.value;
     const args = node.arguments.map(arg => convertIRExpr(arg));
-    const functionExpr = ts.factory.createFunctionExpression(
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      [ts.factory.createParameterDeclaration(undefined, undefined, ts.factory.createIdentifier(objectVar))],
-      undefined,
-      ts.factory.createBlock(
-        [
-          ts.factory.createVariableStatement(
-            undefined,
-            ts.factory.createVariableDeclarationList(
-              [ts.factory.createVariableDeclaration(
-                ts.factory.createIdentifier("_method"),
-                undefined,
-                undefined,
-                ts.factory.createCallExpression(
-                  ts.factory.createIdentifier("get"),
-                  undefined,
-                  [
-                    ts.factory.createIdentifier(objectVar),
-                    ts.factory.createStringLiteral(methodName)
-                  ]
-                )
-              )],
-              ts.NodeFlags.Var
-            )
-          ),
-          ts.factory.createReturnStatement(
-            ts.factory.createConditionalExpression(
-              ts.factory.createBinaryExpression(
-                ts.factory.createTypeOfExpression(ts.factory.createIdentifier("_method")),
-                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                ts.factory.createStringLiteral("function")
-              ),
-              ts.factory.createToken(ts.SyntaxKind.QuestionToken),
-              ts.factory.createCallExpression(
-                ts.factory.createPropertyAccessExpression(
-                  ts.factory.createIdentifier("_method"),
-                  ts.factory.createIdentifier("call")
-                ),
-                undefined,
-                [ts.factory.createIdentifier(objectVar), ...args]
-              ),
-              ts.factory.createToken(ts.SyntaxKind.ColonToken),
-              ts.factory.createIdentifier("_method")
-            )
-          )
-        ],
-        true
-      )
-    );
+    
+    // Create an IIFE to contain the safe method call logic
     return ts.factory.createCallExpression(
-      ts.factory.createParenthesizedExpression(functionExpr),
+      ts.factory.createParenthesizedExpression(
+        ts.factory.createArrowFunction(
+          undefined,
+          undefined,
+          [],
+          undefined,
+          ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+          ts.factory.createBlock([
+            // Store object in a temp variable
+            ts.factory.createVariableStatement(
+              undefined,
+              ts.factory.createVariableDeclarationList(
+                [
+                  ts.factory.createVariableDeclaration(
+                    ts.factory.createIdentifier("_obj"),
+                    undefined,
+                    undefined,
+                    object
+                  )
+                ],
+                ts.NodeFlags.Const
+              )
+            ),
+            
+            // Get the method using runtime get function
+            ts.factory.createVariableStatement(
+              undefined,
+              ts.factory.createVariableDeclarationList(
+                [
+                  ts.factory.createVariableDeclaration(
+                    ts.factory.createIdentifier("_method"),
+                    undefined,
+                    undefined,
+                    ts.factory.createCallExpression(
+                      ts.factory.createIdentifier("get"),
+                      undefined,
+                      [
+                        ts.factory.createIdentifier("_obj"),
+                        ts.factory.createStringLiteral(methodName)
+                      ]
+                    )
+                  )
+                ],
+                ts.NodeFlags.Const
+              )
+            ),
+            
+            // Return conditional: if method is a function, call it with object as 'this'
+            ts.factory.createReturnStatement(
+              ts.factory.createConditionalExpression(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createTypeOfExpression(
+                    ts.factory.createIdentifier("_method")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                  ts.factory.createStringLiteral("function")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+                ts.factory.createCallExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("_method"),
+                    ts.factory.createIdentifier("call")
+                  ),
+                  undefined,
+                  [ts.factory.createIdentifier("_obj"), ...args]
+                ),
+                ts.factory.createToken(ts.SyntaxKind.ColonToken),
+                ts.factory.createIdentifier("_method")
+              )
+            )
+          ], true)
+        )
+      ),
       undefined,
-      [convertIRExpr(node.object)]
+      []
     );
   });
 }
