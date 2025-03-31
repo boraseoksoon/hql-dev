@@ -37,7 +37,7 @@ export function transformSyntax(
 /**
  * Transform a single node, dispatching to specific handlers based on type
  */
-function transformNode(node: SExp, logger: Logger): SExp {
+export function transformNode(node: SExp, logger: Logger): SExp {
   return perform(
     () => {
       if (!isList(node)) {
@@ -51,7 +51,23 @@ function transformNode(node: SExp, logger: Logger): SExp {
         return list;
       }
 
-      // Check if this is a special form that needs transformation
+      // Check if this is a chain method invocation form
+      // Pattern: First element is not a method (doesn't start with .)
+      // AND there's at least one element that is a method (starts with .)
+      if (list.elements.length > 1) {
+        const firstIsNotMethod = !isSymbol(list.elements[0]) || 
+                                !(list.elements[0] as SSymbol).name.startsWith('.');
+        
+        const hasMethodInRest = list.elements.slice(1).some(elem => 
+          isSymbol(elem) && (elem as SSymbol).name.startsWith('.')
+        );
+        
+        if (firstIsNotMethod && hasMethodInRest) {
+          return transformChainMethodInvocation(list, logger);
+        }
+      }
+
+      // The rest of the existing transformNode function...
       const first = list.elements[0];
       if (!isSymbol(first)) {
         // If the first element isn't a symbol, recursively transform its children
@@ -220,5 +236,72 @@ function transformFnSyntax(list: SList, logger: Logger): SExp {
     "transformFnSyntax",
     TransformError,
     ["fn syntax transformation"],
+  );
+}
+
+/**
+ * Transform chain method invocation syntax
+ * Converts (obj .method1 arg1 .method2 arg2) to nested form
+ * Result: (.method2 arg2 (.method1 arg1 obj))
+ */
+function transformChainMethodInvocation(list: SList, logger: Logger): SExp {
+  return perform(
+    () => {
+      logger.debug("Transforming chain method invocation syntax");
+
+      // If list has no elements, return it unchanged
+      if (list.elements.length === 0) {
+        return list;
+      }
+
+      // Extract the initial object (first element)
+      let result = transformNode(list.elements[0], logger);
+      
+      // Process each element in the list to find .method patterns
+      let currentMethod: SSymbol | null = null;
+      let currentArgs: SExp[] = [];
+      
+      for (let i = 1; i < list.elements.length; i++) {
+        const element = list.elements[i];
+        
+        // Check if this is a method indicator (symbol starting with '.')
+        if (isSymbol(element) && (element as SSymbol).name.startsWith('.')) {
+          // If we have a previous method with arguments, create its call form
+          if (currentMethod !== null) {
+            // Create the method call with accumulated arguments
+            result = createList(
+              currentMethod,
+              ...currentArgs,
+              result
+            );
+            // Reset for the next method
+            currentArgs = [];
+          }
+          
+          // Set the current method
+          currentMethod = element as SSymbol;
+        } 
+        // If not a method indicator, it's an argument to the current method
+        else if (currentMethod !== null) {
+          // Transform the argument recursively
+          const transformedArg = transformNode(element, logger);
+          currentArgs.push(transformedArg);
+        }
+      }
+      
+      // Process the last method if there is one
+      if (currentMethod !== null) {
+        result = createList(
+          currentMethod,
+          ...currentArgs,
+          result
+        );
+      }
+      
+      return result;
+    },
+    "transformChainMethodInvocation",
+    TransformError,
+    ["chain method invocation transformation"],
   );
 }
