@@ -713,6 +713,9 @@ function generateLoopId(): string {
 /**
  * Transform a list node, handling special forms including loop and recur.
  */
+/**
+ * Transform a list node, handling special forms including loop and recur.
+ */
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   // Handle empty list
   if (list.elements.length === 0) {
@@ -724,6 +727,61 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
   if (jsGetInvokeResult) return jsGetInvokeResult;
 
   const first = list.elements[0];
+
+  // ===== START OF FIX: Special case for dot method calls =====
+  if (
+    first.type === "symbol" && 
+    (first as SymbolNode).name.startsWith('.') &&
+    list.elements.length >= 2
+  ) {
+    logger.debug(`Processing method call starting with ${(first as SymbolNode).name}`);
+    
+    const methodName = (first as SymbolNode).name.substring(1);
+    
+    // The object is the SECOND element (after the method name)
+    const object = transformNode(list.elements[1], currentDir);
+    if (!object) {
+      throw new ValidationError(
+        "Object in method call transformed to null",
+        "method call object",
+        "valid object expression",
+        "null"
+      );
+    }
+    
+    // Arguments are all elements AFTER the object (starting from the third element)
+    const args = list.elements.slice(2).map(arg => {
+      const transformed = transformNode(arg, currentDir);
+      if (!transformed) {
+        throw new ValidationError(
+          `Method argument transformed to null: ${JSON.stringify(arg)}`,
+          "method argument",
+          "valid expression",
+          "null"
+        );
+      }
+      return transformed;
+    });
+    
+    // Create a member expression for method access
+    const memberExpr: IR.IRMemberExpression = {
+      type: IR.IRNodeType.MemberExpression,
+      object: object,
+      property: {
+        type: IR.IRNodeType.Identifier,
+        name: methodName
+      },
+      computed: false
+    };
+    
+    // Create the call expression
+    return {
+      type: IR.IRNodeType.CallExpression,
+      callee: memberExpr,
+      arguments: args
+    } as IR.IRCallExpression;
+  }
+  // ===== END OF FIX =====
 
   if (first.type === "symbol") {
     const op = (first as SymbolNode).name;

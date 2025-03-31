@@ -2,6 +2,7 @@
 // Enhanced version with dot-chain syntax transformation
 
 import {
+  createLiteral,
   createList,
   createSymbol,
   isList,
@@ -113,7 +114,7 @@ function isDotChainForm(list: SList): boolean {
 
 /**
  * Transform a dot-chain form into proper nested method calls
- * Example: (obj .method1 arg1 .method2 arg2) becomes (.method2 arg2 (.method1 arg1 obj))
+ * Example: (obj .method1 arg1 .method2 arg2) becomes proper nested js-call expressions
  */
 function transformDotChainForm(list: SList, logger: Logger): SExp {
   return perform(
@@ -164,12 +165,27 @@ function transformDotChainForm(list: SList, logger: Logger): SExp {
       
       // Build the nested method calls from inside out
       for (const { method, args } of methodGroups) {
-        // Create a method call with the object as the last argument
-        result = createList(
-          method,
-          ...args,
-          result
-        );
+        const methodName = (method as SSymbol).name;
+        const methodNameWithoutDot = methodName.substring(1);
+        
+        // Check if this is a property access (starts with . but has no arguments)
+        if (args.length === 0) {
+          // For property access, create a property access expression
+          // Use js-get for property access
+          result = createList(
+            createSymbol("js-get"),
+            result,
+            createLiteral(methodNameWithoutDot)
+          );
+        } else {
+          // For method calls, use js-call primitive with the correct ordering
+          result = createList(
+            createSymbol("js-call"),
+            result,                        // Object first
+            createLiteral(methodNameWithoutDot),  // Method name as string
+            ...args                        // Method arguments
+          );
+        }
       }
       
       return result;

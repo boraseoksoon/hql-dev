@@ -838,10 +838,9 @@ function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
   try {
     const object = convertIRExpr(node.object);
     
+    // Always create a property access expression, never auto-call it
     if (node.property.type === IR.IRNodeType.Identifier) {
       const propertyName = (node.property as IR.IRIdentifier).name;
-      
-      // FIXED: Just create a property access, don't auto-call it
       return ts.factory.createPropertyAccessExpression(
         object,
         ts.factory.createIdentifier(propertyName)
