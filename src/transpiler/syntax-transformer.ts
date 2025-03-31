@@ -168,24 +168,14 @@ function transformDotChainForm(list: SList, logger: Logger): SExp {
         const methodName = (method as SSymbol).name;
         const methodNameWithoutDot = methodName.substring(1);
         
-        // Check if this is a property access (starts with . but has no arguments)
-        if (args.length === 0) {
-          // For property access, create a property access expression
-          // Use js-get for property access
-          result = createList(
-            createSymbol("js-get"),
-            result,
-            createLiteral(methodNameWithoutDot)
-          );
-        } else {
-          // For method calls, use js-call primitive with the correct ordering
-          result = createList(
-            createSymbol("js-call"),
-            result,                        // Object first
-            createLiteral(methodNameWithoutDot),  // Method name as string
-            ...args                        // Method arguments
-          );
-        }
+        // Now we'll use a different approach - create a get-and-call expression
+        // This will ensure proper method invocation using the get runtime function
+        result = createList(
+          createSymbol("method-call"),
+          result,                           // Object
+          createLiteral(methodNameWithoutDot),  // Method name
+          ...args                           // Arguments (if any)
+        );
       }
       
       return result;
@@ -195,6 +185,7 @@ function transformDotChainForm(list: SList, logger: Logger): SExp {
     ["dot-chain form transformation"],
   );
 }
+
 
 /**
  * Transform fx function syntax

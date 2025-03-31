@@ -63,6 +63,7 @@ export enum IRNodeType {
   ClassField,
   ClassMethod,
   ClassConstructor,
+  GetAndCall,
 }
 
 export interface IRNode {
@@ -346,4 +347,11 @@ export interface IRClassConstructor extends IRNode {
   type: IRNodeType.ClassConstructor;
   params: IRIdentifier[];
   body: IRBlockStatement;
+}
+
+export interface IRGetAndCall extends IRNode {
+  type: IRNodeType.GetAndCall;
+  object: IRNode;
+  method: IRStringLiteral;
+  arguments: IRNode[];
 }

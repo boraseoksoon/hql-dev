@@ -182,6 +182,7 @@ function initializeTransformFactory(): void {
       transformFactory.set("recur", transformRecur);
       transformFactory.set("class", transformClass);
       transformFactory.set("return", transformReturn);
+      transformFactory.set("method-call", transformMethodCall);
 
       // Register import/export handlers
       transformFactory.set("export", null);
@@ -2838,6 +2839,11 @@ function transformJsCall(list: ListNode, currentDir: string): IR.IRNode {
 /**
  * Transform JavaScript property access with optional invocation
  */
+// src/transpiler/hql-ast-to-hql-ir.ts - Enhanced js-get-invoke transformation
+
+/**
+ * Transform JavaScript property access with optional invocation
+ */
 function transformJsGetInvoke(list: ListNode, currentDir: string): IR.IRNode {
   return perform(
     () => {
@@ -2862,26 +2868,42 @@ function transformJsGetInvoke(list: ListNode, currentDir: string): IR.IRNode {
         );
       }
 
+      // Get the property name
+      let propertyName: string;
       try {
-        const property = extractStringLiteral(list.elements[2]);
-        return {
-          type: IR.IRNodeType.InteropIIFE,
-          object,
-          property: {
-            type: IR.IRNodeType.StringLiteral,
-            value: property,
-          } as IR.IRStringLiteral,
-        } as IR.IRInteropIIFE;
+        if (list.elements[2].type === "literal") {
+          propertyName = String(list.elements[2].value);
+        } else if (list.elements[2].type === "symbol") {
+          propertyName = list.elements[2].name;
+        } else {
+          throw new ValidationError(
+            "js-get-invoke property must be a string literal or symbol",
+            "js-get-invoke",
+            "string literal or symbol",
+            list.elements[2].type,
+          );
+        }
       } catch (err) {
         throw new ValidationError(
-          `js-get-invoke property must be a string literal or quoted string: ${
+          `js-get-invoke property must be a string literal or symbol: ${
             err instanceof Error ? err.message : String(err)
           }`,
           "js-get-invoke",
-          "string literal or quoted string",
+          "string literal or symbol",
           "other expression type",
         );
       }
+
+      // Create the IR node for the js-get-invoke operation
+      // This transforms to an IIFE that checks if the property is a method at runtime
+      return {
+        type: IR.IRNodeType.InteropIIFE,
+        object,
+        property: {
+          type: IR.IRNodeType.StringLiteral,
+          value: propertyName,
+        } as IR.IRStringLiteral,
+      } as IR.IRInteropIIFE;
     },
     "transformJsGetInvoke",
     TransformError,
@@ -4812,76 +4834,70 @@ function transformCond(list: ListNode, currentDir: string): IR.IRNode {
   return { type: IR.IRNodeType.NullLiteral };
 }
 
-
-/**
- * Transform method calls with dot notation: (.method object args...)
- * This function detects and processes method calls where the first element
- * is a symbol starting with a dot.
- */
 function transformMethodCall(list: ListNode, currentDir: string): IR.IRNode {
-  try {
-    logger.debug("Transforming method call");
-    
-    if (list.elements.length < 2) {
-      throw new ValidationError(
-        "Method call requires at least an object",
-        "method call",
-        "object",
-        `${list.elements.length - 1} arguments`
-      );
-    }
-
-    // First element is the method name (e.g., ".filter")
-    const methodSymbol = list.elements[0] as SymbolNode;
-    
-    // Remove the dot prefix to get the actual method name
-    const methodName = methodSymbol.name.substring(1);
-    
-    // Last element is the object the method is called on (in this syntax form)
-    const object = transformNode(list.elements[list.elements.length - 1], currentDir);
-    if (!object) {
-      throw new ValidationError(
-        "Object in method call transformed to null",
-        "method call object",
-        "valid object expression",
-        "null"
-      );
-    }
-    
-    // Middle elements are the arguments to the method (excluding the last element which is the object)
-    const args = list.elements.slice(1, list.elements.length - 1).map(arg => {
-      const transformed = transformNode(arg, currentDir);
-      if (!transformed) {
+  return perform(
+    () => {
+      if (list.elements.length < 3) {
         throw new ValidationError(
-          `Method argument transformed to null: ${JSON.stringify(arg)}`,
-          "method argument",
-          "valid expression",
-          "null"
+          "method-call requires at least an object and method name",
+          "method-call",
+          "at least 2 arguments",
+          `${list.elements.length - 1} arguments`,
         );
       }
-      return transformed;
-    });
-    
-    // Create a CallExpression with a MemberExpression as the callee
-    return {
-      type: IR.IRNodeType.CallExpression,
-      callee: {
-        type: IR.IRNodeType.MemberExpression,
-        object: object,
-        property: {
-          type: IR.IRNodeType.Identifier,
-          name: methodName
-        },
-        computed: false
-      },
-      arguments: args
-    } as IR.IRCallExpression;
-  } catch (error) {
-    throw new TransformError(
-      `Failed to transform method call: ${error instanceof Error ? error.message : String(error)}`,
-      "method call transformation",
-      "valid method call",
-      list
-    );
-  }
+
+      const object = transformNode(list.elements[1], currentDir);
+      if (!object) {
+        throw new ValidationError(
+          "Object transformed to null",
+          "method-call",
+          "valid object expression",
+          "null",
+        );
+      }
+
+      // Extract method name
+      let methodName: string;
+      if (list.elements[2].type === "literal") {
+        methodName = String(list.elements[2].value);
+      } else if (list.elements[2].type === "symbol") {
+        methodName = list.elements[2].name;
+      } else {
+        throw new ValidationError(
+          "Method name must be a string literal or symbol",
+          "method-call",
+          "string literal or symbol",
+          list.elements[2].type,
+        );
+      }
+
+      // Transform arguments (if any)
+      const args = list.elements.slice(3).map(arg => {
+        const transformed = transformNode(arg, currentDir);
+        if (!transformed) {
+          throw new ValidationError(
+            `Argument transformed to null: ${JSON.stringify(arg)}`,
+            "method-call argument",
+            "valid expression",
+            "null",
+          );
+        }
+        return transformed;
+      });
+
+      // Create a GetAndCall node - new IR node type for this pattern
+      return {
+        type: IR.IRNodeType.GetAndCall,
+        object,
+        method: {
+          type: IR.IRNodeType.StringLiteral,
+          value: methodName
+        } as IR.IRStringLiteral,
+        arguments: args
+      } as IR.IRGetAndCall;
+    },
+    "transformMethodCall",
+    TransformError,
+    [list],
+  );
 }

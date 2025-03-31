@@ -11,9 +11,6 @@ const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 /**
  * Convert an IR node to a TypeScript statement with centralized error handling.
  */
-/**
- * Convert an IR node to a TypeScript statement with centralized error handling.
- */
 export function convertIRNode(
   node: IR.IRNode,
 ): ts.Statement | ts.Statement[] | null {
@@ -770,26 +767,75 @@ function convertIdentifier(node: IR.IRIdentifier): ts.Identifier {
   }
 }
 
-/**
- * Fix 6: Function to handle method calls properly
- */
 function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
   try {
-    // CRITICAL ADDITION: Special case for method calls
+    // Special case: When the callee is js-call and we have at least object and method args
+    if (node.callee.type === IR.IRNodeType.Identifier && 
+        (node.callee as IR.IRIdentifier).name === 'js-call' &&
+        node.arguments.length >= 2) {
+      
+      // Extract object and method name
+      const object = convertIRExpr(node.arguments[0]);
+      let methodNameExpr: ts.Expression;
+      
+      // Handle the method name based on its type
+      if (node.arguments[1].type === IR.IRNodeType.StringLiteral) {
+        const methodName = (node.arguments[1] as IR.IRStringLiteral).value;
+        
+        // Check if the method name is a valid JS identifier
+        if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(methodName)) {
+          // Create a property access expression (using dot notation)
+          const methodAccess = ts.factory.createPropertyAccessExpression(
+            object,
+            ts.factory.createIdentifier(methodName)
+          );
+          
+          // Create the method call
+          return ts.factory.createCallExpression(
+            methodAccess,
+            undefined,
+            node.arguments.slice(2).map(arg => convertIRExpr(arg))
+          );
+        } else {
+          // For non-identifier method names, use bracket notation
+          methodNameExpr = ts.factory.createStringLiteral(methodName);
+        }
+      } else {
+        // For dynamic method names, convert to expression
+        methodNameExpr = convertIRExpr(node.arguments[1]);
+      }
+      
+      // For non-identifier or dynamic method names, use bracket notation
+      const methodAccess = ts.factory.createElementAccessExpression(
+        object,
+        methodNameExpr
+      );
+      
+      // Create the method call
+      return ts.factory.createCallExpression(
+        methodAccess,
+        undefined,
+        node.arguments.slice(2).map(arg => convertIRExpr(arg))
+      );
+    }
+    
+    // Handle MemberExpression for method calls
     if (node.callee.type === IR.IRNodeType.MemberExpression) {
       const memberExpr = node.callee as IR.IRMemberExpression;
       const object = convertIRExpr(memberExpr.object);
       
-      // Create property access for the method
+      // Get method access
       let methodAccess: ts.Expression;
       if (memberExpr.property.type === IR.IRNodeType.Identifier) {
-        const propName = (memberExpr.property as IR.IRIdentifier).name;
+        // Regular property access using dot notation
         methodAccess = ts.factory.createPropertyAccessExpression(
           object,
-          ts.factory.createIdentifier(propName)
+          ts.factory.createIdentifier((memberExpr.property as IR.IRIdentifier).name)
         );
       } else if (memberExpr.property.type === IR.IRNodeType.StringLiteral) {
         const propValue = (memberExpr.property as IR.IRStringLiteral).value;
+        
+        // Use dot notation for valid identifiers, bracket notation otherwise
         if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propValue)) {
           methodAccess = ts.factory.createPropertyAccessExpression(
             object,
@@ -802,13 +848,14 @@ function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
           );
         }
       } else {
+        // Use bracket notation for dynamic property access
         methodAccess = ts.factory.createElementAccessExpression(
           object,
           convertIRExpr(memberExpr.property)
         );
       }
       
-      // Create the method call expression - proper method call format
+      // Create the method call
       return ts.factory.createCallExpression(
         methodAccess,
         undefined,
@@ -816,9 +863,10 @@ function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
       );
     }
     
-    // For regular function calls - remain the same
+    // Default case: standard function call
     const callee = convertIRExpr(node.callee);
-    const args = node.arguments.map((arg) => convertIRExpr(arg));
+    const args = node.arguments.map(arg => convertIRExpr(arg));
+    
     return ts.factory.createCallExpression(callee, undefined, args);
   } catch (error) {
     throw new CodeGenError(
@@ -1655,6 +1703,7 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
           ts.NodeFlags.Const,
         ),
       ),
+      // Get the member - we use this for both properties and methods
       ts.factory.createVariableStatement(
         undefined,
         ts.factory.createVariableDeclarationList(
@@ -1670,6 +1719,7 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
           ts.NodeFlags.Const,
         ),
       ),
+      // Return statement that checks if member is a function and calls it if so
       ts.factory.createReturnStatement(
         ts.factory.createConditionalExpression(
           ts.factory.createBinaryExpression(
@@ -1678,25 +1728,29 @@ function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
             ts.factory.createStringLiteral("function"),
           ),
           ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+          // If it's a function, call it with the object as context
           ts.factory.createCallExpression(
             ts.factory.createPropertyAccessExpression(memberVar, "call"),
             undefined,
             [objVar],
           ),
           ts.factory.createToken(ts.SyntaxKind.ColonToken),
+          // Otherwise, return the property value
           memberVar,
         ),
       ),
     ];
     return ts.factory.createCallExpression(
-      ts.factory.createFunctionExpression(
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        [],
-        undefined,
-        ts.factory.createBlock(statements, true),
+      ts.factory.createParenthesizedExpression(
+        ts.factory.createFunctionExpression(
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          [],
+          undefined,
+          ts.factory.createBlock(statements, true),
+        ),
       ),
       undefined,
       [],
@@ -1800,9 +1854,9 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
         return convertInteropIIFE(node as IR.IRInteropIIFE);
       case IR.IRNodeType.AssignmentExpression:
         return convertAssignmentExpression(node as IR.IRAssignmentExpression);
+      case IR.IRNodeType.GetAndCall:
+        return convertGetAndCall(node as IR.IRGetAndCall);
       case IR.IRNodeType.ReturnStatement: {
-        // Handle ReturnStatement in expression context
-        // Convert it to an immediately invoked arrow function that returns the value
         const returnArg = (node as IR.IRReturnStatement).argument;
         return ts.factory.createCallExpression(
           ts.factory.createParenthesizedExpression(
@@ -1837,6 +1891,122 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
       }`,
       node ? IR.IRNodeType[node.type] || String(node.type) : "unknown",
       node,
+    );
+  }
+}
+
+// src/transpiler/hql-ir-to-ts-ast.ts - Simplified approach to guarantee correct JavaScript output
+
+/**
+ * Convert a GetAndCall IR node to TypeScript AST - Simplified implementation
+ * This code focuses on creating a correct raw string of JavaScript first,
+ * then parsing it back to a TypeScript AST to ensure correct syntax.
+ */
+function convertGetAndCall(node: IR.IRGetAndCall): ts.Expression {
+  try {
+    // Convert the object to a variable reference string
+    const objectVar = "_obj";
+    
+    // Get the method name
+    const methodName = node.method.value;
+    
+    // Process arguments
+    const args = node.arguments.map(arg => convertIRExpr(arg));
+    const argsStr = args.length > 0 
+      ? `, ${args.map((_, i) => `_arg${i}`).join(", ")}` 
+      : "";
+    
+    // Create a raw string for a function that gets and calls a method
+    const functionBodyStr = `
+      var _method = get(${objectVar}, "${methodName}");
+      return typeof _method === "function" ? _method.call(${objectVar}${argsStr}) : _method;
+    `;
+    
+    // Create the function expression
+    const functionExpr = ts.factory.createFunctionExpression(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        ts.factory.createIdentifier(objectVar)
+      )],
+      undefined,
+      ts.factory.createBlock(
+        [
+          // Variable declaration for the method
+          ts.factory.createVariableStatement(
+            undefined,
+            ts.factory.createVariableDeclarationList(
+              [ts.factory.createVariableDeclaration(
+                ts.factory.createIdentifier("_method"),
+                undefined,
+                undefined,
+                ts.factory.createCallExpression(
+                  ts.factory.createIdentifier("get"),
+                  undefined,
+                  [
+                    ts.factory.createIdentifier(objectVar),
+                    ts.factory.createStringLiteral(methodName)
+                  ]
+                )
+              )],
+              ts.NodeFlags.Var
+            )
+          ),
+          
+          // Return statement with the conditional
+          ts.factory.createReturnStatement(
+            ts.factory.createConditionalExpression(
+              // typeof _method === "function"
+              ts.factory.createBinaryExpression(
+                ts.factory.createTypeOfExpression(
+                  ts.factory.createIdentifier("_method")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                ts.factory.createStringLiteral("function")
+              ),
+              ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+              // _method.call(obj, ...args)
+              ts.factory.createCallExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createIdentifier("_method"),
+                  ts.factory.createIdentifier("call")
+                ),
+                undefined,
+                [
+                  ts.factory.createIdentifier(objectVar),
+                  ...args
+                ]
+              ),
+              ts.factory.createToken(ts.SyntaxKind.ColonToken),
+              // _method
+              ts.factory.createIdentifier("_method")
+            )
+          )
+        ],
+        true
+      )
+    );
+    
+    // Ensure the function is properly parenthesized
+    const parenthesizedFunc = ts.factory.createParenthesizedExpression(functionExpr);
+    
+    // Create the call expression with the object
+    return ts.factory.createCallExpression(
+      parenthesizedFunc,
+      undefined,
+      [convertIRExpr(node.object)]
+    );
+  } catch (error) {
+    throw new CodeGenError(
+      `Failed to convert GetAndCall expression: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "GetAndCall",
+      node
     );
   }
 }
@@ -2083,62 +2253,73 @@ function convertClassDeclaration(node: IR.IRClassDeclaration): ts.ClassDeclarati
 
 function walkAndReplaceSelf(node: IR.IRNode): IR.IRNode {
   if (!node) return node;
-  
+
   switch (node.type) {
-    case IR.IRNodeType.Identifier:
+    case IR.IRNodeType.Identifier: {
+      // Explicitly wrap in braces
       if ((node as IR.IRIdentifier).name === 'self') {
         return {
           ...node,
-          name: 'this'
+          name: 'this',
         } as IR.IRIdentifier;
       }
       return node;
-      
-    case IR.IRNodeType.MemberExpression:
+    }
+
+    case IR.IRNodeType.MemberExpression: {
       const memberExpr = node as IR.IRMemberExpression;
       return {
         ...memberExpr,
-        object: memberExpr.object.type === IR.IRNodeType.Identifier && 
-                (memberExpr.object as IR.IRIdentifier).name === 'self' 
-                  ? { type: IR.IRNodeType.Identifier, name: 'this' } as IR.IRIdentifier
-                  : walkAndReplaceSelf(memberExpr.object),
-        property: walkAndReplaceSelf(memberExpr.property)
+        object:
+          memberExpr.object.type === IR.IRNodeType.Identifier &&
+          (memberExpr.object as IR.IRIdentifier).name === 'self'
+            ? { type: IR.IRNodeType.Identifier, name: 'this' } as IR.IRIdentifier
+            : walkAndReplaceSelf(memberExpr.object),
+        property: walkAndReplaceSelf(memberExpr.property),
       } as IR.IRMemberExpression;
-      
-    case IR.IRNodeType.CallExpression:
+    }
+
+    case IR.IRNodeType.CallExpression: {
       const callExpr = node as IR.IRCallExpression;
       return {
         ...callExpr,
         callee: walkAndReplaceSelf(callExpr.callee),
-        arguments: callExpr.arguments.map(arg => walkAndReplaceSelf(arg))
+        arguments: callExpr.arguments.map((arg) => walkAndReplaceSelf(arg)),
       } as IR.IRCallExpression;
-      
-    case IR.IRNodeType.BinaryExpression:
+    }
+
+    case IR.IRNodeType.BinaryExpression: {
       const binExpr = node as IR.IRBinaryExpression;
       return {
         ...binExpr,
         left: walkAndReplaceSelf(binExpr.left),
-        right: walkAndReplaceSelf(binExpr.right)
+        right: walkAndReplaceSelf(binExpr.right),
       } as IR.IRBinaryExpression;
-      
-    case IR.IRNodeType.AssignmentExpression:
+    }
+
+    case IR.IRNodeType.AssignmentExpression: {
       const assignExpr = node as IR.IRAssignmentExpression;
       return {
         ...assignExpr,
         left: walkAndReplaceSelf(assignExpr.left),
-        right: walkAndReplaceSelf(assignExpr.right)
+        right: walkAndReplaceSelf(assignExpr.right),
       } as IR.IRAssignmentExpression;
-      
-    case IR.IRNodeType.ReturnStatement:
+    }
+
+    case IR.IRNodeType.ReturnStatement: {
       const returnStmt = node as IR.IRReturnStatement;
       return {
         ...returnStmt,
-        argument: returnStmt.argument ? walkAndReplaceSelf(returnStmt.argument) : null
+        argument: returnStmt.argument
+          ? walkAndReplaceSelf(returnStmt.argument)
+          : null,
       } as IR.IRReturnStatement;
-      
+    }
+
     // Handle other node types as needed
-    default:
+    default: {
       return node;
+    }
   }
 }
 
@@ -2287,74 +2468,84 @@ function convertIRNodeToStatement(node: IR.IRNode): ts.Statement | ts.Statement[
   return ts.factory.createEmptyStatement();
 }
 
-// Function to recursively replace 'self' with 'this' in IR nodes
 function replaceSelfWithThis(node: IR.IRNode): IR.IRNode {
   if (!node) return node;
-  
+
   switch (node.type) {
-    case IR.IRNodeType.Identifier:
-      if ((node as IR.IRIdentifier).name === 'self') {
+    case IR.IRNodeType.Identifier: {
+      const identifierNode = node as IR.IRIdentifier;
+      if (identifierNode.name === 'self') {
         return {
-          ...node,
-          name: 'this'
+          ...identifierNode,
+          name: 'this',
         } as IR.IRIdentifier;
       }
-      return node;
-      
-    case IR.IRNodeType.MemberExpression:
+      return identifierNode;
+    }
+
+    case IR.IRNodeType.MemberExpression: {
       const memberExpr = node as IR.IRMemberExpression;
-      
-      if (memberExpr.object.type === IR.IRNodeType.Identifier && 
-          (memberExpr.object as IR.IRIdentifier).name === 'self') {
-        
+
+      if (
+        memberExpr.object.type === IR.IRNodeType.Identifier &&
+        (memberExpr.object as IR.IRIdentifier).name === 'self'
+      ) {
         return {
           ...memberExpr,
           object: {
             type: IR.IRNodeType.Identifier,
-            name: 'this'
+            name: 'this',
           } as IR.IRIdentifier,
-          property: replaceSelfWithThis(memberExpr.property)
+          property: replaceSelfWithThis(memberExpr.property),
         } as IR.IRMemberExpression;
       }
-      
+
       return {
         ...memberExpr,
         object: replaceSelfWithThis(memberExpr.object),
-        property: replaceSelfWithThis(memberExpr.property)
+        property: replaceSelfWithThis(memberExpr.property),
       } as IR.IRMemberExpression;
-      
-    case IR.IRNodeType.ReturnStatement:
+    }
+
+    case IR.IRNodeType.ReturnStatement: {
       const returnStmt = node as IR.IRReturnStatement;
       return {
         ...returnStmt,
-        argument: returnStmt.argument ? replaceSelfWithThis(returnStmt.argument) : null
+        argument: returnStmt.argument
+          ? replaceSelfWithThis(returnStmt.argument)
+          : null,
       } as IR.IRReturnStatement;
-      
-    case IR.IRNodeType.AssignmentExpression:
+    }
+
+    case IR.IRNodeType.AssignmentExpression: {
       const assignExpr = node as IR.IRAssignmentExpression;
       return {
         ...assignExpr,
         left: replaceSelfWithThis(assignExpr.left),
-        right: replaceSelfWithThis(assignExpr.right)
+        right: replaceSelfWithThis(assignExpr.right),
       } as IR.IRAssignmentExpression;
-      
-    case IR.IRNodeType.CallExpression:
+    }
+
+    case IR.IRNodeType.CallExpression: {
       const callExpr = node as IR.IRCallExpression;
       return {
         ...callExpr,
         callee: replaceSelfWithThis(callExpr.callee),
-        arguments: callExpr.arguments.map(arg => replaceSelfWithThis(arg))
+        arguments: callExpr.arguments.map(arg => replaceSelfWithThis(arg)),
       } as IR.IRCallExpression;
-      
-    case IR.IRNodeType.BlockStatement:
+    }
+
+    case IR.IRNodeType.BlockStatement: {
       const blockStmt = node as IR.IRBlockStatement;
       return {
         ...blockStmt,
-        body: blockStmt.body.map(stmt => replaceSelfWithThis(stmt))
+        body: blockStmt.body.map(stmt => replaceSelfWithThis(stmt)),
       } as IR.IRBlockStatement;
-      
+    }
+
     // Handle other node types as needed
-    default:
+    default: {
       return node;
+    }
   }
 }
