@@ -39,55 +39,166 @@ export function transformSyntax(
  * Transform a single node, dispatching to specific handlers based on type
  */
 export function transformNode(node: SExp, logger: Logger): SExp {
-  return perform(
-    () => {
-      if (!isList(node)) {
-        // Only lists can contain syntactic sugar that needs transformation
-        return node;
-      }
+  // Handle the existing node transformation logic
+  if (!isList(node)) {
+    // Non-list nodes don't need special handling
+    return node;
+  }
 
-      const list = node as SList;
-      if (list.elements.length === 0) {
-        // Empty lists don't need transformation
-        return list;
-      }
+  const list = node as SList;
+  if (list.elements.length === 0) {
+    // Empty lists don't need transformation
+    return list;
+  }
 
-      // Check if this is a dot-chain method invocation form
-      if (isDotChainForm(list)) {
-        return transformDotChainForm(list, logger);
-      }
+  if (isDotChainForm(list)) {
+    return transformDotChainForm(list, logger);
+  }
 
-      // Process standard list with recursion on elements
-      const first = list.elements[0];
-      if (!isSymbol(first)) {
-        // If the first element isn't a symbol, recursively transform its children
+  // Process standard list with recursion on elements
+  const first = list.elements[0];
+  if (!isSymbol(first)) {
+    // If the first element isn't a symbol, recursively transform its children
+    return {
+      ...list,
+      elements: list.elements.map((elem) => transformNode(elem, logger)),
+    };
+  }
+
+  // Get the operation name
+  const op = (first as SSymbol).name;
+
+  // For enums, just do basic validation but keep as ListNode for the IR layer
+  if (op === "enum") {
+    return validateEnumSyntax(list, logger);
+  }
+
+  // Handle other special forms like before
+  switch (op) {
+    case "fx":
+      return transformFxSyntax(list, logger);
+    case "fn":
+      return transformFnSyntax(list, logger);
+    default:
+      // Recursively transform elements for non-special forms
+      return {
+        ...list,
+        elements: list.elements.map((elem) => transformNode(elem, logger)),
+      };
+  }
+}
+
+function validateEnumSyntax(list: SList, logger: Logger): SList {
+  logger.debug("Validating enum syntax");
+  
+  // Basic validation
+  if (list.elements.length < 2) {
+    throw new TransformError(
+      "Invalid enum syntax: requires at least an enum name and one case",
+      "enum syntax validation",
+      "valid enum form",
+      list,
+    );
+  }
+  
+  // Validate enum name
+  const nameNode = list.elements[1];
+  if (!isSymbol(nameNode)) {
+    throw new TransformError(
+      "Invalid enum syntax: enum name must be a symbol",
+      "enum name",
+      "symbol",
+      nameNode,
+    );
+  }
+  
+  // Determine where case elements start (after name and optional type)
+  let caseStartIndex = 2;
+  const enumName = (nameNode as SSymbol).name;
+  
+  // Handle raw type if present
+  if (enumName.endsWith(":") && list.elements.length > 2 && isSymbol(list.elements[2])) {
+    caseStartIndex = 3;
+  }
+  
+  // Basic validation of case elements
+  for (let i = caseStartIndex; i < list.elements.length; i++) {
+    const caseNode = list.elements[i];
+    if (!isList(caseNode)) {
+      throw new TransformError(
+        "Invalid enum case: must be a list",
+        "enum case",
+        "list",
+        caseNode,
+      );
+    }
+    
+    // Basic case node validation
+    validateEnumCase(caseNode as SList, logger);
+  }
+  
+  // After validation, transform the children nodes but keep the overall structure
+  return {
+    ...list,
+    elements: list.elements.map((elem, index) => {
+      // For case elements, recursively transform their contents
+      if (index >= caseStartIndex && elem.type === "list") {
         return {
-          ...list,
-          elements: list.elements.map((elem) => transformNode(elem, logger)),
+          ...elem,
+          elements: (elem as SList).elements.map(subElem => transformNode(subElem, logger))
         };
       }
+      return transformNode(elem, logger);
+    })
+  };
+}
 
-      // Get the operation name
-      const op = (first as SSymbol).name;
-
-      // Handle specific syntactic transformations
-      switch (op) {
-        case "fx":
-          return transformFxSyntax(list, logger);
-        case "fn":
-          return transformFnSyntax(list, logger);
-        default:
-          // Recursively transform elements for non-special forms
-          return {
-            ...list,
-            elements: list.elements.map((elem) => transformNode(elem, logger)),
-          };
+// Just validate enum case syntax
+function validateEnumCase(caseList: SList, logger: Logger): void {
+  // Validate case form
+  if (caseList.elements.length < 2 || 
+      !isSymbol(caseList.elements[0]) || 
+      (caseList.elements[0] as SSymbol).name !== "case") {
+    throw new TransformError(
+      "Invalid enum case: must start with 'case' keyword",
+      "enum case",
+      "case declaration",
+      caseList,
+    );
+  }
+  
+  // Validate case name
+  if (!isSymbol(caseList.elements[1])) {
+    throw new TransformError(
+      "Invalid enum case: case name must be a symbol",
+      "enum case name",
+      "symbol",
+      caseList.elements[1],
+    );
+  }
+  
+  // For associated values parameters, do basic validation
+  for (let i = 2; i < caseList.elements.length; i++) {
+    const elem = caseList.elements[i];
+    
+    // If it's a parameter name with colon
+    if (isSymbol(elem) && (elem as SSymbol).name.endsWith(':')) {
+      const paramName = (elem as SSymbol).name.slice(0, -1);
+      
+      // Ensure there's a type after the parameter name
+      if (i + 1 >= caseList.elements.length || !isSymbol(caseList.elements[i + 1])) {
+        throw new TransformError(
+          `Missing type for associated value parameter '${paramName}'`,
+          "enum case associated value",
+          "type symbol",
+          caseList,
+        );
       }
-    },
-    "transformNode",
-    TransformError,
-    ["syntax transformation"],
-  );
+      
+      // Skip the type in the next iteration
+      i++;
+    }
+  }
 }
 
 /**

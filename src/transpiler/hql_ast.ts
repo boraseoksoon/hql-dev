@@ -16,6 +16,13 @@ export interface ListNode {
   elements: HQLNode[];
 }
 
+export function isEnumNode(node: HQLNode): boolean {
+  return node.type === "list" && 
+         node.elements.length >= 2 && 
+         node.elements[0].type === "symbol" && 
+         (node.elements[0] as SymbolNode).name === "enum";
+}
+
 /**
  * Check if a node is an import statement
  */

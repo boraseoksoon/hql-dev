@@ -64,6 +64,8 @@ export enum IRNodeType {
   ClassMethod,
   ClassConstructor,
   GetAndCall,
+  EnumDeclaration,
+  EnumCase,
 }
 
 export interface IRNode {
@@ -354,4 +356,18 @@ export interface IRGetAndCall extends IRNode {
   object: IRNode;
   method: IRStringLiteral;
   arguments: IRNode[];
+}
+
+export interface IREnumDeclaration extends IRNode {
+  type: IRNodeType.EnumDeclaration;
+  id: IRIdentifier;
+  rawType?: string;
+  cases: IREnumCase[];
+}
+
+export interface IREnumCase extends IRNode {
+  type: IRNodeType.EnumCase;
+  name: string;
+  rawValue?: IRNode;
+  associatedValues?: { name?: string; type: string }[];
 }
