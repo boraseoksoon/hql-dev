@@ -74,6 +74,7 @@ export function generateTypeScript(ir: IR.IRProgram): string {
     );
 
     const printTime = performance.now() - printStartTime;
+    
     logger.debug(
       `TS AST printing completed in ${
         printTime.toFixed(2)

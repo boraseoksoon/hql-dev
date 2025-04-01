@@ -368,16 +368,24 @@ export interface IRGetAndCall extends IRNode {
 export interface IREnumDeclaration extends IRNode {
   type: IRNodeType.EnumDeclaration;
   id: IRIdentifier; // The name of the enum (e.g., OsType)
+  rawType?: string; // Type for raw values (e.g., Int, String)
   cases: IREnumCase[]; // The list of cases defined within the enum
+  hasAssociatedValues?: boolean; // Flag indicating if any case has associated values
 }
 
 /**
  * Represents a simple enum case: (case CaseName)
  * (Future versions will add support for raw values and associated values)
  */
+export interface IREnumAssociatedValue {
+  name: string;
+  type: string;
+}
+
 export interface IREnumCase extends IRNode {
   type: IRNodeType.EnumCase;
   id: IRIdentifier; // The name of the case (e.g., macOS)
-  // value?: IRNode; // For future raw value support
-  // associatedValues?: IRIdentifier[]; // For future associated value support
+  rawValue?: IRNode; // For raw value support
+  associatedValues?: IREnumAssociatedValue[]; // For associated values support
+  hasAssociatedValues?: boolean;
 }

@@ -1454,9 +1454,16 @@ export function replaceSelfWithThis(node: IR.IRNode): IR.IRNode {
   }
 }
 
-export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts.VariableStatement {
+export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts.Statement {
   return execute(node, "enum declaration to JS object", () => {
     logger.debug(`Converting enum declaration to JS object: ${node.id.name}`);
+    
+    // If the enum has associated values, create a class-based implementation
+    if (node.hasAssociatedValues) {
+      return createEnumWithAssociatedValues(node);
+    }
+    
+    // Otherwise create a simple frozen object
     const properties = node.cases.map(enumCase => {
       if (enumCase.type !== IR.IRNodeType.EnumCase) {
         throw new CodeGenError(
@@ -1465,17 +1472,48 @@ export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts
           enumCase
         );
       }
+      
       const caseName = enumCase.id.name;
       logger.debug(`  Creating object property for case: ${caseName}`);
+      
+      // Use raw value if available, otherwise use the case name as a string
+      const valueExpression = enumCase.rawValue
+        ? convertIRExpr(enumCase.rawValue)
+        : ts.factory.createStringLiteral(caseName);
+        
       return ts.factory.createPropertyAssignment(
         ts.factory.createIdentifier(caseName),
-        ts.factory.createStringLiteral(caseName)
+        valueExpression
       );
     });
+    
+    // Create a comment for the enum type if rawType is specified
+    let enumTypeComment: ts.SynthesizedComment | undefined;
+    if (node.rawType) {
+      enumTypeComment = {
+        kind: ts.SyntaxKind.MultiLineCommentTrivia,
+        text: ` @type {Object<string, ${node.rawType}>} `,
+        hasTrailingNewLine: false,
+        pos: -1,
+        end: -1
+      };
+    }
+    
     const objectLiteral = ts.factory.createObjectLiteralExpression(
       properties,
       true
     );
+    
+    // Add comment to the object literal if we have a type
+    if (enumTypeComment) {
+      ts.addSyntheticLeadingComment(
+        objectLiteral,
+        enumTypeComment.kind,
+        enumTypeComment.text,
+        enumTypeComment.hasTrailingNewLine
+      );
+    }
+    
     const freezeCall = ts.factory.createCallExpression(
       ts.factory.createPropertyAccessExpression(
         ts.factory.createIdentifier("Object"),
@@ -1484,12 +1522,14 @@ export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts
       undefined,
       [objectLiteral]
     );
+    
     const variableDeclaration = ts.factory.createVariableDeclaration(
       ts.factory.createIdentifier(node.id.name),
       undefined,
       undefined,
       freezeCall
     );
+    
     return ts.factory.createVariableStatement(
       [ts.factory.createToken(ts.SyntaxKind.ExportKeyword)],
       ts.factory.createVariableDeclarationList(
@@ -1498,4 +1538,217 @@ export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts
       )
     );
   });
+}
+
+/**
+ * Create a class-based implementation for an enum with associated values
+ */
+function createEnumWithAssociatedValues(node: IR.IREnumDeclaration): ts.ClassDeclaration {
+  // Create the enum class
+  const enumName = node.id.name;
+  const members: ts.ClassElement[] = [];
+  
+  // Create a private constructor without type annotations
+  const constructorDecl = ts.factory.createConstructorDeclaration(
+    [ts.factory.createModifier(ts.SyntaxKind.PrivateKeyword)],
+    [
+      ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        ts.factory.createIdentifier("type"),
+        undefined,
+        undefined  // No type annotation
+      ),
+      ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        ts.factory.createIdentifier("values"),
+        undefined,
+        undefined  // No type annotation
+      )
+    ],
+    ts.factory.createBlock([
+      ts.factory.createExpressionStatement(
+        ts.factory.createBinaryExpression(
+          ts.factory.createPropertyAccessExpression(
+            ts.factory.createThis(),
+            ts.factory.createIdentifier("type")
+          ),
+          ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+          ts.factory.createIdentifier("type")
+        )
+      ),
+      ts.factory.createExpressionStatement(
+        ts.factory.createBinaryExpression(
+          ts.factory.createPropertyAccessExpression(
+            ts.factory.createThis(),
+            ts.factory.createIdentifier("values")
+          ),
+          ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+          ts.factory.createIdentifier("values")
+        )
+      )
+    ], true)
+  );
+  
+  members.push(constructorDecl);
+  
+  // Add properties for type and values without type annotations
+  members.push(
+    ts.factory.createPropertyDeclaration(
+      undefined,
+      ts.factory.createIdentifier("type"),
+      undefined,
+      undefined,  // No type annotation
+      undefined
+    )
+  );
+  
+  members.push(
+    ts.factory.createPropertyDeclaration(
+      undefined,
+      ts.factory.createIdentifier("values"),
+      undefined,
+      undefined,  // No type annotation
+      undefined
+    )
+  );
+  
+  // Add a type-checking method without type annotations
+  members.push(
+    ts.factory.createMethodDeclaration(
+      undefined,
+      undefined,
+      ts.factory.createIdentifier("is"),
+      undefined,
+      undefined,
+      [
+        ts.factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          ts.factory.createIdentifier("type"),
+          undefined,
+          undefined  // No type annotation
+        )
+      ],
+      undefined,  // No return type annotation
+      ts.factory.createBlock([
+        ts.factory.createReturnStatement(
+          ts.factory.createBinaryExpression(
+            ts.factory.createPropertyAccessExpression(
+              ts.factory.createThis(),
+              ts.factory.createIdentifier("type")
+            ),
+            ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+            ts.factory.createIdentifier("type")
+          )
+        )
+      ], true)
+    )
+  );
+  
+  // Add factory methods for each case
+  for (const enumCase of node.cases) {
+    const caseName = enumCase.id.name;
+    
+    if (enumCase.hasAssociatedValues && enumCase.associatedValues) {
+      // Create a factory method for this case with associated values
+      const parameters = enumCase.associatedValues.map(param => 
+        ts.factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          ts.factory.createIdentifier(param.name),
+          undefined,
+          undefined  // No type annotation
+        )
+      );
+      
+      const paramNames = enumCase.associatedValues.map(param => param.name);
+      
+      members.push(
+        ts.factory.createMethodDeclaration(
+          [ts.factory.createModifier(ts.SyntaxKind.StaticKeyword)],
+          undefined,
+          ts.factory.createIdentifier(caseName),
+          undefined,
+          undefined,
+          parameters,
+          undefined,  // No return type annotation
+          ts.factory.createBlock([
+            ts.factory.createReturnStatement(
+              ts.factory.createNewExpression(
+                ts.factory.createIdentifier(enumName),
+                undefined,
+                [
+                  ts.factory.createStringLiteral(caseName),
+                  ts.factory.createObjectLiteralExpression(
+                    paramNames.map(name => 
+                      ts.factory.createPropertyAssignment(
+                        ts.factory.createIdentifier(name),
+                        ts.factory.createIdentifier(name)
+                      )
+                    ),
+                    false
+                  )
+                ]
+              )
+            )
+          ], true)
+        )
+      );
+    } else {
+      // Create a simple property for cases without associated values
+      const valueExpr = enumCase.rawValue 
+        ? convertIRExpr(enumCase.rawValue)
+        : ts.factory.createStringLiteral(caseName);
+        
+      members.push(
+        ts.factory.createPropertyDeclaration(
+          [
+            ts.factory.createModifier(ts.SyntaxKind.StaticKeyword), 
+            ts.factory.createModifier(ts.SyntaxKind.ReadonlyKeyword)
+          ],
+          ts.factory.createIdentifier(caseName),
+          undefined,
+          undefined,  // No type annotation
+          ts.factory.createNewExpression(
+            ts.factory.createIdentifier(enumName),
+            undefined,
+            [
+              ts.factory.createStringLiteral(caseName),
+              valueExpr
+            ]
+          )
+        )
+      );
+    }
+  }
+  
+  // Create the class declaration
+  return ts.factory.createClassDeclaration(
+    [ts.factory.createModifier(ts.SyntaxKind.ExportKeyword)],
+    ts.factory.createIdentifier(enumName),
+    undefined,
+    undefined,
+    members
+  );
+}
+
+
+/**
+ * Map HQL types to TypeScript types
+ */
+function mapHqlTypeToTsType(hqlType: string): ts.SyntaxKind {
+  switch (hqlType) {
+    case 'Int':
+      return ts.SyntaxKind.NumberKeyword;
+    case 'Double':
+      return ts.SyntaxKind.NumberKeyword;
+    case 'String':
+      return ts.SyntaxKind.StringKeyword;
+    case 'Bool':
+      return ts.SyntaxKind.BooleanKeyword;
+    default:
+      return ts.SyntaxKind.AnyKeyword;
+  }
 }
