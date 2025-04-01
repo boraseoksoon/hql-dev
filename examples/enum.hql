@@ -6,5 +6,9 @@
   (case linux)
 )
 
-(fx install (os: OsType) (-> Any)
-  os)
+(let os OsType.macOS)
+
+(fn install (os)
+ os)
+
+(print (install os: OsType.macOS))

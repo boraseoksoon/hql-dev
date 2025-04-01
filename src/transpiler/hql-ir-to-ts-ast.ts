@@ -1,16 +1,11 @@
-// src/transpiler/hql-ir-to-ts-ast.ts - Updated to generate JS enum simulation
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 import { CodeGenError } from "./errors.ts";
 import { Logger } from "../logger.ts";
 
-// Initialize logger for this module
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
-/**
- * Helper that wraps conversion code with a try–catch to throw a standardized CodeGenError.
- */
 function execute<T>(node: IR.IRNode | any, context: string, fn: () => T): T {
   try {
     return fn();
@@ -24,18 +19,16 @@ function execute<T>(node: IR.IRNode | any, context: string, fn: () => T): T {
   }
 }
 
-/**
- * Helper to create an expression statement.
- */
 function createExpressionStatement(expr: ts.Expression): ts.ExpressionStatement {
   return execute(expr, "expression statement creation", () =>
     ts.factory.createExpressionStatement(expr)
   );
 }
 
-/**
- * Main entry point: Convert an IR node to a TypeScript AST statement.
- */
+function wrap<T>(node: T, conv: (node: T) => ts.Expression): ts.ExpressionStatement {
+  return createExpressionStatement(conv(node));
+}
+
 export function convertIRNode(
   node: IR.IRNode,
 ): ts.Statement | ts.Statement[] | null {
@@ -50,35 +43,35 @@ export function convertIRNode(
     logger.debug(`Converting IR node of type ${IR.IRNodeType[node.type]}`);
     switch (node.type) {
       case IR.IRNodeType.ObjectExpression:
-        return createExpressionStatement(convertObjectExpression(node as IR.IRObjectExpression));
+        return wrap(node as IR.IRObjectExpression, convertObjectExpression);
       case IR.IRNodeType.StringLiteral:
-        return createExpressionStatement(convertStringLiteral(node as IR.IRStringLiteral));
+        return wrap(node as IR.IRStringLiteral, convertStringLiteral);
       case IR.IRNodeType.NumericLiteral:
-        return createExpressionStatement(convertNumericLiteral(node as IR.IRNumericLiteral));
+        return wrap(node as IR.IRNumericLiteral, convertNumericLiteral);
       case IR.IRNodeType.BooleanLiteral:
-        return createExpressionStatement(convertBooleanLiteral(node as IR.IRBooleanLiteral));
+        return wrap(node as IR.IRBooleanLiteral, convertBooleanLiteral);
       case IR.IRNodeType.NullLiteral:
         return createExpressionStatement(convertNullLiteral());
       case IR.IRNodeType.Identifier:
-        return createExpressionStatement(convertIdentifier(node as IR.IRIdentifier));
+        return wrap(node as IR.IRIdentifier, convertIdentifier);
       case IR.IRNodeType.CallExpression:
-        return createExpressionStatement(convertCallExpression(node as IR.IRCallExpression));
+        return wrap(node as IR.IRCallExpression, convertCallExpression);
       case IR.IRNodeType.MemberExpression:
-        return createExpressionStatement(convertMemberExpression(node as IR.IRMemberExpression));
+        return wrap(node as IR.IRMemberExpression, convertMemberExpression);
       case IR.IRNodeType.CallMemberExpression:
-        return createExpressionStatement(convertCallMemberExpression(node as IR.IRCallMemberExpression));
+        return wrap(node as IR.IRCallMemberExpression, convertCallMemberExpression);
       case IR.IRNodeType.NewExpression:
-        return createExpressionStatement(convertNewExpression(node as IR.IRNewExpression));
+        return wrap(node as IR.IRNewExpression, convertNewExpression);
       case IR.IRNodeType.BinaryExpression:
-        return createExpressionStatement(convertBinaryExpression(node as IR.IRBinaryExpression));
+        return wrap(node as IR.IRBinaryExpression, convertBinaryExpression);
       case IR.IRNodeType.UnaryExpression:
-        return createExpressionStatement(convertUnaryExpression(node as IR.IRUnaryExpression));
+        return wrap(node as IR.IRUnaryExpression, convertUnaryExpression);
       case IR.IRNodeType.ConditionalExpression:
-        return createExpressionStatement(convertConditionalExpression(node as IR.IRConditionalExpression));
+        return wrap(node as IR.IRConditionalExpression, convertConditionalExpression);
       case IR.IRNodeType.ArrayExpression:
-        return createExpressionStatement(convertArrayExpression(node as IR.IRArrayExpression));
+        return wrap(node as IR.IRArrayExpression, convertArrayExpression);
       case IR.IRNodeType.FunctionExpression:
-        return createExpressionStatement(convertFunctionExpression(node as IR.IRFunctionExpression));
+        return wrap(node as IR.IRFunctionExpression, convertFunctionExpression);
       case IR.IRNodeType.VariableDeclaration:
         return convertVariableDeclaration(node as IR.IRVariableDeclaration);
       case IR.IRNodeType.FunctionDeclaration:
@@ -94,9 +87,9 @@ export function convertIRNode(
       case IR.IRNodeType.ExportVariableDeclaration:
         return convertExportVariableDeclaration(node as IR.IRExportVariableDeclaration);
       case IR.IRNodeType.InteropIIFE:
-        return createExpressionStatement(convertInteropIIFE(node as IR.IRInteropIIFE));
+        return wrap(node as IR.IRInteropIIFE, convertInteropIIFE);
       case IR.IRNodeType.AssignmentExpression:
-        return createExpressionStatement(convertAssignmentExpression(node as IR.IRAssignmentExpression));
+        return wrap(node as IR.IRAssignmentExpression, convertAssignmentExpression);
       case IR.IRNodeType.JsImportReference:
         return convertJsImportReference(node as IR.IRJsImportReference);
       case IR.IRNodeType.CommentBlock:
@@ -114,12 +107,9 @@ export function convertIRNode(
       case IR.IRNodeType.ClassDeclaration:
         return convertClassDeclaration(node as IR.IRClassDeclaration);
       case IR.IRNodeType.GetAndCall:
-        return createExpressionStatement(convertGetAndCall(node as IR.IRGetAndCall));
-      // Enum handling (UPDATED)
+        return wrap(node as IR.IRGetAndCall, convertGetAndCall);
       case IR.IRNodeType.EnumDeclaration:
-        // Convert IREnumDeclaration to a JS object simulation (const Enum = Object.freeze({...}))
         return convertEnumDeclarationToJsObject(node as IR.IREnumDeclaration);
-      // Enum cases are handled within EnumDeclaration, so they don't produce top-level statements.
       case IR.IRNodeType.EnumCase:
         logger.warn(`EnumCase node encountered outside EnumDeclaration. This should not happen.`);
         return null;
@@ -135,8 +125,6 @@ export function convertIRNode(
     }
   });
 }
-
-/* ────────────── Statement Converters ────────────── */
 
 export function convertIfStatement(node: IR.IRIfStatement): ts.IfStatement {
   return execute(node, "if statement", () => {
@@ -195,7 +183,7 @@ export function convertFxFunctionDeclaration(
 ): ts.FunctionDeclaration {
   return execute(node, "fx function declaration", () => {
     const defaultValues = new Map(
-      node.defaults.map((d) => [d.name, convertIRExpr(d.value)])
+      node.defaults.map(d => [d.name, convertIRExpr(d.value)])
     );
     const parameters = [
       ts.factory.createParameterDeclaration(
@@ -285,7 +273,7 @@ export function convertFxFunctionDeclaration(
             )
           ),
           ts.factory.createBlock([
-            ...node.params.map((param) =>
+            ...node.params.map(param =>
               ts.factory.createIfStatement(
                 ts.factory.createBinaryExpression(
                   ts.factory.createElementAccessExpression(
@@ -436,8 +424,6 @@ export function convertExpressionStatement(node: IR.IRExpressionStatement): ts.E
     ts.factory.createExpressionStatement(convertIRExpr(node.expression))
   );
 }
-
-/* ────────────── Expression Converters ────────────── */
 
 export function convertObjectExpression(node: IR.IRObjectExpression): ts.ObjectLiteralExpression {
   return execute(node, "object expression", () => {
@@ -847,8 +833,6 @@ function isExpressionNode(node: IR.IRNode): boolean {
   return expressionTypes.includes(node.type);
 }
 
-/* ────────────── Import / Export / Raw Converters ────────────── */
-
 export function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclaration {
   return execute(node, "import declaration", () => {
     if (!node.specifiers || node.specifiers.length === 0) {
@@ -1105,8 +1089,6 @@ export function convertRaw(node: IR.IRRaw): ts.ExpressionStatement {
   );
 }
 
-/* ────────────── IR Expression Converter ────────────── */
-
 export function convertIRExpr(node: IR.IRNode): ts.Expression {
   return execute(node, "IR expression", () => {
     switch (node.type) {
@@ -1173,12 +1155,9 @@ export function convertIRExpr(node: IR.IRNode): ts.Expression {
 
 export function convertGetAndCall(node: IR.IRGetAndCall): ts.Expression {
   return execute(node, "GetAndCall", () => {
-    // Convert object and arguments
     const object = convertIRExpr(node.object);
     const methodName = node.method.value;
     const args = node.arguments.map(arg => convertIRExpr(arg));
-
-    // Create an IIFE to contain the safe method call logic
     return ts.factory.createCallExpression(
       ts.factory.createParenthesizedExpression(
         ts.factory.createArrowFunction(
@@ -1188,7 +1167,6 @@ export function convertGetAndCall(node: IR.IRGetAndCall): ts.Expression {
           undefined,
           ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
           ts.factory.createBlock([
-            // Store object in a temp variable
             ts.factory.createVariableStatement(
               undefined,
               ts.factory.createVariableDeclarationList(
@@ -1203,8 +1181,6 @@ export function convertGetAndCall(node: IR.IRGetAndCall): ts.Expression {
                 ts.NodeFlags.Const
               )
             ),
-
-            // Get the method using runtime get function
             ts.factory.createVariableStatement(
               undefined,
               ts.factory.createVariableDeclarationList(
@@ -1226,8 +1202,6 @@ export function convertGetAndCall(node: IR.IRGetAndCall): ts.Expression {
                 ts.NodeFlags.Const
               )
             ),
-
-            // Return conditional: if method is a function, call it with object as 'this'
             ts.factory.createReturnStatement(
               ts.factory.createConditionalExpression(
                 ts.factory.createBinaryExpression(
@@ -1290,8 +1264,6 @@ export function convertAssignmentExpression(node: IR.IRAssignmentExpression): ts
     )
   );
 }
-
-/* ────────────── Class Converters ────────────── */
 
 export function convertClassMethod(node: IR.IRClassMethod): ts.MethodDeclaration {
   return execute(node, "class method", () => {
@@ -1363,7 +1335,6 @@ export function convertClassDeclaration(node: IR.IRClassDeclaration): ts.ClassDe
       }
     });
     logger.debug(`Final class members count: ${members.length}`);
-    // Remove export modifier as per the original comment
     return ts.factory.createClassDeclaration(
       [],
       ts.factory.createIdentifier(node.id.name),
@@ -1428,11 +1399,9 @@ function convertIRNodeToStatement(node: IR.IRNode): ts.Statement | ts.Statement[
   if (!result) return null;
   if (Array.isArray(result)) return result;
   if (ts.isStatement(result)) return result;
-  // If it's an expression, wrap it in an ExpressionStatement
   if (ts.isExpression(result)) {
     return ts.factory.createExpressionStatement(result);
   }
-  // Handle cases where convertIRNode might return something unexpected
   logger.warn(`Unexpected result type from convertIRNode: ${result.kind}`);
   return null;
 }
@@ -1485,18 +1454,9 @@ export function replaceSelfWithThis(node: IR.IRNode): IR.IRNode {
   }
 }
 
-/* ────────────── Enum Converters (UPDATED) ────────────── */
-
-/**
- * Convert an IREnumDeclaration to a TypeScript VariableStatement
- * that simulates an enum using a frozen JavaScript object.
- * Example Output: export const OsType = Object.freeze({ macOS: "macOS", ... });
- */
 export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts.VariableStatement {
   return execute(node, "enum declaration to JS object", () => {
     logger.debug(`Converting enum declaration to JS object: ${node.id.name}`);
-
-    // Create object properties from enum cases
     const properties = node.cases.map(enumCase => {
       if (enumCase.type !== IR.IRNodeType.EnumCase) {
         throw new CodeGenError(
@@ -1507,21 +1467,15 @@ export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts
       }
       const caseName = enumCase.id.name;
       logger.debug(`  Creating object property for case: ${caseName}`);
-
-      // Create property assignment: CaseName: "CaseName"
       return ts.factory.createPropertyAssignment(
-        ts.factory.createIdentifier(caseName), // Property name is the case name
-        ts.factory.createStringLiteral(caseName) // Value is the case name as a string
+        ts.factory.createIdentifier(caseName),
+        ts.factory.createStringLiteral(caseName)
       );
     });
-
-    // Create the object literal: { macOS: "macOS", ... }
     const objectLiteral = ts.factory.createObjectLiteralExpression(
       properties,
-      true // multiline
+      true
     );
-
-    // Create the call to Object.freeze: Object.freeze({ ... })
     const freezeCall = ts.factory.createCallExpression(
       ts.factory.createPropertyAccessExpression(
         ts.factory.createIdentifier("Object"),
@@ -1530,21 +1484,17 @@ export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts
       undefined,
       [objectLiteral]
     );
-
-    // Create the variable declaration: const EnumName = Object.freeze({...});
     const variableDeclaration = ts.factory.createVariableDeclaration(
-      ts.factory.createIdentifier(node.id.name), // Enum name identifier
-      undefined, // No explicit type annotation
-      undefined, // No explicit type annotation
-      freezeCall // Initializer is the Object.freeze call
+      ts.factory.createIdentifier(node.id.name),
+      undefined,
+      undefined,
+      freezeCall
     );
-
-    // Create the variable statement with export keyword
     return ts.factory.createVariableStatement(
-      [ts.factory.createToken(ts.SyntaxKind.ExportKeyword)], // Add export keyword
+      [ts.factory.createToken(ts.SyntaxKind.ExportKeyword)],
       ts.factory.createVariableDeclarationList(
         [variableDeclaration],
-        ts.NodeFlags.Const // Use const for immutability
+        ts.NodeFlags.Const
       )
     );
   });

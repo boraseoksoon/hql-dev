@@ -1,7 +1,7 @@
 // src/transpiler/hql-transpiler.ts - Refactored
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { sexpToString } from "../s-exp/types.ts";
-import { parse } from "../s-exp/parser.ts";
+import { parse } from "./parser.ts";
 import { Environment } from "../environment.ts";
 import { expandMacros } from "../s-exp/macro.ts";
 import { processImports } from "../s-exp/imports.ts";

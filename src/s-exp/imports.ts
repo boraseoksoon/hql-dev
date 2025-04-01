@@ -14,7 +14,7 @@ import {
 } from "./types.ts";
 import { Environment, Value } from "../environment.ts";
 import { defineUserMacro, evaluateForMacro } from "./macro.ts";
-import { parse } from "./parser.ts";
+import { parse } from "../transpiler/parser.ts";
 import { Logger } from "../logger.ts";
 import {
   ImportError,
@@ -31,37 +31,29 @@ import {
   registerModulePath,
 } from "../utils/import-utils.ts";
 
-/**
- * Options for import processing
- */
 interface ImportProcessorOptions {
   verbose?: boolean;
   baseDir?: string;
   tempDir?: string;
   processedFiles?: Set<string>;
-  inProgressFiles?: Set<string>; // Track files currently being processed
+  inProgressFiles?: Set<string>;
   importMap?: Map<string, string>;
   currentFile?: string;
 }
 
-/**
- * --- Helper Functions ---
- */
+interface SLiteral {
+  type: "literal";
+  value: string | number | boolean | null;
+}
 
-/** Creates a logger instance from options */
 function createLogger(options: ImportProcessorOptions): Logger {
   return new Logger(options.verbose || false);
 }
 
-/** Formats an error message */
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Throws a new ImportError with a formatted message.
- * This helps remove duplicate try/catch error message formatting.
- */
 function wrapError(
   context: string,
   error: unknown,
@@ -76,9 +68,6 @@ function wrapError(
   );
 }
 
-/**
- * Process all imports in a list of S-expressions.
- */
 export async function processImports(
   exprs: SExp[],
   env: Environment,
@@ -87,27 +76,20 @@ export async function processImports(
   const logger = createLogger(options);
   const baseDir = options.baseDir || Deno.cwd();
   const previousCurrentFile = env.getCurrentFile();
-
   const processedFiles = options.processedFiles || new Set<string>();
   const inProgressFiles = options.inProgressFiles || new Set<string>();
   const importMap = options.importMap || new Map<string, string>();
-
   try {
-    // Setup environment and tracking for current file
     if (options.currentFile) {
       env.setCurrentFile(options.currentFile);
       logger.debug(`Processing imports in file: ${options.currentFile}`);
       inProgressFiles.add(options.currentFile);
     }
-
-    // In parallel: create a temporary directory (if needed) and analyze imports
     const [tempDir, importExprs] = await Promise.all([
       createTempDirIfNeeded(options, logger),
       analyzeImports(exprs, logger),
     ]);
-
     const { remoteImports, localImports } = categorizeImports(importExprs, logger);
-
     if (remoteImports.length > 0) {
       await processRemoteImportsInParallel(
         remoteImports,
@@ -121,7 +103,6 @@ export async function processImports(
         logger,
       );
     }
-
     if (localImports.length > 0) {
       await processLocalImportsSequentially(
         localImports,
@@ -135,11 +116,9 @@ export async function processImports(
         logger,
       );
     }
-
     if (options.currentFile) {
       processFileDefinitionsAndExports(exprs, env, options, logger);
     }
-
     finalizeFileProcessing(options.currentFile, inProgressFiles, processedFiles, logger);
   } catch (error) {
     wrapError("Processing imports", error, options.currentFile || "imports", options.currentFile);
@@ -148,9 +127,6 @@ export async function processImports(
   }
 }
 
-/**
- * Create a temporary directory if needed.
- */
 async function createTempDirIfNeeded(
   options: ImportProcessorOptions,
   logger: Logger,
@@ -168,18 +144,14 @@ async function createTempDirIfNeeded(
   return options.tempDir;
 }
 
-/**
- * Analyze and identify import expressions.
- */
 function analyzeImports(exprs: SExp[], logger: Logger): SList[] {
-  const importExprs = exprs.filter((expr) => isImport(expr) && expr.type === "list") as SList[];
+  const importExprs = exprs.filter(
+    (expr) => isImport(expr) && expr.type === "list",
+  ) as SList[];
   logger.debug(`Found ${importExprs.length} import expressions to process`);
   return importExprs;
 }
 
-/**
- * Categorize imports into remote and local.
- */
 function categorizeImports(importExprs: SList[], logger: Logger): {
   remoteImports: SList[];
   localImports: SList[];
@@ -200,9 +172,6 @@ function categorizeImports(importExprs: SList[], logger: Logger): {
   return { remoteImports, localImports };
 }
 
-/**
- * Process remote imports in parallel.
- */
 async function processRemoteImportsInParallel(
   remoteImports: SList[],
   env: Environment,
@@ -234,9 +203,6 @@ async function processRemoteImportsInParallel(
   );
 }
 
-/**
- * Process local imports sequentially.
- */
 async function processLocalImportsSequentially(
   localImports: SList[],
   env: Environment,
@@ -266,9 +232,6 @@ async function processLocalImportsSequentially(
   }
 }
 
-/**
- * Process file definitions and exports.
- */
 function processFileDefinitionsAndExports(
   exprs: SExp[],
   env: Environment,
@@ -277,22 +240,13 @@ function processFileDefinitionsAndExports(
 ): void {
   try {
     processFileDefinitions(exprs, env, logger);
-    processFileExportsAndDefinitions(
-      exprs,
-      env,
-      {},
-      options.currentFile!,
-      logger,
-    );
+    processFileExportsAndDefinitions(exprs, env, {}, options.currentFile!, logger);
   } catch (error) {
     if (error instanceof MacroError) throw error;
     wrapError("Processing file definitions and exports", error, options.currentFile || "unknown", options.currentFile);
   }
 }
 
-/**
- * Finalize file processing by updating tracking sets.
- */
 function finalizeFileProcessing(
   currentFile: string | undefined,
   inProgressFiles: Set<string>,
@@ -306,9 +260,6 @@ function finalizeFileProcessing(
   }
 }
 
-/**
- * Extract the module path from an import expression.
- */
 function getModulePathFromImport(importExpr: SList): string {
   try {
     if (
@@ -324,21 +275,10 @@ function getModulePathFromImport(importExpr: SList): string {
     ) {
       return String((importExpr.elements[2] as SLiteral).value);
     }
-  } catch (_e) {
-    // Ignore errors and fall through.
-  }
+  } catch (_e) {}
   return "unknown";
 }
 
-// --- Type definition for literals ---
-interface SLiteral {
-  type: "literal";
-  value: string | number | boolean | null;
-}
-
-/**
- * Process a single import expression.
- */
 async function processImport(
   importExpr: SList,
   env: Environment,
@@ -365,10 +305,6 @@ async function processImport(
   }
 }
 
-/**
- * Process namespace import with "from" syntax.
- * Format: (import name from "path")
- */
 async function processNamespaceImport(
   elements: SExp[],
   env: Environment,
@@ -388,41 +324,27 @@ async function processNamespaceImport(
     registerModulePath(moduleName, modulePath);
     logger.debug(`Processing namespace import with "from": ${moduleName} from ${modulePath}`);
     const resolvedPath = path.resolve(baseDir, modulePath);
-    await loadModuleByType(
-      moduleName,
-      modulePath,
-      resolvedPath,
-      baseDir,
-      env,
-      options,
-    );
+    await loadModuleByType(moduleName, modulePath, resolvedPath, baseDir, env, options);
   } catch (error) {
-    const modulePath =
-      elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
+    const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
     wrapError("Processing namespace import", error, modulePath, options.currentFile);
   }
 }
 
-/**
- * Process elements in a vector, handling vector keyword and commas.
- */
 function processVectorElements(elements: SExp[]): SExp[] {
   try {
     let startIndex = 0;
     if (elements.length > 0 && elements[0].type === "symbol" && (elements[0] as SSymbol).name === "vector") {
       startIndex = 1;
     }
-    return elements.slice(startIndex).filter((elem) =>
-      !(elem.type === "symbol" && (elem as SSymbol).name === ",")
+    return elements.slice(startIndex).filter(
+      (elem) => !(elem.type === "symbol" && (elem as SSymbol).name === ","),
     );
   } catch (error) {
     wrapError("Processing vector elements", error, "vector", "unknown");
   }
 }
 
-/**
- * Process vector-based import.
- */
 async function processVectorBasedImport(
   elements: SExp[],
   env: Environment,
@@ -441,14 +363,7 @@ async function processVectorBasedImport(
     const modulePath = elements[3].value as string;
     const resolvedPath = path.resolve(baseDir, modulePath);
     const tempModuleName = `__temp_module_${modulePath.replace(/[^a-zA-Z0-9_]/g, "_")}`;
-    await loadModuleByType(
-      tempModuleName,
-      modulePath,
-      resolvedPath,
-      baseDir,
-      env,
-      options,
-    );
+    await loadModuleByType(tempModuleName, modulePath, resolvedPath, baseDir, env, options);
     const vectorElements = processVectorElements(symbolsVector.elements);
     const requestedSymbols = extractSymbolsAndAliases(vectorElements);
     if (options.currentFile && modulePath.endsWith(".hql")) {
@@ -461,25 +376,14 @@ async function processVectorBasedImport(
         logger,
       );
     } else {
-      processRegularImports(
-        requestedSymbols,
-        modulePath,
-        tempModuleName,
-        env,
-        options.currentFile,
-        logger,
-      );
+      processRegularImports(requestedSymbols, modulePath, tempModuleName, env, options.currentFile, logger);
     }
   } catch (error) {
-    const modulePath =
-      elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
+    const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
     wrapError("Processing vector import", error, modulePath, options.currentFile);
   }
 }
 
-/**
- * Extract symbols and their aliases from vector elements.
- */
 function extractSymbolsAndAliases(vectorElements: SExp[]): Map<string, string | null> {
   const requestedSymbols = new Map<string, string | null>();
   let i = 0;
@@ -506,9 +410,6 @@ function extractSymbolsAndAliases(vectorElements: SExp[]): Map<string, string | 
   return requestedSymbols;
 }
 
-/**
- * Process and import the requested symbols for HQL files.
- */
 function processMacrosAndValuesFromHQL(
   requestedSymbols: Map<string, string | null>,
   resolvedPath: string,
@@ -546,9 +447,6 @@ function processMacrosAndValuesFromHQL(
   }
 }
 
-/**
- * Process regular imports from non-HQL files.
- */
 function processRegularImports(
   requestedSymbols: Map<string, string | null>,
   modulePath: string,
@@ -575,9 +473,6 @@ function processRegularImports(
   }
 }
 
-/**
- * Load a module based on its file type, with improved circular dependency handling.
- */
 async function loadModuleByType(
   moduleName: string,
   modulePath: string,
@@ -601,17 +496,7 @@ async function loadModuleByType(
     if (isRemoteModule(modulePath)) {
       await loadRemoteModule(moduleName, modulePath, env, logger);
     } else if (isHqlFile(modulePath)) {
-      await loadHqlModule(
-        moduleName,
-        modulePath,
-        resolvedPath,
-        baseDir,
-        env,
-        processedFiles,
-        inProgressFiles,
-        logger,
-        options,
-      );
+      await loadHqlModule(moduleName, modulePath, resolvedPath, baseDir, env, processedFiles, inProgressFiles, logger, options);
     } else if (isJavaScriptModule(modulePath)) {
       await loadJavaScriptModule(moduleName, modulePath, resolvedPath, env, logger, processedFiles);
     } else {
@@ -622,9 +507,6 @@ async function loadModuleByType(
   }
 }
 
-/**
- * Load a remote module (npm:, jsr:, http:).
- */
 async function loadRemoteModule(
   moduleName: string,
   modulePath: string,
@@ -640,9 +522,6 @@ async function loadRemoteModule(
   }
 }
 
-/**
- * Load an HQL module.
- */
 async function loadHqlModule(
   moduleName: string,
   modulePath: string,
@@ -672,9 +551,6 @@ async function loadHqlModule(
   processedFiles.add(resolvedPath);
 }
 
-/**
- * Load a JavaScript module.
- */
 async function loadJavaScriptModule(
   moduleName: string,
   modulePath: string,
@@ -686,9 +562,6 @@ async function loadJavaScriptModule(
   await processJsImport(moduleName, modulePath, resolvedPath, env, logger, processedFiles);
 }
 
-/**
- * Process HQL file import with improved circular dependency handling.
- */
 async function processHqlImport(
   moduleName: string,
   modulePath: string,
@@ -727,9 +600,6 @@ async function processHqlImport(
   }
 }
 
-/**
- * Read a file with error handling.
- */
 async function readFile(
   filePath: string,
   currentFile: string | undefined,
@@ -741,9 +611,6 @@ async function readFile(
   }
 }
 
-/**
- * Parse HQL content.
- */
 function parseHqlContent(
   content: string,
   filePath: string,
@@ -756,9 +623,6 @@ function parseHqlContent(
   }
 }
 
-/**
- * Process exports and create a module exports object.
- */
 function processExports(
   importedExprs: SExp[],
   env: Environment,
@@ -770,9 +634,6 @@ function processExports(
   return moduleExports;
 }
 
-/**
- * Process JavaScript imports with temporary file tracking.
- */
 async function processJsImport(
   moduleName: string,
   modulePath: string,
@@ -802,9 +663,6 @@ async function processJsImport(
   }
 }
 
-/**
- * Process npm: imports with parallel CDN fallbacks.
- */
 async function processNpmImport(
   moduleName: string,
   modulePath: string,
@@ -834,9 +692,6 @@ async function processNpmImport(
   }
 }
 
-/**
- * Process jsr: imports.
- */
 async function processJsrImport(
   moduleName: string,
   modulePath: string,
@@ -852,9 +707,6 @@ async function processJsrImport(
   }
 }
 
-/**
- * Process http(s): imports.
- */
 async function processHttpImport(
   moduleName: string,
   modulePath: string,
@@ -870,9 +722,6 @@ async function processHttpImport(
   }
 }
 
-/**
- * Process file definitions for macros and variables.
- */
 function processFileDefinitions(
   exprs: SExp[],
   env: Environment,
@@ -881,9 +730,7 @@ function processFileDefinitions(
   try {
     logger.debug("Processing file definitions for macros and variables");
     for (const expr of exprs) {
-      if (
-        expr.type !== "list" || expr.elements.length === 0 || !isSymbol(expr.elements[0])
-      ) continue;
+      if (expr.type !== "list" || expr.elements.length === 0 || !isSymbol(expr.elements[0])) continue;
       const op = expr.elements[0].name;
       if (op === "let" && expr.elements.length === 3) {
         processLetDeclaration(expr, env, logger);
@@ -892,14 +739,10 @@ function processFileDefinitions(
       }
     }
   } catch (error) {
-    if (error instanceof MacroError) throw error;
     wrapError("Processing file definitions", error, env.getCurrentFile() || "");
   }
 }
 
-/**
- * Process a let declaration.
- */
 function processLetDeclaration(
   expr: SList,
   env: Environment,
@@ -917,9 +760,6 @@ function processLetDeclaration(
   }
 }
 
-/**
- * Process a fn declaration.
- */
 function processFnDeclaration(
   expr: SList,
   env: Environment,
@@ -945,9 +785,6 @@ function processFnDeclaration(
   }
 }
 
-/**
- * Enhanced export tracking.
- */
 function processFileExportsAndDefinitions(
   expressions: SExp[],
   env: Environment,
@@ -956,10 +793,8 @@ function processFileExportsAndDefinitions(
   logger: Logger,
 ): void {
   try {
-    // First process user macros
     for (const expr of expressions) {
-      if (expr.type === "list" && expr.elements.length > 0 &&
-          isSymbol(expr.elements[0]) && expr.elements[0].name === "macro") {
+      if (expr.type === "list" && expr.elements.length > 0 && isSymbol(expr.elements[0]) && expr.elements[0].name === "macro") {
         try {
           defineUserMacro(expr as SList, filePath, env, logger);
         } catch (error) {
@@ -970,14 +805,9 @@ function processFileExportsAndDefinitions(
         }
       }
     }
-
-    // Collect and process exports
     const exportDefinitions: { name: string; value: SExp | null }[] = [];
     for (const expr of expressions) {
-      if (
-        expr.type === "list" && expr.elements.length > 0 &&
-        isSymbol(expr.elements[0]) && expr.elements[0].name === "export"
-      ) {
+      if (expr.type === "list" && expr.elements.length > 0 && isSymbol(expr.elements[0]) && expr.elements[0].name === "export") {
         if (expr.elements.length === 2 && expr.elements[1].type === "list") {
           const vectorElements = (expr.elements[1] as SList).elements;
           const elements = processVectorElements(vectorElements);
@@ -987,18 +817,13 @@ function processFileExportsAndDefinitions(
               logger.debug(`Collected vector export: ${(elem as SSymbol).name}`);
             }
           }
-        } else if (
-          expr.elements.length === 3 &&
-          expr.elements[1].type === "literal" &&
-          typeof (expr.elements[1] as SLiteral).value === "string"
-        ) {
+        } else if (expr.elements.length === 3 && expr.elements[1].type === "literal" && typeof (expr.elements[1] as SLiteral).value === "string") {
           const exportName = (expr.elements[1] as SLiteral).value as string;
           exportDefinitions.push({ name: exportName, value: expr.elements[2] });
           logger.debug(`Collected string export with expression: "${exportName}"`);
         }
       }
     }
-
     for (const { name, value } of exportDefinitions) {
       try {
         if (env.hasModuleMacro(filePath, name)) {

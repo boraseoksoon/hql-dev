@@ -1,7 +1,7 @@
 // src/s-exp/repl.ts - Interactive REPL for the S-expression frontend, updated to use core.hql
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { parse } from "./parser.ts";
+import { parse } from "../transpiler/parser.ts";
 import { Environment } from "../environment.ts";
 import { expandMacros } from "./macro.ts";
 import { processImports } from "./imports.ts";
