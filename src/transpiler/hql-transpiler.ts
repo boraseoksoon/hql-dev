@@ -202,7 +202,7 @@ function handleProcessError(
   }
 }
 
-async function loadSystemMacros(env: Environment, options: ProcessOptions): Promise<void> {
+export async function loadSystemMacros(env: Environment, options: ProcessOptions): Promise<void> {
   const logger = new Logger(options.verbose || false);
   if (systemMacrosLoaded) {
     logger.debug("System macros already loaded, skipping");

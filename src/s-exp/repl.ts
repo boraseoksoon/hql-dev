@@ -1,4 +1,4 @@
-// src/s-exp/repl.ts - Interactive REPL for the S-expression frontend, updated to use core.hql
+// src/s-exp/repl.ts - Updated to use system macro loading
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { parse } from "../transpiler/parser.ts";
@@ -9,6 +9,7 @@ import { sexpToString } from "./types.ts";
 import { Logger } from "../logger.ts";
 import { convertToHqlAst } from "./macro-reader.ts";
 import { transformAST } from "../transformer.ts";
+import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
 
 /**
  * Configuration for the REPL.
@@ -80,37 +81,6 @@ function printBanner(): void {
 }
 
 /**
- * Load macros from core.hql
- */
-async function loadCoreMacros(env: Environment, logger: Logger): Promise<void> {
-  try {
-    // Find the core.hql file
-    const cwd = Deno.cwd();
-    const corePath = path.join(cwd, "lib/core.hql");
-
-    logger.debug(`Loading core.hql from: ${corePath}`);
-
-    // Read and parse the file
-    const coreSource = await Deno.readTextFile(corePath);
-    const coreExps = parse(coreSource);
-
-    // Process imports in core.hql
-    await processImports(coreExps, env, {
-      verbose: logger.enabled,
-      baseDir: path.dirname(corePath),
-    });
-
-    // Expand macros to register them
-    expandMacros(coreExps, env);
-
-    logger.debug("Core macros loaded successfully");
-  } catch (error) {
-    logger.error(`Error loading core macros: ${error.message}`);
-    throw error;
-  }
-}
-
-/**
  * Start the interactive REPL.
  */
 export async function startRepl(options: ReplOptions = {}): Promise<void> {
@@ -124,111 +94,122 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
 
   printBanner();
 
-  // Initialize environment and load core.hql macros
+  // Initialize environment and load system macros
+  logger.log({ text: "Initializing environment...", namespace: "repl" });
 
-  logger.log({ text: "Initializing environment...", namespace: "repl"});
+  try {
+    // Initialize the global environment
+    const env = await Environment.initializeGlobalEnv({
+      verbose: options.verbose,
+    });
+    
+    // Load system macros using the shared implementation
+    await loadSystemMacros(env, {
+      verbose: options.verbose,
+      baseDir: Deno.cwd(),
+    });
+    
+    // Display available macros
+    if (options.verbose) {
+      const macroKeys = Array.from(env.macros.keys());
+      logger.log({ text: `Available macros: ${macroKeys.join(", ")}`, namespace: "repl" });
+    }
 
-  const env = await Environment.initializeGlobalEnv({
-    verbose: options.verbose,
-  });
+    const history: string[] = [];
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
 
-  await loadCoreMacros(env, logger);
+    let running = true;
+    let multilineInput = "";
+    let multilineMode = false;
+    let parenBalance = 0;
 
-  // Display available macros
-  if (options.verbose) {
-    const macroKeys = Array.from(env.macros.keys());
-    logger.log({ text: `Available macros: ${macroKeys.join(", ")}`, namespace: "repl"});
-  }
+    while (running) {
+      try {
+        const prompt = multilineMode ? "... " : "hql> ";
+        await Deno.stdout.write(encoder.encode(prompt));
 
-  const history: string[] = [];
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
+        const buf = new Uint8Array(1024);
+        const n = await Deno.stdin.read(buf);
+        if (n === null) break;
+        const line = decoder.decode(buf.subarray(0, n)).trim();
 
-  let running = true;
-  let multilineInput = "";
-  let multilineMode = false;
-  let parenBalance = 0;
+        // Handle multiline input.
+        if (multilineMode) {
+          multilineInput += line + "\n";
+          for (const char of line) {
+            if (char === "(") parenBalance++;
+            else if (char === ")") parenBalance--;
+          }
+          if (parenBalance <= 0) {
+            multilineMode = false;
+            await processInput(multilineInput, env, history, {
+              logger,
+              baseDir,
+              historySize,
+              showAst,
+              showExpanded,
+              showJs,
+            });
+            multilineInput = "";
+            parenBalance = 0;
+          }
+          continue;
+        }
 
-  while (running) {
-    try {
-      const prompt = multilineMode ? "... " : "hql> ";
-      await Deno.stdout.write(encoder.encode(prompt));
+        // Handle special commands.
+        if (line.startsWith(":")) {
+          await handleCommand(line, env, history, {
+            logger,
+            baseDir,
+            showAst,
+            showExpanded,
+            showJs,
+            running: () => running,
+            setRunning: (value) => {
+              running = value;
+            },
+            setVerbose: (value) => {
+              logger.setEnabled(value);
+            },
+          });
+          continue;
+        }
 
-      const buf = new Uint8Array(1024);
-      const n = await Deno.stdin.read(buf);
-      if (n === null) break;
-      const line = decoder.decode(buf.subarray(0, n)).trim();
-
-      // Handle multiline input.
-      if (multilineMode) {
-        multilineInput += line + "\n";
+        // Check if input is incomplete.
         for (const char of line) {
           if (char === "(") parenBalance++;
           else if (char === ")") parenBalance--;
         }
-        if (parenBalance <= 0) {
-          multilineMode = false;
-          await processInput(multilineInput, env, history, {
-            logger,
-            baseDir,
-            historySize,
-            showAst,
-            showExpanded,
-            showJs,
-          });
-          multilineInput = "";
-          parenBalance = 0;
+        if (parenBalance > 0) {
+          multilineMode = true;
+          multilineInput = line + "\n";
+          continue;
         }
-        continue;
-      }
 
-      // Handle special commands.
-      if (line.startsWith(":")) {
-        await handleCommand(line, env, history, {
+        await processInput(line, env, history, {
           logger,
           baseDir,
+          historySize,
           showAst,
           showExpanded,
           showJs,
-          running: () => running,
-          setRunning: (value) => {
-            running = value;
-          },
-          setVerbose: (value) => {
-            logger.setEnabled(value);
-          },
         });
-        continue;
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${errMsg}`);
+        multilineMode = false;
+        multilineInput = "";
+        parenBalance = 0;
       }
-
-      // Check if input is incomplete.
-      for (const char of line) {
-        if (char === "(") parenBalance++;
-        else if (char === ")") parenBalance--;
-      }
-      if (parenBalance > 0) {
-        multilineMode = true;
-        multilineInput = line + "\n";
-        continue;
-      }
-
-      await processInput(line, env, history, {
-        logger,
-        baseDir,
-        historySize,
-        showAst,
-        showExpanded,
-        showJs,
-      });
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      console.error(`Error: ${errMsg}`);
-      multilineMode = false;
-      multilineInput = "";
-      parenBalance = 0;
+    }
+    console.log("\nGoodbye!");
+  } catch (error) {
+    console.error(`REPL initialization error: ${error instanceof Error ? error.message : String(error)}`);
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
     }
   }
-  console.log("\nGoodbye!");
 }
 
 /**
@@ -264,21 +245,28 @@ async function processInput(
       printBlock("Parsed S-expressions:", sexps.map(sexpToString).join("\n  "));
     }
 
+    // Process imports if any
+    await processImports(sexps, env, {
+      verbose: logger.enabled,
+      baseDir,
+      currentFile: baseDir,
+    });
+
     logger.debug("Expanding macros...");
     const expanded = expandMacros(sexps, env, { verbose: logger.enabled });
-
+    
     // Optionally display expanded forms.
     if (showExpanded) {
       printBlock("Expanded forms:", expanded.map(sexpToString).join("\n  "));
     }
 
-    // Transpile to JavaScript.
+    // Convert to AST
     logger.debug("Converting to HQL AST...");
     const hqlAst = convertToHqlAst(expanded, { verbose: logger.enabled });
+
+    // Transform to JavaScript
     logger.debug("Transforming to JavaScript...");
-    const jsCode = await transformAST(hqlAst, baseDir, {
-      verbose: logger.enabled,
-    });
+    const jsCode = await transformAST(hqlAst, baseDir, { verbose: logger.enabled });
 
     // Optionally display transpiled JavaScript.
     if (showJs) {
@@ -364,6 +352,15 @@ async function handleCommand(
       setVerbose(!logger.enabled);
       console.log(`Verbose mode: ${logger.enabled ? "on" : "off"}`);
       break;
+    case ":ast":
+      console.log(`AST display: ${!showAst ? "on" : "off"}`);
+      return { showAst: !showAst, showExpanded, showJs };
+    case ":expanded":
+      console.log(`Expanded form display: ${!showExpanded ? "on" : "off"}`);
+      return { showAst, showExpanded: !showExpanded, showJs };
+    case ":js":
+      console.log(`JavaScript display: ${!showJs ? "on" : "off"}`);
+      return { showAst, showExpanded, showJs: !showJs };
     case ":load":
       if (parts.length < 2) {
         console.error("Usage: :load <filename>");
@@ -414,6 +411,9 @@ async function handleCommand(
       console.log("Type :help for available commands");
       break;
   }
+  
+  // Return the same settings for commands that don't change them
+  return { showAst, showExpanded, showJs };
 }
 
 // Run as script if invoked directly.
