@@ -3,7 +3,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 import * as IR from "./hql_ir.ts";
-import { HQLNode, ListNode, LiteralNode, SymbolNode, isEnumNode } from "./hql_ast.ts";
+import { HQLNode, ListNode, LiteralNode, SymbolNode } from "./hql_ast.ts";
 import { registerPureFunction, verifyFunctionPurity } from "./purity.ts";
 import {
   KERNEL_PRIMITIVES,
@@ -690,10 +690,6 @@ function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
         case "symbol":
           return transformSymbol(node as SymbolNode);
         case "list":
-          // Check if this is an enum node before general list handling
-          if (isEnumNode(node)) {
-            return transformEnum(node as ListNode, currentDir);
-          }
           return transformList(node as ListNode, currentDir);
         default:
           logger.warn(`Unknown node type: ${(node as any).type}`);
