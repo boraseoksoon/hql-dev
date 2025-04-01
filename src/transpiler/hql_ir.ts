@@ -1,4 +1,4 @@
-// src/transpiler/hql_ir.ts - Updated with object expressions
+// src/transpiler/hql_ir.ts - Updated with enum types
 
 export enum IRNodeType {
   // Basic program structure
@@ -64,6 +64,10 @@ export enum IRNodeType {
   ClassMethod,
   ClassConstructor,
   GetAndCall,
+
+  // Enum Types (NEW)
+  EnumDeclaration,
+  EnumCase,
 }
 
 export interface IRNode {
@@ -354,4 +358,26 @@ export interface IRGetAndCall extends IRNode {
   object: IRNode;
   method: IRStringLiteral;
   arguments: IRNode[];
+}
+
+// --- Enum Types (NEW) ---
+
+/**
+ * Represents an enum declaration: (enum TypeName ...)
+ */
+export interface IREnumDeclaration extends IRNode {
+  type: IRNodeType.EnumDeclaration;
+  id: IRIdentifier; // The name of the enum (e.g., OsType)
+  cases: IREnumCase[]; // The list of cases defined within the enum
+}
+
+/**
+ * Represents a simple enum case: (case CaseName)
+ * (Future versions will add support for raw values and associated values)
+ */
+export interface IREnumCase extends IRNode {
+  type: IRNodeType.EnumCase;
+  id: IRIdentifier; // The name of the case (e.g., macOS)
+  // value?: IRNode; // For future raw value support
+  // associatedValues?: IRIdentifier[]; // For future associated value support
 }

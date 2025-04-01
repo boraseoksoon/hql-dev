@@ -1,4 +1,4 @@
-// src/transpiler/hql-ir-to-ts-ast.ts
+// src/transpiler/hql-ir-to-ts-ast.ts - Updated to generate JS enum simulation
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
 import { sanitizeIdentifier } from "../utils.ts";
@@ -115,6 +115,14 @@ export function convertIRNode(
         return convertClassDeclaration(node as IR.IRClassDeclaration);
       case IR.IRNodeType.GetAndCall:
         return createExpressionStatement(convertGetAndCall(node as IR.IRGetAndCall));
+      // Enum handling (UPDATED)
+      case IR.IRNodeType.EnumDeclaration:
+        // Convert IREnumDeclaration to a JS object simulation (const Enum = Object.freeze({...}))
+        return convertEnumDeclarationToJsObject(node as IR.IREnumDeclaration);
+      // Enum cases are handled within EnumDeclaration, so they don't produce top-level statements.
+      case IR.IRNodeType.EnumCase:
+        logger.warn(`EnumCase node encountered outside EnumDeclaration. This should not happen.`);
+        return null;
       default:
         logger.warn(
           `Cannot convert node of type ${node.type} (${IR.IRNodeType[node.type]}) to expression`
@@ -1169,7 +1177,7 @@ export function convertGetAndCall(node: IR.IRGetAndCall): ts.Expression {
     const object = convertIRExpr(node.object);
     const methodName = node.method.value;
     const args = node.arguments.map(arg => convertIRExpr(arg));
-    
+
     // Create an IIFE to contain the safe method call logic
     return ts.factory.createCallExpression(
       ts.factory.createParenthesizedExpression(
@@ -1195,7 +1203,7 @@ export function convertGetAndCall(node: IR.IRGetAndCall): ts.Expression {
                 ts.NodeFlags.Const
               )
             ),
-            
+
             // Get the method using runtime get function
             ts.factory.createVariableStatement(
               undefined,
@@ -1218,7 +1226,7 @@ export function convertGetAndCall(node: IR.IRGetAndCall): ts.Expression {
                 ts.NodeFlags.Const
               )
             ),
-            
+
             // Return conditional: if method is a function, call it with object as 'this'
             ts.factory.createReturnStatement(
               ts.factory.createConditionalExpression(
@@ -1420,7 +1428,13 @@ function convertIRNodeToStatement(node: IR.IRNode): ts.Statement | ts.Statement[
   if (!result) return null;
   if (Array.isArray(result)) return result;
   if (ts.isStatement(result)) return result;
-  return ts.factory.createExpressionStatement(result);
+  // If it's an expression, wrap it in an ExpressionStatement
+  if (ts.isExpression(result)) {
+    return ts.factory.createExpressionStatement(result);
+  }
+  // Handle cases where convertIRNode might return something unexpected
+  logger.warn(`Unexpected result type from convertIRNode: ${result.kind}`);
+  return null;
 }
 
 export function replaceSelfWithThis(node: IR.IRNode): IR.IRNode {
@@ -1469,4 +1483,69 @@ export function replaceSelfWithThis(node: IR.IRNode): IR.IRNode {
       return node;
     }
   }
+}
+
+/* ────────────── Enum Converters (UPDATED) ────────────── */
+
+/**
+ * Convert an IREnumDeclaration to a TypeScript VariableStatement
+ * that simulates an enum using a frozen JavaScript object.
+ * Example Output: export const OsType = Object.freeze({ macOS: "macOS", ... });
+ */
+export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts.VariableStatement {
+  return execute(node, "enum declaration to JS object", () => {
+    logger.debug(`Converting enum declaration to JS object: ${node.id.name}`);
+
+    // Create object properties from enum cases
+    const properties = node.cases.map(enumCase => {
+      if (enumCase.type !== IR.IRNodeType.EnumCase) {
+        throw new CodeGenError(
+          `Expected EnumCase inside EnumDeclaration, got ${IR.IRNodeType[enumCase.type]}`,
+          "enum case",
+          enumCase
+        );
+      }
+      const caseName = enumCase.id.name;
+      logger.debug(`  Creating object property for case: ${caseName}`);
+
+      // Create property assignment: CaseName: "CaseName"
+      return ts.factory.createPropertyAssignment(
+        ts.factory.createIdentifier(caseName), // Property name is the case name
+        ts.factory.createStringLiteral(caseName) // Value is the case name as a string
+      );
+    });
+
+    // Create the object literal: { macOS: "macOS", ... }
+    const objectLiteral = ts.factory.createObjectLiteralExpression(
+      properties,
+      true // multiline
+    );
+
+    // Create the call to Object.freeze: Object.freeze({ ... })
+    const freezeCall = ts.factory.createCallExpression(
+      ts.factory.createPropertyAccessExpression(
+        ts.factory.createIdentifier("Object"),
+        ts.factory.createIdentifier("freeze")
+      ),
+      undefined,
+      [objectLiteral]
+    );
+
+    // Create the variable declaration: const EnumName = Object.freeze({...});
+    const variableDeclaration = ts.factory.createVariableDeclaration(
+      ts.factory.createIdentifier(node.id.name), // Enum name identifier
+      undefined, // No explicit type annotation
+      undefined, // No explicit type annotation
+      freezeCall // Initializer is the Object.freeze call
+    );
+
+    // Create the variable statement with export keyword
+    return ts.factory.createVariableStatement(
+      [ts.factory.createToken(ts.SyntaxKind.ExportKeyword)], // Add export keyword
+      ts.factory.createVariableDeclarationList(
+        [variableDeclaration],
+        ts.NodeFlags.Const // Use const for immutability
+      )
+    );
+  });
 }

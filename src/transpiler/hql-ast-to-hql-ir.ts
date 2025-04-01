@@ -1,5 +1,5 @@
 ////////////////////////////////////////////////////////////////////////////////
-// src/transpiler/hql-ast-to-hql-ir.ts - Improved import handling with better organization
+// src/transpiler/hql-ast-to-hql-ir.ts - Updated to handle enums
 ////////////////////////////////////////////////////////////////////////////////
 
 import * as IR from "./hql_ir.ts";
@@ -64,7 +64,10 @@ export function transformToIR(
 
       macroCache.clear();
 
-      initializeTransformFactory();
+      // Initialize the factory if it hasn't been already
+      if (transformFactory.size === 0) {
+        initializeTransformFactory();
+      }
 
       const body: IR.IRNode[] = [];
       const errors: { node: HQLNode; error: Error }[] = [];
@@ -184,9 +187,12 @@ function initializeTransformFactory(): void {
       transformFactory.set("return", transformReturn);
       transformFactory.set("method-call", transformMethodCall);
 
-      // Register import/export handlers
+      // Register import/export handlers (these often just return null or are handled elsewhere)
       transformFactory.set("export", null);
-      transformFactory.set("import", null);      
+      transformFactory.set("import", null);
+
+      // Register enum handler (NEW)
+      transformFactory.set("enum", transformEnum);
 
       logger.debug(`Registered ${transformFactory.size} handler functions`);
     },
@@ -194,6 +200,106 @@ function initializeTransformFactory(): void {
     TransformError,
   );
 }
+
+/**
+ * Transform an enum declaration to IR (NEW)
+ * Handles simple case: (enum TypeName (case CaseName) ...)
+ */
+function transformEnum(list: ListNode, currentDir: string): IR.IRNode {
+  return perform(
+    () => {
+      logger.debug("Transforming enum declaration");
+
+      // Validate enum syntax: (enum TypeName case1 case2 ...)
+      if (list.elements.length < 2) {
+        throw new ValidationError(
+          "enum requires a name and at least one case",
+          "enum definition",
+          "name and cases",
+          `${list.elements.length - 1} arguments`,
+        );
+      }
+
+      // Extract enum name
+      const nameNode = list.elements[1];
+      if (nameNode.type !== "symbol") {
+        throw new ValidationError(
+          "Enum name must be a symbol",
+          "enum name",
+          "symbol",
+          nameNode.type,
+        );
+      }
+      const enumName = (nameNode as SymbolNode).name;
+
+      // Process enum cases
+      const cases: IR.IREnumCase[] = [];
+      const caseElements = list.elements.slice(2);
+
+      for (const element of caseElements) {
+        // Each case must be a list like (case CaseName)
+        if (element.type !== "list") {
+          throw new ValidationError(
+            "Enum cases must be lists starting with 'case'",
+            "enum case",
+            "list",
+            element.type,
+          );
+        }
+
+        const caseList = element as ListNode;
+        if (
+          caseList.elements.length !== 2 ||
+          caseList.elements[0].type !== "symbol" ||
+          (caseList.elements[0] as SymbolNode).name !== "case" ||
+          caseList.elements[1].type !== "symbol"
+        ) {
+          throw new ValidationError(
+            "Invalid enum case format. Expected (case CaseName)",
+            "enum case format",
+            "(case CaseName)",
+            `invalid format: ${JSON.stringify(element)}`,
+          );
+        }
+
+        const caseNameNode = caseList.elements[1] as SymbolNode;
+        const caseName = caseNameNode.name;
+
+        // Add the simple case to the list
+        cases.push({
+          type: IR.IRNodeType.EnumCase,
+          id: {
+            type: IR.IRNodeType.Identifier,
+            name: sanitizeIdentifier(caseName), // Sanitize the case name
+          },
+        });
+      }
+
+      if (cases.length === 0) {
+        throw new ValidationError(
+          "Enum must define at least one case",
+          "enum definition",
+          "at least one case",
+          "no cases defined",
+        );
+      }
+
+      // Create the EnumDeclaration IR node
+      return {
+        type: IR.IRNodeType.EnumDeclaration,
+        id: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(enumName), // Sanitize the enum name
+        },
+        cases,
+      } as IR.IREnumDeclaration;
+    },
+    "transformEnum",
+    TransformError,
+    [list],
+  );
+}
+
 
 /**
  * Transform a class declaration to IR
@@ -225,7 +331,7 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
 
     // Process class body elements
     const bodyElements = list.elements.slice(2);
-    
+
     // Extract fields, constructor, and methods
     const fields: IR.IRClassField[] = [];
     let classConstructor: IR.IRClassConstructor | null = null;
@@ -312,7 +418,7 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
         // Extract parameter names
         const paramsList = paramsNode as ListNode;
         const params: IR.IRIdentifier[] = [];
-        
+
         for (const param of paramsList.elements) {
           if (param.type !== "symbol") {
             throw new ValidationError(
@@ -322,7 +428,7 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
               param.type,
             );
           }
-          
+
           params.push({
             type: IR.IRNodeType.Identifier,
             name: sanitizeIdentifier((param as SymbolNode).name),
@@ -332,22 +438,22 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
         // Transform constructor body
         let bodyBlock: IR.IRBlockStatement;
         const bodyNode = elementList.elements[2];
-        
+
         // Special handling for do blocks
-        if (bodyNode.type === "list" && 
-            bodyNode.elements.length > 0 && 
-            bodyNode.elements[0].type === "symbol" && 
+        if (bodyNode.type === "list" &&
+            bodyNode.elements.length > 0 &&
+            bodyNode.elements[0].type === "symbol" &&
             (bodyNode.elements[0] as SymbolNode).name === "do") {
-          
+
           // Extract statements from do-block directly
           const doList = bodyNode as ListNode;
           const statements: IR.IRNode[] = [];
-          
+
           for (let i = 1; i < doList.elements.length; i++) {
             const stmt = transformNode(doList.elements[i], currentDir);
             if (stmt) statements.push(stmt);
           }
-          
+
           bodyBlock = {
             type: IR.IRNodeType.BlockStatement,
             body: statements
@@ -404,7 +510,7 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
         // Extract parameter names
         const paramsList = paramsNode as ListNode;
         const params: IR.IRIdentifier[] = [];
-        
+
         for (const param of paramsList.elements) {
           if (param.type !== "symbol") {
             throw new ValidationError(
@@ -414,7 +520,7 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
               param.type,
             );
           }
-          
+
           params.push({
             type: IR.IRNodeType.Identifier,
             name: sanitizeIdentifier((param as SymbolNode).name),
@@ -422,10 +528,10 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
         }
 
         // Transform method body
-        const bodyNodes = elementList.elements.slice(3).map(node => 
+        const bodyNodes = elementList.elements.slice(3).map(node =>
           transformNode(node, currentDir)
         ).filter(node => node !== null) as IR.IRNode[];
-        
+
         // Create a block statement
         const bodyBlock: IR.IRBlockStatement = {
           type: IR.IRNodeType.BlockStatement,
@@ -449,7 +555,7 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
             `${elementList.elements.length - 1} arguments`,
           );
         }
-      
+
         // Get method name
         const methodNameNode = elementList.elements[1];
         if (methodNameNode.type !== "symbol") {
@@ -461,7 +567,7 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
           );
         }
         const methodName = (methodNameNode as SymbolNode).name;
-      
+
         // Get method parameters
         const paramsNode = elementList.elements[2];
         if (paramsNode.type !== "list") {
@@ -472,20 +578,20 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
             paramsNode.type,
           );
         }
-      
+
         // Parse parameters with type annotations - extract defaults as well
         const paramsList = paramsNode as ListNode;
         const params: IR.IRIdentifier[] = [];
         const defaults: { name: string; value: IR.IRNode }[] = [];
-        
+
         // Process parameters to extract defaults
         let i = 0;
         while (i < paramsList.elements.length) {
           const elem = paramsList.elements[i];
-          
+
           if (elem.type === "symbol") {
             const symbolName = (elem as SymbolNode).name;
-            
+
             // Handle parameter with type
             if (symbolName.endsWith(":")) {
               const paramName = symbolName.slice(0, -1);
@@ -493,15 +599,15 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
                 type: IR.IRNodeType.Identifier,
                 name: sanitizeIdentifier(paramName)
               });
-              
+
               // Skip type annotation
               i += 2;
-              
+
               // Check for default value
-              if (i < paramsList.elements.length && 
-                  paramsList.elements[i].type === "symbol" && 
+              if (i < paramsList.elements.length &&
+                  paramsList.elements[i].type === "symbol" &&
                   (paramsList.elements[i] as SymbolNode).name === "=") {
-                
+
                 // Process default value
                 if (i + 1 < paramsList.elements.length) {
                   const defaultValue = transformNode(paramsList.elements[i + 1], currentDir);
@@ -525,21 +631,21 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
             i++;
           }
         }
-      
-        // Skip return type and get the body expressions 
+
+        // Skip return type and get the body expressions
         const bodyExprs = elementList.elements.slice(4);
-        
+
         // Transform body expressions
-        const bodyNodes = bodyExprs.map(node => 
+        const bodyNodes = bodyExprs.map(node =>
           transformNode(node, currentDir)
         ).filter(node => node !== null) as IR.IRNode[];
-        
+
         // Create a block statement
         const bodyBlock: IR.IRBlockStatement = {
           type: IR.IRNodeType.BlockStatement,
           body: bodyNodes
         };
-      
+
         // Add as a regular class method but include defaults information
         methods.push({
           type: IR.IRNodeType.ClassMethod,
@@ -577,21 +683,21 @@ function transformClass(list: ListNode, currentDir: string): IR.IRNode {
 function transformDo(list: ListNode, currentDir: string): IR.IRNode {
   // Get body expressions (skip the 'do' symbol)
   const bodyExprs = list.elements.slice(1);
-  
+
   // If no body, return null
   if (bodyExprs.length === 0) {
     return { type: IR.IRNodeType.NullLiteral };
   }
-  
+
   // If only one expression, just transform it directly
   if (bodyExprs.length === 1) {
     const expr = transformNode(bodyExprs[0], currentDir);
     return expr || { type: IR.IRNodeType.NullLiteral };
   }
-  
+
   // Multiple expressions - create statements for IIFE body
   const bodyStatements: IR.IRNode[] = [];
-  
+
   // Transform all except the last expression
   for (let i = 0; i < bodyExprs.length - 1; i++) {
     const transformedExpr = transformNode(bodyExprs[i], currentDir);
@@ -599,10 +705,10 @@ function transformDo(list: ListNode, currentDir: string): IR.IRNode {
       bodyStatements.push(transformedExpr);
     }
   }
-  
+
   // Transform the last expression - it's the return value
   const lastExpr = transformNode(bodyExprs[bodyExprs.length - 1], currentDir);
-  
+
   if (lastExpr) {
     // Create a return statement for the last expression
     bodyStatements.push({
@@ -610,7 +716,7 @@ function transformDo(list: ListNode, currentDir: string): IR.IRNode {
       argument: lastExpr
     });
   }
-  
+
   // Return an IIFE (Immediately Invoked Function Expression)
   return {
     type: IR.IRNodeType.CallExpression,
@@ -667,7 +773,7 @@ function transformReturn(list: ListNode, currentDir: string): IR.IRNode {
 /**
  * Transform a single HQL node to its IR representation.
  * Enhanced with loop context tracking for proper loop/recur implementation.
- * 
+ *
  * File: src/transpiler/hql-ast-to-hql-ir.ts
  */
 function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
@@ -728,14 +834,14 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
 
   // Special case for dot method calls
   if (
-    first.type === "symbol" && 
+    first.type === "symbol" &&
     (first as SymbolNode).name.startsWith('.') &&
     list.elements.length >= 2
   ) {
     logger.debug(`Processing method call starting with ${(first as SymbolNode).name}`);
-    
+
     const methodName = (first as SymbolNode).name.substring(1);
-    
+
     // The object is the SECOND element (after the method name)
     const object = transformNode(list.elements[1], currentDir);
     if (!object) {
@@ -746,7 +852,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
         "null"
       );
     }
-    
+
     // Arguments are all elements AFTER the object (starting from the third element)
     const args = list.elements.slice(2).map(arg => {
       const transformed = transformNode(arg, currentDir);
@@ -760,7 +866,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       }
       return transformed;
     });
-    
+
     // Create a member expression for method access
     const memberExpr: IR.IRMemberExpression = {
       type: IR.IRNodeType.MemberExpression,
@@ -771,7 +877,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       },
       computed: false
     };
-    
+
     // Create the call expression
     return {
       type: IR.IRNodeType.CallExpression,
@@ -792,9 +898,9 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     if (first.type === "symbol" && (first as SymbolNode).name.startsWith('.')) {
       return transformMethodCall(list, currentDir);
     }
-    
+
     if (
-      first.type === "symbol" && 
+      first.type === "symbol" &&
       (first as SymbolNode).name === "class" &&
       list.elements.length >= 2
     ) {
@@ -930,9 +1036,9 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       // Check if the operator is a known lambda or function
       // We can use heuristics to determine this
       // If we only have one argument and it's a literal, it's likely a collection access
-      const isLikelyCollectionAccess = list.elements.length === 2 && 
+      const isLikelyCollectionAccess = list.elements.length === 2 &&
                                       list.elements[1].type === "literal";
-      
+
       if (isLikelyCollectionAccess) {
         // Handle as collection access
         return transformCollectionAccess(list, op, currentDir);
@@ -947,7 +1053,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
             "null"
           );
         }
-        
+
         const args = list.elements.slice(1).map(arg => {
           const transformed = transformNode(arg, currentDir);
           if (!transformed) {
@@ -1058,14 +1164,14 @@ function transformLoop(list: ListNode, currentDir: string): IR.IRNode {
       // For a loop, we'll wrap all body expressions in a single block statement
       // This ensures the recur call is properly tail-recursive
       let bodyBlock: IR.IRBlockStatement;
-      
+
       // Special case: If there's only one expression in the body and it's an if/when
       // we'll transform it specially to ensure proper tail recursion
       if (list.elements.length === 3 && list.elements[2].type === "list") {
         const bodyExpr = list.elements[2] as ListNode;
         if (bodyExpr.elements.length > 0 && bodyExpr.elements[0].type === "symbol") {
           const op = (bodyExpr.elements[0] as SymbolNode).name;
-          
+
           if (op === "if" || op === "when") {
             // Let the regular transformers handle this, but in loop context
             const transformedBody = transformNode(bodyExpr, currentDir);
@@ -1172,7 +1278,7 @@ function transformRecur(list: ListNode, currentDir: string): IR.IRNode {
         "outside loop context"
       );
     }
-    
+
     const loopId = loopContextStack[loopContextStack.length - 1];
 
     // Transform all the argument expressions
@@ -1221,14 +1327,14 @@ function transformRecur(list: ListNode, currentDir: string): IR.IRNode {
  */
 function transformLoopBody(bodyExprs: HQLNode[], currentDir: string): IR.IRBlockStatement {
   const bodyNodes: IR.IRNode[] = [];
-  
+
   for (const expr of bodyExprs) {
     const transformedExpr = transformNode(expr, currentDir);
     if (transformedExpr) {
       bodyNodes.push(transformedExpr);
     }
   }
-  
+
   return {
     type: IR.IRNodeType.BlockStatement,
     body: bodyNodes
@@ -3406,7 +3512,7 @@ function transformCollectionAccess(
       }
 
       // Determine if this is a function call or collection access
-      // If the first element is a symbol that contains "lambda" or "function", 
+      // If the first element is a symbol that contains "lambda" or "function",
       // treat it as a function call
       if (collection.type === IR.IRNodeType.Identifier) {
         const name = (collection as IR.IRIdentifier).name;
@@ -3669,27 +3775,27 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
 
   // Handle the specific case (let (name value) body...)
   // This is a specific pattern in bug11.hql
-  if (list.elements.length >= 2 && 
-      list.elements[1].type === "list" && 
+  if (list.elements.length >= 2 &&
+      list.elements[1].type === "list" &&
       (list.elements[1] as ListNode).elements.length === 2) {
-    
+
     const bindingList = list.elements[1] as ListNode;
     // Extract name and value
     const nameNode = bindingList.elements[0];
     const valueNode = bindingList.elements[1];
-    
+
     if (nameNode.type !== "symbol") {
       throw new ValidationError(
-        "Binding name must be a symbol", 
-        "let binding name", 
-        "symbol", 
+        "Binding name must be a symbol",
+        "let binding name",
+        "symbol",
         nameNode.type
       );
     }
-    
+
     const name = (nameNode as SymbolNode).name;
     const valueExpr = transformNode(valueNode, currentDir);
-    
+
     if (!valueExpr) {
       throw new ValidationError(
         `Binding value for '${name}' transformed to null`,
@@ -3698,7 +3804,7 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
         "null",
       );
     }
-    
+
     // Create a variable declaration
     const variableDecl: IR.IRVariableDeclaration = {
       type: IR.IRNodeType.VariableDeclaration,
@@ -3714,17 +3820,17 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
         },
       ],
     };
-    
+
     // If there are body expressions
     if (list.elements.length > 2) {
       const bodyExprs = list.elements.slice(2);
       const bodyNodes: IR.IRNode[] = [];
-      
+
       for (const expr of bodyExprs) {
         const node = transformNode(expr, currentDir);
         if (node) bodyNodes.push(node);
       }
-      
+
       // Create an IIFE to contain our block of code
       return {
         type: IR.IRNodeType.CallExpression,
@@ -3740,7 +3846,7 @@ function transformLet(list: ListNode, currentDir: string): IR.IRNode {
         arguments: [],
       } as IR.IRCallExpression;
     }
-    
+
     return variableDecl;
   }
 
@@ -4911,16 +5017,16 @@ function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
 function transformCond(list: ListNode, currentDir: string): IR.IRNode {
   // Extract clauses (skip the 'cond' symbol)
   const clauses = list.elements.slice(1);
-  
+
   // If no clauses, return nil
   if (clauses.length === 0) {
     return { type: IR.IRNodeType.NullLiteral };
   }
-  
+
   // Process clauses from first to last
   for (let i = 0; i < clauses.length; i++) {
     const clause = clauses[i];
-    
+
     // Validate clause format
     if (clause.type !== "list" || (clause as ListNode).elements.length < 2) {
       throw new ValidationError(
@@ -4930,20 +5036,20 @@ function transformCond(list: ListNode, currentDir: string): IR.IRNode {
         clause.type
       );
     }
-    
+
     const clauseList = clause as ListNode;
     const testExpr = clauseList.elements[0];
-    
+
     // Handle 'else' or 'true' as the test condition
     if (testExpr.type === "symbol" && (testExpr as SymbolNode).name === "else") {
       const consequent = transformNode(clauseList.elements[1], currentDir);
       return consequent;
     }
-    
+
     // Evaluate the condition
     const test = transformNode(testExpr, currentDir);
     const consequent = transformNode(clauseList.elements[1], currentDir);
-    
+
     // If this is the last clause, it becomes the alternate for all previous conditions
     if (i === clauses.length - 1) {
       return {
@@ -4953,11 +5059,11 @@ function transformCond(list: ListNode, currentDir: string): IR.IRNode {
         alternate: { type: IR.IRNodeType.NullLiteral }
       };
     }
-    
+
     // Build a nested conditional for each subsequent clause
     const restClauses = list.elements.slice(0, 1).concat(clauses.slice(i + 1));
     const alternate = transformCond({ type: "list", elements: restClauses }, currentDir);
-    
+
     return {
       type: IR.IRNodeType.ConditionalExpression,
       test,
@@ -4965,7 +5071,7 @@ function transformCond(list: ListNode, currentDir: string): IR.IRNode {
       alternate
     };
   }
-  
+
   // Default case if no clauses match (should not reach here)
   return { type: IR.IRNodeType.NullLiteral };
 }
