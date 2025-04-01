@@ -1,7 +1,6 @@
 import { transpileCLI } from "../src/bundler.ts";
 import { resolve } from "../src/platform/platform.ts";
 import logger, { Logger } from "../src/logger.ts";
-import { Environment } from "../src/environment.ts";
 import { cleanupAllTempFiles } from "../src/temp-file-tracker.ts";
 import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
 

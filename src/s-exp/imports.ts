@@ -647,7 +647,14 @@ async function processJsImport(
     const jsSource = await Deno.readTextFile(resolvedPath);
     if (checkForHqlImports(jsSource, logger)) {
       logger.debug(`JS file ${resolvedPath} contains nested HQL imports. Pre-processing them.`);
-      const processedSource = await processHqlImportsInJs(jsSource, resolvedPath, {}, logger);
+      const processedSource = await processHqlImportsInJs(
+        jsSource,
+        resolvedPath,
+        {
+          verbose: logger.enabled,
+        },
+        logger,
+      );
       const tempFilePath = resolvedPath.replace(/\.js$/, ".temp.js");
       await writeTextFile(tempFilePath, processedSource);
       registerTempFile(tempFilePath);
@@ -659,7 +666,12 @@ async function processJsImport(
     processedFiles.add(resolvedPath);
     logger.debug(`Imported JS module: ${moduleName} from ${finalModuleUrl}`);
   } catch (error) {
-    wrapError(`Importing JS module ${moduleName}`, error, modulePath, env.getCurrentFile());
+    throw new ImportError(
+      `Importing JS module ${moduleName}: ${error instanceof Error ? error.message : String(error)}`,
+      modulePath,
+      env.getCurrentFile(),
+      error instanceof Error ? error : undefined
+    );
   }
 }
 

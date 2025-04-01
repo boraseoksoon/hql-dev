@@ -111,3 +111,10 @@ export function isJsFile(filePath: string): boolean {
   return filePath.endsWith(".js") || filePath.endsWith(".mjs") ||
     filePath.endsWith(".cjs");
 }
+
+/**
+ * Check if a file is a TypeScript file
+ */
+export function isTypeScriptFile(filePath: string): boolean {
+  return filePath.endsWith(".ts") || filePath.endsWith(".tsx");
+}

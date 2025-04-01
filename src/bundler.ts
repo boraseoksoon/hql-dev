@@ -18,7 +18,7 @@ import {
   ValidationError,
 } from "./transpiler/errors.ts";
 import { performAsync } from "./transpiler/error-utils.ts";
-import { isHqlFile, isJsFile, simpleHash } from "./utils.ts";
+import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash } from "./utils.ts";
 import { registerTempFile } from "./temp-file-tracker.ts";
 
 const MAX_RETRIES = 3;
@@ -63,17 +63,106 @@ export function transpileCLI(
   }, `CLI transpilation failed for ${inputPath}`);
 }
 
-export function checkForHqlImports(jsSource: string, logger: Logger): boolean {
+export function checkForHqlImports(source: string, logger: Logger): boolean {
   const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
-  const hasHqlImports = hqlImportRegex.test(jsSource);
-  if (hasHqlImports) logger.log(`JS file contains HQL imports - processing these imports`);
+  const hasHqlImports = hqlImportRegex.test(source);
+  if (hasHqlImports) logger.log(`File contains HQL imports - processing these imports`);
   return hasHqlImports;
+}
+
+export async function processHqlImportsInTs(
+  tsSource: string,
+  tsFilePath: string,
+  options: BundleOptions,
+  logger: Logger,
+): Promise<string> {
+  try {
+    const baseDir = dirname(tsFilePath);
+    let modifiedSource = tsSource;
+    const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
+    const imports: { full: string; path: string }[] = [];
+    let match;
+    hqlImportRegex.lastIndex = 0;
+    while ((match = hqlImportRegex.exec(tsSource)) !== null) {
+      const fullImport = match[0];
+      const importPath = match[1];
+      imports.push({ full: fullImport, path: importPath });
+    }
+    logger.debug(`Found ${imports.length} HQL imports in TypeScript file`);
+    for (const importInfo of imports) {
+      const hqlPath = importInfo.path;
+      let resolvedHqlPath: string | null = null;
+      try {
+        const pathFromTs = path.resolve(baseDir, hqlPath);
+        await Deno.stat(pathFromTs);
+        resolvedHqlPath = pathFromTs;
+        logger.debug(`Resolved import relative to TS file: ${pathFromTs}`);
+      } catch {}
+      if (!resolvedHqlPath && options.sourceDir) {
+        try {
+          const pathFromSource = path.resolve(options.sourceDir, hqlPath);
+          await Deno.stat(pathFromSource);
+          resolvedHqlPath = pathFromSource;
+          logger.debug(`Resolved import relative to source dir: ${pathFromSource}`);
+        } catch {}
+      }
+      if (
+        !resolvedHqlPath &&
+        (hqlPath.startsWith("./") || hqlPath.startsWith("../"))
+      ) {
+        try {
+          const pathFromLib = path.resolve(
+            Deno.cwd(),
+            "lib",
+            hqlPath.replace(/^\.\//, ""),
+          );
+          await Deno.stat(pathFromLib);
+          resolvedHqlPath = pathFromLib;
+          logger.debug(`Resolved import relative to lib dir: ${pathFromLib}`);
+        } catch {}
+      }
+      if (!resolvedHqlPath) {
+        try {
+          const pathFromCwd = path.resolve(Deno.cwd(), hqlPath);
+          await Deno.stat(pathFromCwd);
+          resolvedHqlPath = pathFromCwd;
+          logger.debug(`Resolved import relative to CWD: ${pathFromCwd}`);
+        } catch {}
+      }
+      if (!resolvedHqlPath) {
+        throw new Error(`Could not resolve import: ${hqlPath} from ${tsFilePath}`);
+      }
+      // Generate a TypeScript file for the imported HQL file
+      const hqlOutputPath = resolvedHqlPath.replace(/\.hql$/, ".ts");
+      if (!await exists(hqlOutputPath)) {
+        logger.debug(`Transpiling HQL import: ${resolvedHqlPath} -> ${hqlOutputPath}`);
+        await transpileCLI(resolvedHqlPath, hqlOutputPath, options);
+      } else {
+        logger.debug(`Using existing transpiled file: ${hqlOutputPath}`);
+      }
+      const relativePath = hqlPath.replace(/\.hql$/, ".ts");
+      const newImport = importInfo.full.replace(hqlPath, relativePath);
+      modifiedSource = modifiedSource.replace(importInfo.full, newImport);
+      logger.debug(`Updated import from "${importInfo.full}" to "${newImport}"`);
+    }
+    return modifiedSource;
+  } catch (error) {
+    throw new TranspilerError(
+      `Processing HQL imports in TypeScript file: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 export async function processHqlImportsInJs(
   jsSource: string,
   jsFilePath: string,
-  options: BundleOptions,
+  options: {
+    verbose?: boolean;
+    tempDir?: string;
+    sourceDir?: string;
+  },
   logger: Logger,
 ): Promise<string> {
   try {
@@ -132,13 +221,54 @@ export async function processHqlImportsInJs(
       if (!resolvedHqlPath) {
         throw new Error(`Could not resolve import: ${hqlPath} from ${jsFilePath}`);
       }
-      const hqlOutputPath = resolvedHqlPath.replace(/\.hql$/, ".js");
-      if (!await exists(hqlOutputPath)) {
-        logger.debug(`Transpiling HQL import: ${resolvedHqlPath} -> ${hqlOutputPath}`);
-        await transpileCLI(resolvedHqlPath, hqlOutputPath, options);
+      
+      // IMPORTANT CHANGE: Generate TypeScript intermediates, not JavaScript
+      const hqlTsOutputPath = resolvedHqlPath.replace(/\.hql$/, ".ts");
+      const hqlJsOutputPath = resolvedHqlPath.replace(/\.hql$/, ".js");
+      
+      // First, generate the TypeScript intermediate
+      if (!await exists(hqlTsOutputPath)) {
+        logger.debug(`Transpiling HQL import to TypeScript: ${resolvedHqlPath} -> ${hqlTsOutputPath}`);
+        
+        // Read the HQL source
+        const hqlSource = await Deno.readTextFile(resolvedHqlPath);
+        
+        // Process it to TypeScript
+        const tsCode = await processHql(hqlSource, {
+          baseDir: dirname(resolvedHqlPath),
+          verbose: options.verbose,
+          tempDir: options.tempDir,
+          sourceDir: options.sourceDir || dirname(resolvedHqlPath),
+        });
+        
+        // Write TypeScript output
+        await writeOutput(tsCode, hqlTsOutputPath, logger);
+        
+        // Register TypeScript file for cleanup
+        registerTempFile(hqlTsOutputPath);
       } else {
-        logger.debug(`Using existing transpiled file: ${hqlOutputPath}`);
+        logger.debug(`Using existing TypeScript file: ${hqlTsOutputPath}`);
+        // Still register for cleanup
+        registerTempFile(hqlTsOutputPath);
       }
+      
+      // Then use esbuild to generate JavaScript from TypeScript
+      if (!await exists(hqlJsOutputPath)) {
+        logger.debug(`Generating JavaScript from TypeScript: ${hqlTsOutputPath} -> ${hqlJsOutputPath}`);
+        await bundleWithEsbuild(hqlTsOutputPath, hqlJsOutputPath, {
+          verbose: options.verbose,
+          sourceDir: options.sourceDir || dirname(resolvedHqlPath),
+        });
+        
+        // Register JavaScript file for cleanup
+        registerTempFile(hqlJsOutputPath);
+      } else {
+        logger.debug(`Using existing JavaScript file: ${hqlJsOutputPath}`);
+        // Still register for cleanup
+        registerTempFile(hqlJsOutputPath);
+      }
+      
+      // JavaScript files import from JavaScript
       const relativePath = hqlPath.replace(/\.hql$/, ".js");
       const newImport = importInfo.full.replace(hqlPath, relativePath);
       modifiedSource = modifiedSource.replace(importInfo.full, newImport);
@@ -195,8 +325,8 @@ function processEntryFile(
         options,
         logger,
       );
-    } else if (isJsFile(resolvedInputPath)) {
-      return await processJsEntryFile(
+    } else if (isJsFile(resolvedInputPath) || isTypeScriptFile(resolvedInputPath)) {
+      return await processJsOrTsEntryFile(
         resolvedInputPath,
         outputPath,
         options,
@@ -204,9 +334,9 @@ function processEntryFile(
       );
     } else {
       throw new ValidationError(
-        `Unsupported file type: ${inputPath} (expected .hql or .js)`,
+        `Unsupported file type: ${inputPath} (expected .hql, .js, or .ts)`,
         "file type validation",
-        ".hql or .js",
+        ".hql, .js, or .ts",
         path.extname(inputPath) || "no extension",
       );
     }
@@ -228,24 +358,30 @@ async function processHqlEntryFile(
   const tempDirCreated = tempDirResult.created;
   logger.debug(`Read ${source.length} bytes from ${resolvedInputPath}`);
   try {
-    let jsCode = await processHql(source, {
+    // Generate TypeScript code from HQL
+    let tsCode = await processHql(source, {
       baseDir: dirname(resolvedInputPath),
       verbose: options.verbose,
       tempDir,
       sourceDir: options.sourceDir || dirname(resolvedInputPath),
     });
-    if (checkForHqlImports(jsCode, logger)) {
+    
+    // Check if the TypeScript code has HQL imports and process them
+    if (checkForHqlImports(tsCode, logger)) {
       logger.debug("Detected nested HQL imports in transpiled output. Processing them.");
-      jsCode = await processHqlImportsInJs(
-        jsCode,
+      tsCode = await processHqlImportsInTs(
+        tsCode,
         resolvedInputPath,
         options,
         logger,
       );
     }
-    await writeOutput(jsCode, outputPath, logger);
-    logger.log(`Entry processed and output written to ${outputPath}`);
-    return outputPath;
+    
+    // Generate an intermediate TypeScript file that will be used by esbuild
+    const tsOutputPath = outputPath.replace(/\.js$/, ".ts");
+    await writeOutput(tsCode, tsOutputPath, logger);
+    logger.log(`Entry processed and TypeScript output written to ${tsOutputPath}`);
+    return tsOutputPath;
   } finally {
     if (tempDirCreated) {
       Deno.remove(tempDir, { recursive: true })
@@ -294,30 +430,50 @@ async function readSourceFile(filePath: string): Promise<string> {
   }
 }
 
-async function processJsEntryFile(
+async function processJsOrTsEntryFile(
   resolvedInputPath: string,
   outputPath: string,
   options: BundleOptions,
   logger: Logger,
 ): Promise<string> {
   try {
-    logger.log(`Using JS entry file: ${resolvedInputPath}`);
-    const jsSource = await Deno.readTextFile(resolvedInputPath);
-    logger.debug(`Read ${jsSource.length} bytes from ${resolvedInputPath}`);
-    let processedSource = jsSource;
-    if (checkForHqlImports(jsSource, logger)) {
-      processedSource = await processHqlImportsInJs(
-        jsSource,
-        resolvedInputPath,
-        options,
-        logger,
-      );
+    const isTs = isTypeScriptFile(resolvedInputPath);
+    logger.log(`Using ${isTs ? 'TypeScript' : 'JavaScript'} entry file: ${resolvedInputPath}`);
+    const source = await Deno.readTextFile(resolvedInputPath);
+    logger.debug(`Read ${source.length} bytes from ${resolvedInputPath}`);
+    let processedSource = source;
+    
+    // Process HQL imports in either JS or TS files
+    if (checkForHqlImports(source, logger)) {
+      if (isTs) {
+        processedSource = await processHqlImportsInTs(
+          source,
+          resolvedInputPath,
+          options,
+          logger,
+        );
+      } else {
+        processedSource = await processHqlImportsInJs(
+          source,
+          resolvedInputPath,
+          options,
+          logger,
+        );
+      }
     }
-    await writeOutput(processedSource, outputPath, logger);
-    return outputPath;
+    
+    // If it's TypeScript, ensure the output has .ts extension for esbuild
+    if (isTs) {
+      const tsOutputPath = outputPath.replace(/\.js$/, ".ts");
+      await writeOutput(processedSource, tsOutputPath, logger);
+      return tsOutputPath;
+    } else {
+      await writeOutput(processedSource, outputPath, logger);
+      return outputPath;
+    }
   } catch (error) {
     throw new TranspilerError(
-      `Processing JS entry file: ${
+      `Processing ${isTypeScriptFile(resolvedInputPath) ? 'TypeScript' : 'JavaScript'} entry file: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -470,7 +626,7 @@ function createHqlPlugin(options: {
   return {
     name: "hql-plugin",
     setup(build: any) {
-      build.onResolve({ filter: /\.(js|hql)$/ }, async (args: any) => {
+      build.onResolve({ filter: /\.(js|ts|hql)$/ }, async (args: any) => {
         return resolveHqlImport(args, options, logger);
       });
       build.onLoad({ filter: /.*/, namespace: "hql" }, async (args: any) => {
@@ -590,7 +746,7 @@ async function loadHqlFile(
   try {
     logger.debug(`Loading HQL file: ${args.path}`);
     if (hqlToJsMap.has(args.path)) {
-      return loadTranspiledJs(args.path, hqlToJsMap.get(args.path)!, logger);
+      return loadTranspiledFile(args.path, hqlToJsMap.get(args.path)!, logger);
     }
     if (processedHqlFiles.has(args.path)) {
       logger.debug(`Already processed HQL file: ${args.path}`);
@@ -600,22 +756,26 @@ async function loadHqlFile(
     const actualPath = await findActualFilePath(args.path, logger);
     const fileHash = simpleHash(actualPath).toString();
     const outputDir = join(options.tempDir || "", fileHash);
-    const [, jsCode] = await Promise.all([
+    const [, tsCode] = await Promise.all([
       ensureDir(outputDir),
       transpileHqlFile(actualPath, options.sourceDir, options.verbose),
     ]);
-    const outFileName = basename(actualPath, ".hql") + ".js";
-    const jsOutputPath = join(outputDir, outFileName);
-    await writeTextFile(jsOutputPath, jsCode);
-    logger.debug(`Written transpiled JS to: ${jsOutputPath}`);
-    hqlToJsMap.set(args.path, jsOutputPath);
+    const outTsFileName = basename(actualPath, ".hql") + ".ts";
+    const tsTempPath = join(outputDir, outTsFileName);
+    await writeTextFile(tsTempPath, tsCode);
+    logger.debug(`Written transpiled TypeScript to: ${tsTempPath}`);
+    
+    // Register for cleanup
+    registerTempFile(tsTempPath);
+    
+    hqlToJsMap.set(args.path, tsTempPath);
     if (args.path !== actualPath) {
-      hqlToJsMap.set(actualPath, jsOutputPath);
+      hqlToJsMap.set(actualPath, tsTempPath);
     }
     return {
-      contents: jsCode,
-      loader: "js",
-      resolveDir: dirname(jsOutputPath),
+      contents: tsCode,
+      loader: "ts", // Important: Tell esbuild this is TypeScript
+      resolveDir: dirname(tsTempPath),
     };
   } catch (error) {
     throw new TranspilerError(
@@ -626,22 +786,23 @@ async function loadHqlFile(
   }
 }
 
-async function loadTranspiledJs(
+async function loadTranspiledFile(
   originalPath: string,
-  jsPath: string,
+  filePath: string,
   logger: Logger,
 ): Promise<any> {
   try {
-    logger.debug(`Using previously transpiled JS file: ${jsPath}`);
-    const jsContent = await Deno.readTextFile(jsPath);
+    logger.debug(`Using previously transpiled file: ${filePath}`);
+    const content = await Deno.readTextFile(filePath);
+    const isTs = filePath.endsWith(".ts");
     return {
-      contents: jsContent,
-      loader: "js",
-      resolveDir: dirname(jsPath),
+      contents: content,
+      loader: isTs ? "ts" : "js", // Specify loader based on file extension
+      resolveDir: dirname(filePath),
     };
   } catch (error) {
     throw new TranspilerError(
-      `Reading transpiled JS file: ${jsPath}: ${
+      `Reading transpiled file: ${filePath}: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -722,7 +883,12 @@ function createBuildOptions(
       allowOverwrite: true,
       minify: options.minify,
       drop: options.drop,
+      // Add TypeScript specific options
+      loader: { ".ts": "ts" }, // Explicitly define loader for .ts files
+      platform: "neutral", // Build for use in any JavaScript runtime
+      target: ["es2020"], // Target modern JavaScript
     };
+    
     Object.keys(buildOptions).forEach((key) => {
       if (buildOptions[key] === undefined) {
         delete buildOptions[key];
@@ -738,24 +904,34 @@ function createBuildOptions(
   }
 }
 
-function createExternalPlugin(): any {
-  return {
-    name: "external-npm-jsr",
-    setup(build: any) {
-      build.onResolve({ filter: /^(npm:|jsr:|https?:)/ }, (args: any) => {
-        return { path: args.path, external: true };
-      });
-    },
-  };
-}
-
 function determineOutputPath(
   resolvedInputPath: string,
   outputPath?: string,
 ): string {
   if (outputPath) return outputPath;
+  
+  // For HQL files, output as .js (for final output)
   if (resolvedInputPath.endsWith(".hql")) {
     return resolvedInputPath.replace(/\.hql$/, ".js");
   }
+  
+  // For TypeScript files, output as .js
+  if (isTypeScriptFile(resolvedInputPath)) {
+    return resolvedInputPath.replace(/\.(ts|tsx)$/, ".js");
+  }
+  
+  // For JS files, append .bundle.js
   return resolvedInputPath + ".bundle.js";
+}
+
+function createExternalPlugin(): any {
+  return {
+    name: "external-npm-jsr",
+    setup(build: any) {
+      // Mark remote modules as external
+      build.onResolve({ filter: /^(npm:|jsr:|https?:)/ }, (args: any) => {
+        return { path: args.path, external: true };
+      });
+    },
+  };
 }
