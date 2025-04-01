@@ -12,7 +12,7 @@ import {
   SSymbol,
 } from "../s-exp/types.ts";
 import { Logger } from "../logger.ts";
-import { TransformError } from "../transpiler/errors.ts";
+import { TransformError, ValidationError } from "../transpiler/errors.ts";
 import { perform } from "../transpiler/error-utils.ts";
 
 /**
@@ -39,53 +39,60 @@ export function transformSyntax(
  * Transform a single node, dispatching to specific handlers based on type
  */
 export function transformNode(node: SExp, logger: Logger): SExp {
-  // Handle the existing node transformation logic
-  if (!isList(node)) {
-    // Non-list nodes don't need special handling
-    return node;
-  }
+  return perform(
+    () => {
+      if (!isList(node)) {
+        // Non-list nodes don't need special handling
+        return node;
+      }
 
-  const list = node as SList;
-  if (list.elements.length === 0) {
-    // Empty lists don't need transformation
-    return list;
-  }
+      const list = node as SList;
+      if (list.elements.length === 0) {
+        // Empty lists don't need transformation
+        return list;
+      }
 
-  if (isDotChainForm(list)) {
-    return transformDotChainForm(list, logger);
-  }
+      // Check for dot-chain form first
+      if (isDotChainForm(list)) {
+        return transformDotChainForm(list, logger);
+      }
 
-  // Process standard list with recursion on elements
-  const first = list.elements[0];
-  if (!isSymbol(first)) {
-    // If the first element isn't a symbol, recursively transform its children
-    return {
-      ...list,
-      elements: list.elements.map((elem) => transformNode(elem, logger)),
-    };
-  }
+      // Process standard list with recursion on elements
+      const first = list.elements[0];
+      if (!isSymbol(first)) {
+        // If the first element isn't a symbol, recursively transform its children
+        return {
+          ...list,
+          elements: list.elements.map((elem) => transformNode(elem, logger)),
+        };
+      }
 
-  // Get the operation name
-  const op = (first as SSymbol).name;
+      // Get the operation name
+      const op = (first as SSymbol).name;
 
-  // For enums, just do basic validation but keep as ListNode for the IR layer
-  if (op === "enum") {
-    return validateEnumSyntax(list, logger);
-  }
+      // For enums, just do basic validation but keep as ListNode for the IR layer
+      if (op === "enum") {
+        return validateEnumSyntax(list, logger);
+      }
 
-  // Handle other special forms like before
-  switch (op) {
-    case "fx":
-      return transformFxSyntax(list, logger);
-    case "fn":
-      return transformFnSyntax(list, logger);
-    default:
-      // Recursively transform elements for non-special forms
-      return {
-        ...list,
-        elements: list.elements.map((elem) => transformNode(elem, logger)),
-      };
-  }
+      // Handle other special forms like before
+      switch (op) {
+        case "fx":
+          return transformFxSyntax(list, logger);
+        case "fn":
+          return transformFnSyntax(list, logger);
+        default:
+          // Recursively transform elements for non-special forms
+          return {
+            ...list,
+            elements: list.elements.map((elem) => transformNode(elem, logger)),
+          };
+      }
+    },
+    "transformNode",
+    TransformError,
+    [node],
+  );
 }
 
 function validateEnumSyntax(list: SList, logger: Logger): SList {

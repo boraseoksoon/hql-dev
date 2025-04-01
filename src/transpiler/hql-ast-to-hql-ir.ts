@@ -667,8 +667,6 @@ function transformReturn(list: ListNode, currentDir: string): IR.IRNode {
 /**
  * Transform a single HQL node to its IR representation.
  * Enhanced with loop context tracking for proper loop/recur implementation.
- * 
- * File: src/transpiler/hql-ast-to-hql-ir.ts
  */
 function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
   return perform(
@@ -5039,5 +5037,179 @@ function transformMethodCall(list: ListNode, currentDir: string): IR.IRNode {
     "transformMethodCall",
     TransformError,
     [list],
+  );
+}
+
+/**
+ * Transform an enum node to its IR representation.
+ */
+function transformEnum(list: ListNode, currentDir: string): IR.IREnumDeclaration {
+  return perform(
+    () => {
+      // Ensure this is an enum definition
+      if (list.elements.length < 2 || 
+          list.elements[0].type !== "symbol" || 
+          (list.elements[0] as SymbolNode).name !== "enum") {
+        throw new ValidationError(
+          "Not a valid enum definition",
+          "enum transformation",
+          "enum definition",
+          "invalid list",
+        );
+      }
+      
+      // Extract enum name and optional raw type
+      const nameNode = list.elements[1];
+      if (nameNode.type !== "symbol") {
+        throw new ValidationError(
+          "Enum name must be a symbol",
+          "enum name",
+          "symbol",
+          nameNode.type,
+        );
+      }
+      
+      let enumName = (nameNode as SymbolNode).name;
+      let rawType: string | undefined = undefined;
+      
+      // Check for raw type (enum Name: Type)
+      if (enumName.endsWith(":") && list.elements.length > 2 && list.elements[2].type === "symbol") {
+        rawType = (list.elements[2] as SymbolNode).name;
+        enumName = enumName.slice(0, -1); // Remove colon
+        var caseStartIndex = 3; // Cases start after name and type
+      } else {
+        var caseStartIndex = 2; // Cases start after just the name
+      }
+      
+      // Process case nodes
+      const cases: IR.IREnumCase[] = [];
+      
+      for (let i = caseStartIndex; i < list.elements.length; i++) {
+        const caseNode = list.elements[i];
+        
+        // Skip non-list nodes (though we should have validated this already)
+        if (caseNode.type !== "list") {
+          continue;
+        }
+        
+        const caseList = caseNode as ListNode;
+        cases.push(transformEnumCase(caseList, currentDir));
+      }
+      
+      return {
+        type: IR.IRNodeType.EnumDeclaration,
+        id: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(enumName),
+        },
+        rawType: rawType,
+        cases: cases
+      };
+    },
+    "transformEnum",
+    TransformError,
+    [list],
+  );
+}
+
+/**
+ * Transform an enum case node to IR.
+ */
+function transformEnumCase(caseList: ListNode, currentDir: string): IR.IREnumCase {
+  return perform(
+    () => {
+      // Basic validation
+      if (caseList.elements.length < 2 || 
+          caseList.elements[0].type !== "symbol" || 
+          (caseList.elements[0] as SymbolNode).name !== "case") {
+        throw new ValidationError(
+          "Invalid enum case node",
+          "enum case",
+          "case list",
+          "invalid list",
+        );
+      }
+      
+      // Get case name
+      if (caseList.elements[1].type !== "symbol") {
+        throw new ValidationError(
+          "Case name must be a symbol",
+          "enum case name",
+          "symbol",
+          caseList.elements[1].type,
+        );
+      }
+      
+      const caseName = (caseList.elements[1] as SymbolNode).name;
+      
+      // Simple case with no raw value or associated values
+      if (caseList.elements.length === 2) {
+        return {
+          type: IR.IRNodeType.EnumCase,
+          name: caseName
+        };
+      }
+      
+      // Check for raw value (simple literal value)
+      if (caseList.elements.length === 3 && caseList.elements[2].type === "literal") {
+        return {
+          type: IR.IRNodeType.EnumCase,
+          name: caseName,
+          rawValue: transformLiteral(caseList.elements[2] as LiteralNode)
+        };
+      }
+      
+      // Check for associated values
+      // Example: (case upc system: Int manufacturer: Int product: Int check: Int)
+      const associatedValues: { name?: string; type: string }[] = [];
+      
+      for (let i = 2; i < caseList.elements.length; i++) {
+        const elem = caseList.elements[i];
+        
+        // Skip if not a parameter name with colon
+        if (elem.type !== "symbol" || !(elem as SymbolNode).name.endsWith(':')) {
+          continue;
+        }
+        
+        const paramName = (elem as SymbolNode).name.slice(0, -1);
+        
+        // Ensure there's a type after the parameter name
+        if (i + 1 >= caseList.elements.length || caseList.elements[i + 1].type !== "symbol") {
+          throw new ValidationError(
+            `Missing type for associated value parameter '${paramName}'`,
+            "enum case associated value",
+            "type symbol",
+            "missing value",
+          );
+        }
+        
+        const paramType = (caseList.elements[i + 1] as SymbolNode).name;
+        associatedValues.push({
+          name: paramName,
+          type: paramType
+        });
+        
+        // Skip the type in the next iteration
+        i++;
+      }
+      
+      if (associatedValues.length > 0) {
+        return {
+          type: IR.IRNodeType.EnumCase,
+          name: caseName,
+          associatedValues
+        };
+      }
+      
+      // If we reach here, it's likely a raw value case we didn't handle above
+      return {
+        type: IR.IRNodeType.EnumCase,
+        name: caseName,
+        rawValue: transformNode(caseList.elements[2], currentDir)
+      };
+    },
+    "transformEnumCase",
+    TransformError,
+    [caseList],
   );
 }

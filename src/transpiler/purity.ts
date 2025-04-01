@@ -80,6 +80,13 @@ export const PRIMITIVE_TYPES = new Set([
 ]);
 
 /**
+ * Function to check if a type name looks like an enum or user-defined type (starts with uppercase)
+ */
+function isLikelyUserDefinedType(typeName: string): boolean {
+  return /^[A-Z][a-zA-Z0-9_]*$/.test(typeName);
+}
+
+/**
  * Register a function as pure
  */
 export function registerPureFunction(name: string): void {
@@ -121,6 +128,30 @@ export function verifyFunctionPurity(
   // After verification, register this function as pure
   registerPureFunction(funcName);
   logger.debug(`Function ${funcName} verified as pure`);
+}
+
+/**
+ * Check if a parameter type is valid (primitive or user-defined)
+ */
+function checkParameterType(paramName: string, paramType: string): void {
+  // If it's a primitive type, it's valid
+  if (PRIMITIVE_TYPES.has(paramType)) {
+    return;
+  }
+  
+  // If it looks like a user-defined type (like an enum), it's valid
+  if (isLikelyUserDefinedType(paramType)) {
+    return;
+  }
+  
+  throw new ValidationError(
+    `Parameter '${paramName}' has unsupported type '${paramType}'. Expected one of: ${
+      Array.from(PRIMITIVE_TYPES).join(", ")
+    } or a user-defined type`,
+    "fx parameter type",
+    Array.from(PRIMITIVE_TYPES).join(", "),
+    paramType,
+  );
 }
 
 /**
@@ -173,6 +204,9 @@ function verifySymbolPurity(
   // Allow JavaScript literals like null, undefined, etc.
   if (JS_LITERALS.has(name)) return;
 
+  // Allow symbols that look like user-defined types (like enums)
+  if (isLikelyUserDefinedType(name)) return;
+
   // Otherwise, symbol is forbidden in a pure function
   throw new ValidationError(
     `Pure function '${funcName}' cannot reference external variable '${name}'`,
@@ -207,6 +241,11 @@ function verifyListPurity(
     // Handle lambda special form
     if (operator === "lambda") {
       handleLambdaForm(list, funcName, paramNames, localVars);
+      return;
+    }
+
+    // If operator is an enum access (like "OsType.macOS"), allow it in pure functions
+    if (operator.includes(".") && isLikelyUserDefinedType(operator.split(".")[0])) {
       return;
     }
 
