@@ -1,18 +1,33 @@
-by end of 03/23
+by end of 04/26/2025
 
 HQL
-1. lazy everywhere 
-2. range, 
-3. for loop
-4. class
-5. fx, type system
-7. unit test
-8. LSP
-9. publisher + own package manager?
+1. fn: named parameter and type annotation
+2. fn + enum dot notation
+3. fundamental type system - 
+4. ts -> js issue
+5. refactoring
+    - code optimization
+    - remove dead code
+    - modularize
+6. range..? lazy everywhere?
+7. bundling optimization
+8. publish testing
+9. HLVM connection
 10. REPL
-11. nREPL -> connected to HLVM
-12. make HQL operate independent (compile binary)
-13. thesis
+    - repl
+    - nRepl
+
+HQL LSP
+1. support all syntax
 
 HLVM
-1. connect to HQL
+1. connect with HQL and integarte nRepl
+2. relalize my visions
+
+HQL Web page
+- refactor existing one into the site
+- simplify and fill in all features
+
+HQL paper
+- aggregate all
+- generate pdf

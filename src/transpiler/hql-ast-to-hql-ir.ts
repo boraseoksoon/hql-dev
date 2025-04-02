@@ -1027,17 +1027,15 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     if (isNamespaceImport(list)) {
       return transformNamespaceImport(list, currentDir);
     }
+    
+    if (hasNamedArguments(list)) {
+      return transformNamedArgumentCall(list, currentDir);
+    }
 
     if (isDotNotation(op)) {
       return transformDotNotation(list, op, currentDir);
     }
 
-    // Check for named arguments in function call
-    if (hasNamedArguments(list)) {
-      return transformNamedArgumentCall(list, currentDir);
-    }
-
-    // Check if this is a call to an fn function
     const fnDef = fnFunctionRegistry.get(op);
     if (fnDef) {
       logger.debug(`Processing call to fn function ${op}`);
@@ -1049,7 +1047,6 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
       );
     }
 
-    // Check if this is a call to an fx function
     const fxDef = fxFunctionRegistry.get(op);
     if (fxDef) {
       logger.debug(`Processing call to fx function ${op}`);
@@ -4252,6 +4249,13 @@ function transformJsSet(list: ListNode, currentDir: string): IR.IRNode {
  * Check if a function call has named arguments
  */
 function hasNamedArguments(list: ListNode): boolean {
+  // Special case: if this is an enum declaration, it shouldn't be treated as named arguments
+  if (list.elements.length > 0 && 
+      list.elements[0].type === "symbol" && 
+      (list.elements[0] as SymbolNode).name === "enum") {
+    return false;
+  }
+  
   for (let i = 1; i < list.elements.length; i++) {
     const elem = list.elements[i];
     if (elem.type === "symbol" && (elem as SymbolNode).name.endsWith(":")) {

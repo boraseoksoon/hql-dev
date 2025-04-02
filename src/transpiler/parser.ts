@@ -7,6 +7,7 @@ import {
   createSymbol,
   SExp,
   SList,
+  SSymbol
 } from "../s-exp/types.ts";
 import { ParseError } from "./errors.ts";
 import { perform } from "./error-utils.ts";
@@ -74,25 +75,6 @@ function tokenize(input: string): Token[] {
     column = token.position.column + token.value.length;
   }
   return tokens;
-}
-
-function matchNextToken(input: string, line: number, column: number, offset: number): Token {
-  const position: SourcePosition = { line, column, offset };
-  let match = input.match(TOKEN_PATTERNS.SPECIAL_TOKENS);
-  if (match) return { type: getTokenTypeForSpecial(match[0]), value: match[0], position };
-  match = input.match(TOKEN_PATTERNS.STRING);
-  if (match) return { type: TokenType.String, value: match[0], position };
-  match = input.match(TOKEN_PATTERNS.COMMENT);
-  if (match) return { type: TokenType.Comment, value: match[0], position };
-  match = input.match(TOKEN_PATTERNS.WHITESPACE);
-  if (match) return { type: TokenType.Whitespace, value: match[0], position };
-  match = input.match(TOKEN_PATTERNS.SYMBOL);
-  if (match) {
-    const value = match[0];
-    if (!isNaN(Number(value))) return { type: TokenType.Number, value, position };
-    return { type: TokenType.Symbol, value, position };
-  }
-  throw new ParseError(`Unexpected character: ${input[0]}`, position, input);
 }
 
 function getTokenTypeForSpecial(value: string): TokenType {
@@ -218,19 +200,104 @@ function parseDotNotation(tokenValue: string): SExp {
     : createSymbol(tokenValue);
 }
 
+// Updated parsing functions in src/transpiler/parser.ts
+
+/**
+ * Parse a list expression
+ */
 function parseList(state: ParserState): SList {
   const listStartPos = state.tokens[state.currentPos - 1].position;
   const elements: SExp[] = [];
+  
+  // Check if this might be an enum declaration
+  let isEnum = false;
+  if (state.currentPos < state.tokens.length && 
+      state.tokens[state.currentPos].type === TokenType.Symbol &&
+      state.tokens[state.currentPos].value === "enum") {
+    isEnum = true;
+  }
+  
   while (
     state.currentPos < state.tokens.length &&
     state.tokens[state.currentPos].type !== TokenType.RightParen
   ) {
-    elements.push(parseExpression(state));
+    // Special handling for enum syntax with separate colon
+    if (isEnum && elements.length === 2 && 
+        state.tokens[state.currentPos].type === TokenType.Colon) {
+      
+      // Skip the colon token
+      state.currentPos++;
+      
+      // Ensure we have a type after the colon
+      if (state.currentPos < state.tokens.length && 
+          state.tokens[state.currentPos].type === TokenType.Symbol) {
+        
+        // Get the enum name (already parsed) and the type
+        const enumNameSym = elements[1] as SSymbol;
+        const typeName = state.tokens[state.currentPos].value;
+        
+        // Replace the enum name with combined enum name and type
+        elements[1] = createSymbol(`${enumNameSym.name}:${typeName}`);
+        
+        // Skip the type token since we've incorporated it
+        state.currentPos++;
+      } else {
+        throw new ParseError(
+          "Expected type name after colon in enum declaration", 
+          state.tokens[state.currentPos - 1].position, 
+          state.input
+        );
+      }
+    } else {
+      // Normal element parsing
+      elements.push(parseExpression(state));
+    }
   }
+  
   if (state.currentPos >= state.tokens.length)
     throw new ParseError("Unclosed list", listStartPos, state.input);
+  
   state.currentPos++;
+  
   return createList(...elements);
+}
+
+/**
+ * Match the next token from the input
+ */
+function matchNextToken(input: string, line: number, column: number, offset: number): Token {
+  const position: SourcePosition = { line, column, offset };
+  
+  // Define patterns to match
+  let match;
+  
+  // First check for special tokens
+  match = input.match(TOKEN_PATTERNS.SPECIAL_TOKENS);
+  if (match) return { type: getTokenTypeForSpecial(match[0]), value: match[0], position };
+  
+  // Then check for strings
+  match = input.match(TOKEN_PATTERNS.STRING);
+  if (match) return { type: TokenType.String, value: match[0], position };
+  
+  // Then check for comments
+  match = input.match(TOKEN_PATTERNS.COMMENT);
+  if (match) return { type: TokenType.Comment, value: match[0], position };
+  
+  // Then check for whitespace
+  match = input.match(TOKEN_PATTERNS.WHITESPACE);
+  if (match) return { type: TokenType.Whitespace, value: match[0], position };
+  
+  // Finally check for symbols
+  match = input.match(TOKEN_PATTERNS.SYMBOL);
+  if (match) {
+    const value = match[0];
+    // If it's a number, return as number token
+    if (!isNaN(Number(value))) return { type: TokenType.Number, value, position };
+    // Otherwise return as symbol token
+    return { type: TokenType.Symbol, value, position };
+  }
+  
+  throw new ParseError(`Unexpected character: ${input[0]}`, position, input);
 }
 
 function parseVector(state: ParserState): SList {

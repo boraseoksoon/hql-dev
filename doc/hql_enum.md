@@ -1,9 +1,3 @@
-Okay, let's finalize the design document for simple enums based on **Option A (Core Compiler Implementation)** using the Lisp-style syntax, and then I'll explain the specific role of the Syntax Transformer in HQL based on the provided files.
-
----
-
-**Final `hql_enum.md` (Focusing on Core Implementation with Lisp Syntax):**
-
 ```markdown
 # HQL Enumerations (Core Design with Lisp Syntax)
 
@@ -75,20 +69,29 @@ Access involves dot notation; shorthand may be possible with type inference.
 
 ## 5. Dot Notation & Autocompletion Roles
 
-Reliable tooling stems from the core implementation:
+```hql
+;; Define a simple OS enum.
+(enum OS
+  (case macOS)
+  (case iOS)
+  (case linux)
+)
 
-**Role of the HQL Language / Compiler:**
+;; A function that “installs” based on the OS.
+(fn install (os)
+  (cond
+    ((= os OS.macOS) (print "Installing on macOS"))
+    ((= os OS.iOS)   (print "Installing on iOS"))
+    ((= os OS.linux) (print "Installing on Linux"))
+    (else            (print "Unsupported OS"))
+  )
+)
 
-1.  **Recognize Structure:** Parse `(enum TypeName ...)` into specific AST/IR nodes.
-2.  **Define Dot Semantics:** Define `TypeName.caseName` as type-aware access to a specific enum case, resolving it internally.
-3.  **Define Shorthand Semantics (Optional):** Allow `.caseName` where the enum type is contextually clear (e.g., via type hints), resolving it to the full case.
-4.  **Expose Structure:** Provide the structured AST/IR for LSP analysis.
-
-**Role of the LSP / IDE Tooling:**
-
-1.  **Analyze Structure:** Read the dedicated enum nodes from the compiler's AST/IR.
-2.  **Suggest on `TypeName.`:** Look up the `TypeName` enum definition and suggest its defined cases.
-3.  **Suggest on `.` (Shorthand):** Use context (type hints) to find the expected enum type and suggest its cases.
+;; enum type inference
+(install os: .macOS)
+(install os: .iOS)
+(install os: .linux)
+```
 
 ## 6. Summary
 

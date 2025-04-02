@@ -1,139 +1,159 @@
-──────────────────────────── Part 1: Function Model (fx, fn, lambda)
-────────────────────────────
+# HQL Function Model Documentation
 
-**Overview:** We distinguish functions by both their naming and their purity:
+## Overview
 
-- **fx:**\
-  **Purpose:** Define named and typed pure functions.\
-  **Semantics:**
-  - Must be completely self‑contained: can use only its parameters and local
-    immutable bindings (created by `let`).
-  - Must not capture any external binding or produce side effects (such as I/O,
-    logging, or updating mutable state).\
-    **Usage:** Use `fx` when you want strong purity guarantees.\
-    **Note:** All `fx` functions are fully typed; there is no support for
-    untyped `fx` definitions.
+HQL provides two primary function constructs:
 
-- **fn:**\
-  **Purpose:** Define named functions that allow side effects and mutable state
-  (a general-purpose function, similar to Clojure’s defn).\
-  **Semantics:**
-  - No purity enforcement; these functions can capture external variables and
-    perform side effects.\
-    **Usage:** Use `fn` when you do not require the function to be pure.
+- **fx:** Pure functions with strict typing and purity guarantees
+- **fn:** General-purpose functions without purity constraints
 
-- **lambda:**\
-  **Purpose:** Define anonymous functions.\
-  **Semantics:**
-  - There is one unified lambda form for all anonymous functions.
-  - Its purity is determined by its body; when passed as an argument to a pure
-    function (`fx`), the lambda is statically checked for purity.
-  - There is no separate form for impure lambdas.\
-    **Usage:** Use `lambda` for inline anonymous functions. In a pure context
-    (like as an argument to an `fx` function), the lambda must be pure;
-    otherwise, an error is raised.
+This document explains the differences and similarities between these constructs, providing clear guidance on when to use each.
 
-**Showcase Examples**
+## 1. Pure Functions (fx)
 
-**Allowed Pure Function Examples (fx and lambda):**
+### Purpose
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; ;; Pure Named Function using
-fx (typed only) ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+The `fx` construct defines **pure functions** with the following guarantees:
+
+- **Purity:** Functions are statically verified to be free of side effects
+- **Type Safety:** All parameters and return values must be fully typed
+- **Immutability:** Functions must not modify their inputs or external state
+- **Self-Containment:** Functions can only access their parameters and local bindings
+
+### Syntax
 
 ```lisp
-(fx add (a: Int b: Int) (-> Int)
-  (+ a b))
-(print "Pure add result:" (add x: 3 y: 4))
+(fx function-name (param1: Type1 param2: Type2 = default) (-> ReturnType)
+  body...)
 ```
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; ;; Pure Function with Local
-Binding ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+### Key Characteristics
+
+- **Complete Type Annotations Required:** All parameters must have type annotations
+- **Return Type Required:** Must specify a return type with the `(-> Type)` form
+- **Default Values:** Parameters can have default values (making them optional)
+- **Named Arguments:** Supports calling with named arguments (`param: value`)
+- **Purity Verification:** Parameters are deep-copied to prevent mutation
+
+### Example
 
 ```lisp
-(fx pure-with-local (n: Int) (-> Int)
-  (let (localConst 10)
-    (+ n localConst)))
-(print "Pure with local result:" (pure-with-local x: 5))
+(fx add (x: Int = 10 y: Int = 20) (-> Int)
+  (+ x y))
+
+;; Usage with named arguments
+(add x: 5 y: 10)  ;; => 15
+
+;; Usage with partial named arguments (using defaults)
+(add x: 5)        ;; => 25
+
+;; Usage with positional arguments
+(add 5 10)        ;; => 15
+
+;; Usage with no arguments (using defaults)
+(add)             ;; => 30
 ```
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; ;; Pure Function Accepting a
-Pure Lambda ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+## 2. General-Purpose Functions (fn)
 
+### Purpose
+
+The `fn` construct defines general-purpose functions that:
+
+- **Allow Side Effects:** Can freely access and modify external state
+- **Flexible Typing:** Can be defined with or without type annotations
+- **Maximum Flexibility:** Can be used for all function use cases
+
+### Syntax
+
+**Untyped Form:**
 ```lisp
-(fx apply-lambda (n: Int f: (-> Int Int)) (-> Int)
-  (f n))
-(print "Applying pure lambda:" (apply-lambda x: 5 f: (lambda (x: Int) (-> Int) (* x 3))))
+(fn function-name (param1 param2 = default)
+  body...)
 ```
 
-**Allowed Impure Function Examples (using fn and lambda):**
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; ;; Impure Named Function
-using fn ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+**Typed Form:**
 ```lisp
-(fn logger (msg: String) (-> String)
-  (print "Logging:" msg)
-  msg)
-(print "Logger output:" ((lambda logger (msg: String) (-> String)
-                             (print "Logging:" msg)
-                             msg) x: "Hello, world"))
+(fn function-name (param1: Type1 param2: Type2 = default) (-> ReturnType)
+  body...)
 ```
 
-**Disallowed Cases in Pure Functions (fx):**
+### Key Characteristics
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; ;; Disallowed Pure Function:
-Capturing External Value ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+- **Optional Type System:** Can be defined with or without type annotations
+- **All-or-Nothing Typing:** If using types, all parameters must be typed (partial typing not allowed)
+- **Default Values:** Parameters can have default values in both typed and untyped forms
+- **Named Arguments:** Supports calling with named arguments in all forms
+- **No Purity Verification:** Parameters are not deep-copied by default
 
+### Examples
+
+**Untyped Function:**
 ```lisp
-(let externalConst 42)
-(fx impure-capture (n: Int) (-> Int)
-  (+ n externalConst))  ; ERROR: impure-capture is rejected because it captures externalConst.
+(fn add (x y)
+  (+ x y))
+
+;; Usage with positional arguments
+(add 5 10)        ;; => 15
+
+;; Usage with named arguments (also supported)
+(add x: 5 y: 10)  ;; => 15
 ```
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; ;; Disallowed Pure Function:
-Side Effects ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+**Untyped Function with Default Values:**
 ```lisp
-(fx impure-side-effect (n: Int) (-> Int)
-  (print "Side effect:" n)  ; ERROR: Using print is a side effect.
-  (+ n 1))
+(fn add (x = 10 y = 20)
+  (+ x y))
+
+;; Usage with partial arguments
+(add 5)           ;; => 25
+
+;; Usage with named arguments
+(add y: 5)        ;; => 15
+
+;; Usage with no arguments
+(add)             ;; => 30
 ```
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; ;; Disallowed Pure Function:
-Accepting an Impure Lambda ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+**Fully Typed Function:**
 ```lisp
-; Define an impure anonymous function using fn.
-(lambda impureLambda (x: Int) (-> Int)
-  (print "Impure lambda:" x)
-  (+ x 2))
-; Then, in a pure fx function, passing impureLambda should be rejected:
-(fx use-lambda (n: Int f: (-> Int Int)) (-> Int)
-  (f n))  ; ERROR: use-lambda must only accept pure lambdas; passing impureLambda violates purity.
+(fn add (x: Int = 10 y: Int = 20) (-> Int)
+  (+ x y))
+
+;; Works exactly like the fx version but without purity checks
+(add x: 5 y: 10)  ;; => 15
+(add x: 5)        ;; => 25
+(add 5 10)        ;; => 15
+(add)             ;; => 30
 ```
 
-**Summary of the Function Model**
+## 3. Comparison Table
 
-- **fx:** Used for defining named pure functions. All definitions are fully
-  typed and must not capture any external state or perform side effects.
-- **fn:** Used for defining named functions without purity guarantees (allowing
-  side effects and external capture).
-- **lambda:** A unified form for anonymous functions. When used in pure contexts
-  (e.g., passed to an `fx` function), the lambda is statically checked for
-  purity.
+| Feature | fx | fn |
+|---------|----|----|
+| Purity Guarantee | ✅ Yes | ❌ No |
+| Side Effects | ❌ Disallowed | ✅ Allowed |
+| Type Annotations | ✅ Required | ✅ Optional |
+| Named Arguments | ✅ Supported | ✅ Supported |
+| Default Values | ✅ Supported | ✅ Supported |
+| Partial Typing | ❌ Disallowed | ❌ Disallowed |
+| Deep Copy Params | ✅ Always | ❌ Never |
 
-**Key Takeaways**
+## 4. When to Use Each
 
-- **Bindings:** `let` creates immutable bindings (with automatic freezing for
-  objects), while `var` creates mutable ones.
-- **Function Definitions:** Pure functions (`fx`) and impure functions (`fn`)
-  are clearly separated, which helps enforce purity at module boundaries.
-- **Anonymous Functions:** Defined using `lambda`. Their purity is determined by
-  context; pure lambdas must be used where required.
-- **Purity Enforcement:** Pure functions (`fx`) must not capture any external
-  state or perform side effects. If a lambda passed to an `fx` function is
-  impure, the system should flag an error.
+- **Use `fx`** when you want predictable, side-effect-free functions with static guarantees
+- **Use `fn`** when you need flexibility or must perform side effects
+- **Use typed `fn`** when you want type safety without purity restrictions
 
-This comprehensive split overview and refined syntax showcase the vision for
-HQL’s design while reducing complexity by ensuring that all `fx` functions are
-fully typed.
+## 5. Implementation Notes
+
+The implementation of `fn` and `fx` shares most of its code, with `fx` adding additional purity verification. This means that:
+
+1. Typed `fn` functions can be converted to `fx` by simply changing the keyword (if they are already pure)
+2. `fx` functions cannot be converted to `fn` without losing purity guarantees
+3. Both handle named arguments and default values in the same way
+
+## 6. Restrictions
+
+- Partial typing is not allowed for either `fn` or `fx`. Either all parameters have type annotations or none do.
+- For typed `fn` and all `fx` functions, all parameter types and return type must be specified.
