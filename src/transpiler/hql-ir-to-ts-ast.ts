@@ -152,20 +152,28 @@ export function convertFnFunctionDeclaration(
   node: IR.IRFnFunctionDeclaration,
 ): ts.FunctionDeclaration {
   return execute(node, "fn function declaration", () => {
+    // Map parameter names, properly handling rest parameters
     const parameters = node.params.map(param => {
       const paramName = param.name;
-      return paramName.startsWith("...")
-        ? ts.factory.createParameterDeclaration(
-            undefined,
-            ts.factory.createToken(ts.SyntaxKind.DotDotDotToken),
-            ts.factory.createIdentifier(paramName.slice(3))
-          )
-        : ts.factory.createParameterDeclaration(
-            undefined,
-            undefined,
-            ts.factory.createIdentifier(paramName)
-          );
+      
+      // Check if this is a rest parameter (starts with "...")
+      if (paramName.startsWith("...")) {
+        return ts.factory.createParameterDeclaration(
+          undefined,
+          ts.factory.createToken(ts.SyntaxKind.DotDotDotToken),
+          ts.factory.createIdentifier(paramName.slice(3)) // Remove "..." prefix
+        );
+      }
+      
+      // Regular parameter
+      return ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        ts.factory.createIdentifier(paramName)
+      );
     });
+    
+    // Create the function declaration with body and parameters
     return ts.factory.createFunctionDeclaration(
       undefined,
       undefined,

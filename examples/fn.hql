@@ -6,6 +6,11 @@
 ;; 1. Using defaults:
 (print (multiply))                   ;; Uses both defaults: 10 * 20 = 200
 
+(fn multiply2 (x: Int = 100 y: Int = 200) (-> Int)
+  (* x y))
+
+(print (multiply2))
+
 ;; 2. Positional arguments:
 (print (multiply 5))                 ;; Overrides x: 5 * 20 = 100
 (print (multiply 5 7))               ;; Overrides both: 5 * 7 = 35

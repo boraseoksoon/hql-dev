@@ -404,15 +404,39 @@ function transformFxSyntax(list: SList, enumDefinitions: Map<string, SList>, log
 }
 
 /**
+ * Handle array type notation like [String] in function signatures
+ */
+function transformTypeAnnotation(node: SExp): SExp {
+  // If it's already a symbol, just return it
+  if (isSymbol(node)) {
+    return node;
+  }
+  
+  // If it's a list that represents an array type like [String]
+  if (isList(node) && 
+      (node as SList).elements.length === 1 && 
+      isSymbol((node as SList).elements[0])) {
+    
+    // Convert [String] to Array<String> format
+    const innerType = ((node as SList).elements[0] as SSymbol).name;
+    return createSymbol(`Array<${innerType}>`);
+  }
+  
+  // For other cases, just return the node as is
+  return node;
+}
+
+/**
  * Transform fn function syntax
- * (fn add (x = 100 y = 200) (+ x y))
+ * Supporting both untyped: (fn add (x = 100 y = 200) (+ x y))
+ * And typed: (fn add (x: Int = 100 y: Int = 200) (-> Int) (+ x y))
  */
 function transformFnSyntax(list: SList, enumDefinitions: Map<string, SList>, logger: Logger): SExp {
   return perform(
     () => {
       logger.debug("Transforming fn syntax");
 
-      // Validate the fn syntax
+      // Validate the fn syntax - minimum required elements
       if (list.elements.length < 3) {
         throw new TransformError(
           "Invalid fn syntax: requires at least a name, parameter list, and body",
@@ -422,10 +446,33 @@ function transformFnSyntax(list: SList, enumDefinitions: Map<string, SList>, log
         );
       }
 
-      // Extract components
+      // Extract basic components
       const name = list.elements[1];
       const paramsList = list.elements[2] as SList;
-      const body = list.elements.slice(3).map(elem => transformNode(elem, enumDefinitions, logger));
+      
+      // Check if this is a typed fn with a return type
+      let bodyStartIndex = 3;
+      let hasReturnType = false;
+      let returnTypeList = null;
+      
+      // Check if the next element is a return type list starting with ->
+      if (list.elements.length > 3 && 
+          isList(list.elements[3]) && 
+          (list.elements[3] as SList).elements.length > 0 &&
+          isSymbol((list.elements[3] as SList).elements[0]) &&
+          ((list.elements[3] as SList).elements[0] as SSymbol).name === "->") {
+        
+        returnTypeList = list.elements[3] as SList;
+        bodyStartIndex = 4; // Body starts after the return type
+        hasReturnType = true;
+        
+        logger.debug("Detected typed fn with return type");
+      }
+      
+      // Extract the body expressions, transforming each one
+      const body = list.elements.slice(bodyStartIndex).map(elem => 
+        transformNode(elem, enumDefinitions, logger)
+      );
 
       // Validate parameter list
       if (paramsList.type !== "list") {
@@ -433,10 +480,15 @@ function transformFnSyntax(list: SList, enumDefinitions: Map<string, SList>, log
           "Invalid fn syntax: parameter list must be a list",
           "fn parameter list",
           "list",
-          paramsList,
+          paramsList.type,
         );
       }
 
+      // Transform the parameter list elements
+      const transformedParams = paramsList.elements.map(param => 
+        transformNode(param, enumDefinitions, logger)
+      );
+      
       // Validate the name
       if (!isSymbol(name)) {
         throw new TransformError(
@@ -447,13 +499,55 @@ function transformFnSyntax(list: SList, enumDefinitions: Map<string, SList>, log
         );
       }
 
-      // Create a processed version with the original 'fn' operation
-      return createList(
-        createSymbol("fn"),
-        name,
-        paramsList,
-        ...body,
-      );
+      // If there is a return type, handle it, including array type notation
+      if (hasReturnType && returnTypeList) {
+        // Check if there's a type specified
+        if (returnTypeList.elements.length >= 2) {
+          const originalType = returnTypeList.elements[1];
+          let transformedType = originalType;
+          
+          // Handle array type notation [ElementType]
+          if (isList(originalType) && 
+              (originalType as SList).elements.length === 1 && 
+              isSymbol((originalType as SList).elements[0])) {
+            
+            const elementType = ((originalType as SList).elements[0] as SSymbol).name;
+            transformedType = createSymbol(`Array<${elementType}>`);
+          }
+          
+          // Create a new return type list with the transformed type
+          const newReturnTypeList = createList(
+            returnTypeList.elements[0], // The -> symbol
+            transformedType
+          );
+          
+          // Create the full fn form with the transformed return type
+          return createList(
+            createSymbol("fn"),
+            name,
+            createList(...transformedParams),
+            newReturnTypeList,
+            ...body,
+          );
+        } else {
+          // Return type list exists but has no type specified
+          return createList(
+            createSymbol("fn"),
+            name,
+            createList(...transformedParams),
+            returnTypeList,
+            ...body,
+          );
+        }
+      } else {
+        // Untyped form doesn't include a return type
+        return createList(
+          createSymbol("fn"),
+          name,
+          createList(...transformedParams),
+          ...body,
+        );
+      }
     },
     "transformFnSyntax",
     TransformError,

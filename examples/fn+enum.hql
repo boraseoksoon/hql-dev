@@ -6,7 +6,7 @@
 )
 
 ;; A function that “installs” based on the OS.
-(fn install (os)
+(fn install (os: OS) (-> OS)
   (cond
     ((= os OS.macOS) (print "Installing on macOS"))
     ((= os OS.iOS)   (print "Installing on iOS"))
@@ -16,6 +16,6 @@
 )
 
 ;; enum type inference
-(install os: .macOS)
-(install os: .iOS)
-(install os: .linux)
+(install os: OS.macOS)
+(install os: OS.iOS)
+(install os: OS.linux)

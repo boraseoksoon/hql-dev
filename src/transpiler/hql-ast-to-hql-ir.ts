@@ -1459,14 +1459,23 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
     }
     const paramList = paramListNode as ListNode;
 
-    // Body expressions start from index 3
-    const bodyOffset = 3;
+    // Check if this is a typed fn with a return type annotation
+    const isTyped = list.elements.length > 3 && 
+                   list.elements[3].type === "list" &&
+                   (list.elements[3] as ListNode).elements.length > 0 &&
+                   (list.elements[3] as ListNode).elements[0].type === "symbol" &&
+                   ((list.elements[3] as ListNode).elements[0] as SymbolNode).name === "->";
+    
+    // Determine body start index based on whether there's a return type
+    const bodyOffset = isTyped ? 4 : 3;
     const bodyExpressions = list.elements.slice(bodyOffset);
 
-    // Parse parameters with defaults and rest params
-    const paramsInfo = parseParametersWithDefaults(paramList, currentDir);
+    // Parse parameters based on whether it's typed or untyped
+    const paramsInfo = isTyped 
+        ? parseParametersWithTypes(paramList, currentDir)
+        : parseParametersWithDefaults(paramList, currentDir);
 
-    // Extract params and body
+    // Extract params and defaults
     const params = paramsInfo.params;
     const defaultValues = paramsInfo.defaults;
 
@@ -1491,6 +1500,24 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
       },
     } as IR.IRFnFunctionDeclaration;
 
+    // If it's a typed fn, add type information
+    if (isTyped) {
+      const returnTypeNode = list.elements[3] as ListNode;
+      if (returnTypeNode.elements.length < 2 || returnTypeNode.elements[1].type !== "symbol") {
+        throw new ValidationError(
+          "Return type must be specified after ->",
+          "fn return type",
+          "type symbol",
+          "missing type",
+        );
+      }
+      const returnType = (returnTypeNode.elements[1] as SymbolNode).name;
+      
+      // Note: We would add type information here if the IR supported it
+      // For now, we'll just proceed with the untyped IR representation
+      // since the specification says types are for documentation only
+    }
+
     // Register this function in our registry for call site handling
     registerFnFunction(funcName, fnFuncDecl);
     return fnFuncDecl;
@@ -1505,6 +1532,7 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
     );
   }
 }
+
 
 /**
  * Parse parameters with default values for fn functions
@@ -1538,10 +1566,14 @@ function parseParametersWithDefaults(
 
       // Add parameter to the list, with special handling for rest parameters
       if (restMode) {
+        // For rest parameter, use the proper spread syntax in the parameter name
         params.push({
           type: IR.IRNodeType.Identifier,
           name: `...${sanitizeIdentifier(symbolName)}`,
         });
+        
+        // Store the original name to be able to reference it in the function body
+        params[params.length - 1].originalName = symbolName;
       } else {
         params.push({
           type: IR.IRNodeType.Identifier,
@@ -1612,102 +1644,117 @@ function processFnFunctionCall(
   args: HQLNode[],
   currentDir: string,
 ): IR.IRNode {
-  // Extract parameter info from the function definition
-  const paramNames = funcDef.params.map((p) => p.name);
-  const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
+  try {
+    // Extract parameter info from the function definition
+    const paramNames = funcDef.params.map((p) => p.name);
+    const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
 
-  // Check if we have a rest parameter (name starts with "...")
-  const hasRestParam = paramNames.length > 0 &&
-    paramNames[paramNames.length - 1].startsWith("...");
+    // Check if we have a rest parameter (name starts with "...")
+    const hasRestParam = paramNames.length > 0 &&
+      paramNames[paramNames.length - 1].startsWith("...");
 
-  // Get the regular parameters (all except the last one if it's a rest parameter)
-  const regularParamNames = hasRestParam ? paramNames.slice(0, -1) : paramNames;
+    // Get the regular parameters (all except the last one if it's a rest parameter)
+    const regularParamNames = hasRestParam ? paramNames.slice(0, -1) : paramNames;
 
-  // Check if we have placeholders (_)
-  const hasPlaceholders = args.some(isPlaceholder);
+    // Check if we have any named arguments or placeholders
+    const hasNamedArgs = args.some(arg => 
+      arg.type === "symbol" && (arg as SymbolNode).name.endsWith(":")
+    );
+    
+    const hasPlaceholders = args.some(isPlaceholder);
 
-  // Process normal positional arguments
-  const positionalArgs: HQLNode[] = args;
+    // If we have named arguments, process them differently
+    if (hasNamedArgs) {
+      return processNamedArguments(funcName, funcDef, args, currentDir);
+    }
+    
+    // Process normal positional arguments
+    const finalArgs: IR.IRNode[] = [];
 
-  // Prepare the final argument list in the correct parameter order
-  const finalArgs: IR.IRNode[] = [];
+    // Process each regular parameter
+    for (let i = 0; i < regularParamNames.length; i++) {
+      const paramName = regularParamNames[i];
 
-  // Process each regular parameter
-  for (let i = 0; i < regularParamNames.length; i++) {
-    const paramName = regularParamNames[i];
+      if (i < args.length) {
+        const arg = args[i];
 
-    if (i < positionalArgs.length) {
-      const arg = positionalArgs[i];
-
-      // If this argument is a placeholder, use default
-      if (isPlaceholder(arg)) {
-        if (defaultValues.has(paramName)) {
-          finalArgs.push(defaultValues.get(paramName)!);
+        // If this argument is a placeholder, use default
+        if (isPlaceholder(arg)) {
+          if (defaultValues.has(paramName)) {
+            finalArgs.push(defaultValues.get(paramName)!);
+          } else {
+            throw new ValidationError(
+              `Placeholder used for parameter '${paramName}' but no default value is defined`,
+              "function call with placeholder",
+              "parameter with default value",
+              "parameter without default",
+            );
+          }
         } else {
-          throw new ValidationError(
-            `Placeholder used for parameter '${paramName}' but no default value is defined`,
-            "function call with placeholder",
-            "parameter with default value",
-            "parameter without default",
-          );
+          // Normal argument, transform it
+          const transformedArg = transformNode(arg, currentDir);
+          if (!transformedArg) {
+            throw new ValidationError(
+              `Argument for parameter '${paramName}' transformed to null`,
+              "function call",
+              "valid expression",
+              "null",
+            );
+          }
+          finalArgs.push(transformedArg);
         }
+      } else if (defaultValues.has(paramName)) {
+        // Use default value for missing arguments
+        finalArgs.push(defaultValues.get(paramName)!);
       } else {
-        // Normal argument, transform it
-        const transformedArg = transformNode(arg, currentDir);
-        if (!transformedArg) {
-          throw new ValidationError(
-            `Argument for parameter '${paramName}' transformed to null`,
-            "function call",
-            "valid expression",
-            "null",
-          );
-        }
-        finalArgs.push(transformedArg);
+        throw new ValidationError(
+          `Missing required argument for parameter '${paramName}' in call to function '${funcName}'`,
+          "function call",
+          "argument value",
+          "missing argument",
+        );
       }
-    } else if (defaultValues.has(paramName)) {
-      // Use default value for missing arguments
-      finalArgs.push(defaultValues.get(paramName)!);
-    } else {
+    }
+
+    // If we have a rest parameter, add all remaining arguments
+    if (hasRestParam) {
+      const restArgStartIndex = regularParamNames.length;
+      for (let i = restArgStartIndex; i < args.length; i++) {
+        const arg = args[i];
+        const transformedArg = transformNode(arg, currentDir);
+        if (transformedArg) {
+          finalArgs.push(transformedArg);
+        }
+      }
+    } else if (args.length > paramNames.length) {
+      // Too many arguments without a rest parameter
       throw new ValidationError(
-        `Missing required argument for parameter '${paramName}' in call to function '${funcName}'`,
+        `Too many positional arguments in call to function '${funcName}'`,
         "function call",
-        "argument value",
-        "missing argument",
+        `${paramNames.length} arguments`,
+        `${args.length} arguments`,
       );
     }
-  }
 
-  // If we have a rest parameter, add all remaining arguments individually
-  if (hasRestParam) {
-    const restArgStartIndex = regularParamNames.length;
-
-    // Process all remaining arguments individually
-    for (let i = restArgStartIndex; i < positionalArgs.length; i++) {
-      const arg = positionalArgs[i];
-      const transformedArg = transformNode(arg, currentDir);
-      if (transformedArg) {
-        finalArgs.push(transformedArg);
-      }
-    }
-  } else if (positionalArgs.length > paramNames.length) {
-    // Too many arguments without a rest parameter
-    throw new ValidationError(
-      `Too many positional arguments in call to function '${funcName}'`,
-      "function call",
-      `${paramNames.length} arguments`,
-      `${positionalArgs.length} arguments`,
+    // Create the final call expression
+    return {
+      type: IR.IRNodeType.CallExpression,
+      callee: {
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(funcName),
+      },
+      arguments: finalArgs,
+    } as IR.IRCallExpression;
+  } catch (error) {
+    throw new TransformError(
+      `Failed to process fn function call: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "fn function call",
+      "transformation",
+      args,
     );
   }
-
-  // Create the final call expression
-  return {
-    type: IR.IRNodeType.CallExpression,
-    callee: {
-      type: IR.IRNodeType.Identifier,
-      name: sanitizeIdentifier(funcName),
-    },
-    arguments: finalArgs,
-  } as IR.IRCallExpression;
 }
 
 /**
@@ -1739,6 +1786,135 @@ function transformLiteral(lit: LiteralNode): IR.IRNode {
     TransformError,
     [lit],
   );
+}
+
+/**
+ * Process named arguments for a function call
+ */
+function processNamedArguments(
+  funcName: string,
+  funcDef: IR.IRFnFunctionDeclaration,
+  args: HQLNode[],
+  currentDir: string,
+): IR.IRNode {
+  try {
+    // Extract parameter info from the function definition
+    const paramNames = funcDef.params.map((p) => p.name);
+    const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
+    
+    // Create a map to store provided named arguments
+    const providedArgs = new Map<string, IR.IRNode>();
+    
+    // Process the arguments
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      
+      // Check if this is a named argument
+      if (arg.type === "symbol" && (arg as SymbolNode).name.endsWith(":")) {
+        // Extract parameter name (without colon)
+        const paramName = (arg as SymbolNode).name.slice(0, -1);
+        
+        // Check if this parameter exists
+        if (!paramNames.includes(paramName)) {
+          throw new ValidationError(
+            `Unknown parameter '${paramName}' in call to function '${funcName}'`,
+            "function call",
+            "valid parameter name",
+            paramName,
+          );
+        }
+        
+        // Ensure we have a value
+        if (i + 1 >= args.length) {
+          throw new ValidationError(
+            `Named argument '${paramName}:' requires a value`,
+            "named argument",
+            "value",
+            "missing value",
+          );
+        }
+        
+        // Get and transform the value
+        const valueNode = args[++i];
+        
+        // Handle placeholder
+        if (isPlaceholder(valueNode)) {
+          if (defaultValues.has(paramName)) {
+            providedArgs.set(paramName, defaultValues.get(paramName)!);
+          } else {
+            throw new ValidationError(
+              `Placeholder used for parameter '${paramName}' but no default value is defined`,
+              "function call with placeholder",
+              "parameter with default value",
+              "parameter without default",
+            );
+          }
+        } else {
+          // Normal value
+          const transformedValue = transformNode(valueNode, currentDir);
+          if (!transformedValue) {
+            throw new ValidationError(
+              `Value for named argument '${paramName}:' transformed to null`,
+              "named argument value",
+              "valid expression",
+              "null",
+            );
+          }
+          providedArgs.set(paramName, transformedValue);
+        }
+      } else {
+        throw new ValidationError(
+          "Mixed positional and named arguments are not allowed",
+          "function call",
+          "all named or all positional arguments",
+          "mixed arguments",
+        );
+      }
+    }
+    
+    // Create the final argument list in the correct parameter order
+    const finalArgs: IR.IRNode[] = [];
+    
+    // Add arguments in the order defined in the function
+    for (const paramName of paramNames) {
+      // Skip rest parameter - not applicable for named arguments
+      if (paramName.startsWith("...")) continue;
+      
+      if (providedArgs.has(paramName)) {
+        // Use the provided value
+        finalArgs.push(providedArgs.get(paramName)!);
+      } else if (defaultValues.has(paramName)) {
+        // Use the default value
+        finalArgs.push(defaultValues.get(paramName)!);
+      } else {
+        throw new ValidationError(
+          `Missing required argument for parameter '${paramName}' in call to function '${funcName}'`,
+          "function call",
+          "argument value",
+          "missing argument",
+        );
+      }
+    }
+    
+    // Create the final call expression
+    return {
+      type: IR.IRNodeType.CallExpression,
+      callee: {
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(funcName),
+      },
+      arguments: finalArgs,
+    } as IR.IRCallExpression;
+  } catch (error) {
+    throw new TransformError(
+      `Failed to process named arguments: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "named arguments",
+      "transformation",
+      args,
+    );
+  }
 }
 
 /**
