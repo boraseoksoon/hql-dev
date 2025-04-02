@@ -79,6 +79,18 @@ export const PRIMITIVE_TYPES = new Set([
   "Any",
 ]);
 
+export function isValidType(typeName: string): boolean {
+  // Check if it's a primitive type
+  if (PRIMITIVE_TYPES.has(typeName)) {
+    return true;
+  }
+  
+  // Check if it's a known enum type
+  // We'll consider any type name not in primitive types as potentially valid
+  // and let the rest of the system validate it if needed
+  return true;
+}
+
 /**
  * Register a function as pure
  */

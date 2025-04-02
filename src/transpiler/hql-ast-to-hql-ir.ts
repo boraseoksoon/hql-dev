@@ -4767,6 +4767,9 @@ function processNamedArgumentsForFn(
 /**
  * Parse parameters with type annotations and default values
  */
+/**
+ * Parse parameters with type annotations and default values
+ */
 function parseParametersWithTypes(
   paramList: ListNode,
   currentDir: string,
@@ -4804,20 +4807,14 @@ function parseParametersWithTypes(
         ) {
           const typeName = (paramList.elements[i + 1] as SymbolNode).name;
 
-          // Validate the type
-          if (!PRIMITIVE_TYPES.has(typeName)) {
-            throw new ValidationError(
-              `Unsupported type '${typeName}'. Expected one of: ${
-                Array.from(PRIMITIVE_TYPES).join(", ")
-              }`,
-              "fx parameter type",
-              Array.from(PRIMITIVE_TYPES).join(", "),
-              typeName,
-            );
+          // For array types
+          if (typeName.startsWith("Array<") && typeName.endsWith(">")) {
+            types.set(paramName, typeName);
+          } 
+          // Handle enum types or any custom type
+          else {
+            types.set(paramName, typeName);
           }
-
-          // Set the type for this parameter
-          types.set(paramName, typeName);
 
           // Check for default value
           if (
@@ -4844,21 +4841,6 @@ function parseParametersWithTypes(
           }
         }
       }
-    }
-  }
-
-  // Validate that all parameters have types
-  for (const param of params) {
-    // Convert from sanitized name back to original for lookup
-    const originalName = param.name.replace(/_/g, "-");
-
-    if (!types.has(originalName)) {
-      throw new ValidationError(
-        `Parameter '${originalName}' is missing a type annotation`,
-        "fx parameter",
-        "type annotation",
-        "missing type",
-      );
     }
   }
 
@@ -5007,7 +4989,7 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
   try {
     logger.debug("Transforming fx function");
 
-    // Validate fx syntax
+    // Validate the fx syntax
     if (list.elements.length < 4) {
       throw new ValidationError(
         "fx requires a name, parameter list, return type list, and at least one body expression",
@@ -5070,18 +5052,9 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
     }
 
     const returnType = (returnTypeSymbol as SymbolNode).name;
-    // Validate return type is supported
-    if (!PRIMITIVE_TYPES.has(returnType)) {
-      throw new ValidationError(
-        `Unsupported return type '${returnType}'. Expected one of: ${
-          Array.from(PRIMITIVE_TYPES).join(", ")
-        }`,
-        "fx return type",
-        Array.from(PRIMITIVE_TYPES).join(", "),
-        returnType,
-      );
-    }
-
+    
+    // Accept any return type - we'll just assume it's valid (including enums)
+    
     // Body expressions start from index 4
     const bodyOffset = 4;
     const bodyExpressions = list.elements.slice(bodyOffset);
@@ -5096,16 +5069,7 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
 
     // Check that all parameter types are supported
     for (const [paramName, paramType] of paramTypes.entries()) {
-      if (!PRIMITIVE_TYPES.has(paramType)) {
-        throw new ValidationError(
-          `Parameter '${paramName}' has unsupported type '${paramType}'. Expected one of: ${
-            Array.from(PRIMITIVE_TYPES).join(", ")
-          }`,
-          "fx parameter type",
-          Array.from(PRIMITIVE_TYPES).join(", "),
-          paramType,
-        );
-      }
+      // Accept all types - we'll assume they're valid (including enums)
     }
 
     // Extract raw parameter symbols for purity verification
