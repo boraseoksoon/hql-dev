@@ -1530,8 +1530,9 @@ export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts
       freezeCall
     );
     
+    // IMPORTANT: Do not add export modifiers by default
     return ts.factory.createVariableStatement(
-      [ts.factory.createToken(ts.SyntaxKind.ExportKeyword)],
+      [],  // Empty array = no modifiers
       ts.factory.createVariableDeclarationList(
         [variableDeclaration],
         ts.NodeFlags.Const
@@ -1548,7 +1549,7 @@ function createEnumWithAssociatedValues(node: IR.IREnumDeclaration): ts.ClassDec
   const enumName = node.id.name;
   const members: ts.ClassElement[] = [];
   
-  // Create a private constructor without type annotations
+  // Create a private constructor
   const constructorDecl = ts.factory.createConstructorDeclaration(
     [ts.factory.createModifier(ts.SyntaxKind.PrivateKeyword)],
     [
@@ -1557,14 +1558,14 @@ function createEnumWithAssociatedValues(node: IR.IREnumDeclaration): ts.ClassDec
         undefined,
         ts.factory.createIdentifier("type"),
         undefined,
-        undefined  // No type annotation
+        undefined
       ),
       ts.factory.createParameterDeclaration(
         undefined,
         undefined,
         ts.factory.createIdentifier("values"),
         undefined,
-        undefined  // No type annotation
+        undefined
       )
     ],
     ts.factory.createBlock([
@@ -1593,13 +1594,13 @@ function createEnumWithAssociatedValues(node: IR.IREnumDeclaration): ts.ClassDec
   
   members.push(constructorDecl);
   
-  // Add properties for type and values without type annotations
+  // Add properties for type and values
   members.push(
     ts.factory.createPropertyDeclaration(
       undefined,
       ts.factory.createIdentifier("type"),
       undefined,
-      undefined,  // No type annotation
+      undefined,
       undefined
     )
   );
@@ -1609,12 +1610,12 @@ function createEnumWithAssociatedValues(node: IR.IREnumDeclaration): ts.ClassDec
       undefined,
       ts.factory.createIdentifier("values"),
       undefined,
-      undefined,  // No type annotation
+      undefined,
       undefined
     )
   );
   
-  // Add a type-checking method without type annotations
+  // Add a type-checking method
   members.push(
     ts.factory.createMethodDeclaration(
       undefined,
@@ -1628,10 +1629,10 @@ function createEnumWithAssociatedValues(node: IR.IREnumDeclaration): ts.ClassDec
           undefined,
           ts.factory.createIdentifier("type"),
           undefined,
-          undefined  // No type annotation
+          undefined
         )
       ],
-      undefined,  // No return type annotation
+      undefined,
       ts.factory.createBlock([
         ts.factory.createReturnStatement(
           ts.factory.createBinaryExpression(
@@ -1647,24 +1648,47 @@ function createEnumWithAssociatedValues(node: IR.IREnumDeclaration): ts.ClassDec
     )
   );
   
+  // Add a getValue helper method to access associated values
+  members.push(
+    ts.factory.createMethodDeclaration(
+      undefined,
+      undefined,
+      ts.factory.createIdentifier("getValue"),
+      undefined,
+      undefined,
+      [
+        ts.factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          ts.factory.createIdentifier("key"),
+          undefined,
+          undefined
+        )
+      ],
+      undefined,
+      ts.factory.createBlock([
+        ts.factory.createReturnStatement(
+          ts.factory.createElementAccessExpression(
+            ts.factory.createPropertyAccessExpression(
+              ts.factory.createThis(),
+              ts.factory.createIdentifier("values")
+            ),
+            ts.factory.createIdentifier("key")
+          )
+        )
+      ], true)
+    )
+  );
+  
   // Add factory methods for each case
   for (const enumCase of node.cases) {
     const caseName = enumCase.id.name;
     
     if (enumCase.hasAssociatedValues && enumCase.associatedValues) {
-      // Create a factory method for this case with associated values
-      const parameters = enumCase.associatedValues.map(param => 
-        ts.factory.createParameterDeclaration(
-          undefined,
-          undefined,
-          ts.factory.createIdentifier(param.name),
-          undefined,
-          undefined  // No type annotation
-        )
-      );
-      
+      // Create a factory method for this case with named parameters
       const paramNames = enumCase.associatedValues.map(param => param.name);
       
+      // Create a method that accepts a single object parameter with named fields
       members.push(
         ts.factory.createMethodDeclaration(
           [ts.factory.createModifier(ts.SyntaxKind.StaticKeyword)],
@@ -1672,24 +1696,52 @@ function createEnumWithAssociatedValues(node: IR.IREnumDeclaration): ts.ClassDec
           ts.factory.createIdentifier(caseName),
           undefined,
           undefined,
-          parameters,
-          undefined,  // No return type annotation
+          [
+            // Create a parameter with explicit named options
+            ts.factory.createParameterDeclaration(
+              undefined,
+              undefined,
+              ts.factory.createIdentifier("options"),
+              undefined,
+              undefined,
+              ts.factory.createObjectLiteralExpression([], false)
+            )
+          ],
+          undefined,
           ts.factory.createBlock([
+            // Create object literal with all the parameters
+            ts.factory.createVariableStatement(
+              undefined,
+              ts.factory.createVariableDeclarationList(
+                [
+                  ts.factory.createVariableDeclaration(
+                    ts.factory.createIdentifier("values"),
+                    undefined,
+                    undefined,
+                    ts.factory.createObjectLiteralExpression(
+                      paramNames.map(name => 
+                        ts.factory.createPropertyAssignment(
+                          ts.factory.createIdentifier(name),
+                          ts.factory.createPropertyAccessExpression(
+                            ts.factory.createIdentifier("options"),
+                            ts.factory.createIdentifier(name)
+                          )
+                        )
+                      ),
+                      false
+                    )
+                  )
+                ],
+                ts.NodeFlags.Const
+              )
+            ),
             ts.factory.createReturnStatement(
               ts.factory.createNewExpression(
                 ts.factory.createIdentifier(enumName),
                 undefined,
                 [
                   ts.factory.createStringLiteral(caseName),
-                  ts.factory.createObjectLiteralExpression(
-                    paramNames.map(name => 
-                      ts.factory.createPropertyAssignment(
-                        ts.factory.createIdentifier(name),
-                        ts.factory.createIdentifier(name)
-                      )
-                    ),
-                    false
-                  )
+                  ts.factory.createIdentifier("values")
                 ]
               )
             )
@@ -1710,13 +1762,13 @@ function createEnumWithAssociatedValues(node: IR.IREnumDeclaration): ts.ClassDec
           ],
           ts.factory.createIdentifier(caseName),
           undefined,
-          undefined,  // No type annotation
+          undefined,
           ts.factory.createNewExpression(
             ts.factory.createIdentifier(enumName),
             undefined,
             [
               ts.factory.createStringLiteral(caseName),
-              valueExpr
+              ts.factory.createObjectLiteralExpression([], false)
             ]
           )
         )
@@ -1724,31 +1776,11 @@ function createEnumWithAssociatedValues(node: IR.IREnumDeclaration): ts.ClassDec
     }
   }
   
-  // Create the class declaration
   return ts.factory.createClassDeclaration(
-    [ts.factory.createModifier(ts.SyntaxKind.ExportKeyword)],
+    [],  // No modifiers
     ts.factory.createIdentifier(enumName),
     undefined,
     undefined,
     members
   );
-}
-
-
-/**
- * Map HQL types to TypeScript types
- */
-function mapHqlTypeToTsType(hqlType: string): ts.SyntaxKind {
-  switch (hqlType) {
-    case 'Int':
-      return ts.SyntaxKind.NumberKeyword;
-    case 'Double':
-      return ts.SyntaxKind.NumberKeyword;
-    case 'String':
-      return ts.SyntaxKind.StringKeyword;
-    case 'Bool':
-      return ts.SyntaxKind.BooleanKeyword;
-    default:
-      return ts.SyntaxKind.AnyKeyword;
-  }
 }
