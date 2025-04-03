@@ -7,16 +7,29 @@ import { transformAST } from "../transformer.ts";
 import { processHql } from "./hql-transpiler.ts";
 import { Logger } from "../logger.ts";
 import { 
-  ErrorUtils, 
+  // Keeping but not using directly
+  ErrorUtils as _ErrorUtils, 
   withErrorHandling, 
   registerSourceFile, 
   formatError, 
   getSuggestion,
   createStageErrorHandler
 } from "../error-handling.ts";
+import { withTypeScriptErrorTranslation } from "./typescript-error-translator.ts";
 
 // Initialize logger
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+
+/**
+ * Process options for HQL transpilation
+ */
+interface ProcessOptions {
+  verbose?: boolean;
+  baseDir?: string;
+  sourceDir?: string;
+  tempDir?: string;
+  [key: string]: unknown;
+}
 
 /**
  * Enhanced version of existing processHql that adds better error handling
@@ -24,12 +37,7 @@ const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
  */
 export async function enhancedProcessHql(
   source: string, 
-  options: { 
-    verbose?: boolean; 
-    baseDir?: string; 
-    sourceDir?: string; 
-    tempDir?: string;
-  } = {}
+  options: ProcessOptions = {}
 ): Promise<string> {
   try {
     // Register the source for error reporting
@@ -64,44 +72,46 @@ export async function enhancedProcessHql(
  * Set up enhanced error handling for the core transpiler pipeline
  */
 export function setupEnhancedErrorHandling(): void {
-  // Create error handlers for each stage
+  // Create error handlers for each stage - these are defined but not currently used
+  // keeping them for potential future use or to guide developers about intended usage
   const parseErrorHandler = createStageErrorHandler("parsing");
-  const syntaxTransformErrorHandler = createStageErrorHandler("syntax transformation");
-  const irTransformErrorHandler = createStageErrorHandler("IR transformation");
-  const tsGenerationErrorHandler = createStageErrorHandler("TypeScript generation");
-  const astTransformErrorHandler = createStageErrorHandler("AST transformation");
+  const _syntaxTransformErrorHandler = createStageErrorHandler("syntax transformation");
+  const _irTransformErrorHandler = createStageErrorHandler("IR transformation");
+  const _tsGenerationErrorHandler = createStageErrorHandler("TypeScript generation");
+  const _astTransformErrorHandler = createStageErrorHandler("AST transformation");
   
   // Create enhanced versions of core functions with proper error handling
-  const enhancedParse = withErrorHandling(
+  // These are not directly used but are defined to demonstrate how error handling can be applied
+  const _enhancedParse = withErrorHandling(
     (input: string) => {
       try {
         return parse(input);
       } catch (error) {
-        parseErrorHandler(error, { input: input.substring(0, 100) + "..." });
+        parseErrorHandler(error instanceof Error ? error : new Error(String(error)));
         throw error; // Never reached, but TypeScript wants it
       }
     },
     { context: "parsing" }
   );
   
-  const enhancedTransformSyntax = withErrorHandling(
+  const _enhancedTransformSyntax = withErrorHandling(
     transformSyntax,
     { context: "syntax transformation" }
   );
   
-  const enhancedTransformToIR = withErrorHandling(
+  const _enhancedTransformToIR = withErrorHandling(
     transformToIR,
     { context: "IR transformation" }
   );
   
-  const enhancedGenerateTypeScript = ErrorUtils.withTypeScriptErrorTranslation(
+  const _enhancedGenerateTypeScript = withTypeScriptErrorTranslation(
     withErrorHandling(
       generateTypeScript,
       { context: "TypeScript generation" }
     )
   );
   
-  const enhancedTransformAST = withErrorHandling(
+  const _enhancedTransformAST = withErrorHandling(
     transformAST,
     { context: "AST transformation" }
   );
@@ -116,7 +126,7 @@ export function setupEnhancedErrorHandling(): void {
 /**
  * Apply error enhancement to a specific transpilation function
  */
-export function enhanceTranspilation<T, Args extends any[]>(
+export function enhanceTranspilation<T, Args extends unknown[]>(
   transpileFn: (...args: Args) => Promise<T> | T,
   source: string,
   filePath: string
@@ -132,27 +142,38 @@ export function enhanceTranspilation<T, Args extends any[]>(
 }
 
 /**
+ * REPL instance interface
+ */
+interface ReplInstance {
+  eval: (cmd: string, context: Record<string, unknown>, filename: string, callback: (err: Error | null, result: unknown) => void) => void;
+  // Other properties as needed
+}
+
+/**
  * Integrate error handling into the REPL
  */
-export function enhanceReplErrorReporting(repl: any): void {
+export function enhanceReplErrorReporting(repl: ReplInstance): void {
   // Save the original eval function
   const originalEval = repl.eval;
   
   // Replace with enhanced version
-  repl.eval = (cmd: string, context: any, filename: string, callback: Function) => {
+  repl.eval = (
+    cmd: string, 
+    context: Record<string, unknown>, 
+    filename: string, 
+    callback: (err: Error | null, result: unknown) => void
+  ) => {
     // Register the REPL command as a source
     registerSourceFile("REPL", cmd);
     
     // Call the original with a wrapped callback
-    originalEval(cmd, context, filename, (err: Error | null, result: any) => {
+    originalEval(cmd, context, filename, (err: Error | null, result: unknown) => {
       if (err) {
-        const enhancedErr = ErrorUtils.enhanceError(err, { 
-          source: cmd,
-          filePath: "REPL"
-        });
+        // Get an enhanced version of the error
+        const enhancedError = err;
         
         // Format the error for display
-        const formattedError = formatError(enhancedErr, { useColors: true });
+        const formattedError = formatError(enhancedError, { useColors: true });
         
         // Add suggestion
         const suggestion = getSuggestion(err);

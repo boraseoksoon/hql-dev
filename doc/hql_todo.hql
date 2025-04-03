@@ -1,8 +1,6 @@
 by end of 04/26/2025
 
 HQL
-1. fn: named parameter and type annotation
-2. fn + enum dot notation
 3. fundamental type system - 
 4. ts -> js issue
 5. refactoring

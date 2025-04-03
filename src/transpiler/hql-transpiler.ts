@@ -1,35 +1,33 @@
 // src/transpiler/hql-transpiler.ts - Refactored
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { sexpToString } from "../s-exp/types.ts";
+import { SExp } from "../s-exp/types.ts";
 import { parse } from "./parser.ts";
 import { Environment } from "../environment.ts";
+import { transformSyntax } from "./syntax-transformer.ts";
 import { expandMacros } from "../s-exp/macro.ts";
 import { processImports } from "../s-exp/imports.ts";
 import { convertToHqlAst } from "../s-exp/macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
-import { transformSyntax } from "./syntax-transformer.ts";
-import { getSystemMacroPaths } from "../s-exp/system-macros.ts";
-import {
-  createErrorReport,
-  ImportError,
-  MacroError,
-  ParseError,
-  TransformError,
-  TranspilerError,
-} from "./errors.ts";
 import { 
-  registerSourceFile, 
   formatError, 
   getSuggestion, 
-  withErrorHandling, 
-  ErrorUtils
+  registerSourceFile
 } from "../error-handling.ts";
 import { enhanceParseError } from "./enhanced-errors.ts";
+import { getSystemMacroPaths } from "../s-exp/system-macros.ts";
+import {
+  TranspilerError,
+  ParseError,
+  ImportError,
+  MacroError as _MacroError,
+  TransformError as _TransformError,
+  createErrorReport as _createErrorReport
+} from "./errors.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
-const macroExpressionsCache = new Map<string, any[]>();
+const macroExpressionsCache = new Map<string, SExp[]>();
 
 interface ProcessOptions {
   verbose?: boolean;
@@ -44,73 +42,99 @@ interface ProcessOptions {
  * Process HQL source code and return transpiled JavaScript
  */
 export async function processHql(
-  source: string,
+  _source: string,
+  _sourceFilename: string,
   options: ProcessOptions = {},
 ): Promise<string> {
   const logger = new Logger(options.verbose || false);
   logger.debug("Processing HQL source with S-expression layer");
 
   const timings = new Map<string, number>();
-  const start = () => performance.now();
-  const end = (label: string, s: number) => {
-    const t = performance.now() - s;
-    timings.set(label, t);
-    logger.debug(`${label} completed in ${t.toFixed(2)}ms`);
-  };
-
-  const sourceFilename = options.baseDir ? path.basename(options.baseDir) : "unknown";
   const sourceFilePath = options.baseDir || "unknown";
   
   // Register source for error enhancement
-  registerSourceFile(sourceFilePath, source);
+  registerSourceFile(sourceFilePath, _source);
 
+  // Get environment in parallel with parsing
+  const envPromise = getGlobalEnv(options);
+  
   try {
-    // Process all stages with proper error handling
-    const t0 = start();
-    const sexps = parseWithHandling(source, logger);
-    end("Parsing", t0);
+    // Parse, transform, and prepare - measure each operation
+    const t0 = performance.now();
+    const sexps = parse(_source);
+    timings.set("Parsing", performance.now() - t0);
+    logger.debug(`Parsed ${sexps.length} S-expressions`);
     
-    const t1 = start();
-    const canonicalSexps = transformWithHandling(sexps, options.verbose, logger);
-    end("Syntax transform", t1);
+    const t1 = performance.now();
+    const canonicalSexps = transformSyntax(sexps, { verbose: options.verbose });
+    timings.set("Syntax transform", performance.now() - t1);
+    logger.debug(`Transformed to ${canonicalSexps.length} expressions`);
     
-    const t2 = start();
-    const env = await getGlobalEnv(options);
+    // Wait for environment
+    const t2 = performance.now();
+    const env = await envPromise;
+    timings.set("Environment setup", performance.now() - t2);
+    
+    // Set current file before processing imports
     if (options.baseDir) env.setCurrentFile(options.baseDir);
-    end("Environment setup", t2);
     
-    const t3 = start();
-    await processImportsWithHandling(canonicalSexps, env, options);
-    end("Import processing", t3);
+    // Process imports, expand macros, and generate code - measure each step
+    const t3 = performance.now();
+    await processImports(canonicalSexps, env, {
+      verbose: options.verbose,
+      baseDir: options.baseDir || Deno.cwd(),
+      tempDir: options.tempDir,
+      currentFile: options.baseDir,
+    });
+    timings.set("Import processing", performance.now() - t3);
     
-    const t4 = start();
-    const expanded = expandWithHandling(canonicalSexps, env, options, logger);
-    end("Macro expansion", t4);
+    const t4 = performance.now();
+    const expanded = expandMacros(canonicalSexps, env, {
+      verbose: options.verbose,
+      currentFile: options.baseDir,
+      useCache: true,
+    });
+    timings.set("Macro expansion", performance.now() - t4);
     
-    const t5 = start();
+    const t5 = performance.now();
     const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
-    end("AST conversion", t5);
+    timings.set("AST conversion", performance.now() - t5);
     
-    const t6 = start();
-    const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), { verbose: options.verbose });
-    end("JS transformation", t6);
+    const t6 = performance.now();
+    const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), { 
+      verbose: options.verbose 
+    });
+    timings.set("JS transformation", performance.now() - t6);
 
+    // Reset current file
     if (options.baseDir) env.setCurrentFile(null);
 
-    if (options.verbose) logPerformance(timings, sourceFilename);
+    // Log performance metrics if verbose
+    if (options.verbose) {
+      logPerformance(timings, _sourceFilename);
+    }
+    
     return jsCode;
   } catch (error) {
+    // Single error handling path with consistent behavior
+    if (options.baseDir) {
+      try { 
+        await envPromise.then(env => env.setCurrentFile(null));
+      } catch {
+        // Ignore errors when resetting current file
+      }
+    }
+    
     if (options.skipErrorHandling) {
-      // Rethrow without additional handling
       throw error;
     }
     
-    // Handle the error with enhanced details
-    return handleProcessError(error, source, options, sourceFilename, logger);
+    return handleProcessError(error, _source, options, _sourceFilename, logger);
   }
 }
 
-function parseWithHandling(source: string, logger: Logger) {
+// Keep these internal functions with underscore prefix since they're unused
+function _parseWithHandling(source: string, logger: Logger) {
   try {
     const sexps = parse(source);
     logger.debug(`Parsed ${sexps.length} S-expressions`);
@@ -129,23 +153,17 @@ function parseWithHandling(source: string, logger: Logger) {
   }
 }
 
-function transformWithHandling(sexps: any[], verbose: boolean | undefined, logger: Logger) {
+function _transformWithHandling(sexps: SExp[], verbose: boolean | undefined, logger: Logger) {
   try {
     const result = transformSyntax(sexps, { verbose });
-    logger.debug(`Transformed ${result.length} expressions`);
     return result;
-  } catch (error: unknown) {
-    if (error instanceof TransformError) throw error;
-    
-    if (error instanceof Error) {
-      throw new TransformError(`Failed to transform syntax: ${error.message}`, "syntax transformation", "valid HQL expressions", sexps);
-    }
-    
-    throw new TransformError(`Failed to transform syntax: ${String(error)}`, "syntax transformation", "valid HQL expressions", sexps);
+  } catch (error) {
+    logger.error(`Error during syntax transformation: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
   }
 }
 
-async function processImportsWithHandling(sexps: any[], env: Environment, options: ProcessOptions) {
+async function _processImportsWithHandling(sexps: SExp[], env: Environment, options: ProcessOptions, logger: Logger) {
   try {
     await processImports(sexps, env, {
       verbose: options.verbose,
@@ -153,40 +171,35 @@ async function processImportsWithHandling(sexps: any[], env: Environment, option
       tempDir: options.tempDir,
       currentFile: options.baseDir,
     });
-  } catch (error: unknown) {
-    if (error instanceof ImportError) throw error;
-    
-    if (error instanceof Error) {
-      throw new ImportError(`Failed to process imports: ${error.message}`, "unknown", options.baseDir, error);
-    }
-    
-    throw new ImportError(`Failed to process imports: ${String(error)}`, "unknown", options.baseDir, undefined);
+  } catch (error) {
+    logger.error(`Error processing imports: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
   }
 }
 
-function expandWithHandling(sexps: any[], env: Environment, options: ProcessOptions, logger: Logger) {
+function _expandWithHandling(sexps: SExp[], env: Environment, options: ProcessOptions, logger: Logger) {
   try {
     return expandMacros(sexps, env, {
       verbose: options.verbose,
       currentFile: options.baseDir,
       useCache: true,
     });
-  } catch (error: unknown) {
-    if (error instanceof MacroError) throw error;
-    
-    if (error instanceof Error) {
-      throw new MacroError(`Failed to expand macros: ${error.message}`, "", options.baseDir, error);
-    }
-    
-    throw new MacroError(`Failed to expand macros: ${String(error)}`, "", options.baseDir, undefined);
+  } catch (error) {
+    logger.error(`Error expanding macros: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
   }
 }
 
-function logExpressions(label: string, sexps: any[], logger: Logger) {
+function _logExpressions(label: string, sexps: SExp[], logger: Logger) {
   const maxLog = 5;
   logger.debug(`${label} ${sexps.length} expressions`);
-  sexps.slice(0, maxLog).forEach((s, i) => logger.debug(`${label} ${i + 1}: ${sexpToString(s)}`));
-  if (sexps.length > maxLog) logger.debug(`...and ${sexps.length - maxLog} more expressions`);
+  
+  if (sexps.length <= maxLog) {
+    sexps.forEach((exp, i) => logger.debug(`  ${i}: ${JSON.stringify(exp)}`));
+  } else {
+    sexps.slice(0, maxLog).forEach((exp, i) => logger.debug(`  ${i}: ${JSON.stringify(exp)}`));
+    logger.debug(`  ... and ${sexps.length - maxLog} more`);
+  }
 }
 
 function logPerformance(timings: Map<string, number>, file: string) {
@@ -201,9 +214,9 @@ function logPerformance(timings: Map<string, number>, file: string) {
 
 function handleProcessError(
   error: unknown,
-  source: string,
+  _source: string,
   options: ProcessOptions,
-  sourceFilename: string,
+  _sourceFilename: string,
   logger: Logger,
 ): never {
   if (error instanceof Error) {

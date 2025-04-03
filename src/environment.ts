@@ -175,49 +175,68 @@ export class Environment {
     }
   }
 
-  lookup(key: string): Value {
-    try {
-      const cachedValue = this.lookupCache.get(key);
-      if (cachedValue !== undefined) return cachedValue;
-      if (key.includes(".")) {
-        const result = this.lookupDotNotation(key);
-        this.lookupCache.set(key, result);
-        return result;
-      }
-      const sanitizedKey = key.replace(/-/g, "_");
-      if (this.variables.has(sanitizedKey)) {
-        const v = this.variables.get(sanitizedKey);
-        this.lookupCache.set(key, v!);
-        this.lookupCache.set(sanitizedKey, v!);
-        return v!;
-      }
-      if (this.variables.has(key)) {
-        const v = this.variables.get(key);
-        this.lookupCache.set(key, v!);
-        return v!;
-      }
-      if (this.parent) {
-        try {
-          const v = this.parent.lookup(key);
-          this.lookupCache.set(key, v);
-          return v;
-        } catch {
-          // Parent lookup failed, continue with local lookup
-        }
-      }
-      this.logger.debug(`Symbol not found: ${key}`);
-      throw new ValidationError(
-        `Symbol not found: ${key}`,
-        "variable lookup",
-        "defined symbol",
-        "undefined symbol",
-      );
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (error instanceof ValidationError) throw error;
-      throw new ValidationError(`Error looking up symbol ${key}: ${msg}`, "variable lookup");
+  // src/environment.ts - lookup function refactor
+
+lookup(key: string): Value {
+  try {
+    // First check cache directly using the original key
+    const cachedValue = this.lookupCache.get(key);
+    if (cachedValue !== undefined) return cachedValue;
+    
+    // Check if we're dealing with a property access via dot notation
+    if (key.includes(".")) {
+      const result = this.lookupDotNotation(key);
+      // Cache the result for future lookups
+      this.lookupCache.set(key, result);
+      return result;
     }
+    
+    // Try with sanitized key first (optimization for most common case)
+    const sanitizedKey = key.replace(/-/g, "_");
+    
+    // Check variables in this scope
+    let value: Value | undefined;
+    if (sanitizedKey !== key && this.variables.has(sanitizedKey)) {
+      value = this.variables.get(sanitizedKey);
+    } else if (this.variables.has(key)) {
+      value = this.variables.get(key);
+    }
+    
+    if (value !== undefined) {
+      // Cache both versions of the key
+      this.lookupCache.set(key, value);
+      if (sanitizedKey !== key) {
+        this.lookupCache.set(sanitizedKey, value);
+      }
+      return value;
+    }
+    
+    // If not found in this scope, try parent
+    if (this.parent) {
+      try {
+        const parentValue = this.parent.lookup(key);
+        // Cache the result from parent
+        this.lookupCache.set(key, parentValue);
+        return parentValue;
+      } catch {
+        // Silently continue if parent lookup fails
+      }
+    }
+    
+    this.logger.debug(`Symbol not found: ${key}`);
+    throw new ValidationError(
+      `Symbol not found: ${key}`,
+      "variable lookup",
+      "defined symbol",
+      "undefined symbol",
+    );
+  } catch (error) {
+    if (error instanceof ValidationError) throw error;
+    
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new ValidationError(`Error looking up symbol ${key}: ${msg}`, "variable lookup");
   }
+}
 
   private lookupDotNotation(key: string): Value {
     const [moduleName, ...propertyParts] = key.split(".");

@@ -6,17 +6,17 @@ import {
   ImportError, 
   CodeGenError, 
   TransformError,
-  summarizeNode,
-  createErrorReport
+  summarizeNode as _summarizeNode,
+  createErrorReport as _createErrorReport
 } from "./transpiler/errors.ts";
 import { 
-  EnhancedTranspilerError, 
+  EnhancedTranspilerError as _EnhancedTranspilerError, 
   enhanceError, 
   enhanceParseError 
 } from "./transpiler/enhanced-errors.ts";
 import { 
   translateTypeScriptError, 
-  withTypeScriptErrorTranslation 
+  withTypeScriptErrorTranslation as _withTypeScriptErrorTranslation 
 } from "./transpiler/typescript-error-translator.ts";
 import { Logger } from "./logger.ts";
 
@@ -64,11 +64,10 @@ export function formatError(
   const source = options.filePath ? sourceRegistry.get(options.filePath) : undefined;
   
   // Enhance the error with source context
-  let enhancedError: Error;
   if (error instanceof ParseError) {
-    enhancedError = enhanceParseError(error, options.useColors);
+    error = enhanceParseError(error, options.useColors);
   } else {
-    enhancedError = enhanceError(error, {
+    error = enhanceError(error, {
       source,
       filePath: options.filePath,
       useColors: options.useColors
@@ -226,7 +225,7 @@ export function getSuggestion(error: Error): string {
  * Create a function wrapper that handles errors
  * Prevents duplicate error messages
  */
-export function withErrorHandling<T, Args extends any[]>(
+export function withErrorHandling<T, Args extends unknown[]>(
   fn: (...args: Args) => Promise<T> | T,
   options: {
     source?: string;
@@ -245,119 +244,105 @@ export function withErrorHandling<T, Args extends any[]>(
         registerSourceFile(options.filePath, options.source);
       }
       
-      // Create a context string for the error
-      const context = options.context ? `in ${options.context}` : '';
+      // Create a context string for the error (used in logging below)
+      const errorContext = options.context ? `in ${options.context}` : '';
       
-      if (error instanceof Error) {
-        // Check if we've already processed this error
-        const alreadyProcessed = processedErrors.has(error);
+      // Check if error is already enhanced/processed (avoid duplicate processing)
+      const isProcessed = error instanceof Error && processedErrors.has(error);
+      
+      if (!isProcessed && error instanceof Error) {
+        // Mark as processed
+        processedErrors.set(error, options.context || 'unknown');
         
-        if (alreadyProcessed) {
-          // Just rethrow without additional processing
-          console.debug(`[Debug] Skipping already processed error: ${processedErrors.get(error)}`);
-          throw error;
-        }
-        
-        // Mark this error as processed with context
-        const errorId = `${error.message} in ${options.context || 'unknown context'}`;
-        processedErrors.set(error, errorId);
-        console.debug(`[Debug] Processing error first time: ${errorId}`);
-        
-        // Enhance the error with context information
-        const enhancedErr = enhanceError(error, {
-          source: options.source,
-          filePath: options.filePath
-        });
-        
-        // Log the error if requested
+        // Only log if logErrors is true or not specified
         if (options.logErrors !== false) {
-          logger.error(formatError(enhancedErr, { 
-            filePath: options.filePath,
-            useColors: true 
-          }));
+          // Log the error with information about where it occurred
+          logger.error(`Error ${errorContext}: ${error.message}`);
           
-          // Add suggestion
-          const suggestion = getSuggestion(error);
-          if (suggestion) {
-            logger.info(`Suggestion: ${suggestion}`);
+          // If the error has a stack trace and we're in debug mode, log it too
+          if (error.stack && logger.enabled) {
+            logger.debug(`Stack trace: ${error.stack.split('\n').slice(1).join('\n')}`);
           }
         }
-        
-        // Rethrow by default, unless explicitly set to false
-        if (options.rethrow !== false) {
-          throw enhancedErr;
-        }
-        
-        // If not rethrowing, return a default value (undefined)
-        return undefined as unknown as T;
       }
       
-      // For non-Error objects, just rethrow
-      throw error;
+      // Rethrow to allow higher-level handling or let it be caught
+      if (options.rethrow !== false) {
+        throw error;
+      }
+      
+      return null as unknown as T;
     }
   };
 }
 
 /**
- * Setup error handling for the entire pipeline
- * This function should be called once during initialization
+ * Initialize error handling for the current process
  */
 export function setupErrorHandling(): void {
-  // Register global error handlers using Deno API
-  // instead of Node.js process.on("uncaughtException")
+  // Listen for uncaught errors in the event loop
   globalThis.addEventListener("error", (event) => {
-    const error = event.error;
-    logger.error(formatError(error, { useColors: true, includeStack: true }));
+    logger.error("Uncaught error:", event.error);
     
-    // Add suggestion
-    logger.info(`Suggestion: ${getSuggestion(error)}`);
-    
-    // Note: Deno will exit automatically after an uncaught exception
-    // so we don't need to call Deno.exit() here
+    if (event.error instanceof Error) {
+      console.error(formatError(event.error, { 
+        useColors: true, 
+        includeStack: true 
+      }));
+      
+      const suggestion = getSuggestion(event.error);
+      if (suggestion) {
+        console.error(`\x1b[36mSuggestion: ${suggestion}\x1b[0m`);
+      }
+    }
   });
   
-  // Handle unhandled promise rejections
+  // Listen for unhandled promise rejections
   globalThis.addEventListener("unhandledrejection", (event) => {
-    const error = event.reason instanceof Error 
-      ? event.reason 
-      : new Error(String(event.reason));
+    logger.error("Unhandled promise rejection:", event.reason);
     
-    logger.error(formatError(error, { useColors: true, includeStack: true }));
-    logger.info(`Suggestion: ${getSuggestion(error)}`);
+    if (event.reason instanceof Error) {
+      console.error(formatError(event.reason, { 
+        useColors: true, 
+        includeStack: true 
+      }));
+      
+      const suggestion = getSuggestion(event.reason);
+      if (suggestion) {
+        console.error(`\x1b[36mSuggestion: ${suggestion}\x1b[0m`);
+      }
+    }
   });
-  
-  logger.debug("Global error handling has been set up");
 }
 
 /**
  * Create an error handler for a specific transpiler stage
  */
-export function createStageErrorHandler(stageName: string): Function {
-  return (error: Error, context: Record<string, unknown> = {}): void => {
-    const errorReport = createErrorReport(error, stageName, context);
-    logger.error(errorReport);
+export function createStageErrorHandler(stageName: string): (error: Error) => void {
+  return (error: Error) => {
+    logger.error(`Error in ${stageName}: ${error.message}`);
+    console.error(formatError(error, { 
+      useColors: true 
+    }));
     
-    // Add suggestion
-    logger.info(`Suggestion: ${getSuggestion(error)}`);
+    const suggestion = getSuggestion(error);
+    if (suggestion) {
+      console.error(`\x1b[36mSuggestion: ${suggestion}\x1b[0m`);
+    }
     
     throw error;
   };
 }
 
-/**
- * Collection of error utilities for easier importing
- */
+// Export utilities through ErrorUtils
 export const ErrorUtils = {
-  enhanceError,
-  enhanceParseError,
-  translateTypeScriptError,
-  withTypeScriptErrorTranslation,
-  withErrorHandling,
   formatError,
   getSuggestion,
   registerSourceFile,
-  getSourceFile,
-  createStageErrorHandler
+  withErrorHandling,
+  enhanceError,
+  enhanceParseError,
+  withTypeScriptErrorTranslation: _withTypeScriptErrorTranslation,
 };
 
 // Export everything from errors.ts for convenience

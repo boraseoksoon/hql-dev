@@ -5,11 +5,29 @@ import {
   setupErrorHandling,
   ErrorUtils 
 } from "./error-handling.ts";
+import { withTypeScriptErrorTranslation } from "./transpiler/typescript-error-translator.ts";
 import { setupEnhancedErrorHandling, enhanceReplErrorReporting } from "./transpiler/integration.ts";
 import { Logger } from "./logger.ts";
 
 // Initialize logger
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+
+/**
+ * Interface for REPL instance
+ */
+interface ReplInstance {
+  setErrorHandler: (handler: (error: Error) => void) => void;
+  // Add other properties as needed
+}
+
+/**
+ * Options for HQL processing
+ */
+interface ProcessHqlOptions {
+  baseDir?: string;
+  verbose?: boolean;
+  [key: string]: unknown;
+}
 
 /**
  * Initialize error handling throughout the system
@@ -18,7 +36,7 @@ const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 export function initializeErrorHandling(options: {
   enableGlobalHandlers?: boolean; 
   enableReplEnhancement?: boolean;
-  repl?: any;
+  repl?: ReplInstance;
 } = {}): void {
   // Set up global error handling if requested
   if (options.enableGlobalHandlers !== false) {
@@ -54,11 +72,11 @@ export async function getEnhancedFunctions() {
     parse: ErrorUtils.withErrorHandling(parserModule.parse, { context: "parsing" }),
     transformSyntax: ErrorUtils.withErrorHandling(syntaxTransformerModule.transformSyntax, { context: "syntax transformation" }),
     transformToIR: ErrorUtils.withErrorHandling(irTransformerModule.transformToIR, { context: "IR transformation" }),
-    generateTypeScript: ErrorUtils.withTypeScriptErrorTranslation(
+    generateTypeScript: withTypeScriptErrorTranslation(
       ErrorUtils.withErrorHandling(tsGeneratorModule.generateTypeScript, { context: "TypeScript generation" })
     ),
     transformAST: ErrorUtils.withErrorHandling(astTransformerModule.transformAST, { context: "AST transformation" }),
-    processHql: async (source: string, options: any = {}) => {
+    processHql: async (source: string, options: ProcessHqlOptions = {}) => {
       // Register the source for error reporting
       const sourceId = options.baseDir || "unknown";
       ErrorUtils.registerSourceFile(sourceId, source);

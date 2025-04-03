@@ -282,6 +282,8 @@ function getModulePathFromImport(importExpr: SList): string {
   return "unknown";
 }
 
+// src/s-exp/imports.ts - processImport function refactor
+
 async function processImport(
   importExpr: SList,
   env: Environment,
@@ -299,52 +301,29 @@ async function processImport(
     );
   }
 
-  // Get the module path to check if it's in examples directory
+  // First get the module path for optimization decisions
   const modulePath = getModulePathFromImport(importExpr);
   
-  // Skip rebuilding any files in the 'examples' directory when in REPL mode
-  if (options.skipRebuild && (
-      modulePath.includes('/examples/') || 
-      modulePath.includes('\\examples\\') || 
-      /examples[/\\]/.test(modulePath)
-    )) {
-    logger.debug(`Skipping rebuild for example import: ${modulePath} (REPL mode)`);
-    return;
-  }
-
-  // If skipRebuild is set, just register the import without rebuilding
+  // Single check for examples directory with regex pattern
+  const isExampleImport = /examples[/\\]/.test(modulePath);
+  
+  // Fast path for skipping builds in REPL mode
   if (options.skipRebuild) {
-    logger.debug(`Skipping rebuild for import in ${options.currentFile || 'unknown'} (REPL mode)`);
-    // Just mark the file as processed without actually rebuilding it
+    if (isExampleImport) {
+      logger.debug(`Skipping rebuild for example import: ${modulePath} (REPL mode)`);
+    } else {
+      logger.debug(`Skipping rebuild for import in ${options.currentFile || 'unknown'} (REPL mode)`);
+    }
     return;
   }
 
   try {
-    // Handle different import syntaxes
-    if (elements.length === 2 && elements[1].type === "literal") {
-      // Simple import statement like (import "module-path")
-      const modulePath = (elements[1] as SLiteral).value as string;
-      const resolvedPath = path.resolve(baseDir, modulePath);
-      
-      logger.debug(`Simple import of full module: ${modulePath} => ${resolvedPath}`);
-      
-      // Register the module path for later reference
-      registerModulePath(modulePath, resolvedPath);
-      
-      // Load the module based on its type
-      await loadModuleByType(
-        modulePath, // Use the path as the module name
-        modulePath,
-        resolvedPath,
-        baseDir,
-        env,
-        options
-      );
+    // Determine import type once and branch based on pattern
+    if (elements.length === 2 && isLiteral(elements[1])) {
+      await processSimpleImport(elements[1] as SLiteral, env, baseDir, options);
     } else if (isSExpNamespaceImport(elements)) {
-      // Namespace import like (import name from "module-path")
       await processNamespaceImport(elements, env, baseDir, options);
     } else if (isSExpVectorImport(elements)) {
-      // Vector import like (import [a b c] from "module-path")
       await processVectorBasedImport(elements, env, baseDir, options);
     } else {
       throw new ImportError(
@@ -354,9 +333,35 @@ async function processImport(
       );
     }
   } catch (error) {
-    const modulePath = getModulePathFromImport(importExpr);
     wrapError("Processing import", error, modulePath, options.currentFile);
   }
+}
+
+// New helper functions to reduce duplication
+async function processSimpleImport(
+  moduleLiteral: SLiteral,
+  env: Environment,
+  baseDir: string,
+  options: ImportProcessorOptions
+): Promise<void> {
+  const modulePath = moduleLiteral.value as string;
+  const resolvedPath = path.resolve(baseDir, modulePath);
+  
+  const logger = createLogger(options);
+  logger.debug(`Simple import of full module: ${modulePath} => ${resolvedPath}`);
+  
+  // Register the module path for later reference
+  registerModulePath(modulePath, resolvedPath);
+  
+  // Load the module based on its type
+  await loadModuleByType(
+    modulePath, // Use the path as the module name
+    modulePath,
+    resolvedPath,
+    baseDir,
+    env,
+    options
+  );
 }
 
 async function processNamespaceImport(
@@ -415,7 +420,22 @@ async function processVectorBasedImport(
       throw new ImportError("Module path must be a string literal", "syntax-error", options.currentFile);
     }
     const modulePath = elements[3].value as string;
-    const resolvedPath = path.resolve(baseDir, modulePath);
+    
+    // Use the current file's directory for resolving relative imports
+    let resolvedPath;
+    if (modulePath.startsWith('./') || modulePath.startsWith('../')) {
+      // If we have a current file, resolve relative to it
+      const currentFileDir = options.currentFile 
+        ? path.dirname(options.currentFile) 
+        : baseDir;
+      resolvedPath = path.resolve(currentFileDir, modulePath);
+      logger.debug(`Resolving ${modulePath} relative to ${currentFileDir} => ${resolvedPath}`);
+    } else {
+      // Otherwise, resolve from baseDir (for absolute or non-relative paths)
+      resolvedPath = path.resolve(baseDir, modulePath);
+      logger.debug(`Resolving ${modulePath} from baseDir ${baseDir} => ${resolvedPath}`);
+    }
+    
     const tempModuleName = `__temp_module_${modulePath.replace(/[^a-zA-Z0-9_]/g, "_")}`;
     await loadModuleByType(tempModuleName, modulePath, resolvedPath, baseDir, env, options);
     const vectorElements = processVectorElements(symbolsVector.elements);
@@ -706,6 +726,7 @@ async function processJsImport(
         resolvedPath,
         {
           verbose: logger.enabled,
+          sourceDir: path.dirname(resolvedPath)
         },
         logger,
       );

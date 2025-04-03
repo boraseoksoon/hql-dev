@@ -51,8 +51,8 @@ export function formatErrorForReporting(
   const logger = new Logger();
   
   try {
-    // Use boxes in verbose mode
-    const useBoxes = options.verbose === true;
+    // Use verbose mode for enhanced formatting
+    const verbose = options.verbose === true;
     
     // Check if this is a JS error from our transpiled code
     const isTranspiledFileError = options.filePath?.includes('/T/hql_run_') || 
@@ -102,7 +102,7 @@ export function formatErrorForReporting(
     const suggestion = getSuggestion(error);
     
     // Format output based on verbose mode
-    if (useBoxes) {
+    if (verbose) {
       printErrorBox(formattedError, "HQL Error");
       if (suggestion) {
         printSuggestionBox(suggestion);
