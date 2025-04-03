@@ -68,6 +68,10 @@ const builtInPure = new Set<string>([
   "let",
   "lambda",
   "return",
+  
+  // Add loop and recur to the list of built-in pure operations
+  "loop",
+  "recur",
 ]);
 
 // Define supported primitive types
@@ -85,18 +89,11 @@ export function isValidType(typeName: string): boolean {
     return true;
   }
   
-  // Check if it's an array type (Array<ElementType>)
-  if (typeName.startsWith("Array<") && typeName.endsWith(">")) {
-    const innerType = typeName.substring(6, typeName.length - 1);
-    return isValidType(innerType);
-  }
-  
   // Check if it's a known enum type
   // We'll consider any type name not in primitive types as potentially valid
   // and let the rest of the system validate it if needed
   return true;
 }
-
 
 /**
  * Register a function as pure
@@ -159,7 +156,6 @@ function verifyExpressionPurity(
   }
   // Literal values are always pure
 }
-
 
 /**
  * Verify a symbol obeys purity rules
@@ -227,6 +223,12 @@ function verifyListPurity(
     // Handle lambda special form
     if (operator === "lambda") {
       handleLambdaForm(list, funcName, paramNames, localVars);
+      return;
+    }
+    
+    // Handle loop special form
+    if (operator === "loop") {
+      handleLoopForm(list, funcName, paramNames, localVars);
       return;
     }
 
@@ -336,6 +338,66 @@ function handleLetForm(
     for (let i = 2; i < elements.length; i++) {
       verifyExpressionPurity(elements[i], funcName, paramNames, localVars);
     }
+  }
+}
+
+/**
+ * Handle loop special form in pure functions
+ */
+function handleLoopForm(
+  loopExpr: ListNode,
+  funcName: string,
+  paramNames: Set<string>,
+  localVars: Map<string, boolean>,
+): void {
+  const elements = loopExpr.elements;
+  
+  // Needs at least (loop (bindings...) body)
+  if (elements.length < 3 || elements[1].type !== "list") {
+    throw new ValidationError(
+      "Invalid loop form: expects bindings list and body",
+      "loop form",
+      "(loop (binding...) body...)",
+      "invalid format"
+    );
+  }
+  
+  // Extract binding names and values
+  const bindingsList = elements[1] as ListNode;
+  const bindings = bindingsList.elements;
+  
+  // Create a new scope for the loop variables
+  const loopScope = new Map<string, boolean>(localVars);
+  
+  // First pass: register all binding names in the loop scope
+  for (let i = 0; i < bindings.length; i += 2) {
+    if (i + 1 >= bindings.length) break;
+    
+    if (bindings[i].type === "symbol") {
+      const varName = (bindings[i] as SymbolNode).name;
+      loopScope.set(varName, false); // Not yet initialized
+    }
+  }
+  
+  // Second pass: verify all binding values
+  for (let i = 0; i < bindings.length; i += 2) {
+    if (i + 1 >= bindings.length) break;
+    
+    if (bindings[i].type === "symbol") {
+      const varName = (bindings[i] as SymbolNode).name;
+      verifyExpressionPurity(
+        bindings[i + 1],
+        funcName,
+        paramNames,
+        localVars // Use original scope to verify initial values
+      );
+      loopScope.set(varName, true); // Mark as initialized
+    }
+  }
+  
+  // Verify the loop body in the extended scope
+  for (let i = 2; i < elements.length; i++) {
+    verifyExpressionPurity(elements[i], funcName, paramNames, loopScope);
   }
 }
 

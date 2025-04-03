@@ -16,6 +16,7 @@ HQL
 10. REPL
     - repl
     - nRepl
+11. error message 
 
 HQL LSP
 1. support all syntax

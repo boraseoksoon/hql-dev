@@ -1249,12 +1249,13 @@ function transformLoop(list: ListNode, currentDir: string): IR.IRNode {
           const op = (bodyExpr.elements[0] as SymbolNode).name;
 
           if (op === "if" || op === "when") {
-            // Let the regular transformers handle this, but in loop context
-            const transformedBody = transformNode(bodyExpr, currentDir);
-            if (transformedBody) {
+            // Ensure we add a return statement for the if/when result
+            // This is a critical fix to ensure the result is returned
+            const transformed = transformIfForLoop(bodyExpr, currentDir);
+            if (transformed) {
               bodyBlock = {
                 type: IR.IRNodeType.BlockStatement,
-                body: [transformedBody]
+                body: [transformed]
               };
             } else {
               bodyBlock = {
@@ -1331,6 +1332,108 @@ function transformLoop(list: ListNode, currentDir: string): IR.IRNode {
 }
 
 /**
+ * New helper function: Transform if expression specifically for loop body
+ * Ensures proper return statements for both branches
+ */
+function transformIfForLoop(ifExpr: ListNode, currentDir: string): IR.IRNode {
+  try {
+    // Validate if syntax: (if test then else?)
+    if (ifExpr.elements.length < 3) {
+      throw new ValidationError(
+        "if requires test and then clause",
+        "if statement",
+        "test and then clause",
+        `${ifExpr.elements.length - 1} elements`
+      );
+    }
+
+    // Transform test expression
+    const test = transformNode(ifExpr.elements[1], currentDir);
+    if (!test) {
+      throw new ValidationError(
+        "Test expression transformed to null",
+        "if test",
+        "valid expression",
+        "null"
+      );
+    }
+
+    // Transform 'then' expression - wrap in return if not already a return or recur
+    const thenExpr = ifExpr.elements[2];
+    let consequent: IR.IRNode;
+    
+    if (isRecurExpression(thenExpr)) {
+      // If it's recur, transform directly - recur generates its own return
+      consequent = transformNode(thenExpr, currentDir);
+    } else {
+      // Otherwise ensure it's returned
+      const transformed = transformNode(thenExpr, currentDir);
+      if (!transformed) {
+        throw new ValidationError(
+          "Then clause transformed to null",
+          "if consequent",
+          "valid expression",
+          "null"
+        );
+      }
+      
+      // Wrap in return if not already a return statement
+      consequent = transformed.type === IR.IRNodeType.ReturnStatement
+        ? transformed
+        : {
+            type: IR.IRNodeType.ReturnStatement,
+            argument: transformed
+          };
+    }
+
+    // Transform 'else' expression if it exists
+    let alternate: IR.IRNode | null = null;
+    if (ifExpr.elements.length > 3) {
+      const elseExpr = ifExpr.elements[3];
+      
+      if (isRecurExpression(elseExpr)) {
+        // If it's recur, transform directly - recur generates its own return
+        alternate = transformNode(elseExpr, currentDir);
+      } else {
+        // Otherwise ensure it's returned
+        const transformed = transformNode(elseExpr, currentDir);
+        if (transformed) {
+          // Wrap in return if not already a return statement
+          alternate = transformed.type === IR.IRNodeType.ReturnStatement
+            ? transformed
+            : {
+                type: IR.IRNodeType.ReturnStatement,
+                argument: transformed
+              };
+        }
+      }
+    }
+
+    // Create the if statement with proper return statements
+    return {
+      type: IR.IRNodeType.IfStatement,
+      test,
+      consequent,
+      alternate
+    };
+  } catch (error) {
+    throw new TransformError(
+      `Failed to transform if for loop: ${error instanceof Error ? error.message : String(error)}`,
+      "if in loop transformation",
+      "valid if expression",
+      ifExpr
+    );
+  }
+}
+
+function isRecurExpression(expr: HQLNode): boolean {
+  return expr.type === "list" &&
+    expr.elements.length > 0 &&
+    expr.elements[0].type === "symbol" &&
+    (expr.elements[0] as SymbolNode).name === "recur";
+}
+
+/**
  * Transform a recur special form to its IR representation.
  */
 function transformRecur(list: ListNode, currentDir: string): IR.IRNode {
@@ -1402,12 +1505,67 @@ function transformRecur(list: ListNode, currentDir: string): IR.IRNode {
  * Helper function to transform a list of body expressions for a loop
  */
 function transformLoopBody(bodyExprs: HQLNode[], currentDir: string): IR.IRBlockStatement {
+  // If only one expression and it's not already a return, wrap it in return
+  if (bodyExprs.length === 1 && !isRecurExpression(bodyExprs[0])) {
+    const transformedExpr = transformNode(bodyExprs[0], currentDir);
+    if (transformedExpr) {
+      // If it's already a return or if statement, use it directly
+      if (transformedExpr.type === IR.IRNodeType.ReturnStatement || 
+          transformedExpr.type === IR.IRNodeType.IfStatement) {
+        return {
+          type: IR.IRNodeType.BlockStatement,
+          body: [transformedExpr]
+        };
+      }
+      
+      // Otherwise wrap in return
+      return {
+        type: IR.IRNodeType.BlockStatement,
+        body: [{
+          type: IR.IRNodeType.ReturnStatement,
+          argument: transformedExpr
+        }]
+      };
+    }
+  }
+
+  // For multiple expressions, handle each one
   const bodyNodes: IR.IRNode[] = [];
 
-  for (const expr of bodyExprs) {
-    const transformedExpr = transformNode(expr, currentDir);
+  // Process all except the last one normally
+  for (let i = 0; i < bodyExprs.length - 1; i++) {
+    const transformedExpr = transformNode(bodyExprs[i], currentDir);
     if (transformedExpr) {
       bodyNodes.push(transformedExpr);
+    }
+  }
+
+  // Handle the last expression specially - wrap in return if needed
+  if (bodyExprs.length > 0) {
+    const lastExpr = bodyExprs[bodyExprs.length - 1];
+    
+    if (isRecurExpression(lastExpr)) {
+      // Recur already returns appropriately
+      const transformedExpr = transformNode(lastExpr, currentDir);
+      if (transformedExpr) {
+        bodyNodes.push(transformedExpr);
+      }
+    } else {
+      // Transform the last expression
+      const transformedExpr = transformNode(lastExpr, currentDir);
+      if (transformedExpr) {
+        // If it's already a return or if statement, use it directly
+        if (transformedExpr.type === IR.IRNodeType.ReturnStatement || 
+            transformedExpr.type === IR.IRNodeType.IfStatement) {
+          bodyNodes.push(transformedExpr);
+        } else {
+          // Otherwise wrap in return
+          bodyNodes.push({
+            type: IR.IRNodeType.ReturnStatement,
+            argument: transformedExpr
+          });
+        }
+      }
     }
   }
 
