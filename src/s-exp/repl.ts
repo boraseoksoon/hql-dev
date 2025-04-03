@@ -1,15 +1,12 @@
-// src/s-exp/repl.ts - Updated to use system macro loading
+// src/s-exp/repl.ts - Updated to use stateful evaluator
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { parse } from "../transpiler/parser.ts";
 import { Environment } from "../environment.ts";
-import { expandMacros } from "./macro.ts";
-import { processImports } from "./imports.ts";
-import { sexpToString } from "./types.ts";
+import { sexpToString, SExp } from "./types.ts";
 import { Logger } from "../logger.ts";
-import { convertToHqlAst } from "./macro-reader.ts";
-import { transformAST } from "../transformer.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
+import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
+import { REPLEvaluator, REPLEvalResult } from "./repl-evaluator.ts";
 
 /**
  * Configuration for the REPL.
@@ -21,63 +18,117 @@ interface ReplOptions {
   showAst?: boolean;
   showExpanded?: boolean;
   showJs?: boolean;
+  initialFile?: string;
+  useColors?: boolean;
 }
+
+// Terminal colors for improved output formatting
+const colors = {
+  reset: "\x1b[0m",
+  bright: "\x1b[1m",
+  dim: "\x1b[2m",
+  underscore: "\x1b[4m",
+  blink: "\x1b[5m",
+  reverse: "\x1b[7m",
+  hidden: "\x1b[8m",
+  
+  fg: {
+    black: "\x1b[30m",
+    red: "\x1b[31m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    blue: "\x1b[34m",
+    magenta: "\x1b[35m",
+    cyan: "\x1b[36m",
+    white: "\x1b[37m",
+    crimson: "\x1b[38m"
+  },
+  
+  bg: {
+    black: "\x1b[40m",
+    red: "\x1b[41m",
+    green: "\x1b[42m",
+    yellow: "\x1b[43m",
+    blue: "\x1b[44m",
+    magenta: "\x1b[45m",
+    cyan: "\x1b[46m",
+    white: "\x1b[47m",
+    crimson: "\x1b[48m"
+  }
+};
 
 /**
  * Helper to print a block of output with a header.
  */
-function printBlock(header: string, content: string) {
-  console.log(header);
-  console.log(content);
-  console.log();
+function printBlock(header: string, content: string, useColors = false) {
+  if (useColors) {
+    console.log(`${colors.fg.cyan}${colors.bright}${header}${colors.reset}`);
+    console.log(content);
+    console.log();
+  } else {
+    console.log(header);
+    console.log(content);
+    console.log();
+  }
 }
 
 /**
  * Displays the REPL banner.
  */
-function printBanner(): void {
-  console.log("╔════════════════════════════════════════════════════════════╗");
+function printBanner(useColors = false): void {
+  const headerColor = useColors ? `${colors.fg.green}${colors.bright}` : "";
+  const textColor = useColors ? `${colors.fg.white}` : "";
+  const commandColor = useColors ? `${colors.fg.yellow}` : "";
+  const reset = useColors ? colors.reset : "";
+
+  console.log(`${headerColor}╔════════════════════════════════════════════════════════════╗${reset}`);
   console.log(
-    "║                HQL S-Expression REPL                        ║",
+    `${headerColor}║                ${textColor}HQL S-Expression REPL${headerColor}                        ║${reset}`,
   );
-  console.log("╠════════════════════════════════════════════════════════════╣");
+  console.log(`${headerColor}╠════════════════════════════════════════════════════════════╣${reset}`);
   console.log(
-    "║  Type HQL expressions to evaluate them                      ║",
-  );
-  console.log(
-    "║  Special commands:                                          ║",
-  );
-  console.log(
-    "║    :help - Display this help                                ║",
-  );
-  console.log(
-    "║    :quit, :exit - Exit the REPL                             ║",
+    `${headerColor}║  ${textColor}Type HQL expressions to evaluate them${headerColor}                      ║${reset}`,
   );
   console.log(
-    "║    :env - Show environment bindings                         ║",
+    `${headerColor}║  ${textColor}Special commands:${headerColor}                                          ║${reset}`,
   );
   console.log(
-    "║    :macros - Show defined macros                            ║",
+    `${headerColor}║    ${commandColor}:help${textColor} - Display this help${headerColor}                                ║${reset}`,
   );
   console.log(
-    "║    :verbose - Toggle verbose mode                           ║",
+    `${headerColor}║    ${commandColor}:quit${textColor}, ${commandColor}:exit${textColor} - Exit the REPL${headerColor}                             ║${reset}`,
   );
   console.log(
-    "║    :ast - Toggle AST display                                ║",
+    `${headerColor}║    ${commandColor}:env${textColor} - Show environment bindings${headerColor}                         ║${reset}`,
   );
   console.log(
-    "║    :expanded - Toggle expanded form display                 ║",
+    `${headerColor}║    ${commandColor}:macros${textColor} - Show defined macros${headerColor}                            ║${reset}`,
   );
   console.log(
-    "║    :js - Toggle JavaScript output display                   ║",
+    `${headerColor}║    ${commandColor}:verbose${textColor} - Toggle verbose mode${headerColor}                           ║${reset}`,
   );
   console.log(
-    "║    :load <filename> - Load and evaluate a file              ║",
+    `${headerColor}║    ${commandColor}:ast${textColor} - Toggle AST display${headerColor}                                ║${reset}`,
   );
   console.log(
-    "║    :save <filename> - Save history to a file                ║",
+    `${headerColor}║    ${commandColor}:expanded${textColor} - Toggle expanded form display${headerColor}                 ║${reset}`,
   );
-  console.log("╚════════════════════════════════════════════════════════════╝");
+  console.log(
+    `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript output display${headerColor}                   ║${reset}`,
+  );
+  console.log(
+    `${headerColor}║    ${commandColor}:load${textColor} <filename> - Load and evaluate a file${headerColor}              ║${reset}`,
+  );
+  console.log(
+    `${headerColor}║    ${commandColor}:save${textColor} <filename> - Save history to a file${headerColor}                ║${reset}`,
+  );
+  console.log(
+    `${headerColor}║    ${commandColor}:colors${textColor} - Toggle colorized output${headerColor}                        ║${reset}`,
+  );
+  console.log(
+    `${headerColor}║    ${commandColor}:clear${textColor} - Clear the screen${headerColor}                                ║${reset}`,
+  );
+  console.log(`${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`);
 }
 
 /**
@@ -86,13 +137,13 @@ function printBanner(): void {
 export async function startRepl(options: ReplOptions = {}): Promise<void> {
   const logger = new Logger(options.verbose || false);
   const baseDir = options.baseDir || Deno.cwd();
-  const historySize = options.historySize || 50;
-  // By default, do not show AST, expanded forms, or transpiled JavaScript.
-  const showAst = options.showAst ?? false;
-  const showExpanded = options.showExpanded ?? false;
-  const showJs = options.showJs ?? false;
+  const historySize = options.historySize || 100;
+  let showAst = options.showAst ?? false;
+  let showExpanded = options.showExpanded ?? false;
+  let showJs = options.showJs ?? false;
+  let useColors = options.useColors ?? true;
 
-  printBanner();
+  printBanner(useColors);
 
   // Initialize environment and load system macros
   logger.log({ text: "Initializing environment...", namespace: "repl" });
@@ -107,6 +158,15 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     await loadSystemMacros(env, {
       verbose: options.verbose,
       baseDir: Deno.cwd(),
+    });
+    
+    // Create a stateful REPL evaluator
+    const evaluator = new REPLEvaluator(env, {
+      verbose: options.verbose,
+      baseDir: baseDir,
+      showAst,
+      showExpanded,
+      showJs,
     });
     
     // Display available macros
@@ -124,9 +184,31 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     let multilineMode = false;
     let parenBalance = 0;
 
+    // Load initial file if specified
+    if (options.initialFile) {
+      try {
+        await loadAndEvaluateFile(options.initialFile, evaluator, history, {
+          logger,
+          baseDir,
+          historySize,
+          showAst,
+          showExpanded,
+          showJs,
+          useColors,
+        });
+      } catch (error) {
+        console.error(`Error loading initial file: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     while (running) {
       try {
-        const prompt = multilineMode ? "... " : "hql> ";
+        const promptStyle = useColors ? `${colors.fg.green}${colors.bright}` : "";
+        const resetStyle = useColors ? colors.reset : "";
+        const prompt = multilineMode ? 
+                       `${promptStyle}... ${resetStyle}` : 
+                       `${promptStyle}hql> ${resetStyle}`;
+        
         await Deno.stdout.write(encoder.encode(prompt));
 
         const buf = new Uint8Array(1024);
@@ -143,13 +225,14 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           }
           if (parenBalance <= 0) {
             multilineMode = false;
-            await processInput(multilineInput, env, history, {
+            await processInput(multilineInput, evaluator, history, {
               logger,
               baseDir,
               historySize,
               showAst,
               showExpanded,
               showJs,
+              useColors,
             });
             multilineInput = "";
             parenBalance = 0;
@@ -159,12 +242,13 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
 
         // Handle special commands.
         if (line.startsWith(":")) {
-          await handleCommand(line, env, history, {
+          await handleCommand(line, evaluator, history, {
             logger,
             baseDir,
             showAst,
             showExpanded,
             showJs,
+            useColors,
             running: () => running,
             setRunning: (value) => {
               running = value;
@@ -172,6 +256,18 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
             setVerbose: (value) => {
               logger.setEnabled(value);
             },
+            setColors: (value) => {
+              useColors = value;
+            },
+            setShowAst: (value) => {
+              showAst = value;
+            },
+            setShowExpanded: (value) => {
+              showExpanded = value;
+            },
+            setShowJs: (value) => {
+              showJs = value;
+            }
           });
           continue;
         }
@@ -187,17 +283,22 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           continue;
         }
 
-        await processInput(line, env, history, {
+        await processInput(line, evaluator, history, {
           logger,
           baseDir,
           historySize,
           showAst,
           showExpanded,
           showJs,
+          useColors,
         });
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${errMsg}`);
+        if (useColors) {
+          console.error(`${colors.fg.red}Error: ${errMsg}${colors.reset}`);
+        } else {
+          console.error(`Error: ${errMsg}`);
+        }
         multilineMode = false;
         multilineInput = "";
         parenBalance = 0;
@@ -217,15 +318,16 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
  */
 async function processInput(
   input: string,
-  env: Environment,
+  evaluator: REPLEvaluator,
   history: string[],
-  { logger, baseDir, historySize, showAst, showExpanded, showJs }: {
+  { logger, baseDir, historySize, showAst, showExpanded, showJs, useColors }: {
     logger: Logger;
     baseDir: string;
     historySize: number;
     showAst: boolean;
     showExpanded: boolean;
     showJs: boolean;
+    useColors: boolean;
   },
 ): Promise<void> {
   if (!input.trim()) return;
@@ -233,63 +335,93 @@ async function processInput(
   history.push(input);
 
   try {
-    logger.debug("Parsing input...");
-    const sexps = parse(input);
-    if (sexps.length === 0) {
-      console.log("No expressions to evaluate");
-      return;
-    }
-
-    // Optionally display the parsed AST.
-    if (showAst) {
-      printBlock("Parsed S-expressions:", sexps.map(sexpToString).join("\n  "));
-    }
-
-    // Process imports if any
-    await processImports(sexps, env, {
-      verbose: logger.enabled,
+    // Evaluate the input using our stateful evaluator
+    const result = await evaluator.evaluate(input, {
+      verbose: logger.isVerbose,
       baseDir,
-      currentFile: baseDir,
+      showAst,
+      showExpanded,
+      showJs,
     });
 
-    logger.debug("Expanding macros...");
-    const expanded = expandMacros(sexps, env, { verbose: logger.enabled });
-    
-    // Optionally display expanded forms.
+    // Show JS output only when verbose or showJs is enabled
+    if (logger.isVerbose || showJs) {
+      console.log("Generated JavaScript:");
+      console.log("---------------------");
+      console.log(result.jsCode);
+      console.log("---------------------");
+    }
+
+    // Optionally display the parsed AST
+    if (showAst) {
+      printBlock("Parsed S-expressions:", result.parsedExpressions.map(sexpToString).join("\n  "), useColors);
+    }
+
+    // Optionally display the expanded form
     if (showExpanded) {
-      printBlock("Expanded forms:", expanded.map(sexpToString).join("\n  "));
+      printBlock("Macro-expanded form:", result.expandedExpressions.map(sexpToString).join("\n  "), useColors);
     }
 
-    // Convert to AST
-    logger.debug("Converting to HQL AST...");
-    const hqlAst = convertToHqlAst(expanded, { verbose: logger.enabled });
-
-    // Transform to JavaScript
-    logger.debug("Transforming to JavaScript...");
-    const jsCode = await transformAST(hqlAst, baseDir, { verbose: logger.enabled });
-
-    // Optionally display transpiled JavaScript.
-    if (showJs) {
-      printBlock("JavaScript:", "```javascript\n" + jsCode + "\n```");
+    // Display the result
+    if (useColors) {
+      console.log(`${colors.fg.green}${colors.bright}=> ${colors.reset}${colors.fg.cyan}${result.value !== undefined ? result.value : 'undefined'}${colors.reset}`);
+    } else {
+      console.log(`=> ${result.value !== undefined ? result.value : 'undefined'}`);
     }
-
-    // Evaluate the transpiled JavaScript.
-    logger.debug("Evaluating transpiled JavaScript...");
-    let evalResult: any;
-    try {
-      // Using eval; note that this assumes the transpiled code is a simple expression.
-      evalResult = eval(jsCode);
-    } catch (e) {
-      console.error("Error during JavaScript evaluation:", e);
-      return;
+    
+    // Show environment state only in verbose mode
+    if (logger.isVerbose) {
+      console.log("Environment state:");
+      console.log("------------------");
+      const envSymbols = evaluator.getEnvironment().getDefinedSymbols();
+      console.log(`Defined symbols: ${envSymbols.join(", ") || "none"}`);
+      console.log("------------------");
     }
-
-    console.log("=> ", evalResult);
   } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    console.error(`Error: ${errMsg}`);
-    if (error instanceof Error && error.stack) logger.debug(error.stack);
+    if (useColors) {
+      console.error(`${colors.fg.red}Error: ${error instanceof Error ? error.message : String(error)}${colors.reset}`);
+    } else {
+      console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (error instanceof Error && error.stack && logger.isVerbose) {
+      console.error(error.stack);
+    }
   }
+}
+
+/**
+ * Load and evaluate a file.
+ */
+async function loadAndEvaluateFile(
+  filePath: string,
+  evaluator: REPLEvaluator,
+  history: string[],
+  options: {
+    logger: Logger;
+    baseDir: string;
+    historySize: number;
+    showAst: boolean;
+    showExpanded: boolean;
+    showJs: boolean;
+    useColors: boolean;
+  },
+): Promise<void> {
+  const resolvedPath = path.isAbsolute(filePath)
+    ? filePath
+    : path.join(options.baseDir, filePath);
+
+  if (!await exists(resolvedPath)) {
+    throw new Error(`File not found: ${resolvedPath}`);
+  }
+
+  const fileContent = await Deno.readTextFile(resolvedPath);
+  if (options.useColors) {
+    console.log(`${colors.fg.yellow}Loading file: ${resolvedPath}${colors.reset}`);
+  } else {
+    console.log(`Loading file: ${resolvedPath}`);
+  }
+  
+  await processInput(fileContent, evaluator, history, options);
 }
 
 /**
@@ -297,7 +429,7 @@ async function processInput(
  */
 async function handleCommand(
   command: string,
-  env: Environment,
+  evaluator: REPLEvaluator,
   history: string[],
   {
     logger,
@@ -305,18 +437,28 @@ async function handleCommand(
     showAst,
     showExpanded,
     showJs,
+    useColors,
     running,
     setRunning,
     setVerbose,
+    setColors,
+    setShowAst,
+    setShowExpanded,
+    setShowJs,
   }: {
     logger: Logger;
     baseDir: string;
     showAst: boolean;
     showExpanded: boolean;
     showJs: boolean;
+    useColors: boolean;
     running: () => boolean;
     setRunning: (value: boolean) => void;
     setVerbose: (value: boolean) => void;
+    setColors: (value: boolean) => void;
+    setShowAst: (value: boolean) => void;
+    setShowExpanded: (value: boolean) => void;
+    setShowJs: (value: boolean) => void;
   },
 ): Promise<void> {
   const parts = command.trim().split(/\s+/);
@@ -324,104 +466,151 @@ async function handleCommand(
 
   switch (cmd) {
     case ":help":
-    case ":h":
-      printBanner();
+      printBanner(useColors);
       break;
-    case ":quit":
+
     case ":exit":
-    case ":q":
+    case ":quit":
       setRunning(false);
       break;
+
     case ":env":
-      console.log("Environment bindings: (simplified view)\n");
-      for (const [key, value] of env.variables.entries()) {
-        if (typeof value === "function") {
-          console.log(`${key}: [Function]`);
-        } else {
-          console.log(`${key}: ${value}`);
-        }
-      }
+      // Get defined symbols from the REPL environment
+      const replEnv = evaluator.getEnvironment();
+      const definedSymbols = replEnv.getDefinedSymbols();
+      
+      // Format the bindings output
+      const bindingString = definedSymbols.length > 0 
+        ? definedSymbols.map(name => {
+            const value = replEnv.getJsValue(name);
+            return `${name}: ${typeof value === "function" ? "<function>" : value}`;
+          }).join("\n")
+        : "No bindings";
+      
+      printBlock("Environment Bindings:", bindingString, useColors);
       break;
+
     case ":macros":
-      console.log("Defined macros:\n");
-      for (const key of env.macros.keys()) {
-        console.log(`- ${key}`);
+      const macroKeys = Array.from(evaluator.getEnvironment().hqlEnv.macros.keys());
+      printBlock("Defined Macros:", macroKeys.join(", ") || "No macros defined", useColors);
+      break;
+
+    case ":verbose":
+      const newVerbose = !logger.enabled;
+      setVerbose(newVerbose);
+      if (useColors) {
+        console.log(`${colors.fg.yellow}Verbose mode ${newVerbose ? "enabled" : "disabled"}${colors.reset}`);
+      } else {
+        console.log(`Verbose mode ${newVerbose ? "enabled" : "disabled"}`);
       }
       break;
-    case ":verbose":
-      setVerbose(!logger.enabled);
-      console.log(`Verbose mode: ${logger.enabled ? "on" : "off"}`);
-      break;
+
     case ":ast":
-      console.log(`AST display: ${!showAst ? "on" : "off"}`);
-      return { showAst: !showAst, showExpanded, showJs };
+      setShowAst(!showAst);
+      if (useColors) {
+        console.log(`${colors.fg.yellow}AST display ${!showAst ? "enabled" : "disabled"}${colors.reset}`);
+      } else {
+        console.log(`AST display ${!showAst ? "enabled" : "disabled"}`);
+      }
+      break;
+
     case ":expanded":
-      console.log(`Expanded form display: ${!showExpanded ? "on" : "off"}`);
-      return { showAst, showExpanded: !showExpanded, showJs };
+      setShowExpanded(!showExpanded);
+      if (useColors) {
+        console.log(`${colors.fg.yellow}Expanded form display ${!showExpanded ? "enabled" : "disabled"}${colors.reset}`);
+      } else {
+        console.log(`Expanded form display ${!showExpanded ? "enabled" : "disabled"}`);
+      }
+      break;
+
     case ":js":
-      console.log(`JavaScript display: ${!showJs ? "on" : "off"}`);
-      return { showAst, showExpanded, showJs: !showJs };
+      setShowJs(!showJs);
+      if (useColors) {
+        console.log(`${colors.fg.yellow}JavaScript output display ${!showJs ? "enabled" : "disabled"}${colors.reset}`);
+      } else {
+        console.log(`JavaScript output display ${!showJs ? "enabled" : "disabled"}`);
+      }
+      break;
+
     case ":load":
       if (parts.length < 2) {
-        console.error("Usage: :load <filename>");
-        break;
+        if (useColors) {
+          console.error(`${colors.fg.red}Error: Missing filename${colors.reset}`);
+        } else {
+          console.error("Error: Missing filename");
+        }
+        return;
       }
+      
       try {
-        const filename = parts.slice(1).join(" ");
-        const content = await Deno.readTextFile(filename);
-        console.log(`Loading file: ${filename}`);
-        await processInput(content, env, history, {
+        await loadAndEvaluateFile(parts[1], evaluator, history, {
           logger,
           baseDir,
-          historySize: 1000,
+          historySize: history.length,
           showAst,
           showExpanded,
           showJs,
+          useColors,
         });
       } catch (error) {
-        console.error(
-          `Error loading file: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+        if (useColors) {
+          console.error(`${colors.fg.red}Error loading file: ${error instanceof Error ? error.message : String(error)}${colors.reset}`);
+        } else {
+          console.error(`Error loading file: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       break;
+
     case ":save":
       if (parts.length < 2) {
-        console.error("Usage: :save <filename>");
-        break;
+        if (useColors) {
+          console.error(`${colors.fg.red}Error: Missing filename${colors.reset}`);
+        } else {
+          console.error("Error: Missing filename");
+        }
+        return;
       }
+      
       try {
-        const filename = parts.slice(1).join(" ");
-        await Deno.writeTextFile(filename, history.join("\n"));
-        console.log(`History saved to: ${filename}`);
+        const savePath = path.isAbsolute(parts[1])
+          ? parts[1]
+          : path.join(baseDir, parts[1]);
+        
+        await Deno.writeTextFile(savePath, history.join("\n"));
+        if (useColors) {
+          console.log(`${colors.fg.green}History saved to ${savePath}${colors.reset}`);
+        } else {
+          console.log(`History saved to ${savePath}`);
+        }
       } catch (error) {
-        console.error(
-          `Error saving history: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+        if (useColors) {
+          console.error(`${colors.fg.red}Error saving history: ${error instanceof Error ? error.message : String(error)}${colors.reset}`);
+        } else {
+          console.error(`Error saving history: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       break;
-    case ":clear":
-      console.log("\x1Bc");
+
+    case ":colors":
+      setColors(!useColors);
+      console.log(`Colors ${!useColors ? "enabled" : "disabled"}`);
       break;
+
+    case ":clear":
+      console.clear();
+      break;
+
     default:
-      console.error(`Unknown command: ${cmd}`);
-      console.log("Type :help for available commands");
+      if (useColors) {
+        console.error(`${colors.fg.red}Unknown command: ${cmd}${colors.reset}`);
+      } else {
+        console.error(`Unknown command: ${cmd}`);
+      }
       break;
   }
-  
-  // Return the same settings for commands that don't change them
-  return { showAst, showExpanded, showJs };
 }
 
-// Run as script if invoked directly.
+// Only start the REPL if this module is the main module
 if (import.meta.main) {
-  startRepl({
-    verbose: Deno.args.includes("--verbose") || Deno.args.includes("-v"),
-    showAst: Deno.args.includes("--ast"),
-    showExpanded: Deno.args.includes("--expanded"),
-    showJs: Deno.args.includes("--js"),
-  }).catch(console.error);
+  startRepl();
 }

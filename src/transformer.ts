@@ -27,6 +27,7 @@ import {
  */
 interface TransformOptions {
   verbose?: boolean;
+  replMode?: boolean;
 }
 
 /**
@@ -79,7 +80,7 @@ export async function transformAST(
     logger.debug(`Found ${moduleReferences.size} external module references`);
 
     // Create a full AST with imported modules
-    const fullAST = [];
+    const fullAST: any[] = [];
     const processedImports = new Set<string>(); // Track imported modules to prevent duplicates
 
     // Process the AST to extract all existing imports
@@ -181,8 +182,13 @@ export async function transformAST(
           `TypeScript code generation completed in ${tsGenTime.toFixed(2)}ms`,
         );
 
-        // Prepend the runtime functions to the generated code
-        const finalCode = `${RUNTIME_FUNCTIONS}\n\n${tsCode}`;
+        // In REPL mode, don't add runtime functions to avoid redefinition errors
+        let finalCode;
+        if (options.replMode) {
+          finalCode = tsCode;
+        } else {
+          finalCode = `${RUNTIME_FUNCTIONS}\n\n${tsCode}`;
+        }
 
         // Calculate and log total time
         const totalTime = performance.now() - startTime;
@@ -224,18 +230,14 @@ export async function transformAST(
         return finalCode;
       } catch (error) {
         throw new CodeGenError(
-          `Failed to generate TypeScript: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `Failed to generate TypeScript: ${error instanceof Error ? error.message : String(error)}`,
           "TypeScript generation",
           ir,
         );
       }
     } catch (error) {
       throw new TransformError(
-        `Failed to transform AST to IR: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Failed to transform AST to IR: ${error instanceof Error ? error.message : String(error)}`,
         `${convertedAst.length} AST nodes`,
         "AST to IR transformation",
         convertedAst,
@@ -275,13 +277,14 @@ export async function transformAST(
 /**
  * AST conversion function
  */
-function convertAST(rawAst: HQLNode[]): HQLNode[] {
+function convertAST(rawAst: any[]): HQLNode[] {
   try {
     // Map through each node and transform export forms into standard HQL node types
     return rawAst.map((node) => {
+      // Handle js-export form
       if (
         node.type === "list" &&
-        node.elements.length >= 3 &&
+        node.elements?.length >= 3 &&
         node.elements[0].type === "symbol" &&
         node.elements[0].name === "export"
       ) {
@@ -302,14 +305,15 @@ function convertAST(rawAst: HQLNode[]): HQLNode[] {
         }
       }
 
-      // Also handle vector exports if they exist in the code
+      // Check if node is a special export declaration (this is a TS-specific structure)
       if (
+        typeof node === 'object' &&
+        node !== null &&
         node.type === "ExportNamedDeclaration" &&
-        node.specifiers &&
         Array.isArray(node.specifiers)
       ) {
         // Convert to a series of standard js-export list nodes
-        const exportElements = node.specifiers.map((spec) => {
+        const exportElements = node.specifiers.map((spec: any) => {
           return {
             type: "list",
             elements: [

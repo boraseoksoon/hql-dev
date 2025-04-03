@@ -12,6 +12,11 @@ export class Logger {
 
   /** Instance property to control logging when no namespace filtering is applied */
   public enabled: boolean;
+  
+  /** Property to check if verbose mode is enabled */
+  public get isVerbose(): boolean {
+    return this.enabled;
+  }
 
   /**
    * Create a new logger
