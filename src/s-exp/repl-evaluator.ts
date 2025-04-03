@@ -8,7 +8,7 @@ import { convertToHqlAst } from "./macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
 import { REPLEnvironment } from "./repl-environment.ts";
-import { Environment } from "../environment.ts";
+import { Environment, Value } from "../environment.ts";
 import { SExp } from "./types.ts";
 import { RUNTIME_FUNCTIONS } from "../transpiler/runtime.ts";
 
@@ -23,10 +23,23 @@ export interface REPLEvalOptions {
 
 // Result of REPL evaluation
 export interface REPLEvalResult {
-  value: any;
+  value: Value;
   jsCode: string;
   parsedExpressions: SExp[];
   expandedExpressions: SExp[];
+  executionTimeMs?: number;
+}
+
+// Performance metrics for evaluation stages
+export interface EvaluationMetrics {
+  parseTimeMs: number;
+  syntaxTransformTimeMs: number;
+  importProcessingTimeMs: number;
+  macroExpansionTimeMs: number;
+  astConversionTimeMs: number;
+  codeGenerationTimeMs: number;
+  evaluationTimeMs: number;
+  totalTimeMs: number;
 }
 
 /**
@@ -37,6 +50,13 @@ export class REPLEvaluator {
   private logger: Logger;
   private baseDir: string;
   private runtimeFunctionsInitialized = false;
+  private runtimeFunctionNames: string[] | null = null;
+  
+  // Cache for parsed expressions to speed up repeat evaluations
+  private parseCache: Map<string, SExp[]> = new Map();
+  
+  // Metrics for performance monitoring
+  private lastMetrics: EvaluationMetrics | null = null;
   
   constructor(env: Environment, options: REPLEvalOptions = {}) {
     this.replEnv = new REPLEnvironment(env, { verbose: options.verbose });
@@ -71,10 +91,21 @@ export class REPLEvaluator {
   
   /**
    * Parse a single line of input
+   * Uses caching to avoid re-parsing identical input
    */
   parseLine(input: string): SExp[] {
+    // Check cache first
+    if (this.parseCache.has(input)) {
+      return this.parseCache.get(input)!;
+    }
+    
     try {
-      return parse(input);
+      const result = parse(input);
+      
+      // Cache the result for future use
+      this.parseCache.set(input, result);
+      
+      return result;
     } catch (error) {
       this.logger.error(`Parse error: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
@@ -83,83 +114,167 @@ export class REPLEvaluator {
   
   /**
    * Evaluate a single line of input and return the result
+   * Measures performance metrics for each stage
    */
   async evaluate(input: string, options: REPLEvalOptions = {}): Promise<REPLEvalResult> {
-    const logger = new Logger(options.verbose || false);
+    const log = (message: string) => {
+      if (this.logger.isVerbose) this.logger.debug(message);
+    };
+    
+    // Reset metrics
+    const metrics: EvaluationMetrics = {
+      parseTimeMs: 0,
+      syntaxTransformTimeMs: 0,
+      importProcessingTimeMs: 0,
+      macroExpansionTimeMs: 0,
+      astConversionTimeMs: 0,
+      codeGenerationTimeMs: 0,
+      evaluationTimeMs: 0,
+      totalTimeMs: 0
+    };
+    
+    const startTime = performance.now();
+    let currentTime;
     
     try {
       // Set current file in the environment
       this.replEnv.hqlEnv.setCurrentFile(options.baseDir || this.baseDir);
       
-      // 1. Parse
-      if (logger.isVerbose) logger.debug("Parsing input...");
-      const sexps = parse(input);
-      if (logger.isVerbose) logger.debug(`Parsed ${sexps.length} expressions`);
+      // Process the input through the evaluation pipeline
+      log("Parsing input...");
+      currentTime = performance.now();
+      const sexps = this.parseLine(input);
+      metrics.parseTimeMs = performance.now() - currentTime;
+      log(`Parsed ${sexps.length} expressions`);
       
-      // 2. Syntax Transform
-      if (logger.isVerbose) logger.debug("Transforming syntax...");
+      log("Transforming syntax...");
+      currentTime = performance.now();
       const transformedSexps = transformSyntax(sexps, { verbose: options.verbose });
-      if (logger.isVerbose) logger.debug(`Transformed to ${transformedSexps.length} expressions`);
+      metrics.syntaxTransformTimeMs = performance.now() - currentTime;
+      log(`Transformed to ${transformedSexps.length} expressions`);
       
-      // 3. Process imports
-      if (logger.isVerbose) logger.debug("Processing imports...");
+      log("Processing imports...");
+      currentTime = performance.now();
       await processImports(transformedSexps, this.replEnv.hqlEnv, {
         verbose: options.verbose,
         baseDir: options.baseDir || this.baseDir,
       });
+      metrics.importProcessingTimeMs = performance.now() - currentTime;
       
-      // 4. Expand macros
-      if (logger.isVerbose) logger.debug("Expanding macros...");
+      log("Expanding macros...");
+      currentTime = performance.now();
       const expanded = expandMacros(transformedSexps, this.replEnv.hqlEnv, {
         verbose: options.verbose,
         currentFile: options.baseDir || this.baseDir,
       });
+      metrics.macroExpansionTimeMs = performance.now() - currentTime;
       
-      // 5. Convert to HQL AST
-      if (logger.isVerbose) logger.debug("Converting to HQL AST...");
+      log("Converting to HQL AST...");
+      currentTime = performance.now();
       const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
+      metrics.astConversionTimeMs = performance.now() - currentTime;
       
-      // 6. Transform to JavaScript
-      if (logger.isVerbose) logger.debug("Transforming to JavaScript...");
+      log("Transforming to JavaScript...");
+      currentTime = performance.now();
       const jsCode = await transformAST(hqlAst, options.baseDir || this.baseDir, { 
         verbose: options.verbose,
-        replMode: true // Add REPL mode flag
+        replMode: true
       });
+      metrics.codeGenerationTimeMs = performance.now() - currentTime;
       
-      // 7. Prepare JS for REPL and evaluate
-      // Strip out runtime function declarations to avoid redefinition errors
+      // Clean, prepare, and evaluate the JavaScript
+      log("Evaluating JavaScript...");
+      currentTime = performance.now();
       const cleanedCode = this.removeRuntimeFunctions(jsCode);
       const preparedJs = this.replEnv.prepareJsForRepl(cleanedCode);
-      if (logger.isVerbose) logger.debug("Evaluating JavaScript...");
-      
-      // 8. Evaluate with stateful environment
       const result = await this.evaluateJs(preparedJs);
+      metrics.evaluationTimeMs = performance.now() - currentTime;
       
       // Reset current file in environment
       this.replEnv.hqlEnv.setCurrentFile(null);
+      
+      // Calculate total time
+      metrics.totalTimeMs = performance.now() - startTime;
+      this.lastMetrics = metrics;
+      
+      if (this.logger.isVerbose) {
+        this.logPerformanceMetrics();
+      }
       
       return {
         value: result,
         jsCode: preparedJs,
         parsedExpressions: sexps,
         expandedExpressions: expanded,
+        executionTimeMs: metrics.totalTimeMs
       };
     } catch (error) {
       this.replEnv.hqlEnv.setCurrentFile(null);
+      
+      // Enhanced error handling - add context about the error
+      if (error instanceof Error) {
+        // Add context to the error message
+        error.message = `Evaluation error: ${error.message}\nInput: ${input.length > 50 ? input.substring(0, 50) + '...' : input}`;
+      }
+      
       throw error;
     }
+  }
+  
+  /**
+   * Get access to the environment
+   */
+  getEnvironment(): Environment {
+    return this.replEnv.hqlEnv;
+  }
+  
+  /**
+   * Get the last recorded metrics
+   */
+  getLastMetrics(): EvaluationMetrics | null {
+    return this.lastMetrics;
+  }
+  
+  /**
+   * Log performance metrics for debugging
+   */
+  logPerformanceMetrics(): void {
+    if (!this.lastMetrics) {
+      this.logger.debug("No performance metrics available");
+      return;
+    }
+    
+    this.logger.debug("Performance metrics:");
+    this.logger.debug(`Parsing: ${this.lastMetrics.parseTimeMs.toFixed(2)}ms`);
+    this.logger.debug(`Syntax Transform: ${this.lastMetrics.syntaxTransformTimeMs.toFixed(2)}ms`);
+    this.logger.debug(`Import Processing: ${this.lastMetrics.importProcessingTimeMs.toFixed(2)}ms`);
+    this.logger.debug(`Macro Expansion: ${this.lastMetrics.macroExpansionTimeMs.toFixed(2)}ms`);
+    this.logger.debug(`AST Conversion: ${this.lastMetrics.astConversionTimeMs.toFixed(2)}ms`);
+    this.logger.debug(`Code Generation: ${this.lastMetrics.codeGenerationTimeMs.toFixed(2)}ms`);
+    this.logger.debug(`Evaluation: ${this.lastMetrics.evaluationTimeMs.toFixed(2)}ms`);
+    this.logger.debug(`Total: ${this.lastMetrics.totalTimeMs.toFixed(2)}ms`);
+  }
+  
+  /**
+   * Clear the parse cache for memory management
+   */
+  clearCache(): void {
+    this.parseCache.clear();
+    this.logger.debug("Parse cache cleared");
   }
   
   /**
    * Remove runtime function declarations from code to avoid redefinition errors
    */
   private removeRuntimeFunctions(code: string): string {
-    // Extract the function names from the runtime code
-    const functionNames = this.extractRuntimeFunctionNames();
+    // Cache the function names for efficiency
+    if (!this.runtimeFunctionNames) {
+      this.runtimeFunctionNames = this.extractRuntimeFunctionNames();
+    }
     
     // For each runtime function, remove its function declaration
     let cleanedCode = code;
-    for (const funcName of functionNames) {
+    for (const funcName of this.runtimeFunctionNames) {
       // Use a more specific regex that doesn't break other functions
       const funcRegex = new RegExp(`function\\s+${funcName}\\s*\\([^)]*\\)\\s*\\{[\\s\\S]*?\\}`, 'g');
       cleanedCode = cleanedCode.replace(funcRegex, '');
@@ -169,7 +284,7 @@ export class REPLEvaluator {
   }
   
   /**
-   * Extract function names from runtime code
+   * Extract function names from runtime code - cached for performance
    */
   private extractRuntimeFunctionNames(): string[] {
     const runtimeFunctionNames: string[] = [];
@@ -187,9 +302,9 @@ export class REPLEvaluator {
   }
   
   /**
-   * Evaluate JavaScript code in the REPL environment
+   * Evaluate JavaScript code with environment context
    */
-  private async evaluateJs(code: string): Promise<any> {
+  private async evaluateJs(code: string): Promise<Value> {
     // Create a function with access to the REPL environment
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
     try {
@@ -209,6 +324,18 @@ export class REPLEvaluator {
           ${this.logger.isVerbose ? 'console.log("DEBUG: Evaluation result type:", typeof result);' : ''}
           return result;
         } catch (error) {
+          // Enhanced error handling
+          if (error instanceof Error) {
+            // Add line number information if available
+            if (error.stack) {
+              const lineMatch = error.stack.match(/at eval.*<anonymous>:(\\d+):(\\d+)/);
+              if (lineMatch && lineMatch[1] && lineMatch[2]) {
+                const lineNum = lineMatch[1];
+                const colNum = lineMatch[2];
+                error.message = \`Error at line \${lineNum}, column \${colNum}: \${error.message}\`;
+              }
+            }
+          }
           console.error("Evaluation error:", error);
           throw error;
         }
@@ -233,9 +360,31 @@ export class REPLEvaluator {
   }
   
   /**
-   * Get the REPL environment
+   * Clear the REPL environment
    */
-  getEnvironment(): REPLEnvironment {
-    return this.replEnv;
+  resetEnvironment(): void {
+    // Create a new environment with the same settings
+    const oldEnv = this.replEnv.hqlEnv;
+    // Create a new environment using the correct constructor
+    const newEnv = new Environment(null, this.logger);
+    
+    // Initialize with the same macros
+    oldEnv.macros.forEach((macro, name) => {
+      newEnv.defineMacro(name, macro);
+    });
+    
+    // Create a new REPL environment
+    this.replEnv = new REPLEnvironment(newEnv, { 
+      verbose: this.logger.isVerbose 
+    });
+    
+    // Clear caches
+    this.clearCache();
+    this.runtimeFunctionsInitialized = false;
+    
+    // Re-initialize runtime functions
+    this.initializeRuntimeFunctions();
+    
+    this.logger.debug("REPL environment reset");
   }
 } 

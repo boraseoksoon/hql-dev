@@ -28,6 +28,7 @@ interface ProcessOptions {
   baseDir?: string;
   sourceDir?: string;
   tempDir?: string;
+  skipRebuild?: boolean;
 }
 
 export async function processHql(
@@ -223,18 +224,34 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
 
       const transformed = transformSyntax(macroExps, { verbose: options.verbose });
 
-      await processImports(transformed, env, {
-        verbose: options.verbose || false,
-        baseDir: path.dirname(macroPath),
-        currentFile: macroPath,
-      });
+      // Skip rebuilding files when loading macros in REPL mode
+      if (!options.skipRebuild) {
+        await processImports(transformed, env, {
+          verbose: options.verbose || false,
+          baseDir: path.dirname(macroPath),
+          currentFile: macroPath,
+        });
+      } else {
+        // In skipRebuild mode, just process the macros without rebuilding dependencies
+        logger.debug(`Skipping rebuild of imports for ${macroPath} in REPL mode`);
+        await processImports(transformed, env, {
+          verbose: options.verbose || false,
+          baseDir: path.dirname(macroPath),
+          currentFile: macroPath,
+          skipRebuild: true,
+        });
+      }
 
       expandMacros(transformed, env, { verbose: options.verbose, currentFile: macroPath });
       env.markFileProcessed(macroPath);
     }
     systemMacrosLoaded = true;
   } catch (error) {
-    throw new TranspilerError(`Loading system macro files: ${error instanceof Error ? error.message : String(error)}`);
+    if (error instanceof Error) {
+      throw new TranspilerError(`Loading system macro files: ${error.message}`);
+    } else {
+      throw new TranspilerError(`Loading system macro files: ${String(error)}`);
+    }
   }
 }
 

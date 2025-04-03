@@ -14,7 +14,8 @@ export type Value =
   | boolean
   | null
   | SExp
-  | Function
+  | /* eslint-disable-next-line @typescript-eslint/ban-types */
+  Function
   | Record<string, unknown>
   | unknown[];
 
@@ -147,7 +148,7 @@ export class Environment {
             typeof o[method],
           );
         }
-        return (o[method] as Function)(...args);
+        return (o[method] as /* eslint-disable-next-line @typescript-eslint/ban-types */ Function)(...args);
       });
       this.define("throw", (message: string) => {
         throw new TranspilerError(message);
@@ -200,7 +201,9 @@ export class Environment {
           const v = this.parent.lookup(key);
           this.lookupCache.set(key, v);
           return v;
-        } catch {}
+        } catch {
+          // Parent lookup failed, continue with local lookup
+        }
       }
       this.logger.debug(`Symbol not found: ${key}`);
       throw new ValidationError(

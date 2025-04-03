@@ -97,14 +97,18 @@ export async function processHqlImportsInTs(
         await Deno.stat(pathFromTs);
         resolvedHqlPath = pathFromTs;
         logger.debug(`Resolved import relative to TS file: ${pathFromTs}`);
-      } catch {}
+      } catch {
+        // File not found relative to TS file, try next lookup location
+      }
       if (!resolvedHqlPath && options.sourceDir) {
         try {
           const pathFromSource = path.resolve(options.sourceDir, hqlPath);
           await Deno.stat(pathFromSource);
           resolvedHqlPath = pathFromSource;
           logger.debug(`Resolved import relative to source dir: ${pathFromSource}`);
-        } catch {}
+        } catch {
+          // File not found relative to source dir, try next lookup location
+        }
       }
       if (
         !resolvedHqlPath &&
@@ -119,7 +123,9 @@ export async function processHqlImportsInTs(
           await Deno.stat(pathFromLib);
           resolvedHqlPath = pathFromLib;
           logger.debug(`Resolved import relative to lib dir: ${pathFromLib}`);
-        } catch {}
+        } catch {
+          // File not found relative to lib dir, try next lookup location
+        }
       }
       if (!resolvedHqlPath) {
         try {
@@ -127,7 +133,9 @@ export async function processHqlImportsInTs(
           await Deno.stat(pathFromCwd);
           resolvedHqlPath = pathFromCwd;
           logger.debug(`Resolved import relative to CWD: ${pathFromCwd}`);
-        } catch {}
+        } catch {
+          // File not found relative to CWD
+        }
       }
       if (!resolvedHqlPath) {
         throw new Error(`Could not resolve import: ${hqlPath} from ${tsFilePath}`);

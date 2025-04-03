@@ -25,7 +25,7 @@ export class MacroRegistry {
     }
   }
 
-  private validateNotNull(value: any, errorMessage: string, macroName: string, filePath?: string): void {
+  private validateNotNull(value: unknown, errorMessage: string, macroName: string, filePath?: string): void {
     if (!value) {
       this.logger.error(errorMessage);
       throw new MacroError(errorMessage, macroName, filePath);
@@ -41,7 +41,7 @@ export class MacroRegistry {
     }
   }
 
-  private safeBoolean(fn: () => void, errorPrefix: string, macroName: string, filePath?: string): boolean {
+  private safeBoolean(fn: () => void, errorPrefix: string, _macroName: string, _filePath?: string): boolean {
     try {
       fn();
       return true;

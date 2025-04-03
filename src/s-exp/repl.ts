@@ -2,11 +2,13 @@
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { Environment } from "../environment.ts";
-import { sexpToString, SExp } from "./types.ts";
 import { Logger } from "../logger.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
-import { REPLEvaluator, REPLEvalResult } from "./repl-evaluator.ts";
+import { REPLEvaluator } from "./repl-evaluator.ts";
+
+// Import needed for arrow key navigation
+import { keypress } from "https://deno.land/x/cliffy@v1.0.0-rc.3/keypress/mod.ts";
 
 /**
  * Configuration for the REPL.
@@ -22,7 +24,7 @@ interface ReplOptions {
   useColors?: boolean;
 }
 
-// Terminal colors for improved output formatting
+// Define SICP book-inspired color scheme
 const colors = {
   reset: "\x1b[0m",
   bright: "\x1b[1m",
@@ -35,13 +37,23 @@ const colors = {
   fg: {
     black: "\x1b[30m",
     red: "\x1b[31m",
+    // SICP red - brighter red for better readability
+    sicpRed: "\x1b[38;2;220;50;47m",
     green: "\x1b[32m",
     yellow: "\x1b[33m",
     blue: "\x1b[34m",
     magenta: "\x1b[35m",
     cyan: "\x1b[36m",
     white: "\x1b[37m",
-    crimson: "\x1b[38m"
+    crimson: "\x1b[38m",
+    // SICP purple (darker/richer purple than before)
+    sicpPurple: "\x1b[38;2;128;0;128m",
+    // Add light color variations
+    lightBlue: "\x1b[94m",
+    lightGreen: "\x1b[92m", 
+    lightYellow: "\x1b[93m",
+    lightPurple: "\x1b[95m",
+    lightCyan: "\x1b[96m"
   },
   
   bg: {
@@ -53,7 +65,10 @@ const colors = {
     magenta: "\x1b[45m",
     cyan: "\x1b[46m",
     white: "\x1b[47m",
-    crimson: "\x1b[48m"
+    crimson: "\x1b[48m",
+    // Background SICP colors
+    sicpRed: "\x1b[48;2;220;50;47m",
+    sicpPurple: "\x1b[48;2;128;0;128m"
   }
 };
 
@@ -62,7 +77,7 @@ const colors = {
  */
 function printBlock(header: string, content: string, useColors = false) {
   if (useColors) {
-    console.log(`${colors.fg.cyan}${colors.bright}${header}${colors.reset}`);
+    console.log(`${colors.fg.sicpRed}${colors.bright}${header}${colors.reset}`);
     console.log(content);
     console.log();
   } else {
@@ -73,62 +88,43 @@ function printBlock(header: string, content: string, useColors = false) {
 }
 
 /**
+ * Helper function to print colored text
+ */
+function colorText(text: string, colorCode: string, useColors = true): string {
+  return useColors ? `${colorCode}${text}${colors.reset}` : text;
+}
+
+/**
  * Displays the REPL banner.
  */
 function printBanner(useColors = false): void {
-  const headerColor = useColors ? `${colors.fg.green}${colors.bright}` : "";
-  const textColor = useColors ? `${colors.fg.white}` : "";
-  const commandColor = useColors ? `${colors.fg.yellow}` : "";
+  const headerColor = useColors ? colors.fg.sicpPurple + colors.bright : "";
+  const textColor = useColors ? colors.fg.white : "";
+  const commandColor = useColors ? colors.fg.sicpRed : "";
   const reset = useColors ? colors.reset : "";
 
-  console.log(`${headerColor}╔════════════════════════════════════════════════════════════╗${reset}`);
-  console.log(
+  const boxLines = [
+    `${headerColor}╔════════════════════════════════════════════════════════════╗${reset}`,
     `${headerColor}║                ${textColor}HQL S-Expression REPL${headerColor}                        ║${reset}`,
-  );
-  console.log(`${headerColor}╠════════════════════════════════════════════════════════════╣${reset}`);
-  console.log(
+    `${headerColor}╠════════════════════════════════════════════════════════════╣${reset}`,
     `${headerColor}║  ${textColor}Type HQL expressions to evaluate them${headerColor}                      ║${reset}`,
-  );
-  console.log(
     `${headerColor}║  ${textColor}Special commands:${headerColor}                                          ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:help${textColor} - Display this help${headerColor}                                ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:quit${textColor}, ${commandColor}:exit${textColor} - Exit the REPL${headerColor}                             ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:env${textColor} - Show environment bindings${headerColor}                         ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:macros${textColor} - Show defined macros${headerColor}                            ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:verbose${textColor} - Toggle verbose mode${headerColor}                           ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:ast${textColor} - Toggle AST display${headerColor}                                ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:expanded${textColor} - Toggle expanded form display${headerColor}                 ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript output display${headerColor}                   ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:load${textColor} <filename> - Load and evaluate a file${headerColor}              ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:save${textColor} <filename> - Save history to a file${headerColor}                ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:colors${textColor} - Toggle colorized output${headerColor}                        ║${reset}`,
-  );
-  console.log(
     `${headerColor}║    ${commandColor}:clear${textColor} - Clear the screen${headerColor}                                ║${reset}`,
-  );
-  console.log(`${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`);
+    `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
+  ];
+
+  boxLines.forEach(line => console.log(line));
 }
 
 /**
@@ -142,7 +138,38 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
   let showExpanded = options.showExpanded ?? false;
   let showJs = options.showJs ?? false;
   let useColors = options.useColors ?? true;
+  
+  // REPL state variables
+  let running = true;
+  let multilineInput = "";
+  let multilineMode = false;
+  let parenBalance = 0;
 
+  function resetReplState() {
+    multilineMode = false;
+    multilineInput = "";
+    parenBalance = 0;
+  }
+
+  function printError(message: string, useColors: boolean) {
+    if (useColors) {
+      console.error(`${colors.fg.red}${message}${colors.reset}`);
+    } else {
+      console.error(message);
+    }
+  }
+
+  // Track symbol usage for potential future auto-completion
+  const trackSymbolUsage = (symbol: string) => {
+    // Just a placeholder for now
+    logger.debug(`Symbol used: ${symbol}`);
+  };
+
+  // Auto-save history function
+  const autoSaveHistory = async () => {
+    // Placeholder for future auto-save functionality
+  };
+  
   printBanner(useColors);
 
   // Initialize environment and load system macros
@@ -155,9 +182,11 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     });
     
     // Load system macros using the shared implementation
+    // Skip rebuilding examples when in REPL mode
     await loadSystemMacros(env, {
       verbose: options.verbose,
       baseDir: Deno.cwd(),
+      skipRebuild: true,  // Add this option to prevent rebuilding examples
     });
     
     // Create a stateful REPL evaluator
@@ -175,14 +204,8 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
       logger.log({ text: `Available macros: ${macroKeys.join(", ")}`, namespace: "repl" });
     }
 
+    // REPL history
     const history: string[] = [];
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-
-    let running = true;
-    let multilineInput = "";
-    let multilineMode = false;
-    let parenBalance = 0;
 
     // Load initial file if specified
     if (options.initialFile) {
@@ -201,28 +224,41 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
       }
     }
 
+    // Common handler for REPL state changes
+    const replState = {
+      running: () => running,
+      setRunning: (value: boolean) => { running = value; },
+      setVerbose: (value: boolean) => { logger.setEnabled(value); },
+      setColors: (value: boolean) => { useColors = value; },
+      setShowAst: (value: boolean) => { showAst = value; },
+      setShowExpanded: (value: boolean) => { showExpanded = value; },
+      setShowJs: (value: boolean) => { showJs = value; }
+    };
+
     while (running) {
       try {
-        const promptStyle = useColors ? `${colors.fg.green}${colors.bright}` : "";
+        const promptStyle = useColors ? `${colors.fg.sicpPurple}${colors.bright}` : "";
         const resetStyle = useColors ? colors.reset : "";
         const prompt = multilineMode ? 
                        `${promptStyle}... ${resetStyle}` : 
                        `${promptStyle}hql> ${resetStyle}`;
         
-        await Deno.stdout.write(encoder.encode(prompt));
+        // Use the enhanced line reader with history support
+        const line = await readLineWithHistory(prompt, history);
+        
+        // Handle empty input
+        if (!line.trim()) continue;
+        
+        // Update paren balance (counting open and closed parens)
+        for (const char of line) {
+          if (char === "(") parenBalance++;
+          else if (char === ")") parenBalance--;
+        }
 
-        const buf = new Uint8Array(1024);
-        const n = await Deno.stdin.read(buf);
-        if (n === null) break;
-        const line = decoder.decode(buf.subarray(0, n)).trim();
-
-        // Handle multiline input.
+        // Handle multiline input
         if (multilineMode) {
           multilineInput += line + "\n";
-          for (const char of line) {
-            if (char === "(") parenBalance++;
-            else if (char === ")") parenBalance--;
-          }
+          
           if (parenBalance <= 0) {
             multilineMode = false;
             await processInput(multilineInput, evaluator, history, {
@@ -233,6 +269,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
               showExpanded,
               showJs,
               useColors,
+              trackSymbolUsage, // Pass the symbol tracker
             });
             multilineInput = "";
             parenBalance = 0;
@@ -240,49 +277,28 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           continue;
         }
 
-        // Handle special commands.
+        // Handle special commands
         if (line.startsWith(":")) {
           await handleCommand(line, evaluator, history, {
+            ...replState,
             logger,
             baseDir,
             showAst,
             showExpanded,
             showJs,
             useColors,
-            running: () => running,
-            setRunning: (value) => {
-              running = value;
-            },
-            setVerbose: (value) => {
-              logger.setEnabled(value);
-            },
-            setColors: (value) => {
-              useColors = value;
-            },
-            setShowAst: (value) => {
-              showAst = value;
-            },
-            setShowExpanded: (value) => {
-              showExpanded = value;
-            },
-            setShowJs: (value) => {
-              showJs = value;
-            }
           });
           continue;
         }
 
-        // Check if input is incomplete.
-        for (const char of line) {
-          if (char === "(") parenBalance++;
-          else if (char === ")") parenBalance--;
-        }
+        // Check if input is incomplete (mismatched parentheses)
         if (parenBalance > 0) {
           multilineMode = true;
           multilineInput = line + "\n";
           continue;
         }
 
+        // Process complete input
         await processInput(line, evaluator, history, {
           logger,
           baseDir,
@@ -291,19 +307,17 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           showExpanded,
           showJs,
           useColors,
+          trackSymbolUsage, // Pass the symbol tracker
         });
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
-        if (useColors) {
-          console.error(`${colors.fg.red}Error: ${errMsg}${colors.reset}`);
-        } else {
-          console.error(`Error: ${errMsg}`);
-        }
-        multilineMode = false;
-        multilineInput = "";
-        parenBalance = 0;
+        printError(`Error: ${error instanceof Error ? error.message : String(error)}`, useColors);
+        resetReplState();
       }
     }
+    
+    // Auto-save history when exiting
+    await autoSaveHistory();
+    
     console.log("\nGoodbye!");
   } catch (error) {
     console.error(`REPL initialization error: ${error instanceof Error ? error.message : String(error)}`);
@@ -320,7 +334,7 @@ async function processInput(
   input: string,
   evaluator: REPLEvaluator,
   history: string[],
-  { logger, baseDir, historySize, showAst, showExpanded, showJs, useColors }: {
+  { logger, baseDir, historySize, showAst, showExpanded, showJs, useColors, trackSymbolUsage }: {
     logger: Logger;
     baseDir: string;
     historySize: number;
@@ -328,63 +342,122 @@ async function processInput(
     showExpanded: boolean;
     showJs: boolean;
     useColors: boolean;
+    trackSymbolUsage?: (symbol: string) => void;
   },
 ): Promise<void> {
-  if (!input.trim()) return;
-  if (history.length >= historySize) history.shift();
-  history.push(input);
+  // Add input to history if non-empty and different from the last entry
+  if (input.trim() && (history.length === 0 || history[history.length - 1] !== input.trim())) {
+    history.push(input.trim());
+    // Keep history size limited
+    if (history.length > historySize) {
+      history.shift();
+    }
+  }
+
+  const result = await evaluator.evaluate(input, { showAst, showExpanded, showJs });
 
   try {
-    // Evaluate the input using our stateful evaluator
-    const result = await evaluator.evaluate(input, {
-      verbose: logger.isVerbose,
-      baseDir,
-      showAst,
-      showExpanded,
-      showJs,
-    });
+    // Detect function definitions for better feedback
+    const isFunctionDefinition = input.trim().startsWith("(fn ") || input.trim().startsWith("(defn ");
+    const isVariableDefinition = input.trim().startsWith("(def ");
+    
+    // Handle different result types
+    if (result.value !== undefined) {
+      let displayValue = result.value;
 
-    // Show JS output only when verbose or showJs is enabled
-    if (logger.isVerbose || showJs) {
-      console.log("Generated JavaScript:");
-      console.log("---------------------");
-      console.log(result.jsCode);
-      console.log("---------------------");
-    }
+      if (useColors) {
+        if (displayValue === null) {
+          displayValue = `${colors.fg.lightBlue}null${colors.reset}`;
+        } else if (typeof displayValue === "number") {
+          displayValue = `${colors.fg.lightGreen}${displayValue}${colors.reset}`;
+        } else if (typeof displayValue === "string") {
+          displayValue = `${colors.fg.lightYellow}"${displayValue}"${colors.reset}`;
+        } else if (typeof displayValue === "boolean") {
+          displayValue = `${colors.fg.lightPurple}${displayValue}${colors.reset}`;
+        } else if (Array.isArray(displayValue)) {
+          // Pretty-print arrays
+          try {
+            displayValue = `${colors.fg.lightCyan}${JSON.stringify(displayValue, null, 2)}${colors.reset}`;
+          } catch (e) {
+            // If JSON.stringify fails, use toString
+            displayValue = `${colors.fg.lightCyan}${displayValue}${colors.reset}`;
+          }
+        } else if (typeof displayValue === "object") {
+          // Pretty-print objects
+          try {
+            displayValue = `${colors.fg.lightCyan}${JSON.stringify(displayValue, null, 2)}${colors.reset}`;
+          } catch (e) {
+            // If JSON.stringify fails, use toString
+            displayValue = `${colors.fg.lightCyan}${displayValue}${colors.reset}`;
+          }
+        }
+      }
 
-    // Optionally display the parsed AST
-    if (showAst) {
-      printBlock("Parsed S-expressions:", result.parsedExpressions.map(sexpToString).join("\n  "), useColors);
-    }
-
-    // Optionally display the expanded form
-    if (showExpanded) {
-      printBlock("Macro-expanded form:", result.expandedExpressions.map(sexpToString).join("\n  "), useColors);
-    }
-
-    // Display the result
-    if (useColors) {
-      console.log(`${colors.fg.green}${colors.bright}=> ${colors.reset}${colors.fg.cyan}${result.value !== undefined ? result.value : 'undefined'}${colors.reset}`);
-    } else {
-      console.log(`=> ${result.value !== undefined ? result.value : 'undefined'}`);
+      console.log(displayValue);
+    } else if (isFunctionDefinition) {
+      // Extract function name from a function definition for better feedback
+      const match = input.trim().match(/\(fn\s+([a-zA-Z0-9_-]+)/);
+      const defnMatch = input.trim().match(/\(defn\s+([a-zA-Z0-9_-]+)/);
+      const functionName = match ? match[1] : (defnMatch ? defnMatch[1] : "anonymous");
+      
+      if (useColors) {
+        console.log(`${colors.fg.lightGreen}Function ${functionName} defined${colors.reset}`);
+      } else {
+        console.log(`Function ${functionName} defined`);
+      }
+    } else if (isVariableDefinition) {
+      // Extract variable name from a definition
+      const match = input.trim().match(/\(def\s+([a-zA-Z0-9_-]+)/);
+      const varName = match ? match[1] : "value";
+      
+      if (useColors) {
+        console.log(`${colors.fg.lightGreen}Variable ${varName} defined${colors.reset}`);
+      } else {
+        console.log(`Variable ${varName} defined`);
+      }
+    } else if (result.value === undefined) {
+      // For undefined results that aren't function definitions, provide feedback
+      if (useColors) {
+        console.log(`${colors.fg.lightBlue}undefined${colors.reset}`);
+      } else {
+        console.log("undefined");
+      }
     }
     
-    // Show environment state only in verbose mode
+    // Show evaluation metrics
     if (logger.isVerbose) {
-      console.log("Environment state:");
-      console.log("------------------");
-      const envSymbols = evaluator.getEnvironment().getDefinedSymbols();
-      console.log(`Defined symbols: ${envSymbols.join(", ") || "none"}`);
-      console.log("------------------");
+      const metrics = evaluator.getLastMetrics();
+      if (metrics) {
+        console.log("------------------");
+        console.log("Evaluation metrics:");
+        console.log(`Parsing: ${metrics.parseTimeMs.toFixed(2)}ms`);
+        console.log(`Syntax Transform: ${metrics.syntaxTransformTimeMs.toFixed(2)}ms`);
+        console.log(`Import Processing: ${metrics.importProcessingTimeMs.toFixed(2)}ms`);
+        console.log(`Macro Expansion: ${metrics.macroExpansionTimeMs.toFixed(2)}ms`);
+        console.log(`AST Conversion: ${metrics.astConversionTimeMs.toFixed(2)}ms`);
+        console.log(`Code Generation: ${metrics.codeGenerationTimeMs.toFixed(2)}ms`);
+        console.log(`Evaluation: ${metrics.evaluationTimeMs.toFixed(2)}ms`);
+        console.log(`Total: ${metrics.totalTimeMs.toFixed(2)}ms`);
+        console.log("------------------");
+      }
+    }
+
+    // Track symbol usage if the function is provided
+    if (trackSymbolUsage && result.parsedExpressions) {
+      // Extract symbols from the expressions
+      for (const expr of result.parsedExpressions) {
+        if (typeof expr === 'string') {
+          trackSymbolUsage(expr);
+        } else if (expr.type === 'symbol') {
+          trackSymbolUsage(expr.name);
+        }
+      }
     }
   } catch (error) {
     if (useColors) {
-      console.error(`${colors.fg.red}Error: ${error instanceof Error ? error.message : String(error)}${colors.reset}`);
+      console.error(`${colors.fg.red}Error displaying result: ${error instanceof Error ? error.message : String(error)}${colors.reset}`);
     } else {
-      console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    if (error instanceof Error && error.stack && logger.isVerbose) {
-      console.error(error.stack);
+      console.error(`Error displaying result: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }
@@ -416,7 +489,7 @@ async function loadAndEvaluateFile(
 
   const fileContent = await Deno.readTextFile(resolvedPath);
   if (options.useColors) {
-    console.log(`${colors.fg.yellow}Loading file: ${resolvedPath}${colors.reset}`);
+    console.log(`${colors.fg.sicpRed}Loading file: ${resolvedPath}${colors.reset}`);
   } else {
     console.log(`Loading file: ${resolvedPath}`);
   }
@@ -425,33 +498,27 @@ async function loadAndEvaluateFile(
 }
 
 /**
- * Handle special REPL commands.
+ * Handle REPL commands.
  */
 async function handleCommand(
   command: string,
   evaluator: REPLEvaluator,
   history: string[],
   {
-    logger,
-    baseDir,
-    showAst,
-    showExpanded,
-    showJs,
-    useColors,
-    running,
+    running: isRunning,
     setRunning,
     setVerbose,
     setColors,
     setShowAst,
     setShowExpanded,
     setShowJs,
+    logger,
+    baseDir,
+    showAst,
+    showExpanded,
+    showJs,
+    useColors,
   }: {
-    logger: Logger;
-    baseDir: string;
-    showAst: boolean;
-    showExpanded: boolean;
-    showJs: boolean;
-    useColors: boolean;
     running: () => boolean;
     setRunning: (value: boolean) => void;
     setVerbose: (value: boolean) => void;
@@ -459,154 +526,284 @@ async function handleCommand(
     setShowAst: (value: boolean) => void;
     setShowExpanded: (value: boolean) => void;
     setShowJs: (value: boolean) => void;
+    logger: Logger;
+    baseDir: string;
+    showAst: boolean;
+    showExpanded: boolean;
+    showJs: boolean;
+    useColors: boolean;
   },
 ): Promise<void> {
-  const parts = command.trim().split(/\s+/);
-  const cmd = parts[0].toLowerCase();
-
+  const parts = command.split(" ");
+  const cmd = parts[0];
+  
   switch (cmd) {
     case ":help":
+    case ":h":
       printBanner(useColors);
       break;
-
-    case ":exit":
+      
     case ":quit":
+    case ":exit":
+    case ":q":
       setRunning(false);
       break;
-
-    case ":env":
-      // Get defined symbols from the REPL environment
-      const replEnv = evaluator.getEnvironment();
-      const definedSymbols = replEnv.getDefinedSymbols();
       
-      // Format the bindings output
-      const bindingString = definedSymbols.length > 0 
-        ? definedSymbols.map(name => {
-            const value = replEnv.getJsValue(name);
-            return `${name}: ${typeof value === "function" ? "<function>" : value}`;
-          }).join("\n")
-        : "No bindings";
+    case ":env": {
+      // Get environment from evaluator
+      const _env = evaluator.getEnvironment();
+      console.log(colorText("Environment bindings:", colors.fg.sicpRed + colors.bright, useColors));
       
-      printBlock("Environment Bindings:", bindingString, useColors);
+      // Display environment variables safely
+      console.log("Defined symbols:");
+      console.log("----------------");
+      try {
+        // Simply display that we can't access symbols directly
+        console.log("(Environment symbol information not directly accessible in this view)");
+        console.log("Use JavaScript to inspect variables with (js ...)");
+      } catch (error) {
+        console.error(`Error accessing environment: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      console.log("----------------");
       break;
-
-    case ":macros":
-      const macroKeys = Array.from(evaluator.getEnvironment().hqlEnv.macros.keys());
-      printBlock("Defined Macros:", macroKeys.join(", ") || "No macros defined", useColors);
-      break;
-
-    case ":verbose":
-      const newVerbose = !logger.enabled;
-      setVerbose(newVerbose);
-      if (useColors) {
-        console.log(`${colors.fg.yellow}Verbose mode ${newVerbose ? "enabled" : "disabled"}${colors.reset}`);
-      } else {
-        console.log(`Verbose mode ${newVerbose ? "enabled" : "disabled"}`);
+    }
+      
+    case ":macros": {
+      console.log(colorText("Defined macros:", colors.fg.sicpRed + colors.bright, useColors));
+      const environment = evaluator.getEnvironment();
+      
+      try {
+        console.log("Macro names:");
+        console.log("------------");
+        // Check if macros property exists on environment
+        if (environment && 'macros' in environment && environment.macros instanceof Map) {
+          const macroKeys = Array.from(environment.macros.keys());
+          if (macroKeys.length > 0) {
+            for (const macroName of macroKeys) {
+              console.log(`- ${macroName}`);
+            }
+          } else {
+            console.log("No macros defined");
+          }
+        } else {
+          console.log("Macro information not available");
+        }
+        console.log("------------");
+      } catch (error) {
+        console.error(`Error accessing macros: ${error instanceof Error ? error.message : String(error)}`);
       }
       break;
-
+    }
+      
+    case ":verbose":
+      setVerbose(!logger.isVerbose);
+      console.log(`Verbose mode ${logger.isVerbose ? "enabled" : "disabled"}`);
+      break;
+      
     case ":ast":
       setShowAst(!showAst);
-      if (useColors) {
-        console.log(`${colors.fg.yellow}AST display ${!showAst ? "enabled" : "disabled"}${colors.reset}`);
-      } else {
-        console.log(`AST display ${!showAst ? "enabled" : "disabled"}`);
-      }
+      console.log(`AST display ${showAst ? "enabled" : "disabled"}`);
       break;
-
+      
     case ":expanded":
       setShowExpanded(!showExpanded);
-      if (useColors) {
-        console.log(`${colors.fg.yellow}Expanded form display ${!showExpanded ? "enabled" : "disabled"}${colors.reset}`);
-      } else {
-        console.log(`Expanded form display ${!showExpanded ? "enabled" : "disabled"}`);
-      }
+      console.log(`Expanded form display ${showExpanded ? "enabled" : "disabled"}`);
       break;
-
+      
     case ":js":
       setShowJs(!showJs);
-      if (useColors) {
-        console.log(`${colors.fg.yellow}JavaScript output display ${!showJs ? "enabled" : "disabled"}${colors.reset}`);
-      } else {
-        console.log(`JavaScript output display ${!showJs ? "enabled" : "disabled"}`);
-      }
+      console.log(`JavaScript output display ${showJs ? "enabled" : "disabled"}`);
       break;
-
-    case ":load":
+      
+    case ":load": {
       if (parts.length < 2) {
-        if (useColors) {
-          console.error(`${colors.fg.red}Error: Missing filename${colors.reset}`);
-        } else {
-          console.error("Error: Missing filename");
-        }
+        console.error("Usage: :load <filename>");
         return;
       }
       
+      const filePath = parts.slice(1).join(" ");
+      console.log(`Loading file: ${filePath}`);
+      
       try {
-        await loadAndEvaluateFile(parts[1], evaluator, history, {
+        await loadAndEvaluateFile(filePath, evaluator, history, {
           logger,
           baseDir,
-          historySize: history.length,
+          historySize: 100,
           showAst,
           showExpanded,
           showJs,
           useColors,
         });
+        console.log(`File loaded successfully: ${filePath}`);
       } catch (error) {
-        if (useColors) {
-          console.error(`${colors.fg.red}Error loading file: ${error instanceof Error ? error.message : String(error)}${colors.reset}`);
-        } else {
-          console.error(`Error loading file: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        console.error(`Error loading file: ${error instanceof Error ? error.message : String(error)}`);
       }
       break;
-
-    case ":save":
+    }
+      
+    case ":save": {
       if (parts.length < 2) {
-        if (useColors) {
-          console.error(`${colors.fg.red}Error: Missing filename${colors.reset}`);
-        } else {
-          console.error("Error: Missing filename");
-        }
+        console.error("Usage: :save <filename>");
         return;
       }
       
+      const saveFilePath = parts.slice(1).join(" ");
       try {
-        const savePath = path.isAbsolute(parts[1])
-          ? parts[1]
-          : path.join(baseDir, parts[1]);
-        
-        await Deno.writeTextFile(savePath, history.join("\n"));
-        if (useColors) {
-          console.log(`${colors.fg.green}History saved to ${savePath}${colors.reset}`);
-        } else {
-          console.log(`History saved to ${savePath}`);
-        }
+        await Deno.writeTextFile(saveFilePath, history.join("\n"));
+        console.log(`History saved to ${saveFilePath}`);
       } catch (error) {
-        if (useColors) {
-          console.error(`${colors.fg.red}Error saving history: ${error instanceof Error ? error.message : String(error)}${colors.reset}`);
-        } else {
-          console.error(`Error saving history: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        console.error(`Error saving history: ${error instanceof Error ? error.message : String(error)}`);
       }
       break;
-
+    }
+      
     case ":colors":
       setColors(!useColors);
-      console.log(`Colors ${!useColors ? "enabled" : "disabled"}`);
+      console.log(`Colorized output ${useColors ? "enabled" : "disabled"}`);
       break;
-
+      
     case ":clear":
       console.clear();
       break;
-
-    default:
-      if (useColors) {
-        console.error(`${colors.fg.red}Unknown command: ${cmd}${colors.reset}`);
-      } else {
-        console.error(`Unknown command: ${cmd}`);
+      
+    case ":reset":
+      try {
+        // Reset REPL state by reinitializing evaluator
+        console.log("Resetting REPL environment...");
+        if (typeof evaluator.resetEnvironment === 'function') {
+          evaluator.resetEnvironment();
+          console.log("Environment reset complete.");
+        } else {
+          console.log("Environment reset not supported.");
+        }
+      } catch (error) {
+        console.error(`Error resetting environment: ${error instanceof Error ? error.message : String(error)}`);
       }
       break;
+      
+    default:
+      console.error(`Unknown command: ${cmd}`);
+      console.log("Type :help for a list of commands");
+  }
+}
+
+/**
+ * Read a line with arrow key history navigation support
+ */
+async function readLineWithHistory(
+  prompt: string, 
+  history: string[]
+): Promise<string> {
+  const encoder = new TextEncoder();
+  
+  // Write prompt
+  await Deno.stdout.write(encoder.encode(prompt));
+  
+  let currentInput = "";
+  let cursorPos = 0;
+  let historyIndex = history.length;
+  
+  // Function to redraw the current line
+  const redrawLine = async () => {
+    // First move to the beginning of the line
+    await Deno.stdout.write(encoder.encode("\r"));
+    
+    // Then clear the entire line
+    await Deno.stdout.write(encoder.encode("\x1b[2K"));
+    
+    // Write prompt and current input
+    await Deno.stdout.write(encoder.encode(prompt + currentInput));
+    
+    // Position cursor correctly if not at the end
+    if (cursorPos < currentInput.length) {
+      // Move cursor to the correct position (from end to desired position)
+      const moveLeft = currentInput.length - cursorPos;
+      await Deno.stdout.write(encoder.encode(`\x1b[${moveLeft}D`));
+    }
+  };
+  
+  while (true) {
+    const keypressEvent = await keypress();
+    
+    // Handle different key presses based on the keypress event structure
+    if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "c") {
+      // Ctrl+C - cancel input
+      await Deno.stdout.write(encoder.encode("\n"));
+      return "";
+    } else if (keypressEvent && keypressEvent.key === "return") {
+      // Enter - complete input
+      await Deno.stdout.write(encoder.encode("\n"));
+      if (currentInput.trim() && (history.length === 0 || history[history.length - 1] !== currentInput)) {
+        history.push(currentInput);
+      }
+      return currentInput;
+    } else if (keypressEvent && keypressEvent.key === "backspace") {
+      // Backspace - delete character before cursor
+      if (cursorPos > 0) {
+        currentInput = currentInput.slice(0, cursorPos - 1) + currentInput.slice(cursorPos);
+        cursorPos--;
+        await redrawLine();
+      }
+    } else if (keypressEvent && keypressEvent.key === "delete") {
+      // Delete - remove character at cursor
+      if (cursorPos < currentInput.length) {
+        currentInput = currentInput.slice(0, cursorPos) + currentInput.slice(cursorPos + 1);
+        await redrawLine();
+      }
+    } else if (keypressEvent && keypressEvent.key === "left") {
+      // Left arrow - move cursor left
+      if (cursorPos > 0) {
+        cursorPos--;
+        await redrawLine();
+      }
+    } else if (keypressEvent && keypressEvent.key === "right") {
+      // Right arrow - move cursor right
+      if (cursorPos < currentInput.length) {
+        cursorPos++;
+        await redrawLine();
+      }
+    } else if (keypressEvent && keypressEvent.key === "up") {
+      // Up arrow - navigate history backwards
+      if (historyIndex > 0) {
+        historyIndex--;
+        currentInput = history[historyIndex];
+        cursorPos = currentInput.length;
+        await redrawLine();
+      }
+    } else if (keypressEvent && keypressEvent.key === "down") {
+      // Down arrow - navigate history forwards
+      if (historyIndex < history.length - 1) {
+        historyIndex++;
+        currentInput = history[historyIndex];
+        cursorPos = currentInput.length;
+        await redrawLine();
+      } else if (historyIndex === history.length - 1) {
+        // At the end of history, show empty line
+        historyIndex = history.length;
+        currentInput = "";
+        cursorPos = 0;
+        await redrawLine();
+      }
+    } else if (keypressEvent && keypressEvent.key === "tab") {
+      // Tab - simple autocompletion (can be expanded later)
+      // For now, just add two spaces
+      currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
+      cursorPos += 2;
+      await redrawLine();
+    } else if (keypressEvent && keypressEvent.key === "home") {
+      // Home - move cursor to start
+      cursorPos = 0;
+      await redrawLine();
+    } else if (keypressEvent && keypressEvent.key === "end") {
+      // End - move cursor to end
+      cursorPos = currentInput.length;
+      await redrawLine();
+    } else if (keypressEvent && keypressEvent.sequence && !keypressEvent.ctrlKey && !keypressEvent.metaKey && !keypressEvent.altKey) {
+      // Regular character input
+      currentInput = currentInput.slice(0, cursorPos) + keypressEvent.sequence + currentInput.slice(cursorPos);
+      cursorPos += keypressEvent.sequence.length;
+      await redrawLine();
+    }
   }
 }
 

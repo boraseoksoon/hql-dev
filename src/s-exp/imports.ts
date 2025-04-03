@@ -39,6 +39,7 @@ interface ImportProcessorOptions {
   inProgressFiles?: Set<string>;
   importMap?: Map<string, string>;
   currentFile?: string;
+  skipRebuild?: boolean;
 }
 
 interface SLiteral {
@@ -275,7 +276,9 @@ function getModulePathFromImport(importExpr: SList): string {
     ) {
       return String((importExpr.elements[2] as SLiteral).value);
     }
-  } catch (_e) {}
+  } catch (_e) {
+    // Error parsing the import expression, fall back to "unknown"
+  }
   return "unknown";
 }
 
@@ -285,23 +288,61 @@ async function processImport(
   baseDir: string,
   options: ImportProcessorOptions,
 ): Promise<void> {
-  const elements = importExpr.elements;
   const logger = createLogger(options);
+  const elements = importExpr.elements;
+  
+  if (elements.length <= 1) {
+    throw new MacroError(
+      "Invalid import statement format. Expected (import ...)",
+      "import",
+      options.currentFile,
+    );
+  }
+
+  // If skipRebuild is set and this isn't a system module, just register the import without rebuilding
+  if (options.skipRebuild && options.currentFile) {
+    logger.debug(`Skipping rebuild for import in ${options.currentFile} (REPL mode)`);
+    // Just mark the file as processed without actually rebuilding it
+    return;
+  }
+
   try {
-    if (isSExpVectorImport(elements)) {
-      await processVectorBasedImport(elements, env, baseDir, options);
+    // Handle different import syntaxes
+    if (elements.length === 2 && elements[1].type === "literal") {
+      // Simple import statement like (import "module-path")
+      const modulePath = (elements[1] as SLiteral).value as string;
+      const resolvedPath = path.resolve(baseDir, modulePath);
+      
+      logger.debug(`Simple import of full module: ${modulePath} => ${resolvedPath}`);
+      
+      // Register the module path for later reference
+      registerModulePath(modulePath, resolvedPath);
+      
+      // Load the module based on its type
+      await loadModuleByType(
+        modulePath, // Use the path as the module name
+        modulePath,
+        resolvedPath,
+        baseDir,
+        env,
+        options
+      );
     } else if (isSExpNamespaceImport(elements)) {
+      // Namespace import like (import name from "module-path")
       await processNamespaceImport(elements, env, baseDir, options);
+    } else if (isSExpVectorImport(elements)) {
+      // Vector import like (import [a b c] from "module-path")
+      await processVectorBasedImport(elements, env, baseDir, options);
     } else {
       throw new ImportError(
-        'Invalid import syntax, expected either (import [symbols] from "path") or (import name from "path")',
+        `Invalid import statement format: ${JSON.stringify(importExpr)}`,
         "syntax-error",
-        options.currentFile,
+        options.currentFile
       );
     }
   } catch (error) {
     const modulePath = getModulePathFromImport(importExpr);
-    wrapError("Processing import expression", error, modulePath, options.currentFile);
+    wrapError("Processing import", error, modulePath, options.currentFile);
   }
 }
 

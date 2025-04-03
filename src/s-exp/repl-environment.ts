@@ -1,7 +1,26 @@
 // src/s-exp/repl-environment.ts - A stateful environment for the REPL
 
-import { Environment } from "../environment.ts";
+import { Environment, Value } from "../environment.ts";
 import { Logger } from "../logger.ts";
+
+/**
+ * Options for the REPL Environment
+ */
+export interface REPLEnvironmentOptions {
+  verbose?: boolean;
+}
+
+/**
+ * Pattern constants for code analysis
+ */
+const PATTERNS = {
+  VARIABLE_DECLARATION: /(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/g,
+  FUNCTION_DECLARATION: /function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g,
+  FUNCTION_OR_VAR_START: /^(function |const |let |var )/,
+  RETURN_OR_DECLARATION: /^(const|let|var|return)\s+/,
+  VARIABLE_NAME_CAPTURE: /^(const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/,
+  EXPRESSION_OPERATORS: /[\(\)\+\-\*\/]/
+};
 
 /**
  * A stateful environment specifically for the REPL.
@@ -13,7 +32,7 @@ export class REPLEnvironment {
   hqlEnv: Environment;
   
   // JavaScript runtime environment to maintain state between evaluations
-  private jsEnv: Record<string, any> = {};
+  private jsEnv: Record<string, Value> = {};
   
   // Track defined symbols to maintain across evaluations
   private definitions: Set<string> = new Set();
@@ -21,7 +40,7 @@ export class REPLEnvironment {
   // Logger for debugging
   private logger: Logger;
 
-  constructor(hqlEnv: Environment, options: { verbose?: boolean } = {}) {
+  constructor(hqlEnv: Environment, options: REPLEnvironmentOptions = {}) {
     this.hqlEnv = hqlEnv;
     this.logger = new Logger(options.verbose || false);
   }
@@ -29,14 +48,14 @@ export class REPLEnvironment {
   /**
    * Get the value of a symbol from the JavaScript environment
    */
-  getJsValue(name: string): any {
+  getJsValue(name: string): Value {
     return this.jsEnv[name];
   }
 
   /**
    * Set a value in the JavaScript environment
    */
-  setJsValue(name: string, value: any): void {
+  setJsValue(name: string, value: Value): void {
     this.jsEnv[name] = value;
     this.definitions.add(name);
     
@@ -86,28 +105,119 @@ export class REPLEnvironment {
    * and store them in the environment
    */
   extractDefinitions(code: string): string[] {
-    // Match variable declarations that should be captured
-    // This handles 'const', 'let', and 'var' declarations and function declarations
-    const varMatches = code.matchAll(/(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/g);
-    const funcMatches = code.matchAll(/function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g);
-    
     const definitions: string[] = [];
     
     // Process variable declarations
-    for (const match of varMatches) {
+    for (const match of code.matchAll(PATTERNS.VARIABLE_DECLARATION)) {
       if (match[1]) {
         definitions.push(match[1]);
       }
     }
     
     // Process function declarations
-    for (const match of funcMatches) {
+    for (const match of code.matchAll(PATTERNS.FUNCTION_DECLARATION)) {
       if (match[1]) {
         definitions.push(match[1]);
       }
     }
     
     return definitions;
+  }
+  
+  /**
+   * Add code to register definitions in the REPL environment
+   */
+  private createRegistrationCode(definitions: string[]): string {
+    let registerCode = "\n\n// Register definitions\n";
+    for (const def of definitions) {
+      registerCode += `if (typeof ${def} !== 'undefined') { replEnv.setJsValue("${def}", ${def}); }\n`;
+    }
+    return registerCode;
+  }
+  
+  /**
+   * Process the last expression to ensure it returns a value
+   */
+  private processLastExpression(code: string): string {
+    // For expressions, capture the result by wrapping the last line
+    const lines = code.split('\n');
+    let lastNonEmptyIndex = lines.length - 1;
+    
+    // Find the last non-empty line
+    while (lastNonEmptyIndex >= 0 && !lines[lastNonEmptyIndex].trim()) {
+      lastNonEmptyIndex--;
+    }
+    
+    if (lastNonEmptyIndex < 0) return code;
+    
+    const lastLine = lines[lastNonEmptyIndex].trim();
+    if (!lastLine) return code;
+    
+    // If the last line is an expression (not a statement ending with semicolon)
+    if (this.isNonDeclarationExpression(lastLine)) {
+      // Replace with a return statement
+      lines[lastNonEmptyIndex] = `return ${lastLine};`;
+      this.debug(`Adding return for expression: ${lastLine}`);
+    }
+    else if (this.isExpressionWithSemicolon(lastLine)) {
+      // It's an expression with semicolon, add return statement
+      lines[lastNonEmptyIndex] = `return ${lastLine.substring(0, lastLine.length - 1)};`;
+      this.debug(`Adding return for expression with semicolon: ${lastLine}`);
+    }
+    else if (this.isVariableDeclaration(lastLine)) {
+      // If it's a variable declaration, add code to return its value
+      const match = lastLine.match(PATTERNS.VARIABLE_NAME_CAPTURE);
+      if (match && match[2]) {
+        const varName = match[2];
+        lines.push(`return ${varName};`);
+        this.debug(`Adding return for variable: ${varName}`);
+      }
+    }
+    else if (this.mightBeExpression(lastLine)) {
+      // For any other expression, assume it's a statement and wrap it
+      // Strip any trailing semicolon
+      let expression = lastLine;
+      if (expression.endsWith(';')) {
+        expression = expression.substring(0, expression.length - 1);
+      }
+      
+      lines[lastNonEmptyIndex] = `return ${expression};`;
+      this.debug(`Adding return for general expression: ${expression}`);
+    }
+    
+    return lines.join('\n');
+  }
+  
+  /**
+   * Helpers for type checking expressions
+   */
+  private isNonDeclarationExpression(line: string): boolean {
+    return !line.endsWith(';') && 
+           !line.startsWith('function ') && 
+           !line.match(PATTERNS.RETURN_OR_DECLARATION);
+  }
+  
+  private isExpressionWithSemicolon(line: string): boolean {
+    return line.endsWith(';') &&
+           !line.startsWith('function ') && 
+           !line.match(PATTERNS.RETURN_OR_DECLARATION);
+  }
+  
+  private isVariableDeclaration(line: string): boolean {
+    return !!line.match(PATTERNS.VARIABLE_NAME_CAPTURE);
+  }
+  
+  private mightBeExpression(line: string): boolean {
+    return PATTERNS.EXPRESSION_OPERATORS.test(line);
+  }
+  
+  /**
+   * Debug logging helper
+   */
+  private debug(message: string): void {
+    if (this.logger.isVerbose) {
+      console.log(`DEBUG: ${message}`);
+    }
   }
   
   /**
@@ -118,103 +228,23 @@ export class REPLEnvironment {
   prepareJsForRepl(jsCode: string): string {
     // Extract definitions that should be captured in the environment
     const definitions = this.extractDefinitions(jsCode);
-    
-    if (this.logger.isVerbose) {
-      console.log("DEBUG: Extracted definitions:", definitions);
-    }
-    
-    let resultCode = "";
-    
-    // Function to add code to register definitions
-    const addRegistrationCode = () => {
-      let registerCode = "\n\n// Register definitions\n";
-      for (const def of definitions) {
-        registerCode += `if (typeof ${def} !== 'undefined') { replEnv.setJsValue("${def}", ${def}); }\n`;
-      }
-      return registerCode;
-    };
+    this.debug(`Extracted definitions: ${JSON.stringify(definitions)}`);
     
     // Check if it's a function definition or variable declaration
-    if (jsCode.trim().startsWith("function ") || /^(const|let|var)\s+/.test(jsCode.trim())) {
+    if (PATTERNS.FUNCTION_OR_VAR_START.test(jsCode.trim())) {
       // For function/variable definitions, add the code as is, then register the definitions
-      resultCode = jsCode + addRegistrationCode();
-      if (this.logger.isVerbose) {
-        console.log("DEBUG: Handling function/variable definition");
-      }
+      const resultCode = jsCode + this.createRegistrationCode(definitions);
+      this.debug("Handling function/variable definition");
       return resultCode;
     }
     
-    // For expressions, capture the result by wrapping the last line
-    const lines = jsCode.split('\n');
-    let lastNonEmptyIndex = lines.length - 1;
-    
-    // Find the last non-empty line
-    while (lastNonEmptyIndex >= 0 && !lines[lastNonEmptyIndex].trim()) {
-      lastNonEmptyIndex--;
-    }
-    
-    if (lastNonEmptyIndex >= 0) {
-      const lastLine = lines[lastNonEmptyIndex].trim();
-      
-      // If the last line is an expression (not a statement ending with semicolon)
-      if (lastLine && !lastLine.endsWith(';') && 
-          !lastLine.startsWith('function ') && 
-          !lastLine.match(/^(const|let|var|return)\s+/)) {
-        
-        // Replace with a return statement
-        lines[lastNonEmptyIndex] = `return ${lastLine};`;
-        if (this.logger.isVerbose) {
-          console.log(`DEBUG: Adding return for expression: ${lastLine}`);
-        }
-      }
-      else if (lastLine && lastLine.endsWith(';') &&
-               !lastLine.startsWith('function ') && 
-               !lastLine.match(/^(const|let|var|return)\s+/)) {
-        // It's an expression with semicolon, add return statement
-        lines[lastNonEmptyIndex] = `return ${lastLine.substring(0, lastLine.length - 1)};`;
-        if (this.logger.isVerbose) {
-          console.log(`DEBUG: Adding return for expression with semicolon: ${lastLine}`);
-        }
-      }
-      else if (lastLine && lastLine.match(/^(const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/)) {
-        // If it's a variable declaration, add code to return its value
-        const match = lastLine.match(/^(const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/);
-        if (match && match[2]) {
-          const varName = match[2];
-          lines.push(`return ${varName};`);
-          if (this.logger.isVerbose) {
-            console.log(`DEBUG: Adding return for variable: ${varName}`);
-          }
-        }
-      }
-      else {
-        // For any other expression, assume it's a statement and wrap it
-        // Strip any trailing semicolon
-        let expression = lastLine;
-        if (expression.endsWith(';')) {
-          expression = expression.substring(0, expression.length - 1);
-        }
-        
-        // Replace the line with a return statement if it could have a value
-        if (expression.includes('(') || 
-            expression.includes('+') || 
-            expression.includes('-') || 
-            expression.includes('*') || 
-            expression.includes('/')) {
-          lines[lastNonEmptyIndex] = `return ${expression};`;
-          if (this.logger.isVerbose) {
-            console.log(`DEBUG: Adding return for general expression: ${expression}`);
-          }
-        }
-      }
-    }
+    // Process the code to ensure the last expression returns a value
+    const processedCode = this.processLastExpression(jsCode);
     
     // Join everything back together and add the registration code
-    resultCode = lines.join('\n') + addRegistrationCode();
+    const resultCode = processedCode + this.createRegistrationCode(definitions);
     
-    if (this.logger.isVerbose) {
-      console.log("DEBUG: Final prepared code:", resultCode);
-    }
+    this.debug(`Final prepared code: ${resultCode}`);
     return resultCode;
   }
 } 
