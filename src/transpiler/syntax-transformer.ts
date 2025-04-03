@@ -12,6 +12,7 @@ import {
   SList,
   SSymbol,
 } from "../s-exp/types.ts";
+import * as enumHandler from "./syntax/enum.ts";
 import { Logger } from "../logger.ts";
 import { TransformError } from "../transpiler/errors.ts";
 import { perform } from "../transpiler/error-utils.ts";
@@ -186,7 +187,7 @@ function transformDotNotationSymbol(
   
   // Find an enum that has this case name
   for (const [enumName, enumDef] of enumDefinitions.entries()) {
-    if (hasCaseNamed(enumDef, caseName)) {
+    if (enumHandler.hasCaseNamed(enumDef, caseName)) {
       logger.debug(`Transformed dot notation .${caseName} to ${enumName}.${caseName}`);
       return createSymbol(`${enumName}.${caseName}`);
     }
@@ -197,10 +198,7 @@ function transformDotNotationSymbol(
   return symbol;
 }
 
-/**
- * Special handling for equality testing with enum dot notation
- * Transforms expressions like (= value .enumCase) to (= value EnumType.enumCase)
- */
+
 function transformEqualityExpression(
   list: SList,
   enumDefinitions: Map<string, SList>,
@@ -238,7 +236,7 @@ function transformEqualityExpression(
     
     // Find an enum that has this case
     for (const [enumName, enumDef] of enumDefinitions.entries()) {
-      if (hasCaseNamed(enumDef, caseName)) {
+      if (enumHandler.hasCaseNamed(enumDef, caseName)) {
         // Replace the dot expression with the full enum reference
         const fullEnumRef = createSymbol(`${enumName}.${caseName}`);
         logger.debug(`Transformed ${dotExpr.name} to ${enumName}.${caseName} in equality expression`);
@@ -384,24 +382,6 @@ function transformNamedArguments(
   }
   
   return createList(...transformedElements);
-}
-
-/**
- * Check if an enum definition has a case with the given name
- */
-function hasCaseNamed(enumDef: SList, caseName: string): boolean {
-  for (let i = 2; i < enumDef.elements.length; i++) {
-    const element = enumDef.elements[i];
-    if (isList(element) && 
-        (element as SList).elements.length >= 2 && 
-        isSymbol((element as SList).elements[0]) && 
-        (element as SList).elements[0].name === "case" &&
-        isSymbol((element as SList).elements[1]) && 
-        (element as SList).elements[1].name === caseName) {
-      return true;
-    }
-  }
-  return false;
 }
 
 /**
@@ -571,29 +551,6 @@ function transformFxSyntax(list: SList, enumDefinitions: Map<string, SList>, log
     TransformError,
     ["fx syntax transformation"],
   );
-}
-
-/**
- * Handle array type notation like [String] in function signatures
- */
-function transformTypeAnnotation(node: SExp): SExp {
-  // If it's already a symbol, just return it
-  if (isSymbol(node)) {
-    return node;
-  }
-  
-  // If it's a list that represents an array type like [String]
-  if (isList(node) && 
-      (node as SList).elements.length === 1 && 
-      isSymbol((node as SList).elements[0])) {
-    
-    // Convert [String] to Array<String> format
-    const innerType = ((node as SList).elements[0] as SSymbol).name;
-    return createSymbol(`Array<${innerType}>`);
-  }
-  
-  // For other cases, just return the node as is
-  return node;
 }
 
 /**

@@ -659,27 +659,6 @@ function expandMacroExpression(
   return createList(...expandedElements);
 }
 
-/* Process all macro definitions (global then user-level) */
-function processMacroDefinitions(
-  exprs: SExp[],
-  env: Environment,
-  currentFile: string | undefined,
-  logger: Logger,
-): void {
-  for (const expr of exprs) {
-    if (isDefMacro(expr) && isList(expr)) {
-      defineMacro(expr as SList, env, logger);
-    }
-  }
-  if (currentFile) {
-    for (const expr of exprs) {
-      if (isUserMacro(expr) && isList(expr)) {
-        defineUserMacro(expr as SList, currentFile, env, logger);
-      }
-    }
-  }
-}
-
 /* Filter out macro definitions from the final S-expression list */
 function filterMacroDefinitions(exprs: SExp[], logger: Logger): SExp[] {
   return exprs.filter((expr) => {

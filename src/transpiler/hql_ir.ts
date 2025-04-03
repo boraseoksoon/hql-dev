@@ -360,32 +360,39 @@ export interface IRGetAndCall extends IRNode {
   arguments: IRNode[];
 }
 
-// --- Enum Types (NEW) ---
+// --- Enum Types (Enhanced definitions) ---
 
 /**
- * Represents an enum declaration: (enum TypeName ...)
- */
-export interface IREnumDeclaration extends IRNode {
-  type: IRNodeType.EnumDeclaration;
-  id: IRIdentifier; // The name of the enum (e.g., OsType)
-  rawType?: string; // Type for raw values (e.g., Int, String)
-  cases: IREnumCase[]; // The list of cases defined within the enum
-  hasAssociatedValues?: boolean; // Flag indicating if any case has associated values
-}
-
-/**
- * Represents a simple enum case: (case CaseName)
- * (Future versions will add support for raw values and associated values)
+ * Associated value for enum cases with parameters
+ * @example (case success: value: Int message: String)
  */
 export interface IREnumAssociatedValue {
   name: string;
   type: string;
 }
 
+/**
+ * Represents an enum declaration: (enum TypeName ...)
+ */
+export interface IREnumDeclaration extends IRNode {
+  type: IRNodeType.EnumDeclaration;
+  id: IRIdentifier;
+  rawType?: string;
+  cases: IREnumCase[];
+  hasAssociatedValues?: boolean;
+}
+
+/**
+ * Represents an enum case declaration
+ * 
+ * @example (case success)           - Simple case
+ * @example (case error 404)         - Case with raw value
+ * @example (case data: value: Int)  - Case with associated values
+ */
 export interface IREnumCase extends IRNode {
   type: IRNodeType.EnumCase;
-  id: IRIdentifier; // The name of the case (e.g., macOS)
-  rawValue?: IRNode; // For raw value support
-  associatedValues?: IREnumAssociatedValue[]; // For associated values support
+  id: IRIdentifier;
+  rawValue?: IRNode;
+  associatedValues?: IREnumAssociatedValue[];
   hasAssociatedValues?: boolean;
 }

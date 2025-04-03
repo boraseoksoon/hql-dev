@@ -3,6 +3,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 import * as IR from "./hql_ir.ts";
+import * as enumHandler from "./syntax/enum.ts";
 import { HQLNode, ListNode, LiteralNode, SymbolNode } from "./hql_ast.ts";
 import { registerPureFunction, verifyFunctionPurity } from "./purity.ts";
 import {
@@ -202,10 +203,6 @@ function initializeTransformFactory(): void {
 }
 
 /**
- * Transform an enum declaration to IR (NEW)
- * Handles simple case: (enum TypeName (case CaseName) ...)
- */
-/**
  * Transform an enum declaration to IR.
  * Handles both syntaxes:
  *  - (enum StatusCodes:Int (case ok 200) …)
@@ -280,67 +277,8 @@ function transformEnum(list: ListNode, currentDir: string): IR.IRNode {
           );
         }
 
-        const caseList = element as ListNode;
-        if (
-          caseList.elements.length < 2 ||
-          caseList.elements[0].type !== "symbol" ||
-          (caseList.elements[0] as SymbolNode).name !== "case" ||
-          caseList.elements[1].type !== "symbol"
-        ) {
-          throw new ValidationError(
-            "Invalid enum case format. Expected (case CaseName ...)",
-            "enum case format",
-            "(case CaseName)",
-            `invalid format: ${JSON.stringify(element)}`,
-          );
-        }
-
-        const caseNameNode = caseList.elements[1] as SymbolNode;
-        const caseName = caseNameNode.name;
-
-        // Create the basic enum case
-        const enumCase: IR.IREnumCase = {
-          type: IR.IRNodeType.EnumCase,
-          id: {
-            type: IR.IRNodeType.Identifier,
-            name: sanitizeIdentifier(caseName),
-          },
-        };
-
-        // Check if this case has additional elements.
-        if (caseList.elements.length > 2) {
-          // If any symbol in the remaining elements ends with a colon, treat them as named parameters
-          const hasNamedParams = caseList.elements.some(elem =>
-            elem.type === "symbol" && (elem as SymbolNode).name.endsWith(":")
-          );
-
-          if (hasNamedParams) {
-            const associatedValues: IR.IREnumAssociatedValue[] = [];
-            for (let i = 2; i < caseList.elements.length; i++) {
-              const elem = caseList.elements[i];
-              if (elem.type === "symbol" && (elem as SymbolNode).name.endsWith(":")) {
-                const paramName = (elem as SymbolNode).name.slice(0, -1); // remove colon
-                if (i + 1 < caseList.elements.length && caseList.elements[i + 1].type === "symbol") {
-                  const typeSymbol = caseList.elements[i + 1] as SymbolNode;
-                  associatedValues.push({
-                    name: paramName,
-                    type: typeSymbol.name
-                  });
-                  i++; // Skip the type symbol
-                }
-              }
-            }
-            enumCase.associatedValues = associatedValues;
-            enumCase.hasAssociatedValues = true;
-            logger.debug(`Enum case ${caseName} has ${associatedValues.length} associated values`);
-          } else {
-            // Otherwise, treat the extra element as a raw value
-            const rawValueNode = caseList.elements[2];
-            enumCase.rawValue = transformNode(rawValueNode, currentDir);
-            logger.debug(`Enum case ${caseName} has raw value`);
-          }
-        }
-
+        // Use the enum handler module to parse cases
+        const enumCase = enumHandler.parseEnumCase(element as ListNode, currentDir, transformNode);
         cases.push(enumCase);
       }
 
@@ -378,7 +316,6 @@ function transformEnum(list: ListNode, currentDir: string): IR.IRNode {
     [list],
   );
 }
-
 
 /**
  * Transform a class declaration to IR
