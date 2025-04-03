@@ -3,7 +3,7 @@ import { transpileCLI } from "../src/bundler.ts";
 import { resolve } from "../src/platform/platform.ts";
 import logger, { Logger } from "../src/logger.ts";
 import { cleanupAllTempFiles } from "../src/temp-file-tracker.ts";
-import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
+import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
 // New imports for enhanced error handling
 import { 
   registerSourceFile, 
@@ -13,6 +13,7 @@ import {
   withErrorHandling
 } from "../src/error-handling.ts";
 import { initializeErrorHandling } from "../src/error-initializer.ts";
+import { reportError } from "../src/error-reporter.ts";
 
 function printHelp() {
   // Unchanged
@@ -20,13 +21,15 @@ function printHelp() {
     "Usage: deno run -A cli/run.ts <target.hql|target.js> [options]",
   );
   console.error("\nOptions:");
-  console.error("  --verbose         Enable verbose logging (shows all logs)");
+  console.error("  --verbose         Enable verbose logging and enhanced error formatting");
   console.error("  --quiet           Disable console.log output");
   console.error(
     "  --log <namespaces>  Filter logging to specified namespaces (e.g., --log parser,cli)",
   );
   console.error("  --performance     Apply performance optimizations");
   console.error("  --print           Print final JS output directly in CLI");
+  console.error("  --debug           Enable enhanced debugging and error reporting");
+  console.error("  --no-clickable-paths  Disable clickable file paths in error messages");
   console.error("  --help, -h        Display this help message");
 }
 
@@ -64,6 +67,12 @@ async function run() {
     console.log("Verbose logging enabled");
   }
   
+  // Setup debug options for enhanced error reporting
+  const { debug, clickablePaths } = setupDebugOptions(args);
+  if (debug) {
+    console.log("Debug mode enabled with enhanced error reporting");
+  }
+  
   // Initialize enhanced error handling system
   initializeErrorHandling({
     enableGlobalHandlers: true,
@@ -85,7 +94,13 @@ async function run() {
     // Register the source for enhanced error handling
     registerSourceFile(inputPath, source);
   } catch (readError) {
-    console.error(`Error reading input file: ${inputPath}`);
+    // Use the enhanced error reporter
+    reportError(readError, {
+      filePath: inputPath,
+      verbose: verbose,
+      useClickablePaths: clickablePaths,
+      includeStack: verbose
+    });
     Deno.exit(1);
   }
   
@@ -117,9 +132,18 @@ async function run() {
       { 
         filePath: inputPath, 
         context: "transpilation",
-        logErrors: true
+        logErrors: false // Handle errors ourselves for better formatting
       }
-    )();
+    )().catch(error => {
+      // Use enhanced error reporting
+      reportError(error, {
+        filePath: inputPath,
+        verbose: verbose || debug,
+        useClickablePaths: clickablePaths,
+        includeStack: verbose || debug
+      });
+      Deno.exit(1);
+    });
     
     if (args.includes("--print")) {
       const bundledContent = await Deno.readTextFile(bundledPath);
@@ -136,18 +160,28 @@ async function run() {
         { 
           filePath: bundledPath, 
           context: "execution",
-          logErrors: true
+          logErrors: false // Handle errors ourselves
         }
-      )();
+      )().catch(error => {
+        // Use enhanced error reporting for runtime errors
+        reportError(error, {
+          filePath: bundledPath,
+          verbose: verbose || debug,
+          useClickablePaths: clickablePaths,
+          includeStack: verbose || debug
+        });
+        Deno.exit(1);
+      });
     }
   } catch (error) {
-    // Only report errors once at this level
-    if (error instanceof Error) {
-      // Don't print the error again - it should have been handled already
-      // by the inner error handlers
-    } else {
-      console.error(`Error: ${String(error)}`);
-    }
+    // Use enhanced error reporting
+    reportError(error, {
+      filePath: inputPath,
+      verbose: verbose || debug,
+      useClickablePaths: clickablePaths,
+      includeStack: verbose || debug
+    });
+    Deno.exit(1);
   } finally {
     try {
       await Deno.remove(tempDir, { recursive: true });
@@ -179,42 +213,6 @@ async function run() {
       });
     }
   }
-}
-
-/**
- * Run a single module execution
- */
-async function runModule(
-  inputPath: string,
-  tempDir: string,
-  options: any,
-  printOutput: boolean,
-): Promise<void> {
-  const fileName = inputPath.split("/").pop() || "output";
-  const tempOutputPath = `${tempDir}/${fileName.replace(/\.hql$/, ".run.js")}`;
-
-  // Use error handling for the transpilation
-  const bundledPath = await ErrorUtils.withErrorHandling(
-    () => transpileCLI(inputPath, tempOutputPath, options),
-    { filePath: inputPath, context: "module transpilation" }
-  )();
-
-  if (printOutput) {
-    const bundledContent = await Deno.readTextFile(bundledPath);
-    console.log(bundledContent);
-    return;
-  }
-
-  logger.log({
-    text: `Running bundled output: ${bundledPath}`,
-    namespace: "cli",
-  });
-  
-  // Import with error handling
-  await ErrorUtils.withErrorHandling(
-    async () => await import("file://" + resolve(bundledPath)),
-    { filePath: bundledPath, context: "module execution" }
-  )();
 }
 
 if (import.meta.main) {

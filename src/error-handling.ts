@@ -52,6 +52,7 @@ export function formatError(
     filePath?: string;
     useColors?: boolean;
     includeStack?: boolean;
+    makePathsClickable?: boolean;
   } = {}
 ): string {
   // First translate TypeScript errors if applicable
@@ -96,7 +97,20 @@ export function formatError(
   
   // Add file location if available
   if (options.filePath) {
-    result += `\n${c.cyan("Location:")} ${options.filePath}`;
+    // Extract line information from error if available
+    const lineMatch = error.message.match(/line (\d+)/i);
+    const columnMatch = error.message.match(/column (\d+)/i);
+    const line = lineMatch ? parseInt(lineMatch[1], 10) : undefined;
+    const column = columnMatch ? parseInt(columnMatch[1], 10) : undefined;
+    
+    // Generate location path
+    let locationPath = options.filePath;
+    if (options.makePathsClickable && line !== undefined) {
+      // Create a path format that editors can make clickable
+      locationPath = `${options.filePath}:${line}${column ? `:${column}` : ''}`;
+    }
+    
+    result += `\n${c.cyan("Location:")} ${locationPath}`;
   }
   
   // If we have a source file but no formatted context yet, add it manually

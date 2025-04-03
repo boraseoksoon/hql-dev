@@ -6,7 +6,7 @@ import {
   registerExceptionTempFile,
 } from "../src/temp-file-tracker.ts";
 import { Logger } from "../src/logger.ts";
-import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
+import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
 // New imports for enhanced error handling
 import { 
   registerSourceFile, 
@@ -15,6 +15,7 @@ import {
   ErrorUtils
 } from "../src/error-handling.ts";
 import { initializeErrorHandling } from "../src/error-initializer.ts";
+import { reportError } from "../src/error-reporter.ts";
 
 function printHelp() {
   // Unchanged
@@ -23,12 +24,14 @@ function printHelp() {
   );
   console.error("\nBasic Options:");
   console.error("  --run             Run the compiled output");
-  console.error("  --verbose, -v     Enable verbose logging");
+  console.error("  --verbose, -v     Enable verbose logging and enhanced error formatting");
   console.error("  --quiet           Disable console.log output");
   console.error(
     "  --log <namespaces>  Filter logging to specified namespaces (e.g., --log parser,cli)",
   );
   console.error("  --print           Print final JS output directly in CLI");
+  console.error("  --debug           Enable enhanced debugging and error reporting");
+  console.error("  --no-clickable-paths  Disable clickable file paths in error messages");
   console.error("  --help, -h        Display this help message");
   console.error("\nExamples:");
   console.error("  deno run -A cli/transpile.ts input.hql");
@@ -77,6 +80,12 @@ async function transpile(): Promise<void> {
     );
   }
   
+  // Setup debug options for enhanced error reporting
+  const { debug, clickablePaths } = setupDebugOptions(args);
+  if (debug) {
+    console.log("Debug mode enabled with enhanced error reporting");
+  }
+  
   // Initialize our enhanced error handling system
   initializeErrorHandling({
     enableGlobalHandlers: true,
@@ -91,11 +100,17 @@ async function transpile(): Promise<void> {
       // Register the source for enhanced error handling
       registerSourceFile(inputPath, source);
     } catch (readError) {
-      console.error(`Error reading input file: ${inputPath}`);
+      // Use the enhanced error reporter
+      reportError(readError, {
+        filePath: inputPath,
+        verbose: verbose,
+        useClickablePaths: clickablePaths,
+        includeStack: verbose
+      });
       Deno.exit(1);
     }
 
-    // Existing code - transpile the input with enhanced error handling
+    // Transpile the input with enhanced error handling
     const bundledPath = await ErrorUtils.withErrorHandling(
       () => transpileCLI(inputPath, outputPath, { 
         verbose,
@@ -104,21 +119,31 @@ async function transpile(): Promise<void> {
       { 
         filePath: inputPath, 
         context: "CLI transpilation",
-        // Log errors only at this level
-        logErrors: true
+        logErrors: false // Handle errors ourselves
       }
-    )();
+    )().catch(error => {
+      // Use enhanced error reporting
+      reportError(error, {
+        filePath: inputPath,
+        verbose: verbose || debug,
+        useClickablePaths: clickablePaths,
+        includeStack: verbose || debug
+      });
+      Deno.exit(1);
+    });
 
     if (printOutput) {
       try {
         const finalOutput = await Deno.readTextFile(bundledPath);
         console.log(finalOutput);
       } catch (error) {
-        console.error(
-          `Error reading output file: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+        // Use enhanced error reporting
+        reportError(error, {
+          filePath: bundledPath,
+          verbose: verbose || debug,
+          useClickablePaths: clickablePaths,
+          includeStack: verbose || debug
+        });
         Deno.exit(1);
       }
     } else if (runAfter) {
@@ -126,11 +151,13 @@ async function transpile(): Promise<void> {
       try {
         await import("file://" + resolve(bundledPath));
       } catch (error) {
-        console.error(
-          `Error running bundled output: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+        // Use enhanced error reporting
+        reportError(error, {
+          filePath: bundledPath,
+          verbose: verbose || debug,
+          useClickablePaths: clickablePaths,
+          includeStack: verbose || debug
+        });
         Deno.exit(1);
       }
     }
@@ -138,14 +165,13 @@ async function transpile(): Promise<void> {
     await cleanupAllTempFiles();
     logger.debug("Cleaned up all registered temporary files");
   } catch (error) {
-    // Enhanced error handling
-    if (error instanceof Error) {
-      // The error should have already been logged by the inner handlers
-      // So we don't need to log it again here
-    } else {
-      console.error(`Error: ${String(error)}`);
-    }
-    
+    // Use enhanced error reporting
+    reportError(error, {
+      filePath: inputPath,
+      verbose: verbose || debug,
+      useClickablePaths: clickablePaths,
+      includeStack: verbose || debug
+    });
     Deno.exit(1);
   }
 }

@@ -1,6 +1,42 @@
 // src/transpiler/enhanced-errors.ts
 import { TranspilerError, ParseError, ValidationError, MacroError, ImportError, CodeGenError, TransformError } from "./errors.ts";
-import * as colors from "https://deno.land/std@0.224.0/fmt/colors.ts";
+
+/**
+ * Colorizer function for terminal output
+ */
+export type ColorFn = (s: string) => string;
+
+/**
+ * Color configuration for error formatting
+ */
+export interface ColorConfig {
+  red: ColorFn;
+  yellow: ColorFn;
+  gray: ColorFn;
+  cyan: ColorFn;
+  bold: ColorFn;
+}
+
+/**
+ * Create a color configuration based on whether colors are enabled
+ */
+export function createColorConfig(useColors: boolean): ColorConfig {
+  return useColors ? 
+    { 
+      red: (s: string) => `\x1b[31m${s}\x1b[0m`, 
+      yellow: (s: string) => `\x1b[33m${s}\x1b[0m`, 
+      gray: (s: string) => `\x1b[90m${s}\x1b[0m`,
+      cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
+      bold: (s: string) => `\x1b[1m${s}\x1b[0m` 
+    } : 
+    { 
+      red: (s: string) => s, 
+      yellow: (s: string) => s, 
+      gray: (s: string) => s, 
+      cyan: (s: string) => s,
+      bold: (s: string) => s 
+    };
+}
 
 /**
  * Enhanced base error class that adds source context information
@@ -12,7 +48,7 @@ export class EnhancedTranspilerError extends TranspilerError {
   public line?: number;
   public column?: number;
   public contextLines: string[] = [];
-  private useColors: boolean;
+  private colorConfig: ColorConfig;
 
   constructor(
     message: string,
@@ -29,7 +65,7 @@ export class EnhancedTranspilerError extends TranspilerError {
     this.filePath = options.filePath;
     this.line = options.line;
     this.column = options.column;
-    this.useColors = options.useColors ?? true;
+    this.colorConfig = createColorConfig(options.useColors ?? true);
     
     // Extract context lines if we have all the location information
     if (this.source && this.line !== undefined) {
@@ -89,34 +125,24 @@ export class EnhancedTranspilerError extends TranspilerError {
    * Generate an enhanced error message with source context
    */
   public override formatMessage(): string {
-    const c = this.useColors ? 
-      { 
-        red: (s: string) => `\x1b[31m${s}\x1b[0m`, 
-        yellow: (s: string) => `\x1b[33m${s}\x1b[0m`, 
-        gray: (s: string) => `\x1b[90m${s}\x1b[0m`,
-        cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
-        bold: (s: string) => `\x1b[1m${s}\x1b[0m` 
-      } : 
-      { 
-        red: (s: string) => s, 
-        yellow: (s: string) => s, 
-        gray: (s: string) => s, 
-        cyan: (s: string) => s,
-        bold: (s: string) => s 
-      };
+    const c = this.colorConfig;
     
     // Start with basic message
     let result = c.red(c.bold(`Error: ${this.message}`));
     
     // Add file location if available
     if (this.filePath) {
-      result += `\n${c.cyan("Location:")} ${this.filePath}`;
+      let locationPath = this.filePath;
+      
+      // Add line and column if available (creates clickable paths in editors)
       if (this.line !== undefined) {
-        result += `:${this.line}`;
+        locationPath += `:${this.line}`;
         if (this.column !== undefined) {
-          result += `:${this.column}`;
+          locationPath += `:${this.column}`;
         }
       }
+      
+      result += `\n${c.cyan("Location:")} ${locationPath}`;
     }
     
     // Add source context if available
@@ -184,8 +210,9 @@ export class EnhancedTranspilerError extends TranspilerError {
  * Parse errors with enhanced formatting
  */
 export class EnhancedParseError extends ParseError {
-  private source?: string;
-  private useColors: boolean;
+  // Declare as public to match the parent class
+  override source?: string;
+  private colorConfig: ColorConfig;
   
   constructor(
     message: string,
@@ -195,14 +222,17 @@ export class EnhancedParseError extends ParseError {
   ) {
     super(message, position, source);
     this.source = source;
-    this.useColors = useColors;
+    this.colorConfig = createColorConfig(useColors);
     
     // Fix prototype chain
     Object.setPrototypeOf(this, EnhancedParseError.prototype);
   }
   
-  public override formatMessage(): string {
-    const c = this.useColors ? colors : { red: (s: string) => s, yellow: (s: string) => s, gray: (s: string) => s, bold: (s: string) => s };
+  /**
+   * Override message formatting for parse errors
+   */
+  override formatMessage(): string {
+    const c = this.colorConfig;
     
     let result = c.red(c.bold(`Parse Error: ${this.message} at line ${this.position.line}, column ${this.position.column}`));
     
@@ -212,20 +242,22 @@ export class EnhancedParseError extends ParseError {
       const lineText = lines[this.position.line - 1] || "";
       const pointer = " ".repeat(this.position.column - 1) + "^";
       
+      result += '\n\n';
+      
       // Add context before
       if (this.position.line > 1) {
-        result += `\n${c.gray(`${this.position.line - 1} | ${lines[this.position.line - 2]}`)}`;
+        result += `${c.gray(`${this.position.line - 1} │ ${lines[this.position.line - 2]}`)}\n`;
       }
       
       // Add error line
-      result += `\n${c.yellow(`${this.position.line} | ${lineText}`)}`;
+      result += `${c.yellow(`${this.position.line} │ ${lineText}`)}\n`;
       
       // Add pointer
-      result += `\n${c.red(`  | ${pointer}`)}`;
+      result += `${c.red(`  │ ${pointer}`)}\n`;
       
       // Add context after
       if (this.position.line < lines.length) {
-        result += `\n${c.gray(`${this.position.line + 1} | ${lines[this.position.line]}`)}`;
+        result += `${c.gray(`${this.position.line + 1} │ ${lines[this.position.line]}`)}\n`;
       }
     }
     

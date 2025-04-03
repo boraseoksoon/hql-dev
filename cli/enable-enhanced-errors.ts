@@ -2,7 +2,7 @@
 import { resolve } from "../src/platform/platform.ts";
 import { initializeErrorHandling } from "../src/error-initializer.ts";
 
-console.log("📝 Enabling enhanced error reporting for all HQL tools...");
+console.log("\n🚀 Enabling enhanced error reporting for all HQL tools...");
 
 // Initialize our enhanced error handling system
 initializeErrorHandling({
@@ -45,8 +45,14 @@ for (const cmd of enhancedCommands) {
 }
 
 console.log("\n📋 Example usage:");
+console.log("\x1b[34mdeno run -A cli/run.ts ./my-file.hql --debug\x1b[0m - Run with enhanced error reporting");
+console.log("\x1b[34mdeno run -A cli/transpile.ts ./my-file.hql --verbose\x1b[0m - Transpile with enhanced errors");
 console.log("\x1b[34mdeno run -A cli/error-report.ts ./my-file.hql\x1b[0m - Show detailed error report");
-console.log("\x1b[34mdeno run -A cli/run.ts ./my-file.hql\x1b[0m - Run with enhanced errors");
+
+console.log("\n🛠️  Available debug flags for all commands:");
+console.log("  --debug              Enable enhanced debugging and error reporting");
+console.log("  --verbose            Show verbose output with enhanced formatting");
+console.log("  --no-clickable-paths Disable clickable file paths in error messages");
 
 console.log("\n📚 Documentation:");
 console.log("For more details, see \x1b[36mdoc/error-handling.md\x1b[0m"); 

@@ -43,3 +43,19 @@ export function setupLoggingOptions(
   const logNamespaces = parseLogNamespaces(args);
   return { verbose, logNamespaces };
 }
+
+/**
+ * Parse debug flags for enhanced error reporting
+ */
+export function setupDebugOptions(args: string[]): { 
+  debug: boolean;
+  clickablePaths: boolean;
+} {
+  const debug = args.includes("--debug");
+  const clickablePaths = !args.includes("--no-clickable-paths");
+  
+  return {
+    debug,
+    clickablePaths
+  };
+}

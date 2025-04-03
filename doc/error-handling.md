@@ -1,122 +1,93 @@
-# HQL Error Handling System
+# Enhanced Error Handling for HQL
 
-## Overview
+The HQL language features a comprehensive error handling system designed to provide clear, actionable error messages with contextual information and suggestions.
 
-The HQL error handling system provides enhanced error reporting throughout the transpiler pipeline. It enriches error messages with source context, line highlighting, and helpful suggestions to guide users in fixing issues.
+## Features
 
-## Key Features
-
-- **Source Context**: Shows code snippets around error locations
-- **Line Highlighting**: Highlights the exact line where errors occur
-- **Intelligent Suggestions**: Provides likely solutions based on error types
-- **TypeScript Error Translation**: Converts cryptic TypeScript errors into clear messages
-- **Consistent Error Format**: Standardizes how errors are reported across the system
-- **Minimal Runtime Overhead**: Designed for efficiency with negligible impact on performance
-
-## Architecture
-
-The error handling system consists of several coordinated modules:
-
-1. **Core Error Classes** (`errors.ts`): Defines the base error types used throughout the system.
-2. **Enhanced Error Formatting** (`enhanced-errors.ts`): Adds source context and formatting to errors.
-3. **TypeScript Error Translation** (`typescript-error-translator.ts`): Converts TypeScript error codes to readable messages.
-4. **Unified Error Handling** (`error-handling.ts`): Central module that integrates all error handling features.
-5. **Error Initializer** (`error-initializer.ts`): Sets up error handling throughout the system.
-6. **Integration Module** (`integration.ts`): Connects error handling to the transpiler pipeline.
+- **Context-rich error messages**: Shows exact line and column numbers with source code context
+- **Clickable file paths**: Directly navigate to error locations in supported editors
+- **Intelligent suggestions**: Provides recommendations based on error type
+- **Enhanced formatting in verbose mode**: Better visualization of errors with source context
+- **Unified error reporting**: Consistent error presentation across all tools
 
 ## Usage
 
-### Basic Setup
+All CLI tools (`run.ts`, `transpile.ts`, `repl.ts`) automatically include enhanced error handling. You can customize error reporting with these flags:
 
-To enable enhanced error handling throughout the system:
+| Flag | Description |
+|------|-------------|
+| `--debug` | Enable detailed error reporting with contextual information |
+| `--verbose` | Show verbose output with enhanced formatting and stack traces |
+| `--no-clickable-paths` | Disable clickable file paths in error messages |
 
-```typescript
-import { initializeErrorHandling } from "./error-initializer.ts";
+## Example Commands
 
-// Initialize at application startup
-initializeErrorHandling();
+```bash
+# Run a file with enhanced error reporting
+deno run -A cli/run.ts ./my-file.hql --debug
+
+# Transpile a file with enhanced error formatting
+deno run -A cli/transpile.ts ./my-file.hql --verbose
+
+# Use the dedicated error reporting tool for detailed analysis
+deno run -A cli/error-report.ts ./my-file.hql
 ```
 
-### Wrapping Functions with Error Handling
+## Example Error Output
 
-To add error handling to any function:
+With `--verbose` mode:
 
-```typescript
-import { withErrorHandling } from "./error-handling.ts";
-
-const safeFunction = withErrorHandling(
-  originalFunction,
-  { context: "descriptive context" }
-);
-
-// Now use safeFunction instead of originalFunction
+```
+┌───────────────────────────────────────────────────────────┐
+│ HQL Error                                                 │
+├───────────────────────────────────────────────────────────┤
+│ Unclosed list                                             │
+│ Location: /path/to/file.hql:1:14                          │
+│                                                           │
+│ 1 │ (fn add (a b) (+ a z)                                 │
+│                    ^                                      │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│ Suggestion                                                            │
+├───────────────────────────────────────────────────────────────────────┤
+│ Check for missing closing parenthesis or closing braces in your code. │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
-### Registering Source Files
+## Error Reporter Tool
 
-To enable source context in error messages:
+The `error-report.ts` tool is a dedicated utility for analyzing HQL files and providing detailed error information:
 
-```typescript
-import { registerSourceFile } from "./error-handling.ts";
-
-// Register a source file early in the processing pipeline
-registerSourceFile("path/to/file.hql", sourceCode);
+```bash
+deno run -A cli/error-report.ts ./my-file.hql [options]
 ```
 
-### Enhancing Errors Manually
+Options:
+- `--verbose`: Show verbose details with enhanced formatting
+- `--debug`: Same as `--verbose` but with more details
+- `--no-clickable-paths`: Disable clickable file paths
 
-```typescript
-import { enhanceError, formatError } from "./error-handling.ts";
+## Integration in Development Environments
 
-try {
-  // Some operation that might fail
-} catch (error) {
-  if (error instanceof Error) {
-    const enhanced = enhanceError(error, { 
-      source: sourceCode,
-      filePath: "path/to/file.hql"
-    });
-    console.error(formatError(enhanced));
-  }
-  throw error;
-}
-```
+Clickable paths work in many modern editors and terminals, allowing you to jump directly to the error location. The format is compatible with:
 
-## Error Types
+- Visual Studio Code
+- JetBrains IDEs (IntelliJ, WebStorm, etc.)
+- iTerm2
+- Modern terminal emulators supporting hyperlinks
 
-The system handles specialized error types for different parts of the transpiler:
+## For Developers
 
-- **TranspilerError**: Base class for all transpiler errors
-- **ParseError**: Errors during parsing with position information
-- **MacroError**: Errors during macro expansion
-- **ImportError**: Errors processing imports
-- **ValidationError**: Type validation errors
-- **TransformError**: Errors during AST transformation
-- **CodeGenError**: Errors during code generation
+The error handling system is implemented across several modules:
 
-## Integration Points
+- `src/error-handling.ts`: Core error handling functionality
+- `src/error-reporter.ts`: Unified error reporting interface
+- `src/transpiler/enhanced-errors.ts`: Enhanced error classes
+- `cli/error-report.ts`: Dedicated error reporting tool
 
-The error handling system integrates at several key points:
+To extend the error handling system, you can:
 
-1. **Parser**: Enhances parse errors with line context
-2. **TypeScript Generation**: Translates TypeScript errors
-3. **REPL**: Shows friendly errors during interactive use
-4. **Transpiler Pipeline**: Each stage has error enhancement
-5. **Process-Level**: Catches uncaught exceptions
-
-## Contributing
-
-When adding new error types or handling:
-
-1. Define error classes in `errors.ts`
-2. Add enhancement logic in `enhanced-errors.ts`
-3. Register translations in `typescript-error-translator.ts` if needed
-4. Update documentation
-
-## Future Improvements
-
-- Support for more language-specific error types
-- Interactive error resolution in the REPL
-- Integration with editor tools for in-editor error highlighting
-- Machine learning-based error suggestions
-- Performance optimization for large files 
+1. Add new error types in `src/transpiler/errors.ts`
+2. Add corresponding suggestions in `src/error-handling.ts`
+3. Update the formatters in `src/error-reporter.ts` as needed 
