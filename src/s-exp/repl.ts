@@ -6,6 +6,7 @@ import { Logger } from "../logger.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { REPLEvaluator } from "./repl-evaluator.ts";
+import { ErrorUtils, formatError, getSuggestion, registerSourceFile } from "../error-handling.ts";
 
 // Import needed for arrow key navigation
 import { keypress } from "https://deno.land/x/cliffy@v1.0.0-rc.3/keypress/mod.ts";
@@ -354,9 +355,12 @@ async function processInput(
     }
   }
 
-  const result = await evaluator.evaluate(input, { showAst, showExpanded, showJs });
-
   try {
+    // Register the source for error enhancement
+    registerSourceFile("REPL input", input);
+    
+    const result = await evaluator.evaluate(input, { showAst, showExpanded, showJs });
+
     // Detect function definitions for better feedback
     const isFunctionDefinition = input.trim().startsWith("(fn ") || input.trim().startsWith("(defn ");
     const isVariableDefinition = input.trim().startsWith("(def ");
@@ -424,40 +428,50 @@ async function processInput(
       }
     }
     
-    // Show evaluation metrics
-    if (logger.isVerbose) {
-      const metrics = evaluator.getLastMetrics();
-      if (metrics) {
-        console.log("------------------");
-        console.log("Evaluation metrics:");
-        console.log(`Parsing: ${metrics.parseTimeMs.toFixed(2)}ms`);
-        console.log(`Syntax Transform: ${metrics.syntaxTransformTimeMs.toFixed(2)}ms`);
-        console.log(`Import Processing: ${metrics.importProcessingTimeMs.toFixed(2)}ms`);
-        console.log(`Macro Expansion: ${metrics.macroExpansionTimeMs.toFixed(2)}ms`);
-        console.log(`AST Conversion: ${metrics.astConversionTimeMs.toFixed(2)}ms`);
-        console.log(`Code Generation: ${metrics.codeGenerationTimeMs.toFixed(2)}ms`);
-        console.log(`Evaluation: ${metrics.evaluationTimeMs.toFixed(2)}ms`);
-        console.log(`Total: ${metrics.totalTimeMs.toFixed(2)}ms`);
-        console.log("------------------");
-      }
+    // Show additional debug information if requested
+    if (showAst) {
+      printBlock("AST:", JSON.stringify(result.parsedExpressions, null, 2), useColors);
     }
-
-    // Track symbol usage if the function is provided
-    if (trackSymbolUsage && result.parsedExpressions) {
-      // Extract symbols from the expressions
-      for (const expr of result.parsedExpressions) {
-        if (typeof expr === 'string') {
-          trackSymbolUsage(expr);
-        } else if (expr.type === 'symbol') {
-          trackSymbolUsage(expr.name);
-        }
+    if (showExpanded) {
+      printBlock("Expanded:", JSON.stringify(result.expandedExpressions, null, 2), useColors);
+    }
+    if (showJs) {
+      printBlock("JavaScript:", result.jsCode, useColors);
+    }
+    
+    // Track symbol usage for potential future auto-completion
+    if (trackSymbolUsage) {
+      const symbolRegex = /\b[a-zA-Z0-9_-]+\b/g;
+      let match;
+      while ((match = symbolRegex.exec(input)) !== null) {
+        trackSymbolUsage(match[0]);
       }
     }
   } catch (error) {
-    if (useColors) {
-      console.error(`${colors.fg.red}Error displaying result: ${error instanceof Error ? error.message : String(error)}${colors.reset}`);
+    // Format error message using our enhanced error formatter
+    if (error instanceof Error) {
+      const formattedError = formatError(error, { 
+        useColors,
+        filePath: "REPL input"
+      });
+      
+      // Add a helpful suggestion
+      const suggestion = getSuggestion(error);
+      
+      if (useColors) {
+        console.error(`${colors.fg.red}${formattedError}${colors.reset}`);
+        console.error(`${colors.fg.cyan}Suggestion: ${suggestion}${colors.reset}`);
+      } else {
+        console.error(formattedError);
+        console.error(`Suggestion: ${suggestion}`);
+      }
     } else {
-      console.error(`Error displaying result: ${error instanceof Error ? error.message : String(error)}`);
+      // For non-Error objects
+      if (useColors) {
+        console.error(`${colors.fg.red}Error: ${String(error)}${colors.reset}`);
+      } else {
+        console.error(`Error: ${String(error)}`);
+      }
     }
   }
 }

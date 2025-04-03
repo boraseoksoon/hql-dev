@@ -11,6 +11,11 @@ import { REPLEnvironment } from "./repl-environment.ts";
 import { Environment, Value } from "../environment.ts";
 import { SExp } from "./types.ts";
 import { RUNTIME_FUNCTIONS } from "../transpiler/runtime.ts";
+import { 
+  registerSourceFile, 
+  withErrorHandling, 
+  ErrorUtils
+} from "../error-handling.ts";
 
 // Options for REPL evaluation
 export interface REPLEvalOptions {
@@ -51,6 +56,7 @@ export class REPLEvaluator {
   private baseDir: string;
   private runtimeFunctionsInitialized = false;
   private runtimeFunctionNames: string[] | null = null;
+  public repl: any; // Reference to REPL instance for error handling
   
   // Cache for parsed expressions to speed up repeat evaluations
   private parseCache: Map<string, SExp[]> = new Map();
@@ -65,6 +71,13 @@ export class REPLEvaluator {
     
     // Initialize runtime functions immediately
     this.initializeRuntimeFunctions();
+  }
+  
+  /**
+   * Set the REPL instance for error handling
+   */
+  setReplInstance(repl: any): void {
+    this.repl = repl;
   }
   
   /**
@@ -93,23 +106,30 @@ export class REPLEvaluator {
    * Parse a single line of input
    * Uses caching to avoid re-parsing identical input
    */
-  parseLine(input: string): SExp[] {
+  async parseLine(input: string): Promise<SExp[]> {
     // Check cache first
     if (this.parseCache.has(input)) {
       return this.parseCache.get(input)!;
     }
     
-    try {
-      const result = parse(input);
-      
-      // Cache the result for future use
-      this.parseCache.set(input, result);
-      
-      return result;
-    } catch (error) {
-      this.logger.error(`Parse error: ${error instanceof Error ? error.message : String(error)}`);
-      throw error;
-    }
+    // Register the input source for error enhancement
+    registerSourceFile("REPL", input);
+    
+    // Use enhanced error handling
+    return await withErrorHandling(
+      () => {
+        try {
+          const result = parse(input);
+          // Cache the result for future use
+          this.parseCache.set(input, result);
+          return result;
+        } catch (error) {
+          this.logger.error(`Parse error: ${error instanceof Error ? error.message : String(error)}`);
+          throw error;
+        }
+      },
+      { source: input, filePath: "REPL", context: "REPL parsing" }
+    )();
   }
   
   /**
@@ -117,6 +137,9 @@ export class REPLEvaluator {
    * Measures performance metrics for each stage
    */
   async evaluate(input: string, options: REPLEvalOptions = {}): Promise<REPLEvalResult> {
+    // Register the input for error context
+    registerSourceFile("REPL", input);
+    
     const log = (message: string) => {
       if (this.logger.isVerbose) this.logger.debug(message);
     };
@@ -143,44 +166,66 @@ export class REPLEvaluator {
       // Process the input through the evaluation pipeline
       log("Parsing input...");
       currentTime = performance.now();
-      const sexps = this.parseLine(input);
+      const sexps = await withErrorHandling(
+        () => this.parseLine(input),
+        { source: input, filePath: "REPL", context: "REPL parsing" }
+      )();
       metrics.parseTimeMs = performance.now() - currentTime;
       log(`Parsed ${sexps.length} expressions`);
       
       log("Transforming syntax...");
       currentTime = performance.now();
-      const transformedSexps = transformSyntax(sexps, { verbose: options.verbose });
+      const transformedSexps = await withErrorHandling(
+        () => transformSyntax(sexps, { verbose: options.verbose }),
+        { source: input, filePath: "REPL", context: "REPL syntax transformation" }
+      )();
       metrics.syntaxTransformTimeMs = performance.now() - currentTime;
       log(`Transformed to ${transformedSexps.length} expressions`);
       
       log("Processing imports...");
       currentTime = performance.now();
-      await processImports(transformedSexps, this.replEnv.hqlEnv, {
-        verbose: options.verbose,
-        baseDir: options.baseDir || this.baseDir,
-        skipRebuild: true,
-      });
+      await withErrorHandling(
+        async () => {
+          await processImports(transformedSexps, this.replEnv.hqlEnv, {
+            verbose: options.verbose,
+            baseDir: options.baseDir || this.baseDir,
+            skipRebuild: true,
+          });
+        },
+        { source: input, filePath: "REPL", context: "REPL import processing" }
+      )();
       metrics.importProcessingTimeMs = performance.now() - currentTime;
       
       log("Expanding macros...");
       currentTime = performance.now();
-      const expanded = expandMacros(transformedSexps, this.replEnv.hqlEnv, {
-        verbose: options.verbose,
-        currentFile: options.baseDir || this.baseDir,
-      });
+      const expanded = await withErrorHandling(
+        () => expandMacros(transformedSexps, this.replEnv.hqlEnv, {
+          verbose: options.verbose,
+          currentFile: options.baseDir || this.baseDir,
+        }),
+        { source: input, filePath: "REPL", context: "REPL macro expansion" }
+      )();
       metrics.macroExpansionTimeMs = performance.now() - currentTime;
       
       log("Converting to HQL AST...");
       currentTime = performance.now();
-      const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
+      const hqlAst = await withErrorHandling(
+        () => convertToHqlAst(expanded, { verbose: options.verbose }),
+        { source: input, filePath: "REPL", context: "REPL AST conversion" }
+      )();
       metrics.astConversionTimeMs = performance.now() - currentTime;
       
       log("Transforming to JavaScript...");
       currentTime = performance.now();
-      const jsCode = await transformAST(hqlAst, options.baseDir || this.baseDir, { 
-        verbose: options.verbose,
-        replMode: true
-      });
+      const jsCode = await ErrorUtils.withTypeScriptErrorTranslation(
+        withErrorHandling(
+          () => transformAST(hqlAst, options.baseDir || this.baseDir, { 
+            verbose: options.verbose,
+            replMode: true
+          }),
+          { source: input, filePath: "REPL", context: "REPL JS transformation" }
+        )
+      )();
       metrics.codeGenerationTimeMs = performance.now() - currentTime;
       
       // Clean, prepare, and evaluate the JavaScript
@@ -188,7 +233,10 @@ export class REPLEvaluator {
       currentTime = performance.now();
       const cleanedCode = this.removeRuntimeFunctions(jsCode);
       const preparedJs = this.replEnv.prepareJsForRepl(cleanedCode);
-      const result = await this.evaluateJs(preparedJs);
+      const result = await withErrorHandling(
+        () => this.evaluateJs(preparedJs),
+        { source: preparedJs, filePath: "REPL JS", context: "REPL JS evaluation" }
+      )();
       metrics.evaluationTimeMs = performance.now() - currentTime;
       
       // Reset current file in environment
@@ -198,10 +246,7 @@ export class REPLEvaluator {
       metrics.totalTimeMs = performance.now() - startTime;
       this.lastMetrics = metrics;
       
-      if (this.logger.isVerbose) {
-        this.logPerformanceMetrics();
-      }
-      
+      // Return the full result
       return {
         value: result,
         jsCode: preparedJs,
@@ -210,15 +255,17 @@ export class REPLEvaluator {
         executionTimeMs: metrics.totalTimeMs
       };
     } catch (error) {
+      // Enhance the error with source context
+      const enhancedError = ErrorUtils.enhanceError(
+        error instanceof Error ? error : new Error(String(error)),
+        { source: input, filePath: "REPL" }
+      );
+      
+      // Reset environment state
       this.replEnv.hqlEnv.setCurrentFile(null);
       
-      // Enhanced error handling - add context about the error
-      if (error instanceof Error) {
-        // Add context to the error message
-        error.message = `Evaluation error: ${error.message}\nInput: ${input.length > 50 ? input.substring(0, 50) + '...' : input}`;
-      }
-      
-      throw error;
+      // Rethrow the enhanced error
+      throw enhancedError;
     }
   }
   

@@ -30,6 +30,7 @@ export interface BundleOptions {
   drop?: string[];
   tempDir?: string;
   sourceDir?: string;
+  skipErrorReporting?: boolean;
 }
 
 export function transpileCLI(
@@ -40,7 +41,12 @@ export function transpileCLI(
   return performAsync(async () => {
     const logger = new Logger(options.verbose);
     const startTime = performance.now();
-    logger.log(`Processing entry: ${inputPath}`);
+    
+    // Skip logging if skipErrorReporting is set
+    if (!options.skipErrorReporting) {
+      logger.log({ text: `Processing entry: ${inputPath}`, namespace: "cli" });
+    }
+    
     const resolvedInputPath = resolve(inputPath);
     const outPath = determineOutputPath(resolvedInputPath, outputPath);
     const sourceDir = dirname(resolvedInputPath);
@@ -48,19 +54,29 @@ export function transpileCLI(
       ...options,
       sourceDir,
     });
-    logger.debug(`Entry file processed to: ${processedPath}`);
+    
+    if (!options.skipErrorReporting) {
+      logger.debug(`Entry file processed to: ${processedPath}`);
+    }
+    
     await bundleWithEsbuild(processedPath, outPath, {
       ...options,
       sourceDir,
     });
+    
     const endTime = performance.now();
-    logger.log(
-      `Successfully processed output to ${outPath} in ${
-        (endTime - startTime).toFixed(2)
-      }ms`,
-    );
+    
+    if (!options.skipErrorReporting) {
+      logger.log({
+        text: `Successfully processed output to ${outPath} in ${
+          (endTime - startTime).toFixed(2)
+        }ms`,
+        namespace: "cli"
+      });
+    }
+    
     return outPath;
-  }, `CLI transpilation failed for ${inputPath}`);
+  }, options.skipErrorReporting ? undefined : `CLI transpilation failed for ${inputPath}`);
 }
 
 export function checkForHqlImports(source: string, logger: Logger): boolean {

@@ -1,3 +1,4 @@
+// cli/transpile.ts - with enhanced error handling
 import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI } from "../src/bundler.ts";
 import {
@@ -6,8 +7,17 @@ import {
 } from "../src/temp-file-tracker.ts";
 import { Logger } from "../src/logger.ts";
 import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
+// New imports for enhanced error handling
+import { 
+  registerSourceFile, 
+  formatError, 
+  getSuggestion,
+  ErrorUtils
+} from "../src/error-handling.ts";
+import { initializeErrorHandling } from "../src/error-initializer.ts";
 
 function printHelp() {
+  // Unchanged
   console.error(
     "Usage: deno run -A cli/transpile.ts <input.hql|input.js> [output.js] [options]",
   );
@@ -41,6 +51,7 @@ async function transpile(): Promise<void> {
   let verbose = false;
   let runAfter = false;
   const printOutput = args.includes("--print");
+  const useColors = !args.includes("--no-colors");
 
   if (args.length > 1 && !args[1].startsWith("--")) {
     outputPath = args[1];
@@ -60,14 +71,43 @@ async function transpile(): Promise<void> {
   // If log namespaces are provided, configure the logger accordingly.
   const logger = new Logger(verbose);
   if (logNamespaces.length > 0) {
-    logger.allowedNamespaces = logNamespaces;
+    Logger.allowedNamespaces = logNamespaces;
     console.log(
       `Logging restricted to namespaces: ${logNamespaces.join(", ")}`,
     );
   }
+  
+  // Initialize our enhanced error handling system
+  initializeErrorHandling({
+    enableGlobalHandlers: true,
+    enableReplEnhancement: false
+  });
 
   try {
-    const bundledPath = await transpileCLI(inputPath, outputPath, { verbose });
+    // Read input file for error context
+    let source;
+    try {
+      source = await Deno.readTextFile(inputPath);
+      // Register the source for enhanced error handling
+      registerSourceFile(inputPath, source);
+    } catch (readError) {
+      console.error(`Error reading input file: ${inputPath}`);
+      Deno.exit(1);
+    }
+
+    // Existing code - transpile the input with enhanced error handling
+    const bundledPath = await ErrorUtils.withErrorHandling(
+      () => transpileCLI(inputPath, outputPath, { 
+        verbose,
+        skipErrorReporting: true
+      }),
+      { 
+        filePath: inputPath, 
+        context: "CLI transpilation",
+        // Log errors only at this level
+        logErrors: true
+      }
+    )();
 
     if (printOutput) {
       try {
@@ -98,10 +138,14 @@ async function transpile(): Promise<void> {
     await cleanupAllTempFiles();
     logger.debug("Cleaned up all registered temporary files");
   } catch (error) {
-    console.error(
-      "Error during transpilation:",
-      error instanceof Error ? error.message : error,
-    );
+    // Enhanced error handling
+    if (error instanceof Error) {
+      // The error should have already been logged by the inner handlers
+      // So we don't need to log it again here
+    } else {
+      console.error(`Error: ${String(error)}`);
+    }
+    
     Deno.exit(1);
   }
 }

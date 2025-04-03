@@ -2,6 +2,7 @@ import { startRepl } from "../src/s-exp/repl.ts";
 import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
 import logger from "../src/logger.ts";
 import { resolve } from "../src/platform/platform.ts";
+import { initializeErrorHandling } from "../src/error-initializer.ts";
 
 function printHelp() {
   console.error("Usage: deno run -A cli/repl.ts [options]");
@@ -77,6 +78,12 @@ async function run() {
       const fileToLoad = resolve(args[loadIndex + 1]);
       replOptions.initialFile = fileToLoad;
     }
+    
+    // Initialize the error handling system first
+    initializeErrorHandling({ 
+      enableGlobalHandlers: true,
+      enableReplEnhancement: true
+    });
     
     // Start the REPL with all configured options
     await startRepl(replOptions);

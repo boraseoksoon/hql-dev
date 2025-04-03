@@ -18,6 +18,13 @@ export class TranspilerError extends Error {
   public formatMessage(): string {
     return this.message;
   }
+  
+  /**
+   * Get a suggestion based on this error
+   */
+  public getSuggestion(): string {
+    return "Check your code for syntax errors or incorrect types.";
+  }
 }
 
 /**
@@ -53,6 +60,19 @@ export class ParseError extends TranspilerError {
     }
 
     return result;
+  }
+  
+  public override getSuggestion(): string {
+    const msg = this.message.toLowerCase();
+    
+    if (msg.includes("unexpected ')'") || msg.includes("unexpected ']'") || msg.includes("unexpected '}'")) {
+      return "Check for mismatched parentheses or brackets. You might have an extra closing delimiter or missing an opening one.";
+    }
+    if (msg.includes("unexpected end of input")) {
+      return "Your expression is incomplete. Check for unclosed parentheses, brackets, or strings.";
+    }
+    
+    return "Review your syntax carefully, paying attention to brackets, quotes, and other delimiters.";
   }
 }
 
@@ -94,6 +114,19 @@ export class MacroError extends TranspilerError {
     }
 
     return result;
+  }
+  
+  public override getSuggestion(): string {
+    const msg = this.message.toLowerCase();
+    
+    if (msg.includes("not found") || msg.includes("undefined") || msg.includes("does not exist")) {
+      return "Make sure the macro is defined and imported correctly before using it.";
+    }
+    if (msg.includes("parameter") || msg.includes("argument")) {
+      return "Check that you're passing the correct number and types of arguments to the macro.";
+    }
+    
+    return "Review your macro definition and usage. Check for proper syntax and parameter types.";
   }
 }
 
@@ -294,36 +327,56 @@ export function summarizeNode(node: unknown): string {
 }
 
 /**
- * Creates a detailed error report for a process stage
+ * Create detailed error report for diagnostics
  */
 export function createErrorReport(
   error: Error,
-  stageName: string,
-  context: Record<string, unknown> = {},
+  context: string,
+  additionalInfo: Record<string, unknown> = {}
 ): string {
-  let report = `Error in ${stageName}:\n${error.message}\n`;
-
-  // Add formatted message for TranspilerErrors
-  if (error instanceof TranspilerError) {
-    report += `\nDetails: ${error.formatMessage()}\n`;
+  let report = `Error in ${context}: ${error.message}\n`;
+  
+  // Add stack trace if available
+  if (error.stack) {
+    report += `\nStack trace:\n${error.stack.split('\n').slice(1).join('\n')}\n`;
   }
-
-  // Add context information if available
-  if (Object.keys(context).length > 0) {
-    try {
-      const contextStr = JSON.stringify(context, null, 2);
-      report += `\nContext:\n${contextStr}\n`;
-    } catch (e) {
-      report += `\nContext: [Could not stringify context: ${
-        e instanceof Error ? e.message : String(e)
-      }]\n`;
+  
+  // Add additional context information
+  if (Object.keys(additionalInfo).length > 0) {
+    report += "\nAdditional information:\n";
+    for (const [key, value] of Object.entries(additionalInfo)) {
+      if (value !== undefined) {
+        report += `  ${key}: ${formatValue(value)}\n`;
+      }
     }
   }
-
-  // Add stack trace
-  if (error.stack) {
-    report += `\nStack trace:\n${error.stack}\n`;
-  }
-
+  
   return report;
+}
+
+/**
+ * Format a value for error reporting
+ */
+function formatValue(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  
+  if (typeof value === "string") {
+    // For long strings, truncate
+    if (value.length > 100) {
+      return `"${value.substring(0, 100)}..."`;
+    }
+    return `"${value}"`;
+  }
+  
+  if (typeof value === "object") {
+    try {
+      // Limit the depth and length of stringified objects
+      return JSON.stringify(value, null, 2).substring(0, 200) + (JSON.stringify(value).length > 200 ? "..." : "");
+    } catch (e) {
+      return String(value);
+    }
+  }
+  
+  return String(value);
 }

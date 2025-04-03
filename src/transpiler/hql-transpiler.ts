@@ -18,6 +18,14 @@ import {
   TransformError,
   TranspilerError,
 } from "./errors.ts";
+import { 
+  registerSourceFile, 
+  formatError, 
+  getSuggestion, 
+  withErrorHandling, 
+  ErrorUtils
+} from "../error-handling.ts";
+import { enhanceParseError } from "./enhanced-errors.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
@@ -29,8 +37,12 @@ interface ProcessOptions {
   sourceDir?: string;
   tempDir?: string;
   skipRebuild?: boolean;
+  skipErrorHandling?: boolean;
 }
 
+/**
+ * Process HQL source code and return transpiled JavaScript
+ */
 export async function processHql(
   source: string,
   options: ProcessOptions = {},
@@ -47,43 +59,38 @@ export async function processHql(
   };
 
   const sourceFilename = options.baseDir ? path.basename(options.baseDir) : "unknown";
+  const sourceFilePath = options.baseDir || "unknown";
+  
+  // Register source for error enhancement
+  registerSourceFile(sourceFilePath, source);
 
   try {
-    // Step 1: Parse
+    // Process all stages with proper error handling
     const t0 = start();
     const sexps = parseWithHandling(source, logger);
     end("Parsing", t0);
-    if (options.verbose) logExpressions("Parsed", sexps, logger);
-
-    // Step 2: Syntax Transform
+    
     const t1 = start();
     const canonicalSexps = transformWithHandling(sexps, options.verbose, logger);
     end("Syntax transform", t1);
-    if (options.verbose) logExpressions("Transformed", canonicalSexps, logger);
-
-    // Step 3: Global Environment
+    
     const t2 = start();
     const env = await getGlobalEnv(options);
     if (options.baseDir) env.setCurrentFile(options.baseDir);
     end("Environment setup", t2);
-
-    // Step 4: Imports
+    
     const t3 = start();
     await processImportsWithHandling(canonicalSexps, env, options);
     end("Import processing", t3);
-
-    // Step 5: Macro Expansion
+    
     const t4 = start();
     const expanded = expandWithHandling(canonicalSexps, env, options, logger);
     end("Macro expansion", t4);
-    if (options.verbose) logExpressions("Expanded", expanded, logger);
-
-    // Step 6: Convert to AST
+    
     const t5 = start();
     const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
     end("AST conversion", t5);
-
-    // Step 7: Transform to JS
+    
     const t6 = start();
     const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), { verbose: options.verbose });
     end("JS transformation", t6);
@@ -93,7 +100,13 @@ export async function processHql(
     if (options.verbose) logPerformance(timings, sourceFilename);
     return jsCode;
   } catch (error) {
-    handleProcessError(error, source, options, sourceFilename, logger);
+    if (options.skipErrorHandling) {
+      // Rethrow without additional handling
+      throw error;
+    }
+    
+    // Handle the error with enhanced details
+    return handleProcessError(error, source, options, sourceFilename, logger);
   }
 }
 
@@ -102,9 +115,17 @@ function parseWithHandling(source: string, logger: Logger) {
     const sexps = parse(source);
     logger.debug(`Parsed ${sexps.length} S-expressions`);
     return sexps;
-  } catch (error) {
-    if (error instanceof ParseError) throw error;
-    throw new ParseError(`Failed to parse HQL source: ${error.message}`, { line: 1, column: 1, offset: 0 }, source);
+  } catch (error: unknown) {
+    if (error instanceof ParseError) {
+      // Enhance the parse error with source context
+      throw enhanceParseError(error, true);
+    }
+    
+    if (error instanceof Error) {
+      throw new ParseError(`Failed to parse HQL source: ${error.message}`, { line: 1, column: 1, offset: 0 }, source);
+    }
+    
+    throw new ParseError(`Failed to parse HQL source: ${String(error)}`, { line: 1, column: 1, offset: 0 }, source);
   }
 }
 
@@ -113,9 +134,14 @@ function transformWithHandling(sexps: any[], verbose: boolean | undefined, logge
     const result = transformSyntax(sexps, { verbose });
     logger.debug(`Transformed ${result.length} expressions`);
     return result;
-  } catch (error) {
+  } catch (error: unknown) {
     if (error instanceof TransformError) throw error;
-    throw new TransformError(`Failed to transform syntax: ${error.message}`, "syntax transformation", "valid HQL expressions", sexps);
+    
+    if (error instanceof Error) {
+      throw new TransformError(`Failed to transform syntax: ${error.message}`, "syntax transformation", "valid HQL expressions", sexps);
+    }
+    
+    throw new TransformError(`Failed to transform syntax: ${String(error)}`, "syntax transformation", "valid HQL expressions", sexps);
   }
 }
 
@@ -127,9 +153,14 @@ async function processImportsWithHandling(sexps: any[], env: Environment, option
       tempDir: options.tempDir,
       currentFile: options.baseDir,
     });
-  } catch (error) {
+  } catch (error: unknown) {
     if (error instanceof ImportError) throw error;
-    throw new ImportError(`Failed to process imports: ${error.message}`, "unknown", options.baseDir, error);
+    
+    if (error instanceof Error) {
+      throw new ImportError(`Failed to process imports: ${error.message}`, "unknown", options.baseDir, error);
+    }
+    
+    throw new ImportError(`Failed to process imports: ${String(error)}`, "unknown", options.baseDir, undefined);
   }
 }
 
@@ -140,9 +171,14 @@ function expandWithHandling(sexps: any[], env: Environment, options: ProcessOpti
       currentFile: options.baseDir,
       useCache: true,
     });
-  } catch (error) {
+  } catch (error: unknown) {
     if (error instanceof MacroError) throw error;
-    throw new MacroError(`Failed to expand macros: ${error.message}`, "", options.baseDir, error);
+    
+    if (error instanceof Error) {
+      throw new MacroError(`Failed to expand macros: ${error.message}`, "", options.baseDir, error);
+    }
+    
+    throw new MacroError(`Failed to expand macros: ${String(error)}`, "", options.baseDir, undefined);
   }
 }
 
@@ -169,37 +205,31 @@ function handleProcessError(
   options: ProcessOptions,
   sourceFilename: string,
   logger: Logger,
-) {
-  let report;
-  if (
-    error instanceof ParseError ||
-    error instanceof MacroError ||
-    error instanceof ImportError ||
-    error instanceof TranspilerError ||
-    error instanceof TransformError
-  ) {
-    report = error.formatMessage();
-  } else {
-    report = createErrorReport(
-      error instanceof Error ? error : new Error(String(error)),
-      "HQL processing",
-      { sourceLength: source.length, options, file: sourceFilename },
-    );
-  }
-
-  logger.error(`❌ Error processing HQL: ${error instanceof Error ? error.message : String(error)}`);
-  if (options.verbose) console.error("Detailed error report:\n" + report);
-
-  if (
-    error instanceof ParseError ||
-    error instanceof MacroError ||
-    error instanceof ImportError ||
-    error instanceof TranspilerError ||
-    error instanceof TransformError
-  ) {
+): never {
+  if (error instanceof Error) {
+    // Format the error with enhanced details
+    const formattedError = formatError(error, { 
+      filePath: options.baseDir,
+      useColors: true,
+      includeStack: options.verbose 
+    });
+    
+    // Log the enhanced error message
+    logger.error(`❌ Error processing HQL: ${formattedError}`);
+    
+    // Add suggestion if verbose
+    if (options.verbose) {
+      const suggestion = getSuggestion(error);
+      logger.info(`Suggestion: ${suggestion}`);
+    }
+    
+    // Rethrow the original error
     throw error;
   } else {
-    throw new TranspilerError(`Error processing HQL: ${error instanceof Error ? error.message : String(error)}`);
+    // For non-Error objects, convert to TranspilerError
+    const genericError = new TranspilerError(`Error processing HQL: ${String(error)}`);
+    logger.error(`❌ ${genericError.message}`);
+    throw genericError;
   }
 }
 
