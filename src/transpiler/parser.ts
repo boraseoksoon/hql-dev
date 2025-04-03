@@ -200,8 +200,6 @@ function parseDotNotation(tokenValue: string): SExp {
     : createSymbol(tokenValue);
 }
 
-// Updated parsing functions in src/transpiler/parser.ts
-
 /**
  * Parse a list expression
  */
@@ -215,6 +213,15 @@ function parseList(state: ParserState): SList {
       state.tokens[state.currentPos].type === TokenType.Symbol &&
       state.tokens[state.currentPos].value === "enum") {
     isEnum = true;
+  }
+
+  let fnKeywordFound = false;
+  
+  if (state.currentPos < state.tokens.length && 
+      state.tokens[state.currentPos].type === TokenType.Symbol &&
+      (state.tokens[state.currentPos].value === "fn" || 
+       state.tokens[state.currentPos].value === "fx")) {
+    fnKeywordFound = true;
   }
   
   while (
@@ -248,8 +255,60 @@ function parseList(state: ParserState): SList {
           state.input
         );
       }
-    } else {
-      // Normal element parsing
+    } 
+    // Special handling for function type expressions like (-> [String])
+    else if (fnKeywordFound && 
+             state.tokens[state.currentPos].type === TokenType.Symbol &&
+             state.tokens[state.currentPos].value === "->") {
+      
+      // Mark that we found an arrow token
+      arrowFound = true;
+      
+      // Add the arrow symbol
+      elements.push(parseExpression(state));
+      
+      // Check if the next token is a left bracket (array type)
+      if (state.currentPos < state.tokens.length && 
+          state.tokens[state.currentPos].type === TokenType.LeftBracket) {
+        
+        // This is an array type notation - preserve it directly
+        const arrayTypeStartToken = state.tokens[state.currentPos];
+        state.currentPos++; // Skip the left bracket
+        
+        // We expect exactly one element (the type) followed by a right bracket
+        if (state.currentPos >= state.tokens.length) {
+          throw new ParseError(
+            "Unclosed array type notation", 
+            arrayTypeStartToken.position, 
+            state.input
+          );
+        }
+        
+        // Parse the inner type
+        const innerType = parseExpression(state);
+        
+        // Expect a closing bracket
+        if (state.currentPos >= state.tokens.length || 
+            state.tokens[state.currentPos].type !== TokenType.RightBracket) {
+          throw new ParseError(
+            "Missing closing bracket in array type notation", 
+            arrayTypeStartToken.position, 
+            state.input
+          );
+        }
+        
+        // Skip the right bracket
+        state.currentPos++;
+        
+        // Add the array type as a list with one element (the inner type)
+        elements.push(createList(innerType));
+      } else {
+        // Regular type, just parse it normally
+        elements.push(parseExpression(state));
+      }
+    }
+    // Normal element parsing
+    else {
       elements.push(parseExpression(state));
     }
   }

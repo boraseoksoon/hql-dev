@@ -85,11 +85,18 @@ export function isValidType(typeName: string): boolean {
     return true;
   }
   
+  // Check if it's an array type (Array<ElementType>)
+  if (typeName.startsWith("Array<") && typeName.endsWith(">")) {
+    const innerType = typeName.substring(6, typeName.length - 1);
+    return isValidType(innerType);
+  }
+  
   // Check if it's a known enum type
   // We'll consider any type name not in primitive types as potentially valid
   // and let the rest of the system validate it if needed
   return true;
 }
+
 
 /**
  * Register a function as pure
@@ -152,6 +159,7 @@ function verifyExpressionPurity(
   }
   // Literal values are always pure
 }
+
 
 /**
  * Verify a symbol obeys purity rules

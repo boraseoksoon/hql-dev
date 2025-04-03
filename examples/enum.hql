@@ -115,3 +115,86 @@
 ;; Testing the functions
 (processPayment payment1)
 (processPayment payment2)
+
+
+;; type inference
+
+;; Define a simple OS enum
+(enum OS
+  (case macOS)
+  (case iOS)
+  (case linux)
+)
+
+;; With raw values
+(enum StatusCode: Int
+  (case ok 200)
+  (case notFound 404)
+  (case serverError 500)
+)
+
+;; A function that "installs" based on the OS
+(fn install (os: OS) (-> String)
+  (cond
+    ((= os OS.macOS) "Installing on macOS")
+    ((= os OS.iOS)   "Installing on iOS")
+    ((= os OS.linux) "Installing on Linux")
+    (else            "Unsupported OS")
+  )
+)
+
+;; A function with dot notation in equality comparisons
+(fn install2 (os: OS) (-> String)
+  (cond
+    ((= os .macOS) "Installing on macOS")
+    ((= os .iOS)   "Installing on iOS")
+    ((= os .linux) "Installing on Linux")
+    (else          "Unsupported OS")
+  )
+)
+
+;; A function demonstrating if statements with enum dot notation
+(fn check-status (code: StatusCode) (-> String)
+  (if (= code .ok)
+    "Everything is ok!"
+    (if (= code .notFound)
+      "Not found!"
+      "Server error!"
+    )
+  )
+)
+
+;; A function demonstrating when with enum dot notation
+(fn process-status (code: StatusCode) (-> String)
+  (when (= code .serverError)
+    (print "Critical error detected!")
+    "Server error needs attention"
+  )
+)
+
+;; Test reversed comparison order
+(fn reverse-check (code: StatusCode) (-> String)
+  (if (= .ok code)
+    "Status is ok!"
+    "Status is not ok!"
+  )
+)
+
+;; Examples of calling with enum type inference in named parameters
+(let mac-result (install os: .macOS))
+(let ios-result (install os: .iOS))
+(let linux-result (install os: .linux))
+
+;; Using explicit enum references also works
+(let mac-result2 (install os: OS.macOS))
+
+;; Status code check
+(let status (check-status code: .ok))
+(let error-status (check-status code: .serverError))
+
+;; Test the second install function with dot notation
+(let mac-result3 (install2 os: .macOS))
+
+;; Return the status to test
+(print status)
+(print mac-result3)

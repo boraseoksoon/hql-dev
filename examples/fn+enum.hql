@@ -16,6 +16,6 @@
 )
 
 ;; enum type inference
-(install os: OS.macOS)
-(install os: OS.iOS)
-(install os: OS.linux)
+(install os: .macOS)
+(install os: .iOS)
+(install os: .linux)

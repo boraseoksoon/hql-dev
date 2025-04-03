@@ -11,7 +11,7 @@ import {
   PRIMITIVE_DATA_STRUCTURE,
   PRIMITIVE_OPS,
 } from "./primitives.ts";
-import { PRIMITIVE_TYPES } from "./purity.ts";
+import { isValidType } from "./purity.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 import { Environment } from "../environment.ts";
 import * as path from "../platform/platform.ts";
@@ -1459,27 +1459,55 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
     }
     const paramList = paramListNode as ListNode;
 
-    // Check if this is a typed fn with a return type annotation
-    const isTyped = list.elements.length > 3 && 
-                   list.elements[3].type === "list" &&
-                   (list.elements[3] as ListNode).elements.length > 0 &&
-                   (list.elements[3] as ListNode).elements[0].type === "symbol" &&
-                   ((list.elements[3] as ListNode).elements[0] as SymbolNode).name === "->";
+    // Check if this is a typed fn with a return type
+    let bodyStartIndex = 3;
+    let hasReturnType = false;
+    let returnType: string | null = null;
     
-    // Determine body start index based on whether there's a return type
-    const bodyOffset = isTyped ? 4 : 3;
-    const bodyExpressions = list.elements.slice(bodyOffset);
+    // Check if the next element is a return type list starting with ->
+    if (list.elements.length > 3 && 
+        list.elements[3].type === "list" && 
+        (list.elements[3] as ListNode).elements.length > 0 &&
+        (list.elements[3] as ListNode).elements[0].type === "symbol" &&
+        ((list.elements[3] as ListNode).elements[0] as SymbolNode).name === "->") {
+      
+      const returnTypeList = list.elements[3] as ListNode;
+      hasReturnType = true;
+      bodyStartIndex = 4;
+      
+      // Process the return type, handling array types
+      if (returnTypeList.elements.length >= 2) {
+        const typeNode = returnTypeList.elements[1];
+        
+        // Handle array type notation: [ElementType]
+        if (typeNode.type === "list" && (typeNode as ListNode).elements.length === 1) {
+          const innerTypeNode = (typeNode as ListNode).elements[0];
+          if (innerTypeNode.type === "symbol") {
+            returnType = `Array<${(innerTypeNode as SymbolNode).name}>`;
+          } else {
+            returnType = "Array";
+          }
+        } 
+        // Regular type
+        else if (typeNode.type === "symbol") {
+          returnType = (typeNode as SymbolNode).name;
+        }
+      }
+    }
 
-    // Parse parameters based on whether it's typed or untyped
-    const paramsInfo = isTyped 
-        ? parseParametersWithTypes(paramList, currentDir)
-        : parseParametersWithDefaults(paramList, currentDir);
+    // Body expressions start after either the parameter list or return type
+    const bodyExpressions = list.elements.slice(bodyStartIndex);
+
+    // Parse parameters with types and defaults
+    const paramsInfo = hasReturnType 
+      ? parseParametersWithTypes(paramList, currentDir)  // For typed fn
+      : parseParametersWithDefaults(paramList, currentDir);  // For untyped fn
 
     // Extract params and defaults
     const params = paramsInfo.params;
     const defaultValues = paramsInfo.defaults;
 
-    // Process the body expressions like a regular function
+    // Process the body expressions
     const bodyNodes = processFunctionBody(bodyExpressions, currentDir);
 
     // Create the FnFunctionDeclaration node
@@ -1500,24 +1528,6 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
       },
     } as IR.IRFnFunctionDeclaration;
 
-    // If it's a typed fn, add type information
-    if (isTyped) {
-      const returnTypeNode = list.elements[3] as ListNode;
-      if (returnTypeNode.elements.length < 2 || returnTypeNode.elements[1].type !== "symbol") {
-        throw new ValidationError(
-          "Return type must be specified after ->",
-          "fn return type",
-          "type symbol",
-          "missing type",
-        );
-      }
-      const returnType = (returnTypeNode.elements[1] as SymbolNode).name;
-      
-      // Note: We would add type information here if the IR supported it
-      // For now, we'll just proceed with the untyped IR representation
-      // since the specification says types are for documentation only
-    }
-
     // Register this function in our registry for call site handling
     registerFnFunction(funcName, fnFuncDecl);
     return fnFuncDecl;
@@ -1532,7 +1542,6 @@ function transformFn(list: ListNode, currentDir: string): IR.IRNode {
     );
   }
 }
-
 
 /**
  * Parse parameters with default values for fn functions
@@ -4802,10 +4811,29 @@ function parseParametersWithTypes(
 
         // Look ahead for the type
         if (
-          i + 1 < paramList.elements.length &&
-          paramList.elements[i + 1].type === "symbol"
+          i + 1 < paramList.elements.length
         ) {
-          const typeName = (paramList.elements[i + 1] as SymbolNode).name;
+          let typeName: string;
+          const typeNode = paramList.elements[i + 1];
+          
+          // Handle array type notation: [ElementType]
+          if (typeNode.type === "list" && (typeNode as ListNode).elements.length === 1) {
+            const innerTypeNode = (typeNode as ListNode).elements[0];
+            if (innerTypeNode.type === "symbol") {
+              const innerTypeName = (innerTypeNode as SymbolNode).name;
+              typeName = `Array<${innerTypeName}>`;
+            } else {
+              typeName = "Array";
+            }
+          } 
+          // Handle normal type (symbol)
+          else if (typeNode.type === "symbol") {
+            typeName = (typeNode as SymbolNode).name;
+          }
+          // Use Any as default if we can't determine the type
+          else {
+            typeName = "Any";
+          }
 
           // For array types
           if (typeName.startsWith("Array<") && typeName.endsWith(">")) {
@@ -5040,20 +5068,26 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
     }
 
     const returnTypeList = returnTypeNode as ListNode;
-    const returnTypeSymbol = returnTypeList.elements[1];
+    let returnType = "Any"; // Default if no type specified
 
-    if (returnTypeSymbol.type !== "symbol") {
-      throw new ValidationError(
-        "Return type must be a symbol",
-        "fx return type",
-        "symbol",
-        returnTypeSymbol.type,
-      );
+    // Process the return type, handling array types
+    if (returnTypeList.elements.length >= 2) {
+      const typeNode = returnTypeList.elements[1];
+      
+      // Handle array type notation: [ElementType]
+      if (typeNode.type === "list" && (typeNode as ListNode).elements.length === 1) {
+        const innerTypeNode = (typeNode as ListNode).elements[0];
+        if (innerTypeNode.type === "symbol") {
+          returnType = `Array<${(innerTypeNode as SymbolNode).name}>`;
+        } else {
+          returnType = "Array";
+        }
+      } 
+      // Regular type
+      else if (typeNode.type === "symbol") {
+        returnType = (typeNode as SymbolNode).name;
+      }
     }
-
-    const returnType = (returnTypeSymbol as SymbolNode).name;
-    
-    // Accept any return type - we'll just assume it's valid (including enums)
     
     // Body expressions start from index 4
     const bodyOffset = 4;
@@ -5069,7 +5103,10 @@ function transformFx(list: ListNode, currentDir: string): IR.IRNode {
 
     // Check that all parameter types are supported
     for (const [paramName, paramType] of paramTypes.entries()) {
-      // Accept all types - we'll assume they're valid (including enums)
+      // Accept all types now, including array types and enums
+      if (!isValidType(paramType)) {
+        logger.warn(`Parameter ${paramName} has unusual type: ${paramType}`);
+      }
     }
 
     // Extract raw parameter symbols for purity verification
