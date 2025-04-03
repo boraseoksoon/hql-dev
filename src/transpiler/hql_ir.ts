@@ -1,19 +1,12 @@
 // src/transpiler/hql_ir.ts - Updated with enum types
 
 export enum IRNodeType {
-  // Basic program structure
   Program,
-
-  // Literals
   StringLiteral,
   NumericLiteral,
   BooleanLiteral,
   NullLiteral,
-
-  // Identifiers
   Identifier,
-
-  // Expressions
   CallExpression,
   MemberExpression,
   CallMemberExpression,
@@ -24,33 +17,21 @@ export enum IRNodeType {
   ArrayExpression,
   ArrayConsExpression,
   FunctionExpression,
-
-  // Object literal support (for maps)
   ObjectExpression,
   ObjectProperty,
-
-  // Statements/Declarations
   VariableDeclaration,
   VariableDeclarator,
   FunctionDeclaration,
   ReturnStatement,
   BlockStatement,
-
-  // Import/Export
   ImportDeclaration,
   ImportSpecifier,
   ExportNamedDeclaration,
   ExportSpecifier,
   ExportVariableDeclaration,
-
-  // JS Interop
   InteropIIFE,
-
-  // Other
   CommentBlock,
   Raw,
-
-  // For representing a JS import reference from (js-import "module")
   JsImportReference,
   AssignmentExpression,
   SpreadAssignment,
@@ -58,14 +39,11 @@ export enum IRNodeType {
   FxFunctionDeclaration,
   FnFunctionDeclaration,
   IfStatement,
-
   ClassDeclaration,
   ClassField,
   ClassMethod,
   ClassConstructor,
   GetAndCall,
-
-  // Enum Types (NEW)
   EnumDeclaration,
   EnumCase,
 }
@@ -171,7 +149,6 @@ export interface IRFunctionExpression extends IRNode {
   body: IRBlockStatement;
 }
 
-// Object literal support (for maps)
 export interface IRObjectProperty extends IRNode {
   type: IRNodeType.ObjectProperty;
   key: IRNode;
@@ -189,13 +166,11 @@ export interface IRExpressionStatement extends IRNode {
   expression: IRNode;
 }
 
-// Update the ObjectExpression interface:
 export interface IRObjectExpression extends IRNode {
   type: IRNodeType.ObjectExpression;
   properties: (IRObjectProperty | IRSpreadAssignment)[];
 }
 
-// Statements/Declarations
 export interface IRVariableDeclaration extends IRNode {
   type: IRNodeType.VariableDeclaration;
   kind: "const" | "let" | "var";
@@ -225,7 +200,6 @@ export interface IRBlockStatement extends IRNode {
   body: IRNode[];
 }
 
-// Import/Export
 export interface IRImportDeclaration extends IRNode {
   type: IRNodeType.ImportDeclaration;
   source: string;
@@ -248,21 +222,18 @@ export interface IRExportVariableDeclaration extends IRNode {
   exportName: string;
 }
 
-// JS Interop
 export interface IRInteropIIFE extends IRNode {
   type: IRNodeType.InteropIIFE;
   object: IRNode;
   property: IRStringLiteral;
 }
 
-// IR node for JS import references
 export interface IRJsImportReference extends IRNode {
   type: IRNodeType.JsImportReference;
   name: string;
   source: string;
 }
 
-// Other
 export interface IRCommentBlock extends IRNode {
   type: IRNodeType.CommentBlock;
   value: string;
@@ -279,7 +250,6 @@ export interface IRImportSpecifier extends IRNode {
   local: IRIdentifier;
 }
 
-// Update the ImportDeclaration interface to use the new ImportSpecifier
 export interface IRImportDeclaration extends IRNode {
   type: IRNodeType.ImportDeclaration;
   source: string;
@@ -293,9 +263,6 @@ export interface IRAssignmentExpression extends IRNode {
   right: IRNode;
 }
 
-/**
- * IR node for fx function declarations with type information
- */
 export interface IRFxFunctionDeclaration extends IRNode {
   type: IRNodeType.FxFunctionDeclaration;
   id: IRIdentifier;
@@ -306,9 +273,6 @@ export interface IRFxFunctionDeclaration extends IRNode {
   body: IRBlockStatement;
 }
 
-/**
- * IR node for fn function declarations with default values (no types)
- */
 export interface IRFnFunctionDeclaration extends IRNode {
   type: IRNodeType.FnFunctionDeclaration;
   id: IRIdentifier;
@@ -343,7 +307,7 @@ export interface IRClassMethod extends IRNode {
   type: IRNodeType.ClassMethod;
   name: string;
   params: IRIdentifier[];
-  defaults?: { name: string, value: IRNode }[]; // Add this field to store defaults
+  defaults?: { name: string, value: IRNode }[];
   body: IRBlockStatement;
 }
 
@@ -360,23 +324,13 @@ export interface IRGetAndCall extends IRNode {
   arguments: IRNode[];
 }
 
-// --- Enum Types (NEW) ---
-
-/**
- * Represents an enum declaration: (enum TypeName ...)
- */
 export interface IREnumDeclaration extends IRNode {
   type: IRNodeType.EnumDeclaration;
-  id: IRIdentifier; // The name of the enum (e.g., OsType)
-  rawType?: string; // Type for raw values (e.g., Int, String)
-  cases: IREnumCase[]; // The list of cases defined within the enum
-  hasAssociatedValues?: boolean; // Flag indicating if any case has associated values
+  id: IRIdentifier;
+  rawType?: string;
+  cases: IREnumCase[];
+  hasAssociatedValues?: boolean;
 }
-
-/**
- * Represents a simple enum case: (case CaseName)
- * (Future versions will add support for raw values and associated values)
- */
 export interface IREnumAssociatedValue {
   name: string;
   type: string;
@@ -384,8 +338,8 @@ export interface IREnumAssociatedValue {
 
 export interface IREnumCase extends IRNode {
   type: IRNodeType.EnumCase;
-  id: IRIdentifier; // The name of the case (e.g., macOS)
-  rawValue?: IRNode; // For raw value support
-  associatedValues?: IREnumAssociatedValue[]; // For associated values support
+  id: IRIdentifier;
+  rawValue?: IRNode;
+  associatedValues?: IREnumAssociatedValue[];
   hasAssociatedValues?: boolean;
 }
