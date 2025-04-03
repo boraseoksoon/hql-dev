@@ -180,8 +180,6 @@ export function defineUserMacro(
 }
 
 /* Expand all macros in a list of S-expressions */
-// src/s-exp/macro.ts - expandMacros function refactor
-
 export function expandMacros(
   exprs: SExp[],
   env: Environment,
@@ -190,63 +188,54 @@ export function expandMacros(
   const logger = new Logger(options.verbose || false);
   const currentFile = options.currentFile;
   const useCache = options.useCache !== false;
-  const cacheKeyPrefix = currentFile ? `${currentFile}:` : '';
   logger.debug(
     `Starting macro expansion on ${exprs.length} expressions${currentFile ? ` in ${currentFile}` : ""}`,
   );
 
   if (currentFile) {
     env.setCurrentFile(currentFile);
+    logger.debug(`Setting current file to: ${currentFile}`);
   }
 
-  // Process macro definitions once in a single pass
+  // Process macro definitions (global first, then user-level if a current file is provided)
   for (const expr of exprs) {
     if (isDefMacro(expr) && isList(expr)) {
       defineMacro(expr as SList, env, logger);
-    } else if (currentFile && isUserMacro(expr) && isList(expr)) {
-      defineUserMacro(expr as SList, currentFile, env, logger);
+    }
+  }
+  if (currentFile) {
+    for (const expr of exprs) {
+      if (isUserMacro(expr) && isList(expr)) {
+        defineUserMacro(expr as SList, currentFile, env, logger);
+      }
     }
   }
 
-  // Use a more efficient fixed-point algorithm with direct reference comparison
   let currentExprs = [...exprs];
   let iteration = 0;
   let changed = true;
-  
   while (changed && iteration < MAX_EXPANSION_ITERATIONS) {
     changed = false;
     iteration++;
     logger.debug(`Macro expansion iteration ${iteration}`);
 
     const newExprs = currentExprs.map((expr) => {
-      // Use a more efficient cache key based on stable string representation
-      if (useCache) {
-        const exprStr = sexpToString(expr);
-        const cacheKey = cacheKeyPrefix + exprStr;
-        const cached = macroExpansionCache.get(cacheKey);
-        if (cached) {
-          return cached;
-        }
-        
-        const expandedExpr = expandMacroExpression(expr, env, options, 0);
-        // Only cache if actually expanded (different from original)
-        if (expandedExpr !== expr) {
-          macroExpansionCache.set(cacheKey, expandedExpr);
-          changed = true;
-        }
-        return expandedExpr;
+      const exprStr = useCache ? sexpToString(expr) : "";
+      if (useCache && macroExpansionCache.has(exprStr)) {
+        logger.debug(`Cache hit for expression: ${exprStr.substring(0, 30)}...`);
+        return macroExpansionCache.get(exprStr)!;
       }
-      
       const expandedExpr = expandMacroExpression(expr, env, options, 0);
-      // Track changes by reference comparison
-      if (expandedExpr !== expr) {
-        changed = true;
+      if (useCache) {
+        macroExpansionCache.set(exprStr, expandedExpr);
       }
       return expandedExpr;
     });
 
-    // Only update if changed to avoid unnecessary array creations
-    if (changed) {
+    const oldStr = currentExprs.map(sexpToString).join("\n");
+    const newStr = newExprs.map(sexpToString).join("\n");
+    if (oldStr !== newStr) {
+      changed = true;
       currentExprs = newExprs;
       logger.debug(`Changes detected in iteration ${iteration}, continuing expansion`);
     } else {
@@ -259,14 +248,14 @@ export function expandMacros(
       `Macro expansion reached maximum iterations (${MAX_EXPANSION_ITERATIONS}). Check for infinite recursion.`,
     );
   }
-  
-  const filteredExprs = filterMacroDefinitions(currentExprs, logger);
-  
+  logger.debug(`Completed macro expansion after ${iteration} iterations`);
+
+  currentExprs = filterMacroDefinitions(currentExprs, logger);
   if (currentFile) {
     env.setCurrentFile(null);
+    logger.debug(`Clearing current file`);
   }
-  
-  return filteredExprs;
+  return currentExprs;
 }
 
 /* Check if a symbol represents a user-level macro with caching. */

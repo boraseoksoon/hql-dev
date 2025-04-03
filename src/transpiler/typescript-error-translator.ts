@@ -20,7 +20,7 @@ const TS_ERROR_MESSAGES: Record<string, string> = {
   "2365": "Operator '{0}' cannot be applied to types '{1}' and '{2}'.",
   "2366": "Function lacks ending return statement and return type does not include 'undefined'.",
   "2571": "Object is of type 'unknown'. Did you forget to cast it to a specific type?",
-  "2339_ALT": "Property '{0}' does not exist on type '{1}'. Did you mean '{2}'?",
+  "2339": "Property '{0}' does not exist on type '{1}'. Did you mean '{2}'?",
   "2448": "Block-scoped variable '{0}' used before its declaration.",
   "2451": "Cannot redeclare block-scoped variable '{0}'.",
   "2454": "Variable '{0}' is used before being assigned.",
@@ -83,7 +83,7 @@ export function translateTypeScriptError(error: Error): Error {
     return error;
   } catch (e) {
     // If anything goes wrong, return the original error
-    logger.debug(`Error translating TypeScript error: ${e instanceof Error ? e.message : String(e)}`);
+    logger.debug(`Error translating TypeScript error: ${e.message}`);
     return error;
   }
 }
@@ -91,7 +91,7 @@ export function translateTypeScriptError(error: Error): Error {
 /**
  * Apply TypeScript error translation to a function
  */
-export function withTypeScriptErrorTranslation<T, Args extends unknown[]>(
+export function withTypeScriptErrorTranslation<T, Args extends any[]>(
   fn: (...args: Args) => Promise<T> | T
 ): (...args: Args) => Promise<T> {
   return async (...args: Args): Promise<T> => {
@@ -107,24 +107,19 @@ export function withTypeScriptErrorTranslation<T, Args extends unknown[]>(
 }
 
 /**
- * Generic type for a function with variable arguments and any return type
- */
-type GenericFunction = (...args: unknown[]) => unknown;
-
-/**
  * Enhance TypeScript generate function with better error messages
  */
 export function enhanceTypeScriptGeneration(
-  generateFunction: GenericFunction, 
+  generateFunction: Function, 
   sourceFilePath?: string, 
   sourceContent?: string
-): GenericFunction {
-  return async (...args: unknown[]) => {
+): Function {
+  return async (...args: any[]) => {
     try {
       return await generateFunction(...args);
     } catch (error) {
       // First translate the error
-      const translatedError = translateTypeScriptError(error instanceof Error ? error : new Error(String(error)));
+      const translatedError = translateTypeScriptError(error);
       
       // Then enhance it with source context if available
       if (sourceFilePath && sourceContent) {

@@ -205,30 +205,20 @@ export async function processHqlImportsInJs(
     for (const importInfo of imports) {
       const hqlPath = importInfo.path;
       let resolvedHqlPath: string | null = null;
-      
-      // First try to resolve relative to the JS file directory
       try {
         const pathFromJs = path.resolve(baseDir, hqlPath);
         await Deno.stat(pathFromJs);
         resolvedHqlPath = pathFromJs;
         logger.debug(`Resolved import relative to JS file: ${pathFromJs}`);
-      } catch {
-        // File not found relative to JS file directory
-      }
-      
-      // If that fails and sourceDir is provided, try relative to sourceDir
+      } catch {}
       if (!resolvedHqlPath && options.sourceDir) {
         try {
           const pathFromSource = path.resolve(options.sourceDir, hqlPath);
           await Deno.stat(pathFromSource);
           resolvedHqlPath = pathFromSource;
           logger.debug(`Resolved import relative to source dir: ${pathFromSource}`);
-        } catch {
-          // File not found relative to source directory
-        }
+        } catch {}
       }
-      
-      // For relative paths, try the lib directory as a fallback
       if (
         !resolvedHqlPath &&
         (hqlPath.startsWith("./") || hqlPath.startsWith("../"))
@@ -242,25 +232,18 @@ export async function processHqlImportsInJs(
           await Deno.stat(pathFromLib);
           resolvedHqlPath = pathFromLib;
           logger.debug(`Resolved import relative to lib dir: ${pathFromLib}`);
-        } catch {
-          // File not found relative to lib directory
-        }
+        } catch {}
       }
-      
-      // Last resort, try current working directory
       if (!resolvedHqlPath) {
         try {
           const pathFromCwd = path.resolve(Deno.cwd(), hqlPath);
           await Deno.stat(pathFromCwd);
           resolvedHqlPath = pathFromCwd;
           logger.debug(`Resolved import relative to CWD: ${pathFromCwd}`);
-        } catch {
-          // File not found relative to current working directory
-        }
+        } catch {}
       }
-      
       if (!resolvedHqlPath) {
-        throw new Error(`Could not resolve import: ${hqlPath} from ${jsFilePath}. Tried paths relative to: JS file directory, source directory, lib directory, and current working directory.`);
+        throw new Error(`Could not resolve import: ${hqlPath} from ${jsFilePath}`);
       }
       
       // IMPORTANT CHANGE: Generate TypeScript intermediates, not JavaScript
@@ -521,8 +504,6 @@ async function processJsOrTsEntryFile(
   }
 }
 
-// src/bundler.ts - bundleWithEsbuild function refactor
-
 function bundleWithEsbuild(
   entryPath: string,
   outputPath: string,
@@ -531,67 +512,40 @@ function bundleWithEsbuild(
   return performAsync(async () => {
     const logger = new Logger(options.verbose);
     logger.debug(`Bundling ${entryPath} to ${outputPath}`);
-    
-    // Create temp dir and plugins in one pass
-    const { tempDir, cleanupTemp } = await createTempDirIfNeeded(options, logger);
-    
+    logger.debug(`Bundling options: ${JSON.stringify(options, null, 2)}`);
+    const tempDirResult = await createTempDirIfNeeded(options, logger);
+    const tempDir = tempDirResult.tempDir;
+    const cleanupTemp = tempDirResult.created;
     try {
-      const plugins = [
-        createHqlPlugin({
-          verbose: options.verbose,
-          tempDir,
-          sourceDir: options.sourceDir || dirname(entryPath),
-        }),
-        createExternalPlugin()
-      ];
-      
+      const hqlPlugin = createHqlPlugin({
+        verbose: options.verbose,
+        tempDir,
+        sourceDir: options.sourceDir || dirname(entryPath),
+      });
+      const externalPlugin = createExternalPlugin();
       const buildOptions = createBuildOptions(
         entryPath,
         outputPath,
         options,
-        plugins,
+        [hqlPlugin, externalPlugin],
       );
-      
       logger.log(`Starting bundling with esbuild for ${entryPath}`);
       const result = await runBuildWithRetry(
         buildOptions,
         MAX_RETRIES,
         logger,
       );
-      
-      const bundleType = options.minify ? "bundled and minified" : "bundled";
-      logger.log(`Successfully ${bundleType} output to ${outputPath}`);
-      
+      if (options.minify) {
+        logger.log(`Successfully bundled and minified output to ${outputPath}`);
+      } else {
+        logger.log(`Successfully bundled output to ${outputPath}`);
+      }
       return outputPath;
     } catch (error) {
-      // Single error handling block with detailed diagnostics
-      if (options.verbose && !(error instanceof TranspilerError)) {
-        const errorReport = createErrorReport(
-          error instanceof Error ? error : new Error(String(error)),
-          "esbuild bundling",
-          {
-            entryPath,
-            outputPath,
-            attempts: MAX_RETRIES,
-          },
-        );
-        console.error("Detailed esbuild error report:");
-        console.error(errorReport);
-      }
-      throw error instanceof TranspilerError ? error : 
-            new TranspilerError(`esbuild failed: ${error instanceof Error ? error.message : String(error)}`);
+      handleBundlingError(error, entryPath, outputPath, options.verbose);
+      throw error;
     } finally {
-      try {
-        await esbuild.stop();
-      } catch {}
-      
-      if (cleanupTemp) {
-        Deno.remove(tempDir, { recursive: true })
-          .then(() => logger.debug(`Cleaned up temporary directory: ${tempDir}`))
-          .catch(error => logger.warn(
-            `Failed to clean up temporary directory: ${error instanceof Error ? error.message : String(error)}`
-          ));
-      }
+      cleanupAfterBundling(tempDir, cleanupTemp, logger);
     }
   }, `Bundling failed for ${entryPath}`);
 }

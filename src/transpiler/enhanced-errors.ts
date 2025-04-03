@@ -1,5 +1,5 @@
 // src/transpiler/enhanced-errors.ts
-import { TranspilerError, ParseError, ValidationError as _ValidationError, MacroError as _MacroError, ImportError as _ImportError, CodeGenError as _CodeGenError, TransformError as _TransformError } from "./errors.ts";
+import { TranspilerError, ParseError, ValidationError, MacroError, ImportError, CodeGenError, TransformError } from "./errors.ts";
 
 /**
  * Colorizer function for terminal output
