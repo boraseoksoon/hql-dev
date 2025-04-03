@@ -708,8 +708,8 @@ async function readLineWithHistory(
     // First move to the beginning of the line
     await Deno.stdout.write(encoder.encode("\r"));
     
-    // Then clear the entire line
-    await Deno.stdout.write(encoder.encode("\x1b[2K"));
+    // Then clear the entire line (but don't go to next line)
+    await Deno.stdout.write(encoder.encode("\x1b[K"));
     
     // Write prompt and current input
     await Deno.stdout.write(encoder.encode(prompt + currentInput));
@@ -727,9 +727,10 @@ async function readLineWithHistory(
     
     // Handle different key presses based on the keypress event structure
     if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "c") {
-      // Ctrl+C - cancel input
-      await Deno.stdout.write(encoder.encode("\n"));
-      return "";
+      // Ctrl+C - exit REPL
+      await Deno.stdout.write(encoder.encode("\nExiting REPL...\n"));
+      // Exit Deno process
+      Deno.exit(0);
     } else if (keypressEvent && keypressEvent.key === "return") {
       // Enter - complete input
       await Deno.stdout.write(encoder.encode("\n"));

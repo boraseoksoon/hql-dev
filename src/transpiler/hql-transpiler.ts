@@ -219,6 +219,16 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
         throw new ImportError(`Could not find macro file at ${macroPath}.`, macroPath, undefined, e);
       });
 
+      // Skip macros that reference example files when in REPL mode
+      if (options.skipRebuild && 
+          (macroSource.includes('/examples/') || 
+           macroSource.includes('\\examples\\') || 
+           macroSource.includes('examples/'))) {
+        logger.debug(`Skipping macro that references example files: ${macroPath} (REPL mode)`);
+        env.markFileProcessed(macroPath);
+        continue;
+      }
+
       const macroExps = macroExpressionsCache.get(macroPath) || parse(macroSource);
       macroExpressionsCache.set(macroPath, macroExps);
 

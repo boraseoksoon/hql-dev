@@ -158,6 +158,7 @@ export class REPLEvaluator {
       await processImports(transformedSexps, this.replEnv.hqlEnv, {
         verbose: options.verbose,
         baseDir: options.baseDir || this.baseDir,
+        skipRebuild: true,
       });
       metrics.importProcessingTimeMs = performance.now() - currentTime;
       
