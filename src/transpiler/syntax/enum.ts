@@ -1,4 +1,4 @@
-// src/transpiler/enum-handler.ts
+// src/transpiler/syntax/enum.ts
 // A unified module for handling enum operations across the transpiler
 
 import * as IR from "../type/hql_ir.ts";
@@ -92,6 +92,125 @@ export function parseEnumCase(
     "parseEnumCase",
     TransformError,
     [caseList],
+  );
+}
+
+/**
+ * Transform an enum declaration to IR.
+ * Handles both syntaxes:
+ *  - (enum StatusCodes:Int (case ok 200) …)
+ *  - (enum StatusCodes: Int (case ok 200) …)
+ */
+export function transformEnumDeclaration(
+  list: ListNode, 
+  currentDir: string,
+  transformNode: (node: any, dir: string) => IR.IRNode | null
+): IR.IRNode {
+  return perform(
+    () => {
+      logger.debug("Transforming enum declaration");
+
+      // Validate enum syntax: at least a name and one case
+      if (list.elements.length < 2) {
+        throw new ValidationError(
+          "enum requires a name and at least one case",
+          "enum definition",
+          "name and cases",
+          `${list.elements.length - 1} arguments`,
+        );
+      }
+
+      // Extract enum name and raw type
+      const nameNode = list.elements[1];
+      let enumName: string;
+      let rawType: string | null = null;
+
+      if (nameNode.type === "symbol") {
+        const symbolName = (nameNode as SymbolNode).name;
+        // If the name token contains a colon, split it up
+        if (symbolName.includes(":")) {
+          const parts = symbolName.split(":");
+          enumName = parts[0].trim();
+          rawType = parts[1].trim();
+          logger.debug(`Detected enum with raw type (embedded): ${enumName}: ${rawType}`);
+        } else {
+          enumName = symbolName;
+          logger.debug(`Detected simple enum: ${enumName}`);
+        }
+      } else {
+        throw new ValidationError(
+          "Enum name must be a symbol",
+          "enum name",
+          "symbol",
+          nameNode.type,
+        );
+      }
+
+      // Determine where enum cases begin.
+      // If rawType is not yet set, check if the next token is a symbol representing the raw type.
+      let caseStartIndex = 2;
+      if (!rawType && list.elements.length >= 3) {
+        const potentialTypeNode = list.elements[2];
+        if (potentialTypeNode.type === "symbol") {
+          // Optionally you could validate the token against allowed types (e.g. "Int", "Double", etc.)
+          rawType = (potentialTypeNode as SymbolNode).name.trim();
+          logger.debug(`Detected enum raw type (separate token): ${rawType}`);
+          caseStartIndex = 3;
+        }
+      }
+
+      // Process enum cases: cases start at caseStartIndex
+      const cases: IR.IREnumCase[] = [];
+      const caseElements = list.elements.slice(caseStartIndex);
+
+      for (const element of caseElements) {
+        // Each case must be a list starting with "case" and at least one argument (the case name)
+        if (element.type !== "list") {
+          throw new ValidationError(
+            "Enum cases must be lists starting with 'case'",
+            "enum case",
+            "list",
+            element.type,
+          );
+        }
+
+        // Use the enum handler module to parse cases
+        const enumCase = parseEnumCase(element as ListNode, currentDir, transformNode);
+        cases.push(enumCase);
+      }
+
+      if (cases.length === 0) {
+        throw new ValidationError(
+          "Enum must define at least one case",
+          "enum definition",
+          "at least one case",
+          "no cases defined",
+        );
+      }
+
+      // Build the final enum declaration IR node.
+      const enumDeclaration: IR.IREnumDeclaration = {
+        type: IR.IRNodeType.EnumDeclaration,
+        id: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(enumName),
+        },
+        cases,
+      };
+
+      if (rawType) {
+        enumDeclaration.rawType = rawType;
+      }
+
+      if (cases.some(c => c.hasAssociatedValues)) {
+        enumDeclaration.hasAssociatedValues = true;
+      }
+
+      return enumDeclaration;
+    },
+    "transformEnum",
+    TransformError,
+    [list],
   );
 }
 
