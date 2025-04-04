@@ -123,14 +123,14 @@
   `(js-call lodash "toUpper" ~text))
 
 ;; Test HQL imports
-(import module from "../../examples/dependency-test2/a.hql")
-(defmacro text-wrapper (a b) `(module.add3 ~a ~b))
+;; (import module from "../../examples/dependency-test2/a.hql")
+;; (defmacro text-wrapper (a b) `(module.add3 ~a ~b))
 
 ;; (import module from "./test/text-utils.hql")
 ;; (defmacro text-wrapper (text) `(module.wrap_text ~text))
 
-(import formatter from "../test/formatter.js")
-(defmacro js-format-text (text) `(formatter.formatText ~text))
+;; (import formatter from "../test/formatter.js")
+;; (defmacro js-format-text (text) `(formatter.formatText ~text))
 
 ;; (import [formatText] from "../test/formatter.js")
 ;; (defmacro js-format-text (text) `(formatText ~text))

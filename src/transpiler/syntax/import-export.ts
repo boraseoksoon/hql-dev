@@ -1,6 +1,7 @@
 // src/transpiler/syntax/import-export.ts
 // Module for handling import and export operations
 
+import * as path from "../../platform/platform.ts";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError, ImportError } from "../error/errors.ts";
@@ -118,7 +119,6 @@ export function isSymbolMacroInModule(
 
       let resolvedPath = modulePath;
       if (modulePath.startsWith("./") || modulePath.startsWith("../")) {
-        import * as path from "../../platform/platform.ts";
         resolvedPath = path.resolve(currentDir, modulePath);
         logger.debug(
           `Resolved relative path '${modulePath}' to '${resolvedPath}'`,

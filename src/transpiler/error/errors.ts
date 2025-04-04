@@ -354,7 +354,7 @@ export function parseError(error: ParseError, useColors: boolean = true): ParseE
 /**
  * Enhance errors by adding source context
  */
-export function enhanceError(
+export function report(
   error: Error,
   options: {
     source?: string;

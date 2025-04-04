@@ -1,14 +1,3 @@
-(fn add (a b) (+ a z))
+(var a 10)
 
-
-
-
-
-
-
-
-
-
-
-
-(x 10 20)
+(repeat a (print "hello!"))

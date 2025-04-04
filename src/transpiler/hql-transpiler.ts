@@ -33,7 +33,6 @@ interface ProcessOptions {
   baseDir?: string;
   sourceDir?: string;
   tempDir?: string;
-  skipRebuild?: boolean;
   skipErrorHandling?: boolean;
 }
 
@@ -245,39 +244,17 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
       const macroSource = await Deno.readTextFile(macroPath).catch(e => {
         throw new ImportError(`Could not find macro file at ${macroPath}.`, macroPath, undefined, e);
       });
-
-      // Skip macros that reference example files when in REPL mode
-      if (options.skipRebuild && 
-          (macroSource.includes('/examples/') || 
-           macroSource.includes('\\examples\\') || 
-           macroSource.includes('examples/'))) {
-        logger.debug(`Skipping macro that references example files: ${macroPath} (REPL mode)`);
-        env.markFileProcessed(macroPath);
-        continue;
-      }
-
+      
       const macroExps = macroExpressionsCache.get(macroPath) || parse(macroSource);
       macroExpressionsCache.set(macroPath, macroExps);
 
       const transformed = transformSyntax(macroExps, { verbose: options.verbose });
 
-      // Skip rebuilding files when loading macros in REPL mode
-      if (!options.skipRebuild) {
-        await processImports(transformed, env, {
-          verbose: options.verbose || false,
-          baseDir: path.dirname(macroPath),
-          currentFile: macroPath,
-        });
-      } else {
-        // In skipRebuild mode, just process the macros without rebuilding dependencies
-        logger.debug(`Skipping rebuild of imports for ${macroPath} in REPL mode`);
-        await processImports(transformed, env, {
-          verbose: options.verbose || false,
-          baseDir: path.dirname(macroPath),
-          currentFile: macroPath,
-          skipRebuild: true,
-        });
-      }
+      await processImports(transformed, env, {
+        verbose: options.verbose || false,
+        baseDir: path.dirname(macroPath),
+        currentFile: macroPath,
+      });
 
       expandMacros(transformed, env, { verbose: options.verbose, currentFile: macroPath });
       env.markFileProcessed(macroPath);

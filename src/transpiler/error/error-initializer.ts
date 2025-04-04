@@ -210,7 +210,7 @@ export function enhanceReplErrorReporting(repl: any): void {
     // Call the original with a wrapped callback
     originalEval(cmd, context, filename, (err: Error | null, result: any) => {
       if (err) {
-        const enhancedErr = ErrorUtils.enhanceError(err, { 
+        const enhancedErr = ErrorUtils.report(err, { 
           source: cmd,
           filePath: "REPL"
         });

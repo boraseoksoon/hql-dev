@@ -8,7 +8,7 @@ import {
   TransformError,
   summarizeNode,
   createErrorReport,
-  enhanceError, 
+  report, 
   parseError
 } from "./errors.ts";
 import { Logger } from "../../logger.ts";
@@ -61,7 +61,7 @@ export function formatError(
   if (error instanceof ParseError) {
     enhancedError = parseError(error, options.useColors);
   } else {
-    enhancedError = enhanceError(error, {
+    enhancedError = report(error, {
       source,
       filePath: options.filePath,
       useColors: options.useColors
@@ -257,7 +257,7 @@ export function withErrorHandling<T, Args extends any[]>(
         console.debug(`[Debug] Processing error first time: ${errorId}`);
         
         // Enhance the error with context information
-        const enhancedErr = enhanceError(error, {
+        const enhancedErr = report(error, {
           source: options.source,
           filePath: options.filePath
         });
@@ -455,7 +455,7 @@ export function enhanceTypeScriptGeneration(
       
       // Then enhance it with source context if available
       if (sourceFilePath && sourceContent) {
-        return enhanceError(translatedError, {
+        return report(translatedError, {
           filePath: sourceFilePath,
           source: sourceContent
         });
@@ -470,7 +470,7 @@ export function enhanceTypeScriptGeneration(
  * Collection of error utilities for easier importing
  */
 export const ErrorUtils = {
-  enhanceError,
+  report,
   parseError,
   translateTypeScriptError,
   withTypeScriptErrorTranslation,

@@ -9,8 +9,7 @@ import {
   registerSourceFile, 
   formatError, 
   getSuggestion,
-  ErrorUtils,
-  withErrorHandling
+  ErrorUtils
 } from "../src/transpiler/error/error-handling.ts";
 import { initializeErrorHandling } from "../src/transpiler/error/error-initializer.ts";
 import { reportError } from "../src/transpiler/error/error-reporter.ts";

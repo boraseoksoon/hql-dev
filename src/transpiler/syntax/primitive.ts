@@ -4,26 +4,13 @@
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
-import { Logger } from "../../logger.ts";
 import { perform } from "../error/error-utils.ts";
 import { 
   KERNEL_PRIMITIVES,
   PRIMITIVE_CLASS,
   PRIMITIVE_DATA_STRUCTURE,
   PRIMITIVE_OPS 
-} from "../keyword/primitives.ts"; ListNode, SymbolNode } from "../hql_ast.ts";
-import { ValidationError, TransformError } from "../errors.ts";
-import { Logger } from "../../logger.ts";
-import { perform } from "../error-utils.ts";
-import { 
-  KERNEL_PRIMITIVES,
-  PRIMITIVE_CLASS,
-  PRIMITIVE_DATA_STRUCTURE,
-  PRIMITIVE_OPS 
-} from "../primitives.ts";
-
-// Initialize logger
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+} from "../keyword/primitives.ts";
 
 /**
  * Transform primitive operations (+, -, *, /, etc.).

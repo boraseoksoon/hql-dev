@@ -1,34 +1,10 @@
 import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
-import * as enumHandler from "../syntax/enum.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { CodeGenError } from "../error/errors.ts";
 import { Logger } from "../../logger.ts";
 
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
-
-function execute<T>(node: IR.IRNode | any, context: string, fn: () => T): T {
-  try {
-    return fn();
-  } catch (error) {
-    if (error instanceof CodeGenError) throw error;
-    throw new CodeGenError(
-      `Failed to convert ${context}: ${error instanceof Error ? error.message : String(error)}`,
-      context,
-      node,
-    );
-  }
-}
-
-function createExpressionStatement(expr: ts.Expression): ts.ExpressionStatement {
-  return execute(expr, "expression statement creation", () =>
-    ts.factory.createExpressionStatement(expr)
-  );
-}
-
-function wrap<T>(node: T, conv: (node: T) => ts.Expression): ts.ExpressionStatement {
-  return createExpressionStatement(conv(node));
-}
 
 export function convertIRNode(
   node: IR.IRNode,
@@ -44,35 +20,35 @@ export function convertIRNode(
     logger.debug(`Converting IR node of type ${IR.IRNodeType[node.type]}`);
     switch (node.type) {
       case IR.IRNodeType.ObjectExpression:
-        return wrap(node as IR.IRObjectExpression, convertObjectExpression);
+        return expressionStatement(node as IR.IRObjectExpression, convertObjectExpression);
       case IR.IRNodeType.StringLiteral:
-        return wrap(node as IR.IRStringLiteral, convertStringLiteral);
+        return expressionStatement(node as IR.IRStringLiteral, convertStringLiteral);
       case IR.IRNodeType.NumericLiteral:
-        return wrap(node as IR.IRNumericLiteral, convertNumericLiteral);
+        return expressionStatement(node as IR.IRNumericLiteral, convertNumericLiteral);
       case IR.IRNodeType.BooleanLiteral:
-        return wrap(node as IR.IRBooleanLiteral, convertBooleanLiteral);
+        return expressionStatement(node as IR.IRBooleanLiteral, convertBooleanLiteral);
       case IR.IRNodeType.NullLiteral:
         return createExpressionStatement(convertNullLiteral());
       case IR.IRNodeType.Identifier:
-        return wrap(node as IR.IRIdentifier, convertIdentifier);
+        return expressionStatement(node as IR.IRIdentifier, convertIdentifier);
       case IR.IRNodeType.CallExpression:
-        return wrap(node as IR.IRCallExpression, convertCallExpression);
+        return expressionStatement(node as IR.IRCallExpression, convertCallExpression);
       case IR.IRNodeType.MemberExpression:
-        return wrap(node as IR.IRMemberExpression, convertMemberExpression);
+        return expressionStatement(node as IR.IRMemberExpression, convertMemberExpression);
       case IR.IRNodeType.CallMemberExpression:
-        return wrap(node as IR.IRCallMemberExpression, convertCallMemberExpression);
+        return expressionStatement(node as IR.IRCallMemberExpression, convertCallMemberExpression);
       case IR.IRNodeType.NewExpression:
-        return wrap(node as IR.IRNewExpression, convertNewExpression);
+        return expressionStatement(node as IR.IRNewExpression, convertNewExpression);
       case IR.IRNodeType.BinaryExpression:
-        return wrap(node as IR.IRBinaryExpression, convertBinaryExpression);
+        return expressionStatement(node as IR.IRBinaryExpression, convertBinaryExpression);
       case IR.IRNodeType.UnaryExpression:
-        return wrap(node as IR.IRUnaryExpression, convertUnaryExpression);
+        return expressionStatement(node as IR.IRUnaryExpression, convertUnaryExpression);
       case IR.IRNodeType.ConditionalExpression:
-        return wrap(node as IR.IRConditionalExpression, convertConditionalExpression);
+        return expressionStatement(node as IR.IRConditionalExpression, convertConditionalExpression);
       case IR.IRNodeType.ArrayExpression:
-        return wrap(node as IR.IRArrayExpression, convertArrayExpression);
+        return expressionStatement(node as IR.IRArrayExpression, convertArrayExpression);
       case IR.IRNodeType.FunctionExpression:
-        return wrap(node as IR.IRFunctionExpression, convertFunctionExpression);
+        return expressionStatement(node as IR.IRFunctionExpression, convertFunctionExpression);
       case IR.IRNodeType.VariableDeclaration:
         return convertVariableDeclaration(node as IR.IRVariableDeclaration);
       case IR.IRNodeType.FunctionDeclaration:
@@ -88,9 +64,9 @@ export function convertIRNode(
       case IR.IRNodeType.ExportVariableDeclaration:
         return convertExportVariableDeclaration(node as IR.IRExportVariableDeclaration);
       case IR.IRNodeType.InteropIIFE:
-        return wrap(node as IR.IRInteropIIFE, convertInteropIIFE);
+        return expressionStatement(node as IR.IRInteropIIFE, convertInteropIIFE);
       case IR.IRNodeType.AssignmentExpression:
-        return wrap(node as IR.IRAssignmentExpression, convertAssignmentExpression);
+        return expressionStatement(node as IR.IRAssignmentExpression, convertAssignmentExpression);
       case IR.IRNodeType.JsImportReference:
         return convertJsImportReference(node as IR.IRJsImportReference);
       case IR.IRNodeType.CommentBlock:
@@ -108,7 +84,7 @@ export function convertIRNode(
       case IR.IRNodeType.ClassDeclaration:
         return convertClassDeclaration(node as IR.IRClassDeclaration);
       case IR.IRNodeType.GetAndCall:
-        return wrap(node as IR.IRGetAndCall, convertGetAndCall);
+        return expressionStatement(node as IR.IRGetAndCall, convertGetAndCall);
       case IR.IRNodeType.EnumDeclaration:
         return convertEnumDeclarationToJsObject(node as IR.IREnumDeclaration);
       case IR.IRNodeType.EnumCase:
@@ -643,28 +619,6 @@ export function convertBinaryExpression(node: IR.IRBinaryExpression): ts.BinaryE
       convertIRExpr(node.right)
     );
   });
-}
-
-function getBinaryOperator(op: string): ts.BinaryOperator {
-  switch (op) {
-    case "+": return ts.SyntaxKind.PlusToken;
-    case "-": return ts.SyntaxKind.MinusToken;
-    case "*": return ts.SyntaxKind.AsteriskToken;
-    case "/": return ts.SyntaxKind.SlashToken;
-    case "%": return ts.SyntaxKind.PercentToken;
-    case "===":
-    case "==": return ts.SyntaxKind.EqualsEqualsEqualsToken;
-    case "!==":
-    case "!=": return ts.SyntaxKind.ExclamationEqualsEqualsToken;
-    case ">": return ts.SyntaxKind.GreaterThanToken;
-    case "<": return ts.SyntaxKind.LessThanToken;
-    case ">=": return ts.SyntaxKind.GreaterThanEqualsToken;
-    case "<=": return ts.SyntaxKind.LessThanEqualsToken;
-    case "&&": return ts.SyntaxKind.AmpersandAmpersandToken;
-    case "||": return ts.SyntaxKind.BarBarToken;
-    default:
-      throw new CodeGenError(`Unknown binary operator: ${op}`, "binary expression operator", op);
-  }
 }
 
 export function convertUnaryExpression(node: IR.IRUnaryExpression): ts.UnaryExpression {
@@ -1274,51 +1228,6 @@ export function convertAssignmentExpression(node: IR.IRAssignmentExpression): ts
   );
 }
 
-export function convertClassMethod(node: IR.IRClassMethod): ts.MethodDeclaration {
-  return execute(node, "class method", () => {
-    const parameters = node.params.map(param => {
-      const defaultValue = node.defaults?.find(d => d.name === param.name)
-        ? convertIRExpr(node.defaults.find(d => d.name === param.name)!.value)
-        : undefined;
-      return ts.factory.createParameterDeclaration(
-        undefined,
-        undefined,
-        ts.factory.createIdentifier(param.name),
-        undefined,
-        undefined,
-        defaultValue
-      );
-    });
-    const bodyStatements: ts.Statement[] = [];
-    if (node.body && node.body.type === IR.IRNodeType.BlockStatement) {
-      node.body.body.forEach((stmt, i) => {
-        const transformedStmt = replaceSelfWithThis(stmt);
-        const tsStmt = convertIRNodeToStatement(
-          i === node.body.body.length - 1 && transformedStmt.type !== IR.IRNodeType.ReturnStatement
-            ? { type: IR.IRNodeType.ReturnStatement, argument: transformedStmt } as IR.IRReturnStatement
-            : transformedStmt
-        );
-        if (tsStmt) {
-          Array.isArray(tsStmt) ? bodyStatements.push(...tsStmt) : bodyStatements.push(tsStmt);
-        }
-      });
-    }
-    if (bodyStatements.length === 0) {
-      bodyStatements.push(ts.factory.createReturnStatement(ts.factory.createNull()));
-    }
-    return ts.factory.createMethodDeclaration(
-      undefined,
-      undefined,
-      ts.factory.createIdentifier(node.name),
-      undefined,
-      undefined,
-      parameters,
-      undefined,
-      ts.factory.createBlock(bodyStatements, true)
-    );
-  });
-}
-
 export function convertClassDeclaration(node: IR.IRClassDeclaration): ts.ClassDeclaration {
   return execute(node, "class declaration", () => {
     const members: ts.ClassElement[] = [];
@@ -1394,6 +1303,51 @@ export function convertClassConstructor(node: IR.IRClassConstructor): ts.Constru
   });
 }
 
+export function convertClassMethod(node: IR.IRClassMethod): ts.MethodDeclaration {
+  return execute(node, "class method", () => {
+    const parameters = node.params.map(param => {
+      const defaultValue = node.defaults?.find(d => d.name === param.name)
+        ? convertIRExpr(node.defaults.find(d => d.name === param.name)!.value)
+        : undefined;
+      return ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        ts.factory.createIdentifier(param.name),
+        undefined,
+        undefined,
+        defaultValue
+      );
+    });
+    const bodyStatements: ts.Statement[] = [];
+    if (node.body && node.body.type === IR.IRNodeType.BlockStatement) {
+      node.body.body.forEach((stmt, i) => {
+        const transformedStmt = replaceSelfWithThis(stmt);
+        const tsStmt = convertIRNodeToStatement(
+          i === node.body.body.length - 1 && transformedStmt.type !== IR.IRNodeType.ReturnStatement
+            ? { type: IR.IRNodeType.ReturnStatement, argument: transformedStmt } as IR.IRReturnStatement
+            : transformedStmt
+        );
+        if (tsStmt) {
+          Array.isArray(tsStmt) ? bodyStatements.push(...tsStmt) : bodyStatements.push(tsStmt);
+        }
+      });
+    }
+    if (bodyStatements.length === 0) {
+      bodyStatements.push(ts.factory.createReturnStatement(ts.factory.createNull()));
+    }
+    return ts.factory.createMethodDeclaration(
+      undefined,
+      undefined,
+      ts.factory.createIdentifier(node.name),
+      undefined,
+      undefined,
+      parameters,
+      undefined,
+      ts.factory.createBlock(bodyStatements, true)
+    );
+  });
+}
+
 function hasExplicitReturnThis(statements: ts.Statement[]): boolean {
   return statements.some(
     stmt =>
@@ -1463,15 +1417,402 @@ export function replaceSelfWithThis(node: IR.IRNode): IR.IRNode {
   }
 }
 
-export function convertEnumDeclarationToJsObject(node: IR.IREnumDeclaration): ts.Statement {
-  return execute(node, "enum declaration to JS object", () => {
-    logger.debug(`Converting enum declaration to JS object: ${node.id.name}`);
+function getBinaryOperator(op: string): ts.BinaryOperator {
+  switch (op) {
+    case "+": return ts.SyntaxKind.PlusToken;
+    case "-": return ts.SyntaxKind.MinusToken;
+    case "*": return ts.SyntaxKind.AsteriskToken;
+    case "/": return ts.SyntaxKind.SlashToken;
+    case "%": return ts.SyntaxKind.PercentToken;
+    case "===":
+    case "==": return ts.SyntaxKind.EqualsEqualsEqualsToken;
+    case "!==":
+    case "!=": return ts.SyntaxKind.ExclamationEqualsEqualsToken;
+    case ">": return ts.SyntaxKind.GreaterThanToken;
+    case "<": return ts.SyntaxKind.LessThanToken;
+    case ">=": return ts.SyntaxKind.GreaterThanEqualsToken;
+    case "<=": return ts.SyntaxKind.LessThanEqualsToken;
+    case "&&": return ts.SyntaxKind.AmpersandAmpersandToken;
+    case "||": return ts.SyntaxKind.BarBarToken;
+    default:
+      throw new CodeGenError(`Unknown binary operator: ${op}`, "binary expression operator", op);
+  }
+}
+
+export function convertEnumDeclarationToJsObject(enumDecl: IR.IREnumDeclaration): ts.Statement {
+  return execute(enumDecl, "enum declaration to JS object", () => {
+    logger.debug(`Converting enum declaration to JS object: ${enumDecl.id.name}`);
     
-    // Use the enum handler to determine the implementation strategy
-    if (enumHandler.shouldUseClassImplementation(node)) {
-      return enumHandler.createEnumClassImplementation(node);
+    // Detect if this is a simple enum or one with associated values
+    const hasAssociatedValues = enumDecl.hasAssociatedValues === true || 
+                               enumDecl.cases.some(c => c.hasAssociatedValues === true);
+    
+    if (hasAssociatedValues) {
+      return createEnumClassImplementation(enumDecl);
     } else {
-      return enumHandler.createEnumObjectImplementation(node);
+      return createEnumObjectImplementation(enumDecl);
     }
   });
+}
+
+/**
+ * Creates a JS object-based implementation for a simple enum
+ */
+function createEnumObjectImplementation(enumDecl: IR.IREnumDeclaration): ts.Statement {
+  return execute(enumDecl, "enum object implementation", () => {
+    logger.debug(`Creating object-based enum implementation: ${enumDecl.id.name}`);
+    
+    // Create properties for each case
+    const properties = enumDecl.cases.map(enumCase => {
+      if (enumCase.type !== IR.IRNodeType.EnumCase) {
+        throw new CodeGenError(
+          `Expected EnumCase inside EnumDeclaration, got ${IR.IRNodeType[enumCase.type]}`,
+          "enum case",
+          enumCase
+        );
+      }
+      
+      const caseName = enumCase.id.name;
+      logger.debug(`  Creating object property for case: ${caseName}`);
+      
+      // Use raw value if available, otherwise use the case name as a string
+      const valueExpression = enumCase.rawValue
+        ? convertIRExpr(enumCase.rawValue)
+        : ts.factory.createStringLiteral(caseName);
+          
+      return ts.factory.createPropertyAssignment(
+        ts.factory.createIdentifier(caseName),
+        valueExpression
+      );
+    });
+    
+    // Create a comment for the enum type if rawType is specified
+    let enumTypeComment: ts.SynthesizedComment | undefined;
+    if (enumDecl.rawType) {
+      enumTypeComment = {
+        kind: ts.SyntaxKind.MultiLineCommentTrivia,
+        text: ` @type {Object<string, ${enumDecl.rawType}>} `,
+        hasTrailingNewLine: false,
+        pos: -1,
+        end: -1
+      };
+    }
+    
+    const objectLiteral = ts.factory.createObjectLiteralExpression(
+      properties,
+      true
+    );
+    
+    // Add comment to the object literal if we have a type
+    if (enumTypeComment) {
+      ts.addSyntheticLeadingComment(
+        objectLiteral,
+        enumTypeComment.kind,
+        enumTypeComment.text,
+        enumTypeComment.hasTrailingNewLine
+      );
+    }
+    
+    const freezeCall = ts.factory.createCallExpression(
+      ts.factory.createPropertyAccessExpression(
+        ts.factory.createIdentifier("Object"),
+        ts.factory.createIdentifier("freeze")
+      ),
+      undefined,
+      [objectLiteral]
+    );
+    
+    const variableDeclaration = ts.factory.createVariableDeclaration(
+      ts.factory.createIdentifier(enumDecl.id.name),
+      undefined,
+      undefined,
+      freezeCall
+    );
+    
+    return ts.factory.createVariableStatement(
+      [],  // Empty array = no modifiers
+      ts.factory.createVariableDeclarationList(
+        [variableDeclaration],
+        ts.NodeFlags.Const
+      )
+    );
+  });
+}
+
+/**
+ * Creates a class-based implementation for an enum with associated values
+ */
+function createEnumClassImplementation(enumDecl: IR.IREnumDeclaration): ts.ClassDeclaration {
+  return execute(enumDecl, "enum class implementation", () => {
+    const enumName = enumDecl.id.name;
+    const members: ts.ClassElement[] = [];
+    
+    // Create a private constructor
+    const constructorDecl = ts.factory.createConstructorDeclaration(
+      [ts.factory.createModifier(ts.SyntaxKind.PrivateKeyword)],
+      [
+        ts.factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          ts.factory.createIdentifier("type"),
+          undefined,
+          undefined
+        ),
+        ts.factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          ts.factory.createIdentifier("values"),
+          undefined,
+          undefined
+        )
+      ],
+      ts.factory.createBlock([
+        ts.factory.createExpressionStatement(
+          ts.factory.createBinaryExpression(
+            ts.factory.createPropertyAccessExpression(
+              ts.factory.createThis(),
+              ts.factory.createIdentifier("type")
+            ),
+            ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+            ts.factory.createIdentifier("type")
+          )
+        ),
+        ts.factory.createExpressionStatement(
+          ts.factory.createBinaryExpression(
+            ts.factory.createPropertyAccessExpression(
+              ts.factory.createThis(),
+              ts.factory.createIdentifier("values")
+            ),
+            ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+            ts.factory.createIdentifier("values")
+          )
+        )
+      ], true)
+    );
+    
+    members.push(constructorDecl);
+    
+    // Add properties for type and values
+    members.push(
+      ts.factory.createPropertyDeclaration(
+        undefined,
+        ts.factory.createIdentifier("type"),
+        undefined,
+        undefined,
+        undefined
+      )
+    );
+    
+    members.push(
+      ts.factory.createPropertyDeclaration(
+        undefined,
+        ts.factory.createIdentifier("values"),
+        undefined,
+        undefined,
+        undefined
+      )
+    );
+    
+    // Add utility methods
+    members.push(createIsMethod());
+    members.push(createGetValueMethod());
+    
+    // Add factory methods for each case
+    for (const enumCase of enumDecl.cases) {
+      members.push(createCaseFactoryMethod(enumCase, enumName));
+    }
+    
+    return ts.factory.createClassDeclaration(
+      [],  // No modifiers
+      ts.factory.createIdentifier(enumName),
+      undefined,
+      undefined,
+      members
+    );
+  });
+}
+
+/**
+ * Create the 'is' method for enum classes
+ */
+function createIsMethod(): ts.MethodDeclaration {
+  return ts.factory.createMethodDeclaration(
+    undefined,
+    undefined,
+    ts.factory.createIdentifier("is"),
+    undefined,
+    undefined,
+    [
+      ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        ts.factory.createIdentifier("type"),
+        undefined,
+        undefined
+      )
+    ],
+    undefined,
+    ts.factory.createBlock([
+      ts.factory.createReturnStatement(
+        ts.factory.createBinaryExpression(
+          ts.factory.createPropertyAccessExpression(
+            ts.factory.createThis(),
+            ts.factory.createIdentifier("type")
+          ),
+          ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+          ts.factory.createIdentifier("type")
+        )
+      )
+    ], true)
+  );
+}
+
+/**
+ * Create the 'getValue' method for enum classes
+ */
+function createGetValueMethod(): ts.MethodDeclaration {
+  return ts.factory.createMethodDeclaration(
+    undefined,
+    undefined,
+    ts.factory.createIdentifier("getValue"),
+    undefined,
+    undefined,
+    [
+      ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        ts.factory.createIdentifier("key"),
+        undefined,
+        undefined
+      )
+    ],
+    undefined,
+    ts.factory.createBlock([
+      ts.factory.createReturnStatement(
+        ts.factory.createElementAccessExpression(
+          ts.factory.createPropertyAccessExpression(
+            ts.factory.createThis(),
+            ts.factory.createIdentifier("values")
+          ),
+          ts.factory.createIdentifier("key")
+        )
+      )
+    ], true)
+  );
+}
+
+/**
+ * Create a factory method for an enum case
+ */
+function createCaseFactoryMethod(enumCase: IR.IREnumCase, enumName: string): ts.ClassElement {
+  const caseName = enumCase.id.name;
+  
+  if (enumCase.hasAssociatedValues && enumCase.associatedValues) {
+    // Create a factory method with named parameters
+    const paramNames = enumCase.associatedValues.map(param => param.name);
+    
+    return ts.factory.createMethodDeclaration(
+      [ts.factory.createModifier(ts.SyntaxKind.StaticKeyword)],
+      undefined,
+      ts.factory.createIdentifier(caseName),
+      undefined,
+      undefined,
+      [
+        // Create a parameter with explicit named options
+        ts.factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          ts.factory.createIdentifier("options"),
+          undefined,
+          undefined,
+          ts.factory.createObjectLiteralExpression([], false)
+        )
+      ],
+      undefined,
+      ts.factory.createBlock([
+        // Create object literal with all the parameters
+        ts.factory.createVariableStatement(
+          undefined,
+          ts.factory.createVariableDeclarationList(
+            [
+              ts.factory.createVariableDeclaration(
+                ts.factory.createIdentifier("values"),
+                undefined,
+                undefined,
+                ts.factory.createObjectLiteralExpression(
+                  paramNames.map(name => 
+                    ts.factory.createPropertyAssignment(
+                      ts.factory.createIdentifier(name),
+                      ts.factory.createPropertyAccessExpression(
+                        ts.factory.createIdentifier("options"),
+                        ts.factory.createIdentifier(name)
+                      )
+                    )
+                  ),
+                  false
+                )
+              )
+            ],
+            ts.NodeFlags.Const
+          )
+        ),
+        ts.factory.createReturnStatement(
+          ts.factory.createNewExpression(
+            ts.factory.createIdentifier(enumName),
+            undefined,
+            [
+              ts.factory.createStringLiteral(caseName),
+              ts.factory.createIdentifier("values")
+            ]
+          )
+        )
+      ], true)
+    );
+  } else {
+    // Create a simple property for cases without associated values
+    const valueExpr = enumCase.rawValue 
+      ? convertIRExpr(enumCase.rawValue)
+      : ts.factory.createStringLiteral(caseName);
+      
+    return ts.factory.createPropertyDeclaration(
+      [
+        ts.factory.createModifier(ts.SyntaxKind.StaticKeyword), 
+        ts.factory.createModifier(ts.SyntaxKind.ReadonlyKeyword)
+      ],
+      ts.factory.createIdentifier(caseName),
+      undefined,
+      undefined,
+      ts.factory.createNewExpression(
+        ts.factory.createIdentifier(enumName),
+        undefined,
+        [
+          ts.factory.createStringLiteral(caseName),
+          ts.factory.createObjectLiteralExpression([], false)
+        ]
+      )
+    );
+  }
+}
+
+function execute<T>(node: IR.IRNode | any, context: string, fn: () => T): T {
+  try {
+    return fn();
+  } catch (error) {
+    if (error instanceof CodeGenError) throw error;
+    throw new CodeGenError(
+      `Failed to convert ${context}: ${error instanceof Error ? error.message : String(error)}`,
+      context,
+      node,
+    );
+  }
+}
+
+function createExpressionStatement(expr: ts.Expression): ts.ExpressionStatement {
+  return execute(expr, "expression statement creation", () =>
+    ts.factory.createExpressionStatement(expr)
+  );
+}
+
+function expressionStatement<T>(node: T, conv: (node: T) => ts.Expression): ts.ExpressionStatement {
+  return createExpressionStatement(conv(node));
 }
