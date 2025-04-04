@@ -1,41 +1,285 @@
 // src/transpiler/syntax/function.ts
-// Module for handling fn and fx function declarations
 
+import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
-import { ListNode, SymbolNode } from "../type/hql_ast.ts";
+import { ListNode, SymbolNode, HQLNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { Logger } from "../../logger.ts";
 import { registerPureFunction, verifyFunctionPurity } from "../fx/purity.ts";
 import { isValidType } from "../fx/purity.ts";
+import { execute, convertIdentifier, convertBlockStatement, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
+import { perform } from "../error/error-utils.ts";
+import { transformNode } from "../pipeline/hql-ast-to-hql-ir.ts";
 
-// Initialize logger
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
-
-// Registry for fn functions to enable access during call site processing
 const fnFunctionRegistry = new Map<string, IR.IRFnFunctionDeclaration>();
-
-// Registry for fx functions to enable access during call site processing
 const fxFunctionRegistry = new Map<string, IR.IRFxFunctionDeclaration>();
 
+const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+
 /**
- * Register an fn function in the registry for call site handling
+ * Check if a function call has named arguments
  */
-export function registerFnFunction(
-  name: string,
-  def: IR.IRFnFunctionDeclaration,
-): void {
-  fnFunctionRegistry.set(name, def);
+export function hasNamedArguments(list: ListNode): boolean {
+  // Special case: if this is an enum declaration, it shouldn't be treated as named arguments
+  if (list.elements.length > 0 && 
+      list.elements[0].type === "symbol" && 
+      (list.elements[0] as SymbolNode).name === "enum") {
+    return false;
+  }
+  
+  for (let i = 1; i < list.elements.length; i++) {
+    const elem = list.elements[i];
+    if (elem.type === "symbol" && (elem as SymbolNode).name.endsWith(":")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
- * Register an fx function in the registry for call site handling
+ * Transform a function call with named arguments (param: value)
  */
-export function registerFxFunction(
-  name: string,
-  def: IR.IRFxFunctionDeclaration,
-): void {
-  fxFunctionRegistry.set(name, def);
+export function transformNamedArgumentCall(
+  list: ListNode,
+  currentDir: string,
+): IR.IRNode {
+  try {
+    const functionName = (list.elements[0] as SymbolNode).name;
+
+    // Check if this is an fx or fn function
+    const fxDef = getFxFunction(functionName);
+    const fnDef = getFnFunction(functionName);
+
+    // If it's a registered function, use the specialized processor
+    if (fxDef) {
+      // Process named arguments for fx functions
+      return processNamedArgumentsForFx(
+        functionName,
+        fxDef,
+        list.elements.slice(1),
+        currentDir,
+        transformNode,
+      );
+    } else if (fnDef) {
+      // Process named arguments for fn functions
+      return processNamedArgumentsForFn(
+        functionName,
+        fnDef,
+        list.elements.slice(1),
+        currentDir,
+        transformNode,
+      );
+    }
+
+    // Default handling for functions without registry entries
+    return transformGenericNamedArguments(list, functionName, currentDir);
+  } catch (error) {
+    throw new TransformError(
+      `Failed to transform named argument call: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      "named argument function call",
+      "transformation",
+      list,
+    );
+  }
+}
+
+/**
+ * Handle registered fx function calls
+ */
+export function handleFxFunctionCall(list: ListNode, op: string, fxDef: IR.IRFxFunctionDeclaration, currentDir: string): IR.IRNode {
+  logger.debug(`Processing call to fx function ${op}`);
+
+  // Check if we have any placeholder symbols in the arguments
+  const hasPlaceholders = list.elements.slice(1).some(isPlaceholder);
+
+  // If we have placeholders or named arguments, use our specialized processor
+  if (hasPlaceholders || hasNamedArguments(list)) {
+    return processFxFunctionCall(
+      op,
+      fxDef,
+      list.elements.slice(1),
+      currentDir,
+      transformNode,
+    );
+  }
+
+  // Otherwise use the standard function call transformation
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.Identifier,
+      name: sanitizeIdentifier(op),
+    },
+    arguments: list.elements.slice(1).map((arg) => {
+      const transformed = transformNode(arg, currentDir);
+      if (!transformed) {
+        throw new ValidationError(
+          `Argument transformed to null in call to ${op}`,
+          "function call",
+          "valid expression",
+          "null",
+        );
+      }
+      return transformed;
+    }),
+  } as IR.IRCallExpression;
+}
+
+
+/**
+ * Process function body expressions, creating return statements
+ */
+export function processFunctionBody(
+  bodyExprs: HQLNode[],
+  currentDir: string,
+): IR.IRNode[] {
+  return perform(
+    () => {
+      const bodyNodes: IR.IRNode[] = [];
+
+      // Check if there are any expressions
+      if (bodyExprs.length === 0) {
+        return bodyNodes;
+      }
+
+      // Process all expressions except the last one
+      for (let i = 0; i < bodyExprs.length - 1; i++) {
+        const expr = transformNode(bodyExprs[i], currentDir);
+        if (expr) bodyNodes.push(expr);
+      }
+
+      // Process the last expression specially - wrap it in a return statement
+      const lastExpr = transformNode(
+        bodyExprs[bodyExprs.length - 1],
+        currentDir,
+      );
+      
+      if (lastExpr) {
+        // If it's already a return statement, use it as is
+        if (lastExpr.type === IR.IRNodeType.ReturnStatement) {
+          bodyNodes.push(lastExpr);
+        } else {
+          // Wrap in a return statement to ensure the value is returned
+          bodyNodes.push({
+            type: IR.IRNodeType.ReturnStatement,
+            argument: lastExpr,
+          } as IR.IRReturnStatement);
+        }
+      }
+
+      return bodyNodes;
+    },
+    "processFunctionBody",
+    TransformError,
+    [bodyExprs],
+  );
+}
+
+export function transformStandardFunctionCall(
+  list: ListNode,
+  currentDir: string,
+): IR.IRNode {
+  return perform(
+    () => {
+      const first = list.elements[0];
+
+      if (first.type === "symbol") {
+        const op = (first as SymbolNode).name;
+
+        // Check if we're calling an fx function
+        const fxDef = getFxFunction(op);
+
+        // Check if we have any named arguments
+        const hasNamed = hasNamedArguments(list);
+
+        if (fxDef && hasNamed) {
+          // We found an fx function with named arguments
+          logger.debug(
+            `Processing call to fx function ${op} with named arguments`,
+          );
+          return transformNamedArgumentCall(list, currentDir);
+        } else if (fxDef) {
+          // Process as a regular call to an fx function with positional args
+          logger.debug(
+            `Processing call to fx function ${op} with positional arguments`,
+          );
+          return processFxFunctionCall(
+            op,
+            fxDef,
+            list.elements.slice(1),
+            currentDir,
+            transformNode,
+          );
+        } else if (hasNamed) {
+          // Handle named arguments for regular functions
+          logger.debug(
+            `Processing call to function ${op} with named arguments`,
+          );
+          return transformNamedArgumentCall(list, currentDir);
+        }
+
+        // Handle regular positional args call
+        logger.debug(`Processing standard function call to ${op}`);
+        const args = list.elements.slice(1).map((arg) => {
+          const transformed = transformNode(arg, currentDir);
+          if (!transformed) {
+            throw new ValidationError(
+              `Function argument transformed to null: ${JSON.stringify(arg)}`,
+              "function argument",
+              "valid expression",
+              "null",
+            );
+          }
+          return transformed;
+        });
+
+        return {
+          type: IR.IRNodeType.CallExpression,
+          callee: {
+            type: IR.IRNodeType.Identifier,
+            name: sanitizeIdentifier(op),
+          } as IR.IRIdentifier,
+          arguments: args,
+        } as IR.IRCallExpression;
+      }
+
+      // Handle function expression calls
+      const callee = transformNode(list.elements[0], currentDir);
+      if (!callee) {
+        throw new ValidationError(
+          "Function callee transformed to null",
+          "function call",
+          "valid function expression",
+          "null",
+        );
+      }
+
+      const args = list.elements.slice(1).map((arg) => {
+        const transformed = transformNode(arg, currentDir);
+        if (!transformed) {
+          throw new ValidationError(
+            `Function argument transformed to null: ${JSON.stringify(arg)}`,
+            "function argument",
+            "valid expression",
+            "null",
+          );
+        }
+        return transformed;
+      });
+
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee,
+        arguments: args,
+      } as IR.IRCallExpression;
+    },
+    "transformStandardFunctionCall",
+    TransformError,
+    [list],
+  );
 }
 
 /**
@@ -50,6 +294,325 @@ export function getFnFunction(name: string): IR.IRFnFunctionDeclaration | undefi
  */
 export function getFxFunction(name: string): IR.IRFxFunctionDeclaration | undefined {
   return fxFunctionRegistry.get(name);
+}
+
+export function convertFunctionExpression(node: IR.IRFunctionExpression): ts.FunctionExpression {
+  return execute(node, "function expression", () => {
+    const parameters = node.params.map(param =>
+      param.name.startsWith("...")
+        ? ts.factory.createParameterDeclaration(
+            undefined,
+            ts.factory.createToken(ts.SyntaxKind.DotDotDotToken),
+            ts.factory.createIdentifier(param.name.slice(3))
+          )
+        : ts.factory.createParameterDeclaration(undefined, undefined, convertIdentifier(param))
+    );
+    return ts.factory.createFunctionExpression(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      parameters,
+      undefined,
+      convertBlockStatement(node.body)
+    );
+  });
+}
+
+export function convertFnFunctionDeclaration(
+  node: IR.IRFnFunctionDeclaration,
+): ts.FunctionDeclaration {
+  return execute(node, "fn function declaration", () => {
+    // Map parameter names, properly handling rest parameters
+    const parameters = node.params.map(param => {
+      const paramName = param.name;
+      
+      // Check if this is a rest parameter (starts with "...")
+      if (paramName.startsWith("...")) {
+        return ts.factory.createParameterDeclaration(
+          undefined,
+          ts.factory.createToken(ts.SyntaxKind.DotDotDotToken),
+          ts.factory.createIdentifier(paramName.slice(3)) // Remove "..." prefix
+        );
+      }
+      
+      // Regular parameter
+      return ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        ts.factory.createIdentifier(paramName)
+      );
+    });
+    
+    // Create the function declaration with body and parameters
+    return ts.factory.createFunctionDeclaration(
+      undefined,
+      undefined,
+      convertIdentifier(node.id),
+      undefined,
+      parameters,
+      undefined,
+      convertBlockStatement(node.body)
+    );
+  });
+}
+
+export function convertFxFunctionDeclaration(
+  node: IR.IRFxFunctionDeclaration
+): ts.FunctionDeclaration {
+  return execute(node, "fx function declaration", () => {
+    const defaultValues = new Map(
+      node.defaults.map(d => [d.name, convertIRExpr(d.value)])
+    );
+    const parameters = [
+      ts.factory.createParameterDeclaration(
+        undefined,
+        ts.factory.createToken(ts.SyntaxKind.DotDotDotToken),
+        ts.factory.createIdentifier("args")
+      ),
+    ];
+    const bodyStatements: ts.Statement[] = [];
+    for (const param of node.params) {
+      let defaultExpr: ts.Expression =
+        defaultValues.get(param.name) ||
+        (() => {
+          const paramType = node.paramTypes.find(pt => pt.name === param.name)?.type;
+          if (paramType === "Int" || paramType === "Double") return ts.factory.createNumericLiteral("0");
+          if (paramType === "String") return ts.factory.createStringLiteral("");
+          if (paramType === "Bool") return ts.factory.createFalse();
+          return ts.factory.createIdentifier("undefined");
+        })();
+      bodyStatements.push(
+        ts.factory.createVariableStatement(
+          undefined,
+          ts.factory.createVariableDeclarationList(
+            [ts.factory.createVariableDeclaration(
+              convertIdentifier(param),
+              undefined,
+              undefined,
+              defaultExpr
+            )],
+            ts.NodeFlags.Let
+          )
+        )
+      );
+    }
+    if (node.params.length > 0) {
+      bodyStatements.push(
+        ts.factory.createIfStatement(
+          ts.factory.createBinaryExpression(
+            ts.factory.createBinaryExpression(
+              ts.factory.createBinaryExpression(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createIdentifier("length")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                  ts.factory.createNumericLiteral("1")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                ts.factory.createBinaryExpression(
+                  ts.factory.createTypeOfExpression(
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral("0")
+                    )
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                  ts.factory.createStringLiteral("object")
+                )
+              ),
+              ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+              ts.factory.createBinaryExpression(
+                ts.factory.createElementAccessExpression(
+                  ts.factory.createIdentifier("args"),
+                  ts.factory.createNumericLiteral("0")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                ts.factory.createNull()
+              )
+            ),
+            ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+            ts.factory.createPrefixUnaryExpression(
+              ts.SyntaxKind.ExclamationToken,
+              ts.factory.createCallExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createIdentifier("Array"),
+                  ts.factory.createIdentifier("isArray")
+                ),
+                undefined,
+                [
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createNumericLiteral("0")
+                  )
+                ]
+              )
+            )
+          ),
+          ts.factory.createBlock([
+            ...node.params.map(param =>
+              ts.factory.createIfStatement(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral("0")
+                    ),
+                    ts.factory.createStringLiteral(param.name)
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                  ts.factory.createIdentifier("undefined")
+                ),
+                ts.factory.createExpressionStatement(
+                  ts.factory.createBinaryExpression(
+                    convertIdentifier(param),
+                    ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createElementAccessExpression(
+                        ts.factory.createIdentifier("args"),
+                        ts.factory.createNumericLiteral("0")
+                      ),
+                      ts.factory.createStringLiteral(param.name)
+                    )
+                  )
+                )
+              )
+            ),
+            ts.factory.createIfStatement(
+              ts.factory.createBinaryExpression(
+                ts.factory.createBinaryExpression(
+                  convertIdentifier(node.params[0]),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                  defaultValues.get(node.params[0].name) || ts.factory.createIdentifier("undefined")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                ts.factory.createBinaryExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createIdentifier("length")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.GreaterThanToken),
+                  ts.factory.createNumericLiteral("0")
+                )
+              ),
+              ts.factory.createExpressionStatement(
+                ts.factory.createBinaryExpression(
+                  convertIdentifier(node.params[0]),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createNumericLiteral("0")
+                  )
+                )
+              )
+            )
+          ], true),
+          ts.factory.createBlock(
+            node.params.map((param, index) =>
+              ts.factory.createIfStatement(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createIdentifier("length")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.GreaterThanToken),
+                  ts.factory.createNumericLiteral(index.toString())
+                ),
+                ts.factory.createExpressionStatement(
+                  ts.factory.createBinaryExpression(
+                    convertIdentifier(param),
+                    ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral(index.toString())
+                    )
+                  )
+                )
+              )
+            ),
+            true
+          )
+        )
+      );
+    }
+    for (const param of node.params) {
+      bodyStatements.push(
+        ts.factory.createExpressionStatement(
+          ts.factory.createBinaryExpression(
+            convertIdentifier(param),
+            ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+            ts.factory.createConditionalExpression(
+              ts.factory.createBinaryExpression(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createTypeOfExpression(convertIdentifier(param)),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                  ts.factory.createStringLiteral("object")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                ts.factory.createBinaryExpression(
+                  convertIdentifier(param),
+                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                  ts.factory.createNull()
+                )
+              ),
+              ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+              ts.factory.createCallExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createIdentifier("JSON"),
+                  ts.factory.createIdentifier("parse")
+                ),
+                undefined,
+                [
+                  ts.factory.createCallExpression(
+                    ts.factory.createPropertyAccessExpression(
+                      ts.factory.createIdentifier("JSON"),
+                      ts.factory.createIdentifier("stringify")
+                    ),
+                    undefined,
+                    [convertIdentifier(param)]
+                  )
+                ]
+              ),
+              ts.factory.createToken(ts.SyntaxKind.ColonToken),
+              convertIdentifier(param)
+            )
+          )
+        )
+      );
+    }
+    const bodyBlock = convertBlockStatement(node.body);
+    for (const statement of bodyBlock.statements) {
+      bodyStatements.push(statement);
+    }
+    return ts.factory.createFunctionDeclaration(
+      undefined,
+      undefined,
+      convertIdentifier(node.id),
+      undefined,
+      parameters,
+      undefined,
+      ts.factory.createBlock(bodyStatements, true)
+    );
+  });
+}
+
+export function convertFunctionDeclaration(node: IR.IRFunctionDeclaration): ts.FunctionDeclaration {
+  return execute(node, "function declaration", () => {
+    const params = node.params.map(param =>
+      ts.factory.createParameterDeclaration(undefined, undefined, convertIdentifier(param))
+    );
+    return ts.factory.createFunctionDeclaration(
+      undefined,
+      undefined,
+      convertIdentifier(node.id),
+      undefined,
+      params,
+      undefined,
+      convertBlockStatement(node.body)
+    );
+  });
 }
 
 /**
@@ -102,37 +665,15 @@ export function transformFn(
     // Check if this is a typed fn with a return type
     let bodyStartIndex = 3;
     let hasReturnType = false;
-    let returnType: string | null = null;
-    
+
     // Check if the next element is a return type list starting with ->
     if (list.elements.length > 3 && 
         list.elements[3].type === "list" && 
         (list.elements[3] as ListNode).elements.length > 0 &&
         (list.elements[3] as ListNode).elements[0].type === "symbol" &&
         ((list.elements[3] as ListNode).elements[0] as SymbolNode).name === "->") {
-      
-      const returnTypeList = list.elements[3] as ListNode;
       hasReturnType = true;
       bodyStartIndex = 4;
-      
-      // Process the return type, handling array types
-      if (returnTypeList.elements.length >= 2) {
-        const typeNode = returnTypeList.elements[1];
-        
-        // Handle array type notation: [ElementType]
-        if (typeNode.type === "list" && (typeNode as ListNode).elements.length === 1) {
-          const innerTypeNode = (typeNode as ListNode).elements[0];
-          if (innerTypeNode.type === "symbol") {
-            returnType = `Array<${(innerTypeNode as SymbolNode).name}>`;
-          } else {
-            returnType = "Array";
-          }
-        } 
-        // Regular type
-        else if (typeNode.type === "symbol") {
-          returnType = (typeNode as SymbolNode).name;
-        }
-      }
     }
 
     // Body expressions start after either the parameter list or return type
@@ -341,237 +882,6 @@ export function transformFx(
 }
 
 /**
- * Parse parameters with default values for fn functions
- */
-export function parseParametersWithDefaults(
-  paramList: ListNode,
-  currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode | null,
-): {
-  params: IR.IRIdentifier[];
-  defaults: Map<string, IR.IRNode>;
-} {
-  // Initialize result structures
-  const params: IR.IRIdentifier[] = [];
-  const defaults = new Map<string, IR.IRNode>();
-
-  // Track if we're processing a rest parameter
-  let restMode = false;
-
-  // Process parameters
-  for (let i = 0; i < paramList.elements.length; i++) {
-    const elem = paramList.elements[i];
-
-    if (elem.type === "symbol") {
-      const symbolName = (elem as SymbolNode).name;
-
-      // Check if this is the rest parameter indicator
-      if (symbolName === "&") {
-        restMode = true;
-        continue;
-      }
-
-      // Add parameter to the list, with special handling for rest parameters
-      if (restMode) {
-        // For rest parameter, use the proper spread syntax in the parameter name
-        params.push({
-          type: IR.IRNodeType.Identifier,
-          name: `...${sanitizeIdentifier(symbolName)}`,
-        });
-        
-        // Store the original name to be able to reference it in the function body
-        params[params.length - 1].originalName = symbolName;
-      } else {
-        params.push({
-          type: IR.IRNodeType.Identifier,
-          name: sanitizeIdentifier(symbolName),
-        });
-      }
-
-      // Check for default value (=)
-      if (
-        !restMode && // Rest parameters can't have defaults
-        i + 1 < paramList.elements.length &&
-        paramList.elements[i + 1].type === "symbol" &&
-        (paramList.elements[i + 1] as SymbolNode).name === "="
-      ) {
-        // Make sure we have a value after the equals sign
-        if (i + 2 < paramList.elements.length) {
-          const defaultValueNode = paramList.elements[i + 2];
-
-          // Transform the default value
-          const defaultValue = transformNode(defaultValueNode, currentDir);
-          if (defaultValue) {
-            defaults.set(symbolName, defaultValue);
-          }
-
-          i += 2; // Skip = and default value
-        } else {
-          throw new ValidationError(
-            `Missing default value after '=' for parameter '${symbolName}'`,
-            "fn parameter default",
-            "default value",
-            "missing value",
-          );
-        }
-      }
-    }
-  }
-
-  return { params, defaults };
-}
-
-/**
- * Parse parameters with type annotations and default values
- */
-export function parseParametersWithTypes(
-  paramList: ListNode,
-  currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode | null,
-): {
-  params: IR.IRIdentifier[];
-  types: Map<string, string>;
-  defaults: Map<string, IR.IRNode>;
-} {
-  // Initialize result structures
-  const params: IR.IRIdentifier[] = [];
-  const types = new Map<string, string>();
-  const defaults = new Map<string, IR.IRNode>();
-
-  // Process parameters
-  for (let i = 0; i < paramList.elements.length; i++) {
-    const elem = paramList.elements[i];
-
-    if (elem.type === "symbol") {
-      const symbolName = (elem as SymbolNode).name;
-
-      // If it's a parameter name with a colon
-      if (symbolName.endsWith(":")) {
-        // Extract parameter name (remove the colon)
-        const paramName = symbolName.slice(0, -1);
-        // Add to params list - remove the colon from the parameter name
-        params.push({
-          type: IR.IRNodeType.Identifier,
-          name: sanitizeIdentifier(paramName),
-        });
-
-        // Look ahead for the type
-        if (i + 1 < paramList.elements.length) {
-          let typeName: string;
-          const typeNode = paramList.elements[i + 1];
-          
-          // Handle array type notation: [ElementType]
-          if (typeNode.type === "list" && (typeNode as ListNode).elements.length === 1) {
-            const innerTypeNode = (typeNode as ListNode).elements[0];
-            if (innerTypeNode.type === "symbol") {
-              const innerTypeName = (innerTypeNode as SymbolNode).name;
-              typeName = `Array<${innerTypeName}>`;
-            } else {
-              typeName = "Array";
-            }
-          } 
-          // Handle normal type (symbol)
-          else if (typeNode.type === "symbol") {
-            typeName = (typeNode as SymbolNode).name;
-          }
-          // Use Any as default if we can't determine the type
-          else {
-            typeName = "Any";
-          }
-
-          // For array types
-          if (typeName.startsWith("Array<") && typeName.endsWith(">")) {
-            types.set(paramName, typeName);
-          } 
-          // Handle enum types or any custom type
-          else {
-            types.set(paramName, typeName);
-          }
-
-          // Check for default value
-          if (
-            i + 2 < paramList.elements.length &&
-            paramList.elements[i + 2].type === "symbol" &&
-            (paramList.elements[i + 2] as SymbolNode).name === "="
-          ) {
-            // Make sure we have a value after the equals sign
-            if (i + 3 < paramList.elements.length) {
-              const defaultValueNode = paramList.elements[i + 3];
-
-              // Transform the default value
-              const defaultValue = transformNode(defaultValueNode, currentDir);
-              if (defaultValue) {
-                defaults.set(paramName, defaultValue);
-              }
-
-              i += 3; // Skip type, =, and default value
-            } else {
-              i += 1; // Just skip the type
-            }
-          } else {
-            i += 1; // Just skip the type
-          }
-        }
-      }
-    }
-  }
-
-  return { params, types, defaults };
-}
-
-/**
- * Extract raw parameter symbols from parameter list for purity verification
- */
-export function extractRawParams(paramList: ListNode): SymbolNode[] {
-  const rawParams: SymbolNode[] = [];
-
-  for (let i = 0; i < paramList.elements.length; i++) {
-    const elem = paramList.elements[i];
-
-    if (elem.type === "symbol") {
-      const symbolName = (elem as SymbolNode).name;
-
-      // Skip special tokens
-      if (symbolName === ":" || symbolName === "=") {
-        continue;
-      }
-
-      // Handle parameter name with colon suffix
-      if (symbolName.endsWith(":")) {
-        // Create a cleaned symbol without the colon
-        const cleanName = symbolName.slice(0, -1);
-
-        // Create a new symbol node with the cleaned name
-        rawParams.push({
-          type: "symbol",
-          name: cleanName,
-        });
-
-        // Skip the type and possible default value
-        if (i + 1 < paramList.elements.length) {
-          i++; // Skip type
-
-          // Check for default value
-          if (
-            i + 1 < paramList.elements.length &&
-            i + 2 < paramList.elements.length &&
-            paramList.elements[i].type === "symbol" &&
-            (paramList.elements[i] as SymbolNode).name === "="
-          ) {
-            i += 2; // Skip = and default value
-          }
-        }
-      } else if (symbolName !== "Int" && !symbolName.includes("->")) {
-        // Regular symbol that isn't a type or arrow
-        rawParams.push(elem as SymbolNode);
-      }
-    }
-  }
-
-  return rawParams;
-}
-
-/**
  * Process and transform a call to an fn function.
  * Handles both positional and named arguments.
  */
@@ -598,8 +908,6 @@ export function processFnFunctionCall(
     const hasNamedArgs = args.some(arg => 
       arg.type === "symbol" && (arg as SymbolNode).name.endsWith(":")
     );
-    
-    const hasPlaceholders = args.some(isPlaceholder);
 
     // If we have named arguments, process them differently
     if (hasNamedArgs) {
@@ -698,7 +1006,7 @@ export function processFnFunctionCall(
 /**
  * Process named arguments for a function call
  */
-export function processNamedArguments(
+function processNamedArguments(
   funcName: string,
   funcDef: IR.IRFnFunctionDeclaration,
   args: any[],
@@ -829,7 +1137,7 @@ export function processNamedArguments(
  * Process and transform a call to an fx function.
  * Handles both positional and named arguments.
  */
-export function processFxFunctionCall(
+function processFxFunctionCall(
   funcName: string,
   funcDef: IR.IRFxFunctionDeclaration,
   args: any[],
@@ -915,14 +1223,14 @@ export function processFxFunctionCall(
 /**
  * Check if a node is a placeholder (_) symbol
  */
-export function isPlaceholder(node: any): boolean {
+function isPlaceholder(node: any): boolean {
   return node.type === "symbol" && (node as SymbolNode).name === "_";
 }
 
 /**
  * Process named arguments for an fx function
  */
-export function processNamedArgumentsForFx(
+function processNamedArgumentsForFx(
   funcName: string,
   funcDef: IR.IRFxFunctionDeclaration,
   args: any[],
@@ -1026,7 +1334,7 @@ export function processNamedArgumentsForFx(
 /**
  * Process named arguments for an fn function
  */
-export function processNamedArgumentsForFn(
+function processNamedArgumentsForFn(
   funcName: string,
   funcDef: IR.IRFnFunctionDeclaration,
   args: any[],
@@ -1130,7 +1438,7 @@ export function processNamedArgumentsForFn(
 /**
  * Generate statements to create deep copies of parameters for fx functions
  */
-export function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
+function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
   const statements: IR.IRNode[] = [];
 
   // For each parameter, create an inline deep copy
@@ -1240,21 +1548,331 @@ export function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] 
 }
 
 /**
- * Check if a function call has named arguments
+ * Handle named arguments for functions without registry entries
  */
-export function hasNamedArguments(list: ListNode): boolean {
-  // Special case: if this is an enum declaration, it shouldn't be treated as named arguments
-  if (list.elements.length > 0 && 
-      list.elements[0].type === "symbol" && 
-      (list.elements[0] as SymbolNode).name === "enum") {
-    return false;
-  }
-  
+function transformGenericNamedArguments(
+  list: ListNode,
+  functionName: string,
+  currentDir: string
+): IR.IRNode {
+  // Build a single object with all named arguments
+  const objProperties: IR.IRObjectProperty[] = [];
+
+  // Process all arguments
   for (let i = 1; i < list.elements.length; i++) {
-    const elem = list.elements[i];
-    if (elem.type === "symbol" && (elem as SymbolNode).name.endsWith(":")) {
-      return true;
+    const current = list.elements[i];
+
+    // Check if this is a named argument (param: value)
+    if (current.type === "symbol" && (current as SymbolNode).name.endsWith(":")) {
+      // Get parameter name without colon
+      const paramName = (current as SymbolNode).name.slice(0, -1);
+      
+      // Ensure a value follows
+      if (i + 1 >= list.elements.length) {
+        throw new ValidationError(
+          `Named argument '${paramName}:' requires a value`,
+          "named argument",
+          "value",
+          "missing value",
+        );
+      }
+
+      // Transform the value
+      const valueNode = transformNode(list.elements[i + 1], currentDir);
+      if (!valueNode) {
+        throw new ValidationError(
+          `Value for named argument '${paramName}:' transformed to null`,
+          "named argument value",
+          "valid expression",
+          "null",
+        );
+      }
+
+      // Add as a property to the argument object
+      objProperties.push({
+        type: IR.IRNodeType.ObjectProperty,
+        key: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(paramName),
+        } as IR.IRIdentifier,
+        value: valueNode,
+      });
+
+      i++; // Skip the value
+    } else {
+      throw new ValidationError(
+        "Mixed positional and named arguments are not allowed",
+        "function call",
+        "all named or all positional arguments",
+        "mixed arguments",
+      );
     }
   }
-  return false;
+
+  // Create an object with all the named arguments
+  const namedArgsObj = {
+    type: IR.IRNodeType.ObjectExpression,
+    properties: objProperties,
+  } as IR.IRObjectExpression;
+
+  // Create the function call with the object as a single argument
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.Identifier,
+      name: sanitizeIdentifier(functionName),
+    },
+    arguments: [namedArgsObj],
+  } as IR.IRCallExpression;
+}
+
+/**
+ * Extract raw parameter symbols from parameter list for purity verification
+ */
+function extractRawParams(paramList: ListNode): SymbolNode[] {
+  const rawParams: SymbolNode[] = [];
+
+  for (let i = 0; i < paramList.elements.length; i++) {
+    const elem = paramList.elements[i];
+
+    if (elem.type === "symbol") {
+      const symbolName = (elem as SymbolNode).name;
+
+      // Skip special tokens
+      if (symbolName === ":" || symbolName === "=") {
+        continue;
+      }
+
+      // Handle parameter name with colon suffix
+      if (symbolName.endsWith(":")) {
+        // Create a cleaned symbol without the colon
+        const cleanName = symbolName.slice(0, -1);
+
+        // Create a new symbol node with the cleaned name
+        rawParams.push({
+          type: "symbol",
+          name: cleanName,
+        });
+
+        // Skip the type and possible default value
+        if (i + 1 < paramList.elements.length) {
+          i++; // Skip type
+
+          // Check for default value
+          if (
+            i + 1 < paramList.elements.length &&
+            i + 2 < paramList.elements.length &&
+            paramList.elements[i].type === "symbol" &&
+            (paramList.elements[i] as SymbolNode).name === "="
+          ) {
+            i += 2; // Skip = and default value
+          }
+        }
+      } else if (symbolName !== "Int" && !symbolName.includes("->")) {
+        // Regular symbol that isn't a type or arrow
+        rawParams.push(elem as SymbolNode);
+      }
+    }
+  }
+
+  return rawParams;
+}
+
+/**
+ * Register an fn function in the registry for call site handling
+ */
+function registerFnFunction(
+  name: string,
+  def: IR.IRFnFunctionDeclaration,
+): void {
+  fnFunctionRegistry.set(name, def);
+}
+
+/**
+ * Register an fx function in the registry for call site handling
+ */
+function registerFxFunction(
+  name: string,
+  def: IR.IRFxFunctionDeclaration,
+): void {
+  fxFunctionRegistry.set(name, def);
+}
+
+/**
+ * Parse parameters with default values for fn functions
+ */
+function parseParametersWithDefaults(
+  paramList: ListNode,
+  currentDir: string,
+  transformNode: (node: any, dir: string) => IR.IRNode | null,
+): {
+  params: IR.IRIdentifier[];
+  defaults: Map<string, IR.IRNode>;
+} {
+  // Initialize result structures
+  const params: IR.IRIdentifier[] = [];
+  const defaults = new Map<string, IR.IRNode>();
+
+  // Track if we're processing a rest parameter
+  let restMode = false;
+
+  // Process parameters
+  for (let i = 0; i < paramList.elements.length; i++) {
+    const elem = paramList.elements[i];
+
+    if (elem.type === "symbol") {
+      const symbolName = (elem as SymbolNode).name;
+
+      // Check if this is the rest parameter indicator
+      if (symbolName === "&") {
+        restMode = true;
+        continue;
+      }
+
+      // Add parameter to the list, with special handling for rest parameters
+      if (restMode) {
+        // For rest parameter, use the proper spread syntax in the parameter name
+        params.push({
+          type: IR.IRNodeType.Identifier,
+          name: `...${sanitizeIdentifier(symbolName)}`,
+        });
+        
+        // Store the original name to be able to reference it in the function body
+        params[params.length - 1].originalName = symbolName;
+      } else {
+        params.push({
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(symbolName),
+        });
+      }
+
+      // Check for default value (=)
+      if (
+        !restMode && // Rest parameters can't have defaults
+        i + 1 < paramList.elements.length &&
+        paramList.elements[i + 1].type === "symbol" &&
+        (paramList.elements[i + 1] as SymbolNode).name === "="
+      ) {
+        // Make sure we have a value after the equals sign
+        if (i + 2 < paramList.elements.length) {
+          const defaultValueNode = paramList.elements[i + 2];
+
+          // Transform the default value
+          const defaultValue = transformNode(defaultValueNode, currentDir);
+          if (defaultValue) {
+            defaults.set(symbolName, defaultValue);
+          }
+
+          i += 2; // Skip = and default value
+        } else {
+          throw new ValidationError(
+            `Missing default value after '=' for parameter '${symbolName}'`,
+            "fn parameter default",
+            "default value",
+            "missing value",
+          );
+        }
+      }
+    }
+  }
+
+  return { params, defaults };
+}
+
+/**
+ * Parse parameters with type annotations and default values
+ */
+function parseParametersWithTypes(
+  paramList: ListNode,
+  currentDir: string,
+  transformNode: (node: any, dir: string) => IR.IRNode | null,
+): {
+  params: IR.IRIdentifier[];
+  types: Map<string, string>;
+  defaults: Map<string, IR.IRNode>;
+} {
+  // Initialize result structures
+  const params: IR.IRIdentifier[] = [];
+  const types = new Map<string, string>();
+  const defaults = new Map<string, IR.IRNode>();
+
+  // Process parameters
+  for (let i = 0; i < paramList.elements.length; i++) {
+    const elem = paramList.elements[i];
+
+    if (elem.type === "symbol") {
+      const symbolName = (elem as SymbolNode).name;
+
+      // If it's a parameter name with a colon
+      if (symbolName.endsWith(":")) {
+        // Extract parameter name (remove the colon)
+        const paramName = symbolName.slice(0, -1);
+        // Add to params list - remove the colon from the parameter name
+        params.push({
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(paramName),
+        });
+
+        // Look ahead for the type
+        if (i + 1 < paramList.elements.length) {
+          let typeName: string;
+          const typeNode = paramList.elements[i + 1];
+          
+          // Handle array type notation: [ElementType]
+          if (typeNode.type === "list" && (typeNode as ListNode).elements.length === 1) {
+            const innerTypeNode = (typeNode as ListNode).elements[0];
+            if (innerTypeNode.type === "symbol") {
+              const innerTypeName = (innerTypeNode as SymbolNode).name;
+              typeName = `Array<${innerTypeName}>`;
+            } else {
+              typeName = "Array";
+            }
+          } 
+          // Handle normal type (symbol)
+          else if (typeNode.type === "symbol") {
+            typeName = (typeNode as SymbolNode).name;
+          }
+          // Use Any as default if we can't determine the type
+          else {
+            typeName = "Any";
+          }
+
+          // For array types
+          if (typeName.startsWith("Array<") && typeName.endsWith(">")) {
+            types.set(paramName, typeName);
+          } 
+          // Handle enum types or any custom type
+          else {
+            types.set(paramName, typeName);
+          }
+
+          // Check for default value
+          if (
+            i + 2 < paramList.elements.length &&
+            paramList.elements[i + 2].type === "symbol" &&
+            (paramList.elements[i + 2] as SymbolNode).name === "="
+          ) {
+            // Make sure we have a value after the equals sign
+            if (i + 3 < paramList.elements.length) {
+              const defaultValueNode = paramList.elements[i + 3];
+
+              // Transform the default value
+              const defaultValue = transformNode(defaultValueNode, currentDir);
+              if (defaultValue) {
+                defaults.set(paramName, defaultValue);
+              }
+
+              i += 3; // Skip type, =, and default value
+            } else {
+              i += 1; // Just skip the type
+            }
+          } else {
+            i += 1; // Just skip the type
+          }
+        }
+      }
+    }
+  }
+
+  return { params, types, defaults };
 }

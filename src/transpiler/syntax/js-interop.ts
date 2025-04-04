@@ -1,11 +1,64 @@
 // src/transpiler/syntax/js-interop.ts
 // Module for handling JavaScript interop operations
 
+import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
-import { Logger } from "../../logger.ts";
 import { perform } from "../error/error-utils.ts";
+import { convertIRExpr, execute, convertStringLiteral } from "../pipeline/hql-ir-to-ts-ast.ts";
+
+export function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {
+  return execute(node, "interop IIFE", () => {
+    const objVar = ts.factory.createIdentifier("_obj");
+    const memberVar = ts.factory.createIdentifier("_member");
+    const statements: ts.Statement[] = [
+      ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          [ts.factory.createVariableDeclaration(objVar, undefined, undefined, convertIRExpr(node.object))],
+          ts.NodeFlags.Const
+        )
+      ),
+      ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          [ts.factory.createVariableDeclaration(
+            memberVar,
+            undefined,
+            undefined,
+            ts.factory.createElementAccessExpression(objVar, convertStringLiteral(node.property))
+          )],
+          ts.NodeFlags.Const
+        )
+      ),
+      ts.factory.createReturnStatement(
+        ts.factory.createConditionalExpression(
+          ts.factory.createBinaryExpression(
+            ts.factory.createTypeOfExpression(memberVar),
+            ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+            ts.factory.createStringLiteral("function")
+          ),
+          ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+          ts.factory.createCallExpression(
+            ts.factory.createPropertyAccessExpression(memberVar, "call"),
+            undefined,
+            [objVar]
+          ),
+          ts.factory.createToken(ts.SyntaxKind.ColonToken),
+          memberVar
+        )
+      ),
+    ];
+    return ts.factory.createCallExpression(
+      ts.factory.createParenthesizedExpression(
+        ts.factory.createFunctionExpression(undefined, undefined, undefined, undefined, [], undefined, ts.factory.createBlock(statements, true))
+      ),
+      undefined,
+      []
+    );
+  });
+}
 
 /**
  * Extract a string literal from a node.

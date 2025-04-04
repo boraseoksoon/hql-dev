@@ -1,23 +1,15 @@
 // src/transpiler/syntax/enum.ts
-// A unified module for handling enum operations across the transpiler
 
+import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { Logger } from "../../logger.ts";
 import { perform } from "../error/error-utils.ts";
-import * as ts from "npm:typescript";
-
-// Initialize logger
+import { execute } from "../pipeline/hql-ir-to-ts-ast.ts";
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
-/**
- * Parse an enum case from an AST node
- * @param caseList The list node representing an enum case
- * @param currentDir The current directory (for resolving imports)
- * @returns An IR node representing the enum case
- */
 export function parseEnumCase(
   caseList: ListNode,
   currentDir: string,
@@ -596,22 +588,18 @@ function convertIRExpr(node: IR.IRNode): ts.Expression {
   return ts.factory.createIdentifier('undefined');
 }
 
-/**
- * Check if an enum has a case with the given name
- */
-export function hasCaseNamed(enumDef: ListNode, caseName: string): boolean {
-  for (let i = 2; i < enumDef.elements.length; i++) {
-    const element = enumDef.elements[i];
-    if (element.type === "list") {
-      const caseList = element as ListNode;
-      if (caseList.elements.length >= 2 && 
-          caseList.elements[0].type === "symbol" && 
-          (caseList.elements[0] as SymbolNode).name === "case" &&
-          caseList.elements[1].type === "symbol" && 
-          (caseList.elements[1] as SymbolNode).name === caseName) {
-        return true;
-      }
+export function convertEnumDeclarationToJsObject(enumDecl: IR.IREnumDeclaration): ts.Statement {
+  return execute(enumDecl, "enum declaration to JS object", () => {
+    logger.debug(`Converting enum declaration to JS object: ${enumDecl.id.name}`);
+    
+    // Detect if this is a simple enum or one with associated values
+    const hasAssociatedValues = enumDecl.hasAssociatedValues === true || 
+                               enumDecl.cases.some(c => c.hasAssociatedValues === true);
+    
+    if (hasAssociatedValues) {
+      return createEnumClassImplementation(enumDecl);
+    } else {
+      return createEnumObjectImplementation(enumDecl);
     }
-  }
-  return false;
+  });
 }

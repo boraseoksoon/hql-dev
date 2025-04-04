@@ -6,13 +6,11 @@ import {
   createList,
   createSymbol,
   isList,
-  isLiteral,
   isSymbol,
   SExp,
   SList,
   SSymbol,
 } from "../../s-exp/types.ts";
-import * as enumHandler from "../syntax/enum.ts";
 import { Logger } from "../../logger.ts";
 import { TransformError } from "../../transpiler/error/errors.ts";
 import { perform } from "../../transpiler/error/error-utils.ts";
@@ -187,7 +185,7 @@ function transformDotNotationSymbol(
   
   // Find an enum that has this case name
   for (const [enumName, enumDef] of enumDefinitions.entries()) {
-    if (enumHandler.hasCaseNamed(enumDef, caseName)) {
+    if (hasCaseNamed(enumDef, caseName)) {
       logger.debug(`Transformed dot notation .${caseName} to ${enumName}.${caseName}`);
       return createSymbol(`${enumName}.${caseName}`);
     }
@@ -236,7 +234,7 @@ function transformEqualityExpression(
     
     // Find an enum that has this case
     for (const [enumName, enumDef] of enumDefinitions.entries()) {
-      if (enumHandler.hasCaseNamed(enumDef, caseName)) {
+      if (hasCaseNamed(enumDef, caseName)) {
         // Replace the dot expression with the full enum reference
         const fullEnumRef = createSymbol(`${enumName}.${caseName}`);
         logger.debug(`Transformed ${dotExpr.name} to ${enumName}.${caseName} in equality expression`);
@@ -680,4 +678,24 @@ function transformFnSyntax(list: SList, enumDefinitions: Map<string, SList>, log
     TransformError,
     ["fn syntax transformation"],
   );
+}
+
+/**
+ * Check if an enum has a case with the given name
+ */
+function hasCaseNamed(enumDef: ListNode, caseName: string): boolean {
+  for (let i = 2; i < enumDef.elements.length; i++) {
+    const element = enumDef.elements[i];
+    if (element.type === "list") {
+      const caseList = element as ListNode;
+      if (caseList.elements.length >= 2 && 
+          caseList.elements[0].type === "symbol" && 
+          (caseList.elements[0] as SymbolNode).name === "case" &&
+          caseList.elements[1].type === "symbol" && 
+          (caseList.elements[1] as SymbolNode).name === caseName) {
+        return true;
+      }
+    }
+  }
+  return false;
 }

@@ -1,19 +1,205 @@
 // src/transpiler/syntax/import-export.ts
 // Module for handling import and export operations
 
+import * as ts from "npm:typescript";
 import * as path from "../../platform/platform.ts";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
-import { ValidationError, TransformError, ImportError } from "../error/errors.ts";
+import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { Logger } from "../../logger.ts";
 import { perform } from "../error/error-utils.ts";
 import { Environment } from "../../environment.ts";
 import { isUserLevelMacro } from "../../s-exp/macro.ts";
 import { processVectorElements } from "./data-structure.ts";
+import { execute, convertVariableDeclaration } from "../pipeline/hql-ir-to-ts-ast.ts";
 
-// Initialize logger
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+
+export function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclaration {
+  return execute(node, "import declaration", () => {
+    if (!node.specifiers || node.specifiers.length === 0) {
+      const moduleName = createModuleVariableName(node.source);
+      return ts.factory.createImportDeclaration(
+        undefined,
+        ts.factory.createImportClause(
+          false,
+          undefined,
+          ts.factory.createNamespaceImport(ts.factory.createIdentifier(moduleName))
+        ),
+        ts.factory.createStringLiteral(node.source)
+      );
+    }
+    const namedImports = node.specifiers.map(spec =>
+      ts.factory.createImportSpecifier(
+        false,
+        spec.imported.name !== spec.local.name ? ts.factory.createIdentifier(spec.imported.name) : undefined,
+        ts.factory.createIdentifier(spec.local.name)
+      )
+    );
+    return ts.factory.createImportDeclaration(
+      undefined,
+      ts.factory.createImportClause(false, undefined, ts.factory.createNamedImports(namedImports)),
+      ts.factory.createStringLiteral(node.source)
+    );
+  });
+}
+
+export function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] {
+  return execute(node, "JS import reference", () => {
+    const importName = sanitizeIdentifier(node.name);
+    const internalModuleName = `${importName}Module`;
+    const importDecl = ts.factory.createImportDeclaration(
+      undefined,
+      ts.factory.createImportClause(
+        false,
+        undefined,
+        ts.factory.createNamespaceImport(ts.factory.createIdentifier(internalModuleName))
+      ),
+      ts.factory.createStringLiteral(node.source)
+    );
+    const functionBody = ts.factory.createBlock(
+      [
+        ts.factory.createVariableStatement(
+          undefined,
+          ts.factory.createVariableDeclarationList(
+            [
+              ts.factory.createVariableDeclaration(
+                ts.factory.createIdentifier("wrapper"),
+                undefined,
+                undefined,
+                ts.factory.createConditionalExpression(
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createPropertyAccessExpression(
+                      ts.factory.createIdentifier(internalModuleName),
+                      ts.factory.createIdentifier("default")
+                    ),
+                    ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                    ts.factory.createIdentifier("undefined")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier(internalModuleName),
+                    ts.factory.createIdentifier("default")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.ColonToken),
+                  ts.factory.createObjectLiteralExpression([], false)
+                )
+              ),
+            ],
+            ts.NodeFlags.Const
+          )
+        ),
+        ts.factory.createForOfStatement(
+          undefined,
+          ts.factory.createVariableDeclarationList(
+            [
+              ts.factory.createVariableDeclaration(
+                ts.factory.createArrayBindingPattern([
+                  ts.factory.createBindingElement(undefined, undefined, ts.factory.createIdentifier("key")),
+                  ts.factory.createBindingElement(undefined, undefined, ts.factory.createIdentifier("value")),
+                ]),
+                undefined,
+                undefined,
+                undefined
+              ),
+            ],
+            ts.NodeFlags.Const
+          ),
+          ts.factory.createCallExpression(
+            ts.factory.createPropertyAccessExpression(
+              ts.factory.createIdentifier("Object"),
+              ts.factory.createIdentifier("entries")
+            ),
+            undefined,
+            [ts.factory.createIdentifier(internalModuleName)]
+          ),
+          ts.factory.createBlock(
+            [
+              ts.factory.createIfStatement(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createIdentifier("key"),
+                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                  ts.factory.createStringLiteral("default")
+                ),
+                ts.factory.createExpressionStatement(
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createElementAccessExpression(ts.factory.createIdentifier("wrapper"), ts.factory.createIdentifier("key")),
+                    ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+                    ts.factory.createIdentifier("value")
+                  )
+                )
+              ),
+            ],
+            true
+          )
+        ),
+        ts.factory.createReturnStatement(ts.factory.createIdentifier("wrapper")),
+      ],
+      true
+    );
+    const iife = ts.factory.createCallExpression(
+      ts.factory.createParenthesizedExpression(
+        ts.factory.createFunctionExpression(undefined, undefined, undefined, undefined, [], undefined, functionBody)
+      ),
+      undefined,
+      []
+    );
+    const defaultAssignment = ts.factory.createVariableStatement(
+      undefined,
+      ts.factory.createVariableDeclarationList(
+        [
+          ts.factory.createVariableDeclaration(
+            ts.factory.createIdentifier(importName),
+            undefined,
+            undefined,
+            iife
+          ),
+        ],
+        ts.NodeFlags.Const
+      )
+    );
+    return [importDecl, defaultAssignment];
+  });
+}
+
+export function convertExportNamedDeclaration(node: IR.IRExportNamedDeclaration): ts.ExportDeclaration {
+  return execute(node, "export named declaration", () => {
+    const specifiers = node.specifiers.map(spec =>
+      ts.factory.createExportSpecifier(
+        false,
+        spec.local.name !== spec.exported.name ? ts.factory.createIdentifier(spec.local.name) : undefined,
+        ts.factory.createIdentifier(spec.exported.name)
+      )
+    );
+    return ts.factory.createExportDeclaration(
+      undefined,
+      false,
+      ts.factory.createNamedExports(specifiers),
+      undefined
+    );
+  });
+}
+
+export function convertExportVariableDeclaration(node: IR.IRExportVariableDeclaration): ts.Statement[] {
+  return execute(node, "export variable declaration", () => {
+    const varDecl = convertVariableDeclaration(node.declaration);
+    const varName = node.declaration.declarations[0].id.name;
+    const exportDecl = ts.factory.createExportDeclaration(
+      undefined,
+      false,
+      ts.factory.createNamedExports([
+        ts.factory.createExportSpecifier(
+          false,
+          ts.factory.createIdentifier(varName),
+          ts.factory.createIdentifier(node.exportName)
+        ),
+      ]),
+      undefined
+    );
+    return [varDecl, exportDecl];
+  });
+}
 
 /**
  * Check if a list is a vector import
@@ -355,4 +541,26 @@ export function transformVectorImport(
     TransformError,
     [list],
   );
+}
+
+function createModuleVariableName(source: string): string {
+  return execute(source, "module variable name creation", () => {
+    let cleanSource = source;
+    if (cleanSource.startsWith("npm:")) {
+      cleanSource = cleanSource.substring(4);
+    } else if (cleanSource.startsWith("jsr:")) {
+      cleanSource = cleanSource.substring(4);
+    }
+    if (cleanSource.includes("@") && cleanSource.includes("/")) {
+      const parts = cleanSource.split("/");
+      cleanSource = parts[parts.length - 1];
+    } else if (cleanSource.includes("/")) {
+      const parts = cleanSource.split("/");
+      cleanSource = parts[parts.length - 1];
+    }
+    let baseName = cleanSource.replace(/\.(js|ts|mjs|cjs)$/, "");
+    baseName = baseName.replace(/[^a-zA-Z0-9]+(.)/g, (_, c) => c.toUpperCase());
+    baseName = baseName.replace(/^[^a-zA-Z_$]/, "_");
+    return `${baseName}Module`;
+  });
 }

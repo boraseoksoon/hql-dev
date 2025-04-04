@@ -1,4 +1,4 @@
-// src/s-exp/repl.ts - Updated to use stateful evaluator
+// src/s-exp/repl.ts - Fully modularized version
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
@@ -9,9 +9,6 @@ import { REPLEvaluator } from "./repl-evaluator.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
 import { formatError, getSuggestion, registerSourceFile } from "../transpiler/error/error-handling.ts";
 
-/**
- * Configuration for the REPL.
- */
 interface ReplOptions {
   verbose?: boolean;
   baseDir?: string;
@@ -23,7 +20,9 @@ interface ReplOptions {
   useColors?: boolean;
 }
 
-// Define SICP book-inspired color scheme
+/* ─────────────────────────────────────────────────────────────────────────────
+   Color and Output Utilities
+───────────────────────────────────────────────────────────────────────────── */
 const colors = {
   reset: "\x1b[0m",
   bright: "\x1b[1m",
@@ -32,11 +31,9 @@ const colors = {
   blink: "\x1b[5m",
   reverse: "\x1b[7m",
   hidden: "\x1b[8m",
-  
   fg: {
     black: "\x1b[30m",
     red: "\x1b[31m",
-    // SICP red - brighter red for better readability
     sicpRed: "\x1b[38;2;220;50;47m",
     green: "\x1b[32m",
     yellow: "\x1b[33m",
@@ -45,16 +42,13 @@ const colors = {
     cyan: "\x1b[36m",
     white: "\x1b[37m",
     crimson: "\x1b[38m",
-    // SICP purple (darker/richer purple than before)
     sicpPurple: "\x1b[38;2;128;0;128m",
-    // Add light color variations
     lightBlue: "\x1b[94m",
-    lightGreen: "\x1b[92m", 
+    lightGreen: "\x1b[92m",
     lightYellow: "\x1b[93m",
     lightPurple: "\x1b[95m",
     lightCyan: "\x1b[96m"
   },
-  
   bg: {
     black: "\x1b[40m",
     red: "\x1b[41m",
@@ -65,44 +59,29 @@ const colors = {
     cyan: "\x1b[46m",
     white: "\x1b[47m",
     crimson: "\x1b[48m",
-    // Background SICP colors
     sicpRed: "\x1b[48;2;220;50;47m",
     sicpPurple: "\x1b[48;2;128;0;128m"
   }
 };
 
-/**
- * Helper to print a block of output with a header.
- */
-function printBlock(header: string, content: string, useColors = false) {
-  if (useColors) {
-    console.log(`${colors.fg.sicpRed}${colors.bright}${header}${colors.reset}`);
-    console.log(content);
-    console.log();
-  } else {
-    console.log(header);
-    console.log(content);
-    console.log();
-  }
+function printBlock(header: string, content: string, useColors = false): void {
+  const headerText = useColors
+    ? `${colors.fg.sicpRed}${colors.bright}${header}${colors.reset}`
+    : header;
+  console.log(headerText);
+  console.log(content, "\n");
 }
 
-/**
- * Helper function to print colored text
- */
 function colorText(text: string, colorCode: string, useColors = true): string {
   return useColors ? `${colorCode}${text}${colors.reset}` : text;
 }
 
-/**
- * Displays the REPL banner.
- */
 function printBanner(useColors = false): void {
   const headerColor = useColors ? colors.fg.sicpPurple + colors.bright : "";
   const textColor = useColors ? colors.fg.white : "";
   const commandColor = useColors ? colors.fg.sicpRed : "";
   const reset = useColors ? colors.reset : "";
-
-  const boxLines = [
+  const banner = [
     `${headerColor}╔════════════════════════════════════════════════════════════╗${reset}`,
     `${headerColor}║                ${textColor}HQL S-Expression REPL${headerColor}                        ║${reset}`,
     `${headerColor}╠════════════════════════════════════════════════════════════╣${reset}`,
@@ -122,89 +101,566 @@ function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:clear${textColor} - Clear the screen${headerColor}                                ║${reset}`,
     `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
   ];
-
-  boxLines.forEach(line => console.log(line));
+  banner.forEach(line => console.log(line));
 }
 
-/**
- * Start the interactive REPL.
- */
-export async function startRepl(options: ReplOptions = {}): Promise<void> {
-  const logger = new Logger(options.verbose || false);
-  const baseDir = options.baseDir || Deno.cwd();
-  const historySize = options.historySize || 100;
-  let showAst = options.showAst ?? false;
-  let showExpanded = options.showExpanded ?? false;
-  let showJs = options.showJs ?? false;
-  let useColors = options.useColors ?? true;
-  
-  // REPL state variables
-  let running = true;
-  let multilineInput = "";
-  let multilineMode = false;
-  let parenBalance = 0;
+function printError(msg: string, useColors: boolean): void {
+  console.error(useColors ? `${colors.fg.red}${msg}${colors.reset}` : msg);
+}
 
-  function resetReplState() {
-    multilineMode = false;
-    multilineInput = "";
-    parenBalance = 0;
+function getPrompt(multilineMode: boolean, useColors: boolean): string {
+  if (useColors) {
+    return multilineMode
+      ? `${colors.fg.sicpPurple}${colors.bright}... ${colors.reset}`
+      : `${colors.fg.sicpPurple}${colors.bright}hql> ${colors.reset}`;
   }
+  return multilineMode ? "... " : "hql> ";
+}
 
-  function printError(message: string, useColors: boolean) {
-    if (useColors) {
-      console.error(`${colors.fg.red}${message}${colors.reset}`);
+/* ─────────────────────────────────────────────────────────────────────────────
+   REPL State Helpers
+───────────────────────────────────────────────────────────────────────────── */
+interface ReplState {
+  multilineMode: boolean;
+  multilineInput: string;
+  parenBalance: number;
+}
+
+function resetReplState(state: ReplState): void {
+  state.multilineMode = false;
+  state.multilineInput = "";
+  state.parenBalance = 0;
+}
+
+function updateParenBalance(line: string, currentBalance: number): number {
+  let balance = currentBalance;
+  for (const char of line) {
+    if (char === "(") balance++;
+    else if (char === ")") balance--;
+  }
+  return balance;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Command Handlers
+   (Each command is now a separate function)
+───────────────────────────────────────────────────────────────────────────── */
+function commandHelp(useColors: boolean): void {
+  printBanner(useColors);
+}
+
+function commandQuit(setRunning: (val: boolean) => void): void {
+  setRunning(false);
+}
+
+function commandEnv(evaluator: REPLEvaluator, useColors: boolean, logger: Logger): void {
+  const env = evaluator.getEnvironment();
+  console.log(colorText("Environment bindings:", colors.fg.sicpRed + colors.bright, useColors));
+  console.log("Defined symbols:");
+  console.log("----------------");
+  console.log("(Environment symbol information not directly accessible)");
+  console.log("Use JavaScript to inspect variables with (js ...)");
+  console.log("----------------");
+}
+
+function commandMacros(evaluator: REPLEvaluator, useColors: boolean): void {
+  console.log(colorText("Defined macros:", colors.fg.sicpRed + colors.bright, useColors));
+  const environment = evaluator.getEnvironment();
+  console.log("Macro names:");
+  console.log("------------");
+  if (environment && "macros" in environment && environment.macros instanceof Map) {
+    const macroKeys = Array.from(environment.macros.keys());
+    if (macroKeys.length > 0) {
+      for (const macroName of macroKeys) {
+        console.log(`- ${macroName}`);
+      }
     } else {
-      console.error(message);
+      console.log("No macros defined");
+    }
+  } else {
+    console.log("Macro information not available");
+  }
+  console.log("------------");
+}
+
+function commandVerbose(logger: Logger, setVerbose: (val: boolean) => void): void {
+  setVerbose(!logger.isVerbose);
+  console.log(`Verbose mode ${logger.isVerbose ? "enabled" : "disabled"}`);
+}
+
+function commandAst(showAst: boolean, setShowAst: (val: boolean) => void): void {
+  setShowAst(!showAst);
+  console.log(`AST display ${showAst ? "enabled" : "disabled"}`);
+}
+
+function commandExpanded(showExpanded: boolean, setShowExpanded: (val: boolean) => void): void {
+  setShowExpanded(!showExpanded);
+  console.log(`Expanded form display ${showExpanded ? "enabled" : "disabled"}`);
+}
+
+function commandJs(showJs: boolean, setShowJs: (val: boolean) => void): void {
+  setShowJs(!showJs);
+  console.log(`JavaScript output display ${showJs ? "enabled" : "disabled"}`);
+}
+
+async function commandLoad(
+  parts: string[],
+  evaluator: REPLEvaluator,
+  history: string[],
+  logger: Logger,
+  baseDir: string,
+  historySize: number,
+  showAst: boolean,
+  showExpanded: boolean,
+  showJs: boolean,
+  useColors: boolean
+): Promise<void> {
+  if (parts.length < 2) {
+    console.error("Usage: :load <filename>");
+    return;
+  }
+  const filePath = parts.slice(1).join(" ");
+  console.log(`Loading file: ${filePath}`);
+  try {
+    await loadAndEvaluateFile(filePath, evaluator, history, {
+      logger,
+      baseDir,
+      historySize,
+      showAst,
+      showExpanded,
+      showJs,
+      useColors,
+    });
+    console.log(`File loaded successfully: ${filePath}`);
+  } catch (error) {
+    console.error(`Error loading file: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+async function commandSave(parts: string[], history: string[]): Promise<void> {
+  if (parts.length < 2) {
+    console.error("Usage: :save <filename>");
+    return;
+  }
+  const saveFilePath = parts.slice(1).join(" ");
+  try {
+    await Deno.writeTextFile(saveFilePath, history.join("\n"));
+    console.log(`History saved to ${saveFilePath}`);
+  } catch (error) {
+    console.error(`Error saving history: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+function commandColors(setColors: (val: boolean) => void, useColors: boolean): void {
+  setColors(!useColors);
+  console.log(`Colorized output ${useColors ? "enabled" : "disabled"}`);
+}
+
+function commandClear(): void {
+  console.clear();
+}
+
+function commandReset(evaluator: REPLEvaluator): void {
+  console.log("Resetting REPL environment...");
+  if (typeof evaluator.resetEnvironment === "function") {
+    evaluator.resetEnvironment();
+    console.log("Environment reset complete.");
+  } else {
+    console.log("Environment reset not supported.");
+  }
+}
+
+function commandDefault(cmd: string): void {
+  console.error(`Unknown command: ${cmd}`);
+  console.log("Type :help for a list of commands");
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   REPL Input Handling Helpers
+───────────────────────────────────────────────────────────────────────────── */
+// We now return an object indicating if the input was obtained via history navigation.
+interface ReadLineResult {
+  text: string;
+  fromHistory: boolean;
+}
+
+async function readLineWithHistory(prompt: string, history: string[]): Promise<ReadLineResult> {
+  const encoder = new TextEncoder();
+  await Deno.stdout.write(encoder.encode(prompt));
+  let currentInput = "", cursorPos = 0, historyIndex = history.length;
+  let historyNavigated = false;
+
+  const redrawLine = async () => {
+    await Deno.stdout.write(encoder.encode("\r\x1b[K" + prompt + currentInput));
+    if (cursorPos < currentInput.length) {
+      await Deno.stdout.write(encoder.encode(`\x1b[${currentInput.length - cursorPos}D`));
+    }
+  };
+
+  const deleteWord = async () => {
+    if (cursorPos > 0) {
+      let newPos = cursorPos - 1;
+      while (newPos > 0 && /\s/.test(currentInput[newPos])) newPos--;
+      while (newPos > 0 && !/\s/.test(currentInput[newPos - 1])) newPos--;
+      currentInput = currentInput.slice(0, newPos) + currentInput.slice(cursorPos);
+      cursorPos = newPos;
+      await redrawLine();
+    }
+  };
+
+  while (true) {
+    const key = await keypress();
+    if (key?.ctrlKey && key.key === "c") {
+      await Deno.stdout.write(encoder.encode("\nExiting REPL...\n"));
+      Deno.exit(0);
+    } else if (key?.key === "return") {
+      await Deno.stdout.write(encoder.encode("\n"));
+      if (currentInput.trim() && (history.length === 0 || history[history.length - 1] !== currentInput)) {
+        history.push(currentInput);
+      }
+      return { text: currentInput, fromHistory: historyNavigated };
+    } else if (key?.key === "backspace") {
+      if (cursorPos > 0) {
+        currentInput = currentInput.slice(0, cursorPos - 1) + currentInput.slice(cursorPos);
+        cursorPos--;
+        await redrawLine();
+      }
+    } else if (key?.key === "delete") {
+      if (cursorPos < currentInput.length) {
+        currentInput = currentInput.slice(0, cursorPos) + currentInput.slice(cursorPos + 1);
+        await redrawLine();
+      }
+    } else if (key?.key === "left") {
+      if (cursorPos > 0) { cursorPos--; await redrawLine(); }
+    } else if (key?.key === "right") {
+      if (cursorPos < currentInput.length) { cursorPos++; await redrawLine(); }
+    } else if (key?.key === "up") {
+      if (historyIndex > 0) {
+        historyIndex--;
+        currentInput = history[historyIndex];
+        cursorPos = currentInput.length;
+        historyNavigated = true;
+        await redrawLine();
+      }
+    } else if (key?.key === "down") {
+      if (historyIndex < history.length - 1) {
+        historyIndex++;
+        currentInput = history[historyIndex];
+        cursorPos = currentInput.length;
+        historyNavigated = true;
+        await redrawLine();
+      } else if (historyIndex === history.length - 1) {
+        historyIndex = history.length;
+        currentInput = "";
+        cursorPos = 0;
+        historyNavigated = true;
+        await redrawLine();
+      }
+    } else if (key?.key === "tab") {
+      currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
+      cursorPos += 2;
+      await redrawLine();
+    } else if (key?.key === "home") {
+      cursorPos = 0;
+      await redrawLine();
+    } else if (key?.key === "end") {
+      cursorPos = currentInput.length;
+      await redrawLine();
+    } else if (key?.ctrlKey && key.key === "w") {
+      await deleteWord();
+    } else if (key?.ctrlKey && key.key === "e") {
+      cursorPos = currentInput.length;
+      await redrawLine();
+    } else if ((key?.ctrlKey && key.key === "a") || (key?.metaKey && key.key === "a")) {
+      cursorPos = 0;
+      await redrawLine();
+    } else if (key?.ctrlKey && key.key === "k") {
+      currentInput = currentInput.slice(0, cursorPos);
+      await redrawLine();
+    } else if (key?.ctrlKey && key.key === "u") {
+      currentInput = currentInput.slice(cursorPos);
+      cursorPos = 0;
+      await redrawLine();
+    } else if (key?.ctrlKey && key.key === "l") {
+      await Deno.stdout.write(encoder.encode("\x1b[2J\x1b[H"));
+      await redrawLine();
+    } else if ((key?.altKey && key.key === "b") || (key?.ctrlKey && key.key === "left")) {
+      if (cursorPos > 0) {
+        let newPos = cursorPos - 1;
+        while (newPos > 0 && /\s/.test(currentInput[newPos])) newPos--;
+        while (newPos > 0 && !/\s/.test(currentInput[newPos - 1])) newPos--;
+        cursorPos = newPos;
+        await redrawLine();
+      }
+    } else if ((key?.altKey && key.key === "f") || (key?.ctrlKey && key.key === "right")) {
+      if (cursorPos < currentInput.length) {
+        let newPos = cursorPos;
+        while (newPos < currentInput.length && !/\s/.test(currentInput[newPos])) newPos++;
+        while (newPos < currentInput.length && /\s/.test(currentInput[newPos])) newPos++;
+        cursorPos = newPos;
+        await redrawLine();
+      }
+    } else if (key?.ctrlKey && key.key === "d") {
+      if (currentInput.length === 0) {
+        await Deno.stdout.write(encoder.encode("\nExiting REPL...\n"));
+        Deno.exit(0);
+      } else if (cursorPos < currentInput.length) {
+        currentInput = currentInput.slice(0, cursorPos) + currentInput.slice(cursorPos + 1);
+        await redrawLine();
+      }
+    } else if (key?.ctrlKey && key.key === "t") {
+      if (cursorPos > 0 && cursorPos < currentInput.length) {
+        const beforeChar = currentInput[cursorPos - 1];
+        const atChar = currentInput[cursorPos];
+        currentInput = currentInput.slice(0, cursorPos - 1) + atChar + beforeChar + currentInput.slice(cursorPos + 1);
+        await redrawLine();
+      }
+    } else if (key?.sequence && !key.ctrlKey && !key.metaKey && !key.altKey) {
+      currentInput = currentInput.slice(0, cursorPos) + key.sequence + currentInput.slice(cursorPos);
+      cursorPos += key.sequence.length;
+      await redrawLine();
     }
   }
+}
 
-  // Track symbol usage for potential future auto-completion
-  const trackSymbolUsage = (symbol: string) => {
-    // Just a placeholder for now
-    logger.debug(`Symbol used: ${symbol}`);
+/* ─────────────────────────────────────────────────────────────────────────────
+   REPL Input Processing
+   This helper decides whether the input is a command, a multiline continuation,
+   or a complete expression ready for evaluation.
+───────────────────────────────────────────────────────────────────────────── */
+interface ProcessOptions {
+  logger: Logger;
+  baseDir: string;
+  historySize: number;
+  showAst: boolean;
+  showExpanded: boolean;
+  showJs: boolean;
+  useColors: boolean;
+  trackSymbolUsage?: (symbol: string) => void;
+  replState: {
+    setRunning: (val: boolean) => void;
+    setVerbose: (val: boolean) => void;
+    setColors: (val: boolean) => void;
+    setShowAst: (val: boolean) => void;
+    setShowExpanded: (val: boolean) => void;
+    setShowJs: (val: boolean) => void;
+  };
+}
+
+async function handleReplLine(
+  lineResult: ReadLineResult,
+  state: ReplState,
+  evaluator: REPLEvaluator,
+  history: string[],
+  options: ProcessOptions
+): Promise<void> {
+  state.parenBalance = updateParenBalance(lineResult.text, state.parenBalance);
+
+  if (state.multilineMode) {
+    // If coming from history navigation, do not add an extra newline.
+    state.multilineInput += lineResult.fromHistory ? lineResult.text : lineResult.text + "\n";
+    if (state.parenBalance <= 0) {
+      state.multilineMode = false;
+      await processInput(state.multilineInput, evaluator, history, options);
+      resetReplState(state);
+    }
+  } else if (lineResult.text.startsWith(":")) {
+    await handleCommand(lineResult.text, evaluator, history, options);
+  } else if (state.parenBalance > 0) {
+    state.multilineMode = true;
+    state.multilineInput = lineResult.text + "\n";
+  } else {
+    await processInput(lineResult.text, evaluator, history, options);
+  }
+}
+
+async function processInput(
+  input: string,
+  evaluator: REPLEvaluator,
+  history: string[],
+  options: ProcessOptions
+): Promise<void> {
+  const trimmed = input.trim();
+  if (trimmed && (history.length === 0 || history[history.length - 1] !== trimmed)) {
+    history.push(trimmed);
+    if (history.length > options.historySize) history.shift();
+  }
+  try {
+    registerSourceFile("REPL input", input);
+    const result = await evaluator.evaluate(input, {
+      showAst: options.showAst,
+      showExpanded: options.showExpanded,
+      showJs: options.showJs,
+    });
+    if (result.value !== undefined) {
+      let displayValue = result.value;
+      if (options.useColors) {
+        if (displayValue === null)
+          displayValue = `${colors.fg.lightBlue}null${colors.reset}`;
+        else if (typeof displayValue === "number")
+          displayValue = `${colors.fg.lightGreen}${displayValue}${colors.reset}`;
+        else if (typeof displayValue === "string")
+          displayValue = `${colors.fg.lightYellow}"${displayValue}"${colors.reset}`;
+        else if (typeof displayValue === "boolean")
+          displayValue = `${colors.fg.lightPurple}${displayValue}${colors.reset}`;
+        else if (typeof displayValue === "object") {
+          try {
+            displayValue = `${colors.fg.lightCyan}${JSON.stringify(displayValue, null, 2)}${colors.reset}`;
+          } catch {
+            displayValue = `${colors.fg.lightCyan}${displayValue}${colors.reset}`;
+          }
+        }
+      }
+      console.log(displayValue);
+    } else if (input.trim().startsWith("(fn ") || input.trim().startsWith("(defn ")) {
+      const match = input.trim().match(/\(fn\s+([a-zA-Z0-9_-]+)/) ||
+                    input.trim().match(/\(defn\s+([a-zA-Z0-9_-]+)/);
+      const functionName = match ? match[1] : "anonymous";
+      console.log(options.useColors
+        ? `${colors.fg.lightGreen}Function ${functionName} defined${colors.reset}`
+        : `Function ${functionName} defined`);
+    } else if (input.trim().startsWith("(def ")) {
+      const match = input.trim().match(/\(def\s+([a-zA-Z0-9_-]+)/);
+      const varName = match ? match[1] : "value";
+      console.log(options.useColors
+        ? `${colors.fg.lightGreen}Variable ${varName} defined${colors.reset}`
+        : `Variable ${varName} defined`);
+    } else {
+      console.log(options.useColors
+        ? `${colors.fg.lightBlue}undefined${colors.reset}`
+        : "undefined");
+    }
+    if (options.showAst)
+      printBlock("AST:", JSON.stringify(result.parsedExpressions, null, 2), options.useColors);
+    if (options.showExpanded)
+      printBlock("Expanded:", JSON.stringify(result.expandedExpressions, null, 2), options.useColors);
+    if (options.showJs)
+      printBlock("JavaScript:", result.jsCode, options.useColors);
+    if (options.trackSymbolUsage) {
+      const symbolRegex = /\b[a-zA-Z0-9_-]+\b/g;
+      let m;
+      while ((m = symbolRegex.exec(input)) !== null) {
+        options.trackSymbolUsage(m[0]);
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      const formattedError = formatError(error, { useColors: options.useColors, filePath: "REPL input" });
+      const suggestion = getSuggestion(error);
+      console.error(options.useColors
+        ? `${colors.fg.red}${formattedError}${colors.reset}`
+        : formattedError);
+      console.error(options.useColors
+        ? `${colors.fg.cyan}Suggestion: ${suggestion}${colors.reset}`
+        : `Suggestion: ${suggestion}`);
+    } else {
+      console.error(options.useColors
+        ? `${colors.fg.red}Error: ${String(error)}${colors.reset}`
+        : `Error: ${String(error)}`);
+    }
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Command Handling Dispatcher
+───────────────────────────────────────────────────────────────────────────── */
+async function handleCommand(
+  command: string,
+  evaluator: REPLEvaluator,
+  history: string[],
+  options: ProcessOptions
+): Promise<void> {
+  const parts = command.split(" ");
+  const cmd = parts[0];
+  switch (cmd) {
+    case ":help":
+    case ":h":
+      commandHelp(options.useColors);
+      break;
+    case ":quit":
+    case ":exit":
+    case ":q":
+      commandQuit(options.replState.setRunning);
+      break;
+    case ":env":
+      commandEnv(evaluator, options.useColors, options.logger);
+      break;
+    case ":macros":
+      commandMacros(evaluator, options.useColors);
+      break;
+    case ":verbose":
+      commandVerbose(options.logger, options.replState.setVerbose);
+      break;
+    case ":ast":
+      commandAst(options.showAst, options.replState.setShowAst);
+      break;
+    case ":expanded":
+      commandExpanded(options.showExpanded, options.replState.setShowExpanded);
+      break;
+    case ":js":
+      commandJs(options.showJs, options.replState.setShowJs);
+      break;
+    case ":load":
+      await commandLoad(parts, evaluator, history, options.logger, options.baseDir, options.historySize, options.showAst, options.showExpanded, options.showJs, options.useColors);
+      break;
+    case ":save":
+      await commandSave(parts, history);
+      break;
+    case ":colors":
+      commandColors(options.replState.setColors, options.useColors);
+      break;
+    case ":clear":
+      commandClear();
+      break;
+    case ":reset":
+      commandReset(evaluator);
+      break;
+    default:
+      commandDefault(cmd);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Main REPL Loop
+───────────────────────────────────────────────────────────────────────────── */
+export async function startRepl(options: ReplOptions = {}): Promise<void> {
+  const logger = new Logger(options.verbose ?? false);
+  const baseDir = options.baseDir ?? Deno.cwd();
+  const historySize = options.historySize ?? 100;
+  const { showAst = false, showExpanded = false, showJs = false, useColors = true } = options;
+
+  let running = true;
+  const history: string[] = [];
+  const replStateObj: ReplState = { multilineMode: false, multilineInput: "", parenBalance: 0 };
+
+  const stateFunctions = {
+    setRunning: (val: boolean) => { running = val; },
+    setVerbose: logger.setEnabled.bind(logger),
+    setColors: (val: boolean) => { /* update local flag if needed */ },
+    setShowAst: (val: boolean) => { /* update local flag if needed */ },
+    setShowExpanded: (val: boolean) => { /* update local flag if needed */ },
+    setShowJs: (val: boolean) => { /* update local flag if needed */ },
   };
 
-  // Auto-save history function
-  const autoSaveHistory = async () => {
-    // Placeholder for future auto-save functionality
-  };
-  
+  const trackSymbolUsage = (symbol: string) => logger.debug(`Symbol used: ${symbol}`);
+
   printBanner(useColors);
-
-  // Initialize environment and load system macros
   logger.log({ text: "Initializing environment...", namespace: "repl" });
 
   try {
-    // Initialize the global environment
-    const env = await Environment.initializeGlobalEnv({
-      verbose: options.verbose,
-    });
-    
-    // Load system macros using the shared implementation
-    await loadSystemMacros(env, {
-      verbose: options.verbose,
-      baseDir: Deno.cwd(),
-    });
-    
-    // Create a stateful REPL evaluator
+    const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
+    await loadSystemMacros(env, { verbose: options.verbose, baseDir: Deno.cwd() });
     const evaluator = new REPLEvaluator(env, {
       verbose: options.verbose,
-      baseDir: baseDir,
+      baseDir,
       showAst,
       showExpanded,
       showJs,
     });
-    
-    // Display available macros
     if (options.verbose) {
-      const macroKeys = Array.from(env.macros.keys());
-      logger.log({ text: `Available macros: ${macroKeys.join(", ")}`, namespace: "repl" });
+      logger.log({ text: `Available macros: ${[...env.macros.keys()].join(", ")}`, namespace: "repl" });
     }
 
-    // REPL history
-    const history: string[] = [];
-
-    // Load initial file if specified
     if (options.initialFile) {
       try {
         await loadAndEvaluateFile(options.initialFile, evaluator, history, {
@@ -217,86 +673,16 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           useColors,
         });
       } catch (error) {
-        console.error(`Error loading initial file: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`Error loading initial file: ${error instanceof Error ? error.message : error}`);
       }
     }
 
-    // Common handler for REPL state changes
-    const replState = {
-      running: () => running,
-      setRunning: (value: boolean) => { running = value; },
-      setVerbose: (value: boolean) => { logger.setEnabled(value); },
-      setColors: (value: boolean) => { useColors = value; },
-      setShowAst: (value: boolean) => { showAst = value; },
-      setShowExpanded: (value: boolean) => { showExpanded = value; },
-      setShowJs: (value: boolean) => { showJs = value; }
-    };
-
     while (running) {
       try {
-        const promptStyle = useColors ? `${colors.fg.sicpPurple}${colors.bright}` : "";
-        const resetStyle = useColors ? colors.reset : "";
-        const prompt = multilineMode ? 
-                       `${promptStyle}... ${resetStyle}` : 
-                       `${promptStyle}hql> ${resetStyle}`;
-        
-        // Use the enhanced line reader with history support
-        const line = await readLineWithHistory(prompt, history);
-        
-        // Handle empty input
-        if (!line.trim()) continue;
-        
-        // Update paren balance (counting open and closed parens)
-        for (const char of line) {
-          if (char === "(") parenBalance++;
-          else if (char === ")") parenBalance--;
-        }
-
-        // Handle multiline input
-        if (multilineMode) {
-          multilineInput += line + "\n";
-          
-          if (parenBalance <= 0) {
-            multilineMode = false;
-            await processInput(multilineInput, evaluator, history, {
-              logger,
-              baseDir,
-              historySize,
-              showAst,
-              showExpanded,
-              showJs,
-              useColors,
-              trackSymbolUsage, // Pass the symbol tracker
-            });
-            multilineInput = "";
-            parenBalance = 0;
-          }
-          continue;
-        }
-
-        // Handle special commands
-        if (line.startsWith(":")) {
-          await handleCommand(line, evaluator, history, {
-            ...replState,
-            logger,
-            baseDir,
-            showAst,
-            showExpanded,
-            showJs,
-            useColors,
-          });
-          continue;
-        }
-
-        // Check if input is incomplete (mismatched parentheses)
-        if (parenBalance > 0) {
-          multilineMode = true;
-          multilineInput = line + "\n";
-          continue;
-        }
-
-        // Process complete input
-        await processInput(line, evaluator, history, {
+        const prompt = getPrompt(replStateObj.multilineMode, useColors);
+        const lineResult = await readLineWithHistory(prompt, history);
+        if (!lineResult.text.trim()) continue;
+        await handleReplLine(lineResult, replStateObj, evaluator, history, {
           logger,
           baseDir,
           historySize,
@@ -304,177 +690,21 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           showExpanded,
           showJs,
           useColors,
-          trackSymbolUsage, // Pass the symbol tracker
+          trackSymbolUsage,
+          replState: stateFunctions,
         });
       } catch (error) {
-        printError(`Error: ${error instanceof Error ? error.message : String(error)}`, useColors);
-        resetReplState();
+        printError(`Error: ${error instanceof Error ? error.message : error}`, useColors);
+        resetReplState(replStateObj);
       }
     }
-    
-    // Auto-save history when exiting
-    await autoSaveHistory();
-    
     console.log("\nGoodbye!");
   } catch (error) {
-    console.error(`REPL initialization error: ${error instanceof Error ? error.message : String(error)}`);
-    if (error instanceof Error && error.stack) {
-      console.error(error.stack);
-    }
+    console.error(`REPL initialization error: ${error instanceof Error ? error.message : error}`);
+    if (error instanceof Error && error.stack) console.error(error.stack);
   }
 }
 
-/**
- * Process a single input line: parse, expand, transpile, evaluate, and print output.
- */
-async function processInput(
-  input: string,
-  evaluator: REPLEvaluator,
-  history: string[],
-  { logger, baseDir, historySize, showAst, showExpanded, showJs, useColors, trackSymbolUsage }: {
-    logger: Logger;
-    baseDir: string;
-    historySize: number;
-    showAst: boolean;
-    showExpanded: boolean;
-    showJs: boolean;
-    useColors: boolean;
-    trackSymbolUsage?: (symbol: string) => void;
-  },
-): Promise<void> {
-  // Add input to history if non-empty and different from the last entry
-  if (input.trim() && (history.length === 0 || history[history.length - 1] !== input.trim())) {
-    history.push(input.trim());
-    // Keep history size limited
-    if (history.length > historySize) {
-      history.shift();
-    }
-  }
-
-  try {
-    // Register the source for error enhancement
-    registerSourceFile("REPL input", input);
-    
-    const result = await evaluator.evaluate(input, { showAst, showExpanded, showJs });
-
-    // Detect function definitions for better feedback
-    const isFunctionDefinition = input.trim().startsWith("(fn ") || input.trim().startsWith("(defn ");
-    const isVariableDefinition = input.trim().startsWith("(def ");
-    
-    // Handle different result types
-    if (result.value !== undefined) {
-      let displayValue = result.value;
-
-      if (useColors) {
-        if (displayValue === null) {
-          displayValue = `${colors.fg.lightBlue}null${colors.reset}`;
-        } else if (typeof displayValue === "number") {
-          displayValue = `${colors.fg.lightGreen}${displayValue}${colors.reset}`;
-        } else if (typeof displayValue === "string") {
-          displayValue = `${colors.fg.lightYellow}"${displayValue}"${colors.reset}`;
-        } else if (typeof displayValue === "boolean") {
-          displayValue = `${colors.fg.lightPurple}${displayValue}${colors.reset}`;
-        } else if (Array.isArray(displayValue)) {
-          // Pretty-print arrays
-          try {
-            displayValue = `${colors.fg.lightCyan}${JSON.stringify(displayValue, null, 2)}${colors.reset}`;
-          } catch (e) {
-            // If JSON.stringify fails, use toString
-            displayValue = `${colors.fg.lightCyan}${displayValue}${colors.reset}`;
-          }
-        } else if (typeof displayValue === "object") {
-          // Pretty-print objects
-          try {
-            displayValue = `${colors.fg.lightCyan}${JSON.stringify(displayValue, null, 2)}${colors.reset}`;
-          } catch (e) {
-            // If JSON.stringify fails, use toString
-            displayValue = `${colors.fg.lightCyan}${displayValue}${colors.reset}`;
-          }
-        }
-      }
-
-      console.log(displayValue);
-    } else if (isFunctionDefinition) {
-      // Extract function name from a function definition for better feedback
-      const match = input.trim().match(/\(fn\s+([a-zA-Z0-9_-]+)/);
-      const defnMatch = input.trim().match(/\(defn\s+([a-zA-Z0-9_-]+)/);
-      const functionName = match ? match[1] : (defnMatch ? defnMatch[1] : "anonymous");
-      
-      if (useColors) {
-        console.log(`${colors.fg.lightGreen}Function ${functionName} defined${colors.reset}`);
-      } else {
-        console.log(`Function ${functionName} defined`);
-      }
-    } else if (isVariableDefinition) {
-      // Extract variable name from a definition
-      const match = input.trim().match(/\(def\s+([a-zA-Z0-9_-]+)/);
-      const varName = match ? match[1] : "value";
-      
-      if (useColors) {
-        console.log(`${colors.fg.lightGreen}Variable ${varName} defined${colors.reset}`);
-      } else {
-        console.log(`Variable ${varName} defined`);
-      }
-    } else if (result.value === undefined) {
-      // For undefined results that aren't function definitions, provide feedback
-      if (useColors) {
-        console.log(`${colors.fg.lightBlue}undefined${colors.reset}`);
-      } else {
-        console.log("undefined");
-      }
-    }
-    
-    // Show additional debug information if requested
-    if (showAst) {
-      printBlock("AST:", JSON.stringify(result.parsedExpressions, null, 2), useColors);
-    }
-    if (showExpanded) {
-      printBlock("Expanded:", JSON.stringify(result.expandedExpressions, null, 2), useColors);
-    }
-    if (showJs) {
-      printBlock("JavaScript:", result.jsCode, useColors);
-    }
-    
-    // Track symbol usage for potential future auto-completion
-    if (trackSymbolUsage) {
-      const symbolRegex = /\b[a-zA-Z0-9_-]+\b/g;
-      let match;
-      while ((match = symbolRegex.exec(input)) !== null) {
-        trackSymbolUsage(match[0]);
-      }
-    }
-  } catch (error) {
-    // Format error message using our enhanced error formatter
-    if (error instanceof Error) {
-      const formattedError = formatError(error, { 
-        useColors,
-        filePath: "REPL input"
-      });
-      
-      // Add a helpful suggestion
-      const suggestion = getSuggestion(error);
-      
-      if (useColors) {
-        console.error(`${colors.fg.red}${formattedError}${colors.reset}`);
-        console.error(`${colors.fg.cyan}Suggestion: ${suggestion}${colors.reset}`);
-      } else {
-        console.error(formattedError);
-        console.error(`Suggestion: ${suggestion}`);
-      }
-    } else {
-      // For non-Error objects
-      if (useColors) {
-        console.error(`${colors.fg.red}Error: ${String(error)}${colors.reset}`);
-      } else {
-        console.error(`Error: ${String(error)}`);
-      }
-    }
-  }
-}
-
-/**
- * Load and evaluate a file.
- */
 async function loadAndEvaluateFile(
   filePath: string,
   evaluator: REPLEvaluator,
@@ -487,449 +717,21 @@ async function loadAndEvaluateFile(
     showExpanded: boolean;
     showJs: boolean;
     useColors: boolean;
-  },
+  }
 ): Promise<void> {
   const resolvedPath = path.isAbsolute(filePath)
     ? filePath
     : path.join(options.baseDir, filePath);
-
-  if (!await exists(resolvedPath)) {
+  if (!(await exists(resolvedPath))) {
     throw new Error(`File not found: ${resolvedPath}`);
   }
-
   const fileContent = await Deno.readTextFile(resolvedPath);
-  if (options.useColors) {
-    console.log(`${colors.fg.sicpRed}Loading file: ${resolvedPath}${colors.reset}`);
-  } else {
-    console.log(`Loading file: ${resolvedPath}`);
-  }
-  
+  console.log(options.useColors
+    ? `${colors.fg.sicpRed}Loading file: ${resolvedPath}${colors.reset}`
+    : `Loading file: ${resolvedPath}`);
   await processInput(fileContent, evaluator, history, options);
 }
 
-/**
- * Handle REPL commands.
- */
-async function handleCommand(
-  command: string,
-  evaluator: REPLEvaluator,
-  history: string[],
-  {
-    running: isRunning,
-    setRunning,
-    setVerbose,
-    setColors,
-    setShowAst,
-    setShowExpanded,
-    setShowJs,
-    logger,
-    baseDir,
-    showAst,
-    showExpanded,
-    showJs,
-    useColors,
-  }: {
-    running: () => boolean;
-    setRunning: (value: boolean) => void;
-    setVerbose: (value: boolean) => void;
-    setColors: (value: boolean) => void;
-    setShowAst: (value: boolean) => void;
-    setShowExpanded: (value: boolean) => void;
-    setShowJs: (value: boolean) => void;
-    logger: Logger;
-    baseDir: string;
-    showAst: boolean;
-    showExpanded: boolean;
-    showJs: boolean;
-    useColors: boolean;
-  },
-): Promise<void> {
-  const parts = command.split(" ");
-  const cmd = parts[0];
-  
-  switch (cmd) {
-    case ":help":
-    case ":h":
-      printBanner(useColors);
-      break;
-      
-    case ":quit":
-    case ":exit":
-    case ":q":
-      setRunning(false);
-      break;
-      
-    case ":env": {
-      // Get environment from evaluator
-      const _env = evaluator.getEnvironment();
-      console.log(colorText("Environment bindings:", colors.fg.sicpRed + colors.bright, useColors));
-      
-      // Display environment variables safely
-      console.log("Defined symbols:");
-      console.log("----------------");
-      try {
-        // Simply display that we can't access symbols directly
-        console.log("(Environment symbol information not directly accessible in this view)");
-        console.log("Use JavaScript to inspect variables with (js ...)");
-      } catch (error) {
-        console.error(`Error accessing environment: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      console.log("----------------");
-      break;
-    }
-      
-    case ":macros": {
-      console.log(colorText("Defined macros:", colors.fg.sicpRed + colors.bright, useColors));
-      const environment = evaluator.getEnvironment();
-      
-      try {
-        console.log("Macro names:");
-        console.log("------------");
-        // Check if macros property exists on environment
-        if (environment && 'macros' in environment && environment.macros instanceof Map) {
-          const macroKeys = Array.from(environment.macros.keys());
-          if (macroKeys.length > 0) {
-            for (const macroName of macroKeys) {
-              console.log(`- ${macroName}`);
-            }
-          } else {
-            console.log("No macros defined");
-          }
-        } else {
-          console.log("Macro information not available");
-        }
-        console.log("------------");
-      } catch (error) {
-        console.error(`Error accessing macros: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      break;
-    }
-      
-    case ":verbose":
-      setVerbose(!logger.isVerbose);
-      console.log(`Verbose mode ${logger.isVerbose ? "enabled" : "disabled"}`);
-      break;
-      
-    case ":ast":
-      setShowAst(!showAst);
-      console.log(`AST display ${showAst ? "enabled" : "disabled"}`);
-      break;
-      
-    case ":expanded":
-      setShowExpanded(!showExpanded);
-      console.log(`Expanded form display ${showExpanded ? "enabled" : "disabled"}`);
-      break;
-      
-    case ":js":
-      setShowJs(!showJs);
-      console.log(`JavaScript output display ${showJs ? "enabled" : "disabled"}`);
-      break;
-      
-    case ":load": {
-      if (parts.length < 2) {
-        console.error("Usage: :load <filename>");
-        return;
-      }
-      
-      const filePath = parts.slice(1).join(" ");
-      console.log(`Loading file: ${filePath}`);
-      
-      try {
-        await loadAndEvaluateFile(filePath, evaluator, history, {
-          logger,
-          baseDir,
-          historySize: 100,
-          showAst,
-          showExpanded,
-          showJs,
-          useColors,
-        });
-        console.log(`File loaded successfully: ${filePath}`);
-      } catch (error) {
-        console.error(`Error loading file: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      break;
-    }
-      
-    case ":save": {
-      if (parts.length < 2) {
-        console.error("Usage: :save <filename>");
-        return;
-      }
-      
-      const saveFilePath = parts.slice(1).join(" ");
-      try {
-        await Deno.writeTextFile(saveFilePath, history.join("\n"));
-        console.log(`History saved to ${saveFilePath}`);
-      } catch (error) {
-        console.error(`Error saving history: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      break;
-    }
-      
-    case ":colors":
-      setColors(!useColors);
-      console.log(`Colorized output ${useColors ? "enabled" : "disabled"}`);
-      break;
-      
-    case ":clear":
-      console.clear();
-      break;
-      
-    case ":reset":
-      try {
-        // Reset REPL state by reinitializing evaluator
-        console.log("Resetting REPL environment...");
-        if (typeof evaluator.resetEnvironment === 'function') {
-          evaluator.resetEnvironment();
-          console.log("Environment reset complete.");
-        } else {
-          console.log("Environment reset not supported.");
-        }
-      } catch (error) {
-        console.error(`Error resetting environment: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      break;
-      
-    default:
-      console.error(`Unknown command: ${cmd}`);
-      console.log("Type :help for a list of commands");
-  }
-}
-
-/**
- * Read a line with arrow key history navigation support
- */
-async function readLineWithHistory(
-  prompt: string, 
-  history: string[]
-): Promise<string> {
-  const encoder = new TextEncoder();
-  
-  // Write prompt
-  await Deno.stdout.write(encoder.encode(prompt));
-  
-  let currentInput = "";
-  let cursorPos = 0;
-  let historyIndex = history.length;
-  
-  // Function to redraw the current line
-  const redrawLine = async () => {
-    // First move to the beginning of the line
-    await Deno.stdout.write(encoder.encode("\r"));
-    
-    // Then clear the entire line (but don't go to next line)
-    await Deno.stdout.write(encoder.encode("\x1b[K"));
-    
-    // Write prompt and current input
-    await Deno.stdout.write(encoder.encode(prompt + currentInput));
-    
-    // Position cursor correctly if not at the end
-    if (cursorPos < currentInput.length) {
-      // Move cursor to the correct position (from end to desired position)
-      const moveLeft = currentInput.length - cursorPos;
-      await Deno.stdout.write(encoder.encode(`\x1b[${moveLeft}D`));
-    }
-  };
-
-  // Helper to delete a word backwards
-  const deleteWord = async () => {
-    if (cursorPos > 0) {
-      // Find the start of the current word
-      let newPos = cursorPos - 1;
-      // Skip any whitespace immediately before the cursor
-      while (newPos > 0 && /\s/.test(currentInput[newPos])) {
-        newPos--;
-      }
-      // Skip back to the start of the word
-      while (newPos > 0 && !/\s/.test(currentInput[newPos - 1])) {
-        newPos--;
-      }
-      
-      // Remove the word
-      currentInput = currentInput.slice(0, newPos) + currentInput.slice(cursorPos);
-      cursorPos = newPos;
-      await redrawLine();
-    }
-  };
-  
-  while (true) {
-    const keypressEvent = await keypress();
-    
-    // Handle different key presses based on the keypress event structure
-    if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "c") {
-      // Ctrl+C - exit REPL
-      await Deno.stdout.write(encoder.encode("\nExiting REPL...\n"));
-      // Exit Deno process
-      Deno.exit(0);
-    } else if (keypressEvent && keypressEvent.key === "return") {
-      // Enter - complete input
-      await Deno.stdout.write(encoder.encode("\n"));
-      if (currentInput.trim() && (history.length === 0 || history[history.length - 1] !== currentInput)) {
-        history.push(currentInput);
-      }
-      return currentInput;
-    } else if (keypressEvent && keypressEvent.key === "backspace") {
-      // Backspace - delete character before cursor
-      if (cursorPos > 0) {
-        currentInput = currentInput.slice(0, cursorPos - 1) + currentInput.slice(cursorPos);
-        cursorPos--;
-        await redrawLine();
-      }
-    } else if (keypressEvent && keypressEvent.key === "delete") {
-      // Delete - remove character at cursor
-      if (cursorPos < currentInput.length) {
-        currentInput = currentInput.slice(0, cursorPos) + currentInput.slice(cursorPos + 1);
-        await redrawLine();
-      }
-    } else if (keypressEvent && keypressEvent.key === "left") {
-      // Left arrow - move cursor left
-      if (cursorPos > 0) {
-        cursorPos--;
-        await redrawLine();
-      }
-    } else if (keypressEvent && keypressEvent.key === "right") {
-      // Right arrow - move cursor right
-      if (cursorPos < currentInput.length) {
-        cursorPos++;
-        await redrawLine();
-      }
-    } else if (keypressEvent && keypressEvent.key === "up") {
-      // Up arrow - navigate history backwards
-      if (historyIndex > 0) {
-        historyIndex--;
-        currentInput = history[historyIndex];
-        cursorPos = currentInput.length;
-        await redrawLine();
-      }
-    } else if (keypressEvent && keypressEvent.key === "down") {
-      // Down arrow - navigate history forwards
-      if (historyIndex < history.length - 1) {
-        historyIndex++;
-        currentInput = history[historyIndex];
-        cursorPos = currentInput.length;
-        await redrawLine();
-      } else if (historyIndex === history.length - 1) {
-        // At the end of history, show empty line
-        historyIndex = history.length;
-        currentInput = "";
-        cursorPos = 0;
-        await redrawLine();
-      }
-    } else if (keypressEvent && keypressEvent.key === "tab") {
-      // Tab - simple autocompletion (can be expanded later)
-      // For now, just add two spaces
-      currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
-      cursorPos += 2;
-      await redrawLine();
-    } else if (keypressEvent && keypressEvent.key === "home") {
-      // Home - move cursor to start
-      cursorPos = 0;
-      await redrawLine();
-    } else if (keypressEvent && keypressEvent.key === "end") {
-      // End - move cursor to end
-      cursorPos = currentInput.length;
-      await redrawLine();
-    } 
-    // 1. CTRL+W: Delete word before cursor
-    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "w") {
-      await deleteWord();
-    } 
-    // 2. CTRL+E: Move to end of line (rightmost)
-    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "e") {
-      cursorPos = currentInput.length;
-      await redrawLine();
-    } 
-    // 3. CTRL+A or CMD+A: Move to beginning of line (leftmost)
-    else if ((keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "a") || 
-             (keypressEvent && keypressEvent.metaKey && keypressEvent.key === "a")) {
-      cursorPos = 0;
-      await redrawLine();
-    }
-    // 4. CTRL+K: Kill line (delete from cursor to end of line)
-    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "k") {
-      currentInput = currentInput.slice(0, cursorPos);
-      await redrawLine();
-    }
-    // 5. CTRL+U: Delete from cursor to beginning of line
-    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "u") {
-      currentInput = currentInput.slice(cursorPos);
-      cursorPos = 0;
-      await redrawLine();
-    }
-    // 6. CTRL+L: Clear screen but keep the current line
-    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "l") {
-      // Clear screen
-      await Deno.stdout.write(encoder.encode("\x1b[2J\x1b[H"));
-      await redrawLine();
-    }
-    // 7. ALT+B or CTRL+Left: Move backward one word
-    else if ((keypressEvent && keypressEvent.altKey && keypressEvent.key === "b") ||
-             (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "left")) {
-      if (cursorPos > 0) {
-        let newPos = cursorPos - 1;
-        // Skip any whitespace immediately before the cursor
-        while (newPos > 0 && /\s/.test(currentInput[newPos])) {
-          newPos--;
-        }
-        // Skip back to the start of the word
-        while (newPos > 0 && !/\s/.test(currentInput[newPos - 1])) {
-          newPos--;
-        }
-        cursorPos = newPos;
-        await redrawLine();
-      }
-    }
-    // 8. ALT+F or CTRL+Right: Move forward one word
-    else if ((keypressEvent && keypressEvent.altKey && keypressEvent.key === "f") ||
-             (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "right")) {
-      if (cursorPos < currentInput.length) {
-        let newPos = cursorPos;
-        // Skip the rest of the current word
-        while (newPos < currentInput.length && !/\s/.test(currentInput[newPos])) {
-          newPos++;
-        }
-        // Skip any whitespace after the word
-        while (newPos < currentInput.length && /\s/.test(currentInput[newPos])) {
-          newPos++;
-        }
-        cursorPos = newPos;
-        await redrawLine();
-      }
-    }
-    // 9. CTRL+D: Delete character at cursor (like Delete key) or exit if line is empty
-    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "d") {
-      if (currentInput.length === 0) {
-        // Exit REPL if line is empty
-        await Deno.stdout.write(encoder.encode("\nExiting REPL...\n"));
-        Deno.exit(0);
-      } else if (cursorPos < currentInput.length) {
-        // Delete character at cursor
-        currentInput = currentInput.slice(0, cursorPos) + currentInput.slice(cursorPos + 1);
-        await redrawLine();
-      }
-    }
-    // 10. CTRL+T: Transpose characters (swap character before cursor with character at cursor)
-    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "t") {
-      if (cursorPos > 0 && cursorPos < currentInput.length) {
-        const beforeChar = currentInput[cursorPos - 1];
-        const atCursorChar = currentInput[cursorPos];
-        currentInput = currentInput.slice(0, cursorPos - 1) + 
-                        atCursorChar + beforeChar + 
-                        currentInput.slice(cursorPos + 1);
-        await redrawLine();
-      }
-    }
-    else if (keypressEvent && keypressEvent.sequence && !keypressEvent.ctrlKey && !keypressEvent.metaKey && !keypressEvent.altKey) {
-      // Regular character input
-      currentInput = currentInput.slice(0, cursorPos) + keypressEvent.sequence + currentInput.slice(cursorPos);
-      cursorPos += keypressEvent.sequence.length;
-      await redrawLine();
-    }
-  }
-}
-
-// Only start the REPL if this module is the main module
 if (import.meta.main) {
   startRepl();
 }

@@ -1,10 +1,46 @@
 // src/transpiler/syntax/conditional.ts
 // Module for handling conditional expressions (if, cond, etc.)
 
+import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { perform } from "../error/error-utils.ts";
+import { convertIRExpr, execute, convertReturnStatement, convertBlockStatement } from "../pipeline/hql-ir-to-ts-ast.ts";
+
+export function convertIfStatement(node: IR.IRIfStatement): ts.IfStatement {
+  return execute(node, "if statement", () => {
+    const test = convertIRExpr(node.test);
+    const consequentStatement =
+      node.consequent.type === IR.IRNodeType.ReturnStatement
+        ? convertReturnStatement(node.consequent as IR.IRReturnStatement)
+        : node.consequent.type === IR.IRNodeType.BlockStatement
+          ? convertBlockStatement(node.consequent as IR.IRBlockStatement)
+          : ts.factory.createExpressionStatement(convertIRExpr(node.consequent));
+    let alternateStatement: ts.Statement | undefined;
+    if (node.alternate) {
+      alternateStatement =
+        node.alternate.type === IR.IRNodeType.ReturnStatement
+          ? convertReturnStatement(node.alternate as IR.IRReturnStatement)
+          : node.alternate.type === IR.IRNodeType.BlockStatement
+            ? convertBlockStatement(node.alternate as IR.IRBlockStatement)
+            : ts.factory.createExpressionStatement(convertIRExpr(node.alternate));
+    }
+    return ts.factory.createIfStatement(test, consequentStatement, alternateStatement);
+  });
+}
+
+export function convertConditionalExpression(node: IR.IRConditionalExpression): ts.ConditionalExpression {
+  return execute(node, "conditional expression", () =>
+    ts.factory.createConditionalExpression(
+      convertIRExpr(node.test),
+      ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+      convertIRExpr(node.consequent),
+      ts.factory.createToken(ts.SyntaxKind.ColonToken),
+      convertIRExpr(node.alternate)
+    )
+  );
+}
 
 /**
  * Transform an if expression.
@@ -185,7 +221,6 @@ export function transformCond(
 export function transformLambda(
   list: ListNode, 
   currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode | null,
   processFunctionBody: (body: any[], dir: string) => IR.IRNode[]
 ): IR.IRNode {
   return perform(

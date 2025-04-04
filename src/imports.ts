@@ -39,7 +39,6 @@ interface ImportProcessorOptions {
   inProgressFiles?: Set<string>;
   importMap?: Map<string, string>;
   currentFile?: string;
-  skipRebuild?: boolean;
 }
 
 interface SLiteral {
@@ -301,23 +300,6 @@ async function processImport(
 
   // Get the module path to check if it's in examples directory
   const modulePath = getModulePathFromImport(importExpr);
-  
-  // Skip rebuilding any files in the 'examples' directory when in REPL mode
-  if (options.skipRebuild && (
-      modulePath.includes('/examples/') || 
-      modulePath.includes('\\examples\\') || 
-      /examples[/\\]/.test(modulePath)
-    )) {
-    logger.debug(`Skipping rebuild for example import: ${modulePath} (REPL mode)`);
-    return;
-  }
-
-  // If skipRebuild is set, just register the import without rebuilding
-  if (options.skipRebuild) {
-    logger.debug(`Skipping rebuild for import in ${options.currentFile || 'unknown'} (REPL mode)`);
-    // Just mark the file as processed without actually rebuilding it
-    return;
-  }
 
   try {
     // Handle different import syntaxes
