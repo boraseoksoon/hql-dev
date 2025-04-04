@@ -1,4 +1,4 @@
-import { startRepl } from "../src/s-exp/repl.ts";
+import { startRepl } from "../src/repl/repl.ts";
 import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
 import logger from "../src/logger.ts";
 import { resolve } from "../src/platform/platform.ts";

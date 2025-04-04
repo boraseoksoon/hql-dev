@@ -1,7 +1,7 @@
 // src/s-exp/imports.ts
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { writeTextFile } from "../platform/platform.ts";
+import { writeTextFile } from "./platform/platform.ts";
 import {
   isImport,
   isLiteral,
@@ -11,25 +11,25 @@ import {
   SExp,
   SList,
   SSymbol,
-} from "./types.ts";
-import { Environment, Value } from "../environment.ts";
-import { defineUserMacro, evaluateForMacro } from "./macro.ts";
-import { parse } from "../transpiler/parser.ts";
-import { Logger } from "../logger.ts";
+} from "./s-exp/types.ts";
+import { Environment, Value } from "./environment.ts";
+import { defineUserMacro, evaluateForMacro } from "./s-exp/macro.ts";
+import { parse } from "./transpiler/parser.ts";
+import { Logger } from "./logger.ts";
 import {
   ImportError,
   MacroError,
   ValidationError,
-} from "../transpiler/error/errors.ts";
-import { checkForHqlImports, processHqlImportsInJs } from "../bundler.ts";
-import { registerTempFile } from "../temp-file-tracker.ts";
+} from "./transpiler/error/errors.ts";
+import { checkForHqlImports, processHqlImportsInJs } from "./bundler.ts";
+import { registerTempFile } from "./temp-file-tracker.ts";
 import {
   isHqlFile,
   isJavaScriptModule,
   isRemoteModule,
   isRemoteUrl,
   registerModulePath,
-} from "../utils/import-utils.ts";
+} from "./utils/import-utils.ts";
 
 interface ImportProcessorOptions {
   verbose?: boolean;

@@ -1,6 +1,6 @@
 import { SExp } from "./s-exp/types.ts";
 import { Logger } from "./logger.ts";
-import { MacroRegistry } from "./macro-registry.ts";
+import { MacroRegistry } from "./s-exp/macro-registry.ts";
 import {
   MacroError,
   TranspilerError,

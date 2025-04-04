@@ -4,14 +4,13 @@ import { sexpToString } from "../s-exp/types.ts";
 import { parse } from "./parser.ts";
 import { Environment } from "../environment.ts";
 import { expandMacros } from "../s-exp/macro.ts";
-import { processImports } from "../s-exp/imports.ts";
+import { processImports } from "../imports.ts";
 import { convertToHqlAst } from "../s-exp/macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
 import { transformSyntax } from "./syntax-transformer.ts";
 import { getSystemMacroPaths } from "../s-exp/system-macros.ts";
 import {
-  createErrorReport,
   ImportError,
   MacroError,
   ParseError,
@@ -23,8 +22,6 @@ import {
   registerSourceFile, 
   formatError, 
   getSuggestion, 
-  withErrorHandling, 
-  ErrorUtils
 } from "./error/error-handling.ts";
 
 let globalEnv: Environment | null = null;

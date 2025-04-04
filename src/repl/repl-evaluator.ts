@@ -2,14 +2,14 @@
 
 import { parse } from "../transpiler/parser.ts";
 import { transformSyntax } from "../transpiler/syntax-transformer.ts";
-import { expandMacros } from "./macro.ts";
-import { processImports } from "./imports.ts";
-import { convertToHqlAst } from "./macro-reader.ts";
+import { expandMacros } from "../s-exp/macro.ts";
+import { processImports } from "../imports.ts";
+import { convertToHqlAst } from "../s-exp/macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
 import { REPLEnvironment } from "./repl-environment.ts";
 import { Environment, Value } from "../environment.ts";
-import { SExp } from "./types.ts";
+import { SExp } from "../s-exp/types.ts";
 import { RUNTIME_FUNCTIONS } from "../transpiler/runtime.ts";
 import { 
   registerSourceFile, 

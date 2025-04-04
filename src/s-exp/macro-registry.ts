@@ -1,7 +1,7 @@
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { Logger } from "./logger.ts";
-import { MacroFn } from "./environment.ts";
-import { MacroError } from "./transpiler/error/errors.ts";
+import { Logger } from "../logger.ts";
+import { MacroFn } from "../environment.ts";
+import { MacroError } from "../transpiler/error/errors.ts";
 
 export class MacroRegistry {
   private systemMacros = new Map<string, MacroFn>();
