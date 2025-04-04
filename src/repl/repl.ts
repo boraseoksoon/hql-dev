@@ -1,13 +1,19 @@
-// src/s-exp/repl.ts - Fully modularized version
+// src/repl/enhanced-repl.ts - Comprehensive REPL with dynamic import support
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { keypress } from "https://deno.land/x/cliffy@v1.0.0-rc.3/keypress/mod.ts";
+import { readLines } from "https://deno.land/std@0.224.0/io/read_lines.ts";
 import { Logger } from "../logger.ts";
 import { Environment } from "../environment.ts";
 import { REPLEvaluator } from "./repl-evaluator.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
 import { formatError, getSuggestion, registerSourceFile } from "../transpiler/error/error-handling.ts";
+import { ImportError, TransformError } from "../transpiler/error/errors.ts";
+import { processImports } from "../imports.ts"; 
+import { parse } from "../transpiler/pipeline/parser.ts";
+import { historyManager } from "./history-manager.ts";
+import { clipboardHandler } from "./clipboard-handler.ts";
 
 interface ReplOptions {
   verbose?: boolean;
@@ -18,12 +24,13 @@ interface ReplOptions {
   showJs?: boolean;
   initialFile?: string;
   useColors?: boolean;
+  pasteMode?: boolean;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Color and Output Utilities
 ───────────────────────────────────────────────────────────────────────────── */
-const colors = {
+export const colors = {
   reset: "\x1b[0m",
   bright: "\x1b[1m",
   dim: "\x1b[2m",
@@ -99,6 +106,8 @@ function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:save${textColor} <filename> - Save history to a file${headerColor}                ║${reset}`,
     `${headerColor}║    ${commandColor}:colors${textColor} - Toggle colorized output${headerColor}                        ║${reset}`,
     `${headerColor}║    ${commandColor}:clear${textColor} - Clear the screen${headerColor}                                ║${reset}`,
+    `${headerColor}║    ${commandColor}:paste${textColor} - Enter paste mode for multi-line input${headerColor}           ║${reset}`,
+    `${headerColor}║    ${commandColor}:modules${textColor} - List imported modules${headerColor}                         ║${reset}`,
     `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
   ];
   banner.forEach(line => console.log(line));
@@ -108,7 +117,13 @@ function printError(msg: string, useColors: boolean): void {
   console.error(useColors ? `${colors.fg.red}${msg}${colors.reset}` : msg);
 }
 
-function getPrompt(multilineMode: boolean, useColors: boolean): string {
+function getPrompt(multilineMode: boolean, pasteMode: boolean, useColors: boolean): string {
+  if (pasteMode) {
+    return useColors 
+      ? `${colors.fg.yellow}paste> ${colors.reset}`
+      : "paste> ";
+  }
+  
   if (useColors) {
     return multilineMode
       ? `${colors.fg.sicpPurple}${colors.bright}... ${colors.reset}`
@@ -124,19 +139,34 @@ interface ReplState {
   multilineMode: boolean;
   multilineInput: string;
   parenBalance: number;
+  pasteMode: boolean;
+  importHandlerActive: boolean;
 }
 
 function resetReplState(state: ReplState): void {
   state.multilineMode = false;
   state.multilineInput = "";
   state.parenBalance = 0;
+  // Don't reset paste mode here, as it should persist until explicitly exited
 }
 
 function updateParenBalance(line: string, currentBalance: number): number {
   let balance = currentBalance;
-  for (const char of line) {
-    if (char === "(") balance++;
-    else if (char === ")") balance--;
+  let inString = false;
+  
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    
+    // Handle string literals to avoid counting parens inside them
+    if (char === '"' && (i === 0 || line[i - 1] !== '\\')) {
+      inString = !inString;
+      continue;
+    }
+    
+    if (!inString) {
+      if (char === "(") balance++;
+      else if (char === ")") balance--;
+    }
   }
   return balance;
 }
@@ -156,11 +186,59 @@ function commandQuit(setRunning: (val: boolean) => void): void {
 function commandEnv(evaluator: REPLEvaluator, useColors: boolean, logger: Logger): void {
   const env = evaluator.getEnvironment();
   console.log(colorText("Environment bindings:", colors.fg.sicpRed + colors.bright, useColors));
-  console.log("Defined symbols:");
-  console.log("----------------");
-  console.log("(Environment symbol information not directly accessible)");
-  console.log("Use JavaScript to inspect variables with (js ...)");
-  console.log("----------------");
+  
+  // Get all defined symbols
+  const symbols = env.getAllDefinedSymbols();
+  
+  if (symbols.length === 0) {
+    console.log("No symbols defined");
+  } else {
+    console.log("Defined symbols:");
+    console.log("----------------");
+    symbols.forEach(symbol => {
+      try {
+        const value = env.lookup(symbol);
+        const valueStr = formatValue(value);
+        console.log(`${symbol} = ${valueStr}`);
+      } catch (error) {
+        console.log(`${symbol} = <error: ${error.message}>`);
+      }
+    });
+    console.log("----------------");
+  }
+}
+
+function formatValue(value: any): string {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+  
+  if (typeof value === 'function') {
+    return value.toString().includes("native code")
+      ? "[Native Function]"
+      : "[Function]";
+  }
+  
+  if (typeof value === 'object') {
+    try {
+      if (Array.isArray(value)) {
+        if (value.length > 5) {
+          return `[Array(${value.length}): ${JSON.stringify(value.slice(0, 5))}...]`;
+        }
+        return JSON.stringify(value);
+      }
+      
+      const stringified = JSON.stringify(value, null, 2);
+      if (stringified.length > 100) {
+        return stringified.substring(0, 100) + "...";
+      }
+      return stringified;
+    } catch (e) {
+      return "[Object]";
+    }
+  }
+  
+  return String(value);
 }
 
 function commandMacros(evaluator: REPLEvaluator, useColors: boolean): void {
@@ -171,9 +249,9 @@ function commandMacros(evaluator: REPLEvaluator, useColors: boolean): void {
   if (environment && "macros" in environment && environment.macros instanceof Map) {
     const macroKeys = Array.from(environment.macros.keys());
     if (macroKeys.length > 0) {
-      for (const macroName of macroKeys) {
+      macroKeys.sort().forEach(macroName => {
         console.log(`- ${macroName}`);
-      }
+      });
     } else {
       console.log("No macros defined");
     }
@@ -181,6 +259,22 @@ function commandMacros(evaluator: REPLEvaluator, useColors: boolean): void {
     console.log("Macro information not available");
   }
   console.log("------------");
+}
+
+function commandModules(evaluator: REPLEvaluator, useColors: boolean): void {
+  console.log(colorText("Imported Modules:", colors.fg.sicpRed + colors.bright, useColors));
+  
+  const modules = evaluator.getImportedModules();
+  if (modules.size === 0) {
+    console.log("No modules imported");
+  } else {
+    console.log("Module names:");
+    console.log("------------");
+    for (const [moduleName, modulePath] of modules.entries()) {
+      console.log(`- ${moduleName} from "${modulePath}"`);
+    }
+    console.log("------------");
+  }
 }
 
 function commandVerbose(logger: Logger, setVerbose: (val: boolean) => void): void {
@@ -213,7 +307,7 @@ async function commandLoad(
   showAst: boolean,
   showExpanded: boolean,
   showJs: boolean,
-  useColors: boolean
+  useColors: boolean,
 ): Promise<void> {
   if (parts.length < 2) {
     console.error("Usage: :load <filename>");
@@ -260,6 +354,16 @@ function commandClear(): void {
   console.clear();
 }
 
+function commandPaste(state: ReplState): void {
+  state.pasteMode = !state.pasteMode;
+  if (state.pasteMode) {
+    console.log("Paste mode enabled. Enter your multi-line code and use Ctrl+D to process it.");
+    console.log("Or type ':end' on a line by itself to finish paste mode.");
+  } else {
+    console.log("Paste mode disabled.");
+  }
+}
+
 function commandReset(evaluator: REPLEvaluator): void {
   console.log("Resetting REPL environment...");
   if (typeof evaluator.resetEnvironment === "function") {
@@ -282,9 +386,19 @@ function commandDefault(cmd: string): void {
 interface ReadLineResult {
   text: string;
   fromHistory: boolean;
+  controlD: boolean; // Used to signal end of paste mode
 }
 
-async function readLineWithHistory(prompt: string, history: string[]): Promise<ReadLineResult> {
+async function readLineWithHistory(
+  prompt: string, 
+  history: string[], 
+  state: ReplState
+): Promise<ReadLineResult> {
+  // If we're in paste mode, use a different input method that supports pasting
+  if (state.pasteMode) {
+    return readPasteInput(prompt);
+  }
+
   const encoder = new TextEncoder();
   await Deno.stdout.write(encoder.encode(prompt));
   let currentInput = "", cursorPos = 0, historyIndex = history.length;
@@ -310,15 +424,42 @@ async function readLineWithHistory(prompt: string, history: string[]): Promise<R
 
   while (true) {
     const key = await keypress();
+    
+    // Check for paste (Ctrl+V on some systems)
+    if ((key?.ctrlKey && key.key === "v") || 
+        (key?.metaKey && key.key === "v")) {
+      try {
+        // Try to get clipboard content using clipboardHandler
+        const clipboardContent = await clipboardHandler.read();
+        if (clipboardContent && clipboardContent.trim()) {
+          // Insert clipboard content at current cursor position
+          currentInput = currentInput.slice(0, cursorPos) + 
+                        clipboardContent + 
+                        currentInput.slice(cursorPos);
+          cursorPos += clipboardContent.length;
+          await redrawLine();
+        }
+      } catch (error) {
+        // Silently fail on clipboard access issues - system might not support it
+      }
+      continue;
+    }
+
     if (key?.ctrlKey && key.key === "c") {
       await Deno.stdout.write(encoder.encode("\nExiting REPL...\n"));
       Deno.exit(0);
+    } else if (key?.ctrlKey && key.key === "d") {
+      // Special handling for Ctrl+D (EOF)
+      if (currentInput.length === 0) {
+        await Deno.stdout.write(encoder.encode("\n"));
+        return { text: "", fromHistory: false, controlD: true };
+      }
     } else if (key?.key === "return") {
       await Deno.stdout.write(encoder.encode("\n"));
       if (currentInput.trim() && (history.length === 0 || history[history.length - 1] !== currentInput)) {
         history.push(currentInput);
       }
-      return { text: currentInput, fromHistory: historyNavigated };
+      return { text: currentInput, fromHistory: historyNavigated, controlD: false };
     } else if (key?.key === "backspace") {
       if (cursorPos > 0) {
         currentInput = currentInput.slice(0, cursorPos - 1) + currentInput.slice(cursorPos);
@@ -423,6 +564,65 @@ async function readLineWithHistory(prompt: string, history: string[]): Promise<R
   }
 }
 
+/**
+ * Read multi-line input in paste mode
+ */
+async function readPasteInput(prompt: string): Promise<ReadLineResult> {
+  const encoder = new TextEncoder();
+  await Deno.stdout.write(encoder.encode(prompt));
+  
+  let inputLines: string[] = [];
+  
+  // Create a BufReader from stdin
+  const reader = readLines(Deno.stdin);
+  
+  for await (const line of reader) {
+    if (line === ':end') {
+      // End paste mode when user types ":end"
+      await Deno.stdout.write(encoder.encode("\n"));
+      break;
+    }
+    
+    // Display the line as it's entered
+    await Deno.stdout.write(encoder.encode(line + "\n"));
+    
+    // Add to our collection
+    inputLines.push(line);
+    
+    // Check if we have a complete expression by counting parentheses
+    let balance = 0;
+    let inString = false;
+    
+    for (const inputLine of inputLines) {
+      for (let i = 0; i < inputLine.length; i++) {
+        const char = inputLine[i];
+        
+        // Handle string literals to avoid counting parens inside them
+        if (char === '"' && (i === 0 || inputLine[i - 1] !== '\\')) {
+          inString = !inString;
+          continue;
+        }
+        
+        if (!inString) {
+          if (char === "(") balance++;
+          else if (char === ")") balance--;
+        }
+      }
+    }
+    
+    // If we reach a balance of 0 and have input, we can process it
+    if (balance === 0 && inputLines.length > 0) {
+      break;
+    }
+  }
+  
+  return { 
+    text: inputLines.join('\n'), 
+    fromHistory: false,
+    controlD: false
+  };
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    REPL Input Processing
    This helper decides whether the input is a command, a multiline continuation,
@@ -454,6 +654,14 @@ async function handleReplLine(
   history: string[],
   options: ProcessOptions
 ): Promise<void> {
+  // Check for end of paste mode via Ctrl+D
+  if (lineResult.controlD && state.pasteMode) {
+    state.pasteMode = false;
+    console.log("Paste mode disabled.");
+    return;
+  }
+  
+  // Process the input text
   state.parenBalance = updateParenBalance(lineResult.text, state.parenBalance);
 
   if (state.multilineMode) {
@@ -461,16 +669,16 @@ async function handleReplLine(
     state.multilineInput += lineResult.fromHistory ? lineResult.text : lineResult.text + "\n";
     if (state.parenBalance <= 0) {
       state.multilineMode = false;
-      await processInput(state.multilineInput, evaluator, history, options);
+      await processInput(state.multilineInput, evaluator, history, options, state);
       resetReplState(state);
     }
   } else if (lineResult.text.startsWith(":")) {
-    await handleCommand(lineResult.text, evaluator, history, options);
+    await handleCommand(lineResult.text, state, evaluator, history, options);
   } else if (state.parenBalance > 0) {
     state.multilineMode = true;
     state.multilineInput = lineResult.text + "\n";
   } else {
-    await processInput(lineResult.text, evaluator, history, options);
+    await processInput(lineResult.text, evaluator, history, options, state);
   }
 }
 
@@ -478,13 +686,35 @@ async function processInput(
   input: string,
   evaluator: REPLEvaluator,
   history: string[],
-  options: ProcessOptions
+  options: ProcessOptions,
+  state: ReplState
 ): Promise<void> {
   const trimmed = input.trim();
   if (trimmed && (history.length === 0 || history[history.length - 1] !== trimmed)) {
     history.push(trimmed);
     if (history.length > options.historySize) history.shift();
   }
+  
+  // Check for special import handling first
+  if (isImportExpression(trimmed)) {
+    // Use the evaluator's direct import processing
+    const result = await evaluator.processImportDirectly(trimmed);
+    
+    if (result.success) {
+      console.log(options.useColors
+        ? `${colors.fg.green}${result.message}${colors.reset}`
+        : result.message);
+    } else {
+      console.error(options.useColors
+        ? `${colors.fg.red}${result.message}${colors.reset}`
+        : result.message);
+    }
+    
+    // Mark that we've processed an import to prevent duplicate attempt in evaluation
+    state.importHandlerActive = true;
+    return;
+  }
+  
   try {
     registerSourceFile("REPL input", input);
     const result = await evaluator.evaluate(input, {
@@ -492,6 +722,9 @@ async function processInput(
       showExpanded: options.showExpanded,
       showJs: options.showJs,
     });
+    
+    // No need to update anything related to imports here
+    
     if (result.value !== undefined) {
       let displayValue = result.value;
       if (options.useColors) {
@@ -530,12 +763,16 @@ async function processInput(
         ? `${colors.fg.lightBlue}undefined${colors.reset}`
         : "undefined");
     }
+    
+    // Display additional information if requested
     if (options.showAst)
       printBlock("AST:", JSON.stringify(result.parsedExpressions, null, 2), options.useColors);
     if (options.showExpanded)
       printBlock("Expanded:", JSON.stringify(result.expandedExpressions, null, 2), options.useColors);
     if (options.showJs)
       printBlock("JavaScript:", result.jsCode, options.useColors);
+    
+    // Track symbol usage if a tracker is provided
     if (options.trackSymbolUsage) {
       const symbolRegex = /\b[a-zA-Z0-9_-]+\b/g;
       let m;
@@ -544,15 +781,38 @@ async function processInput(
       }
     }
   } catch (error) {
+    // Check for import-related errors and handle them specially
+    if ((error instanceof ImportError || 
+         (error instanceof Error && error.message.includes("import")) ||
+         (error.toString().includes("import"))) && 
+        !state.importHandlerActive) {
+      
+      // Try to handle this as a dynamic import if it looks like an import expression
+      if (isImportExpression(trimmed)) {
+        await handleImportExpression(trimmed, options.dynamicImporter, options.useColors);
+        return;
+      }
+    }
+    
+    // Reset import handler flag
+    state.importHandlerActive = false;
+    
+    // Format and display the error
     if (error instanceof Error) {
-      const formattedError = formatError(error, { useColors: options.useColors, filePath: "REPL input" });
+      const formattedError = formatError(error, { 
+        useColors: options.useColors, 
+        filePath: "REPL input" 
+      });
       const suggestion = getSuggestion(error);
       console.error(options.useColors
         ? `${colors.fg.red}${formattedError}${colors.reset}`
         : formattedError);
-      console.error(options.useColors
-        ? `${colors.fg.cyan}Suggestion: ${suggestion}${colors.reset}`
-        : `Suggestion: ${suggestion}`);
+      
+      if (suggestion) {
+        console.error(options.useColors
+          ? `${colors.fg.cyan}Suggestion: ${suggestion}${colors.reset}`
+          : `Suggestion: ${suggestion}`);
+      }
     } else {
       console.error(options.useColors
         ? `${colors.fg.red}Error: ${String(error)}${colors.reset}`
@@ -561,11 +821,41 @@ async function processInput(
   }
 }
 
+/**
+ * Check if an input string looks like an import statement
+ */
+function isImportExpression(input: string): boolean {
+  input = input.trim();
+  
+  // Check for HQL import syntax: (import name from "path")
+  if (input.startsWith('(import ') && input.includes(' from ') && input.endsWith(')')) {
+    return true;
+  }
+  
+  // Check for vector import syntax: (import [a b c] from "path")
+  if (input.startsWith('(import [') && input.includes('] from "') && input.endsWith(')')) {
+    return true;
+  }
+  
+  // Check for simple import: (import "path")
+  if (input.startsWith('(import "') && input.endsWith('")')) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Handle an import expression by using the DynamicImportHandler
+ */
+// This function is no longer needed as we're using evaluator.processImportDirectly
+
 /* ─────────────────────────────────────────────────────────────────────────────
    Command Handling Dispatcher
 ───────────────────────────────────────────────────────────────────────────── */
 async function handleCommand(
   command: string,
+  state: ReplState,
   evaluator: REPLEvaluator,
   history: string[],
   options: ProcessOptions
@@ -588,6 +878,9 @@ async function handleCommand(
     case ":macros":
       commandMacros(evaluator, options.useColors);
       break;
+    case ":modules":
+      commandModules(evaluator, options.useColors);
+      break;
     case ":verbose":
       commandVerbose(options.logger, options.replState.setVerbose);
       break;
@@ -601,7 +894,19 @@ async function handleCommand(
       commandJs(options.showJs, options.replState.setShowJs);
       break;
     case ":load":
-      await commandLoad(parts, evaluator, history, options.logger, options.baseDir, options.historySize, options.showAst, options.showExpanded, options.showJs, options.useColors);
+      await commandLoad(
+        parts, 
+        evaluator, 
+        history, 
+        options.logger, 
+        options.baseDir, 
+        options.historySize, 
+        options.showAst, 
+        options.showExpanded, 
+        options.showJs, 
+        options.useColors,
+        options.dynamicImporter
+      );
       break;
     case ":save":
       await commandSave(parts, history);
@@ -611,6 +916,9 @@ async function handleCommand(
       break;
     case ":clear":
       commandClear();
+      break;
+    case ":paste":
+      commandPaste(state);
       break;
     case ":reset":
       commandReset(evaluator);
@@ -627,11 +935,23 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
   const logger = new Logger(options.verbose ?? false);
   const baseDir = options.baseDir ?? Deno.cwd();
   const historySize = options.historySize ?? 100;
-  const { showAst = false, showExpanded = false, showJs = false, useColors = true } = options;
+  const { 
+    showAst = false, 
+    showExpanded = false, 
+    showJs = false, 
+    useColors = true,
+    pasteMode = false,
+  } = options;
 
   let running = true;
-  const history: string[] = [];
-  const replStateObj: ReplState = { multilineMode: false, multilineInput: "", parenBalance: 0 };
+  const history: string[] = historyManager.load(historySize);
+  const replStateObj: ReplState = { 
+    multilineMode: false, 
+    multilineInput: "", 
+    parenBalance: 0,
+    pasteMode,
+    importHandlerActive: false
+  };
 
   const stateFunctions = {
     setRunning: (val: boolean) => { running = val; },
@@ -648,8 +968,11 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
   logger.log({ text: "Initializing environment...", namespace: "repl" });
 
   try {
+    // Initialize environment
     const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
     await loadSystemMacros(env, { verbose: options.verbose, baseDir: Deno.cwd() });
+    
+    // Create new evaluator
     const evaluator = new REPLEvaluator(env, {
       verbose: options.verbose,
       baseDir,
@@ -657,10 +980,18 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
       showExpanded,
       showJs,
     });
+    
+    // No need for a separate dynamic importer
+    
+    // Log available macros in verbose mode
     if (options.verbose) {
-      logger.log({ text: `Available macros: ${[...env.macros.keys()].join(", ")}`, namespace: "repl" });
+      logger.log({ 
+        text: `Available macros: ${[...env.macros.keys()].join(", ")}`, 
+        namespace: "repl" 
+      });
     }
 
+    // Load initial file if specified
     if (options.initialFile) {
       try {
         await loadAndEvaluateFile(options.initialFile, evaluator, history, {
@@ -679,9 +1010,14 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
 
     while (running) {
       try {
-        const prompt = getPrompt(replStateObj.multilineMode, useColors);
-        const lineResult = await readLineWithHistory(prompt, history);
-        if (!lineResult.text.trim()) continue;
+        const prompt = getPrompt(replStateObj.multilineMode, replStateObj.pasteMode, useColors);
+        const lineResult = await readLineWithHistory(prompt, history, replStateObj);
+        
+        // Save history after each command
+        historyManager.save(history.slice(-historySize));
+        
+        if (!lineResult.text.trim() && !lineResult.controlD) continue;
+        
         await handleReplLine(lineResult, replStateObj, evaluator, history, {
           logger,
           baseDir,
@@ -691,6 +1027,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           showJs,
           useColors,
           trackSymbolUsage,
+
           replState: stateFunctions,
         });
       } catch (error) {
@@ -722,14 +1059,27 @@ async function loadAndEvaluateFile(
   const resolvedPath = path.isAbsolute(filePath)
     ? filePath
     : path.join(options.baseDir, filePath);
+    
   if (!(await exists(resolvedPath))) {
     throw new Error(`File not found: ${resolvedPath}`);
   }
+  
   const fileContent = await Deno.readTextFile(resolvedPath);
+  
   console.log(options.useColors
     ? `${colors.fg.sicpRed}Loading file: ${resolvedPath}${colors.reset}`
     : `Loading file: ${resolvedPath}`);
-  await processInput(fileContent, evaluator, history, options);
+    
+  // Create a temporary state object just for file processing
+  const tempState: ReplState = {
+    multilineMode: false,
+    multilineInput: "",
+    parenBalance: 0,
+    pasteMode: false,
+    importHandlerActive: false
+  };
+    
+  await processInput(fileContent, evaluator, history, options, tempState);
 }
 
 if (import.meta.main) {

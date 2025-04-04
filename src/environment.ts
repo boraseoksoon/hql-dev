@@ -474,4 +474,49 @@ export class Environment {
     this.lookupCache.clear();
     this.logger.debug("Lookup cache cleared");
   }
+
+  // Add these methods to Environment class in src/environment.ts
+
+  /**
+   * Get all defined symbols in the environment
+   */
+  getAllDefinedSymbols(): string[] {
+    // Collect symbols from variables
+    const variableSymbols = Array.from(this.variables.keys());
+    
+    // Collect symbols from imported modules
+    const moduleSymbols: string[] = [];
+    this.moduleExports.forEach((exports, modulePath) => {
+      Object.keys(exports).forEach(key => {
+        moduleSymbols.push(key);
+      });
+    });
+    
+    // Return a unique set of symbols
+    return [...new Set([...variableSymbols, ...moduleSymbols])];
+  }
+
+  /**
+   * Get information about all imported modules
+   */
+  getAllImportedModules(): Map<string, string> {
+    const result = new Map<string, string>();
+    
+    // Collect module names and their sources
+    Array.from(this.moduleExports.entries()).forEach(([path, exports]) => {
+      // Extract module name from path
+      const moduleName = path.split('/').pop()?.replace(/\.[^/.]+$/, '') || path;
+      result.set(moduleName, path);
+    });
+    
+    return result;
+  }
+
+  /**
+   * Get all exported symbols from a specific module
+   */
+  getModuleExports(modulePath: string): string[] {
+    const exports = this.moduleExports.get(modulePath);
+    return exports ? Object.keys(exports) : [];
+  }
 }

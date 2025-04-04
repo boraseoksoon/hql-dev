@@ -1,24 +1,34 @@
+// cli/repl.ts - Entry point for the HQL REPL
+// Uses the enhanced src/repl/repl.ts implementation
+
 import { startRepl } from "../src/repl/repl.ts";
 import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
 import logger from "../src/logger.ts";
 import { resolve } from "../src/platform/platform.ts";
 import { initializeErrorHandling } from "../src/transpiler/error/error-initializer.ts";
 
+/**
+ * Print help information about REPL usage and options
+ */
 function printHelp() {
   console.error("Usage: deno run -A cli/repl.ts [options]");
   console.error("\nOptions:");
-  console.error("  --verbose         Enable verbose logging");
-  console.error("  --quiet           Disable console.log output");
-  console.error("  --log <namespaces> Filter logging to specified namespaces (e.g., --log parser,cli)");
-  console.error("  --history <size>  Set history size (default: 100)");
-  console.error("  --load <file>     Load and evaluate a file on startup");
-  console.error("  --ast             Show AST for expressions by default");
-  console.error("  --expanded        Show expanded forms by default");
-  console.error("  --js              Show JavaScript output by default");
-  console.error("  --no-colors       Disable colored output");
-  console.error("  --help, -h        Display this help message");
+  console.error("  --verbose           Enable verbose logging");
+  console.error("  --quiet             Disable console.log output");
+  console.error("  --log <namespaces>  Filter logging to specified namespaces (e.g., --log parser,cli)");
+  console.error("  --history <size>    Set history size (default: 100)");
+  console.error("  --load <file>       Load and evaluate a file on startup");
+  console.error("  --ast               Show AST for expressions by default");
+  console.error("  --expanded          Show expanded forms by default");
+  console.error("  --js                Show JavaScript output by default");
+  console.error("  --no-colors         Disable colored output");
+  console.error("  --paste-mode        Start in paste mode for easier multi-line input");
+  console.error("  --help, -h          Display this help message");
 }
 
+/**
+ * Main entry point - parse command line args and start the REPL
+ */
 async function run() {
   const args = Deno.args;
 
@@ -33,13 +43,13 @@ async function run() {
 
   // Parse options
   const { verbose, logNamespaces } = setupLoggingOptions(args);
-  
+
   // Set verbose mode
   logger.setEnabled(verbose);
   if (verbose) {
     Deno.env.set("HQL_DEBUG", "1");
   }
-  
+
   // Configure REPL options
   const replOptions: {
     verbose?: boolean;
@@ -50,6 +60,7 @@ async function run() {
     showJs?: boolean;
     initialFile?: string;
     useColors?: boolean;
+    pasteMode?: boolean;
   } = {
     verbose,
     baseDir: Deno.cwd(),
@@ -58,6 +69,7 @@ async function run() {
     showExpanded: args.includes("--expanded"),
     showJs: args.includes("--js"),
     useColors: !args.includes("--no-colors"),
+    pasteMode: args.includes("--paste-mode"),
   };
 
   // Override history size if specified
@@ -78,13 +90,13 @@ async function run() {
       const fileToLoad = resolve(args[loadIndex + 1]);
       replOptions.initialFile = fileToLoad;
     }
-    
+
     // Initialize the error handling system first
-    initializeErrorHandling({ 
+    initializeErrorHandling({
       enableGlobalHandlers: true,
       enableReplEnhancement: true
     });
-    
+
     // Start the REPL with all configured options
     await startRepl(replOptions);
   } catch (error) {
@@ -96,6 +108,7 @@ async function run() {
   }
 }
 
+// Run the main function if this is the entry point
 if (import.meta.main) {
   run();
-} 
+}
