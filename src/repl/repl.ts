@@ -181,11 +181,9 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     });
     
     // Load system macros using the shared implementation
-    // Skip rebuilding examples when in REPL mode
     await loadSystemMacros(env, {
       verbose: options.verbose,
       baseDir: Deno.cwd(),
-      skipRebuild: false,  // Add this option to prevent rebuilding examples
     });
     
     // Create a stateful REPL evaluator
@@ -733,6 +731,27 @@ async function readLineWithHistory(
       await Deno.stdout.write(encoder.encode(`\x1b[${moveLeft}D`));
     }
   };
+
+  // Helper to delete a word backwards
+  const deleteWord = async () => {
+    if (cursorPos > 0) {
+      // Find the start of the current word
+      let newPos = cursorPos - 1;
+      // Skip any whitespace immediately before the cursor
+      while (newPos > 0 && /\s/.test(currentInput[newPos])) {
+        newPos--;
+      }
+      // Skip back to the start of the word
+      while (newPos > 0 && !/\s/.test(currentInput[newPos - 1])) {
+        newPos--;
+      }
+      
+      // Remove the word
+      currentInput = currentInput.slice(0, newPos) + currentInput.slice(cursorPos);
+      cursorPos = newPos;
+      await redrawLine();
+    }
+  };
   
   while (true) {
     const keypressEvent = await keypress();
@@ -811,7 +830,97 @@ async function readLineWithHistory(
       // End - move cursor to end
       cursorPos = currentInput.length;
       await redrawLine();
-    } else if (keypressEvent && keypressEvent.sequence && !keypressEvent.ctrlKey && !keypressEvent.metaKey && !keypressEvent.altKey) {
+    } 
+    // 1. CTRL+W: Delete word before cursor
+    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "w") {
+      await deleteWord();
+    } 
+    // 2. CTRL+E: Move to end of line (rightmost)
+    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "e") {
+      cursorPos = currentInput.length;
+      await redrawLine();
+    } 
+    // 3. CTRL+A or CMD+A: Move to beginning of line (leftmost)
+    else if ((keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "a") || 
+             (keypressEvent && keypressEvent.metaKey && keypressEvent.key === "a")) {
+      cursorPos = 0;
+      await redrawLine();
+    }
+    // 4. CTRL+K: Kill line (delete from cursor to end of line)
+    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "k") {
+      currentInput = currentInput.slice(0, cursorPos);
+      await redrawLine();
+    }
+    // 5. CTRL+U: Delete from cursor to beginning of line
+    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "u") {
+      currentInput = currentInput.slice(cursorPos);
+      cursorPos = 0;
+      await redrawLine();
+    }
+    // 6. CTRL+L: Clear screen but keep the current line
+    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "l") {
+      // Clear screen
+      await Deno.stdout.write(encoder.encode("\x1b[2J\x1b[H"));
+      await redrawLine();
+    }
+    // 7. ALT+B or CTRL+Left: Move backward one word
+    else if ((keypressEvent && keypressEvent.altKey && keypressEvent.key === "b") ||
+             (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "left")) {
+      if (cursorPos > 0) {
+        let newPos = cursorPos - 1;
+        // Skip any whitespace immediately before the cursor
+        while (newPos > 0 && /\s/.test(currentInput[newPos])) {
+          newPos--;
+        }
+        // Skip back to the start of the word
+        while (newPos > 0 && !/\s/.test(currentInput[newPos - 1])) {
+          newPos--;
+        }
+        cursorPos = newPos;
+        await redrawLine();
+      }
+    }
+    // 8. ALT+F or CTRL+Right: Move forward one word
+    else if ((keypressEvent && keypressEvent.altKey && keypressEvent.key === "f") ||
+             (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "right")) {
+      if (cursorPos < currentInput.length) {
+        let newPos = cursorPos;
+        // Skip the rest of the current word
+        while (newPos < currentInput.length && !/\s/.test(currentInput[newPos])) {
+          newPos++;
+        }
+        // Skip any whitespace after the word
+        while (newPos < currentInput.length && /\s/.test(currentInput[newPos])) {
+          newPos++;
+        }
+        cursorPos = newPos;
+        await redrawLine();
+      }
+    }
+    // 9. CTRL+D: Delete character at cursor (like Delete key) or exit if line is empty
+    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "d") {
+      if (currentInput.length === 0) {
+        // Exit REPL if line is empty
+        await Deno.stdout.write(encoder.encode("\nExiting REPL...\n"));
+        Deno.exit(0);
+      } else if (cursorPos < currentInput.length) {
+        // Delete character at cursor
+        currentInput = currentInput.slice(0, cursorPos) + currentInput.slice(cursorPos + 1);
+        await redrawLine();
+      }
+    }
+    // 10. CTRL+T: Transpose characters (swap character before cursor with character at cursor)
+    else if (keypressEvent && keypressEvent.ctrlKey && keypressEvent.key === "t") {
+      if (cursorPos > 0 && cursorPos < currentInput.length) {
+        const beforeChar = currentInput[cursorPos - 1];
+        const atCursorChar = currentInput[cursorPos];
+        currentInput = currentInput.slice(0, cursorPos - 1) + 
+                        atCursorChar + beforeChar + 
+                        currentInput.slice(cursorPos + 1);
+        await redrawLine();
+      }
+    }
+    else if (keypressEvent && keypressEvent.sequence && !keypressEvent.ctrlKey && !keypressEvent.metaKey && !keypressEvent.altKey) {
       // Regular character input
       currentInput = currentInput.slice(0, cursorPos) + keypressEvent.sequence + currentInput.slice(cursorPos);
       cursorPos += keypressEvent.sequence.length;
