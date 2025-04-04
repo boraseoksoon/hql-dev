@@ -2,7 +2,7 @@ import { startRepl } from "../src/s-exp/repl.ts";
 import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
 import logger from "../src/logger.ts";
 import { resolve } from "../src/platform/platform.ts";
-import { initializeErrorHandling } from "../src/error-initializer.ts";
+import { initializeErrorHandling } from "../src/transpiler/error/error-initializer.ts";
 
 function printHelp() {
   console.error("Usage: deno run -A cli/repl.ts [options]");

@@ -3,7 +3,7 @@ import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { HQLNode, isImportNode } from "../transpiler/hql_ast.ts";
 import { Environment } from "../environment.ts";
 import { Logger } from "../logger.ts";
-import { ImportError } from "../transpiler/errors.ts";
+import { ImportError } from "../transpiler/error/errors.ts";
 /**
  * Registry to track import sources and their modules
  * This is used across the codebase to resolve module paths

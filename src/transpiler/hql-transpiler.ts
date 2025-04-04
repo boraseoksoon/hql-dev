@@ -17,15 +17,15 @@ import {
   ParseError,
   TransformError,
   TranspilerError,
-} from "./errors.ts";
+  parseError
+} from "./error/errors.ts";
 import { 
   registerSourceFile, 
   formatError, 
   getSuggestion, 
   withErrorHandling, 
   ErrorUtils
-} from "../error-handling.ts";
-import { enhanceParseError } from "./enhanced-errors.ts";
+} from "./error/error-handling.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
@@ -118,7 +118,7 @@ function parseWithHandling(source: string, logger: Logger) {
   } catch (error: unknown) {
     if (error instanceof ParseError) {
       // Enhance the parse error with source context
-      throw enhanceParseError(error, true);
+      throw parseError(error, true);
     }
     
     if (error instanceof Error) {

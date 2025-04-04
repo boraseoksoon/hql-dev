@@ -6,7 +6,7 @@ import { Logger } from "../logger.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { REPLEvaluator } from "./repl-evaluator.ts";
-import { ErrorUtils, formatError, getSuggestion, registerSourceFile } from "../error-handling.ts";
+import { formatError, getSuggestion, registerSourceFile } from "../transpiler/error/error-handling.ts";
 
 // Import needed for arrow key navigation
 import { keypress } from "https://deno.land/x/cliffy@v1.0.0-rc.3/keypress/mod.ts";

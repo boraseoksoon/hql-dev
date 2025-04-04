@@ -20,7 +20,7 @@ import {
   ImportError,
   MacroError,
   ValidationError,
-} from "../transpiler/errors.ts";
+} from "../transpiler/error/errors.ts";
 import { checkForHqlImports, processHqlImportsInJs } from "../bundler.ts";
 import { registerTempFile } from "../temp-file-tracker.ts";
 import {

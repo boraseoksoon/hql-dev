@@ -1,6 +1,6 @@
 // src/error-reporter.ts - Unified error reporting for HQL
 import { formatError, getSuggestion } from "./error-handling.ts";
-import { Logger } from "./logger.ts";
+import { Logger } from "../../logger.ts";
 
 // Print syntax-highlighted box with text
 export function printErrorBox(text: string, title: string = "Error") {

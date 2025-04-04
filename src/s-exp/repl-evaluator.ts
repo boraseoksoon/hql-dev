@@ -14,8 +14,8 @@ import { RUNTIME_FUNCTIONS } from "../transpiler/runtime.ts";
 import { 
   registerSourceFile, 
   withErrorHandling, 
-  ErrorUtils
-} from "../error-handling.ts";
+  withTypeScriptErrorTranslation
+} from "../transpiler/error/error-handling.ts";
 
 // Options for REPL evaluation
 export interface REPLEvalOptions {
@@ -217,7 +217,7 @@ export class REPLEvaluator {
       
       log("Transforming to JavaScript...");
       currentTime = performance.now();
-      const jsCode = await ErrorUtils.withTypeScriptErrorTranslation(
+      const jsCode = await withTypeScriptErrorTranslation(
         withErrorHandling(
           () => transformAST(hqlAst, options.baseDir || this.baseDir, { 
             verbose: options.verbose,

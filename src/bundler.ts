@@ -16,8 +16,8 @@ import {
   createErrorReport,
   TranspilerError,
   ValidationError,
-} from "./transpiler/errors.ts";
-import { performAsync } from "./transpiler/error-utils.ts";
+} from "./transpiler/error/errors.ts";
+import { performAsync } from "./transpiler/error/error-utils.ts";
 import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash } from "./utils.ts";
 import { registerTempFile } from "./temp-file-tracker.ts";
 

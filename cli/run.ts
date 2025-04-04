@@ -11,9 +11,9 @@ import {
   getSuggestion,
   ErrorUtils,
   withErrorHandling
-} from "../src/error-handling.ts";
-import { initializeErrorHandling } from "../src/error-initializer.ts";
-import { reportError } from "../src/error-reporter.ts";
+} from "../src/transpiler/error/error-handling.ts";
+import { initializeErrorHandling } from "../src/transpiler/error/error-initializer.ts";
+import { reportError } from "../src/transpiler/error/error-reporter.ts";
 
 function printHelp() {
   // Unchanged

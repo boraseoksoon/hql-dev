@@ -3,10 +3,10 @@
 
 import * as IR from "../hql_ir.ts";
 import { ListNode, SymbolNode } from "../hql_ast.ts";
-import { ValidationError, TransformError } from "../errors.ts";
+import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../utils.ts";
 import { Logger } from "../../logger.ts";
-import { perform } from "../error-utils.ts";
+import { perform } from "../error/error-utils.ts";
 import * as ts from "npm:typescript";
 
 // Initialize logger

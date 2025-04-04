@@ -5,7 +5,7 @@ import {
   MacroError,
   TranspilerError,
   ValidationError,
-} from "./transpiler/errors.ts";
+} from "./transpiler/error/errors.ts";
 import { LRUCache } from "./utils/lru-cache.ts";
 
 export type Value =

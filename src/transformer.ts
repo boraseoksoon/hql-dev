@@ -20,7 +20,7 @@ import {
   createErrorReport,
   TransformError,
   TranspilerError,
-} from "./transpiler/errors.ts";
+} from "./transpiler/error/errors.ts";
 
 /**
  * Options for code transformation.

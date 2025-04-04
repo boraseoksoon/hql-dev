@@ -16,9 +16,9 @@ import { isValidType } from "./purity.ts";
 import { sanitizeIdentifier } from "../utils.ts";
 import { Environment } from "../environment.ts";
 import * as path from "../platform/platform.ts";
-import { TransformError, ValidationError } from "./errors.ts";
+import { TransformError, ValidationError } from "./error/errors.ts";
 import { Logger } from "../logger.ts";
-import { perform } from "./error-utils.ts";
+import { perform } from "./error/error-utils.ts";
 import { isUserLevelMacro, macroCache } from "../s-exp/macro.ts";
 import {
   isNamespaceImport,

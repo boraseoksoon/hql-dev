@@ -2,9 +2,9 @@
 import * as ts from "npm:typescript";
 import * as IR from "./hql_ir.ts";
 import { convertIRNode } from "./hql-ir-to-ts-ast.ts";
-import { CodeGenError, createErrorReport } from "./errors.ts";
+import { CodeGenError, createErrorReport } from "./error/errors.ts";
 import { Logger } from "../logger.ts";
-import { perform } from "./error-utils.ts";
+import { perform } from "./error/error-utils.ts";
 
 // Initialize logger
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
