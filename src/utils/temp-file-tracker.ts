@@ -1,4 +1,4 @@
-import { Logger } from "./logger.ts";
+import { Logger } from "../logger.ts";
 
 const tempFilesRegistry = new Set<string>();
 const exceptionFilesRegistry = new Set<string>();

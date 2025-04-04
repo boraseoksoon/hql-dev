@@ -1,9 +1,9 @@
 import * as ts from "npm:typescript";
-import * as IR from "./hql_ir.ts";
-import * as enumHandler from "./syntax/enum.ts";
-import { sanitizeIdentifier } from "../utils.ts";
-import { CodeGenError } from "./error/errors.ts";
-import { Logger } from "../logger.ts";
+import * as IR from "../type/hql_ir.ts";
+import * as enumHandler from "../syntax/enum.ts";
+import { sanitizeIdentifier } from "../../utils/utils.ts";
+import { CodeGenError } from "../error/errors.ts";
+import { Logger } from "../../logger.ts";
 
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 

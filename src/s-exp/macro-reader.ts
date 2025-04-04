@@ -14,7 +14,7 @@ import {
   ListNode,
   LiteralNode,
   SymbolNode,
-} from "../transpiler/hql_ast.ts";
+} from "../transpiler/type/hql_ast.ts";
 import { Logger } from "../logger.ts";
 
 /**

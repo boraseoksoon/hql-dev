@@ -1,7 +1,5 @@
 // src/utils.ts - Refactored
 
-import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-
 const REMOTE_PATH_PREFIXES = new Set(["npm:", "jsr:", "http:", "https:"]);
 
 /**

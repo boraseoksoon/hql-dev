@@ -1,10 +1,10 @@
 // src/transpiler/ts-ast-to-ts-code.ts - Refactored with perform and performAsync utilities
 import * as ts from "npm:typescript";
-import * as IR from "./hql_ir.ts";
-import { convertIRNode } from "./hql-ir-to-ts-ast.ts";
-import { CodeGenError, createErrorReport } from "./error/errors.ts";
-import { Logger } from "../logger.ts";
-import { perform } from "./error/error-utils.ts";
+import * as IR from "../type/hql_ir.ts";
+import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
+import { CodeGenError, createErrorReport } from "../error/errors.ts";
+import { Logger } from "../../logger.ts";
+import { perform } from "../error/error-utils.ts";
 
 // Initialize logger
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");

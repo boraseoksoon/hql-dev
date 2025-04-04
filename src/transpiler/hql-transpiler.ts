@@ -1,14 +1,14 @@
 // src/transpiler/hql-transpiler.ts - Refactored
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { sexpToString } from "../s-exp/types.ts";
-import { parse } from "./parser.ts";
+import { parse } from "./pipeline/parser.ts";
 import { Environment } from "../environment.ts";
 import { expandMacros } from "../s-exp/macro.ts";
 import { processImports } from "../imports.ts";
 import { convertToHqlAst } from "../s-exp/macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
-import { transformSyntax } from "./syntax-transformer.ts";
+import { transformSyntax } from "./pipeline/syntax-transformer.ts";
 import { getSystemMacroPaths } from "../s-exp/system-macros.ts";
 import {
   ImportError,

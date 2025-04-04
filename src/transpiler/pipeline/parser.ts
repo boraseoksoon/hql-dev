@@ -1,4 +1,4 @@
-// src/s-exp/parser.ts - Clean implementation focused on chain method invocation
+// src/transpiler/pipeline/parser.ts - Clean implementation focused on chain method invocation
 
 import {
   createList,
@@ -8,9 +8,9 @@ import {
   SExp,
   SList,
   SSymbol
-} from "../s-exp/types.ts";
-import { ParseError } from "./error/errors.ts";
-import { perform } from "./error/error-utils.ts";
+} from "../../s-exp/types.ts";
+import { ParseError } from "../error/errors.ts";
+import { perform } from "../error/error-utils.ts";
 
 enum TokenType {
   LeftParen,

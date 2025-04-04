@@ -4,7 +4,7 @@ import { transpileCLI } from "../src/bundler.ts";
 import {
   cleanupAllTempFiles,
   registerExceptionTempFile,
-} from "../src/temp-file-tracker.ts";
+} from "../src/utils/temp-file-tracker.ts";
 import { Logger } from "../src/logger.ts";
 import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
 // New imports for enhanced error handling

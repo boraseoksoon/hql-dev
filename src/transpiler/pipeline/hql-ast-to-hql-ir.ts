@@ -2,29 +2,28 @@
 // src/transpiler/hql-ast-to-hql-ir.ts - Updated to handle enums
 ////////////////////////////////////////////////////////////////////////////////
 
-import * as IR from "./hql_ir.ts";
-import * as enumHandler from "./syntax/enum.ts";
-import { HQLNode, ListNode, LiteralNode, SymbolNode } from "./hql_ast.ts";
-import { registerPureFunction, verifyFunctionPurity } from "./purity.ts";
+import * as IR from "../type/hql_ir.ts";
+import * as enumHandler from "../syntax/enum.ts";
+import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../type/hql_ast.ts";
+import { registerPureFunction, verifyFunctionPurity, isValidType } from "../fx/purity.ts";
 import {
   KERNEL_PRIMITIVES,
   PRIMITIVE_CLASS,
   PRIMITIVE_DATA_STRUCTURE,
   PRIMITIVE_OPS,
-} from "./primitives.ts";
-import { isValidType } from "./purity.ts";
-import { sanitizeIdentifier } from "../utils.ts";
-import { Environment } from "../environment.ts";
-import * as path from "../platform/platform.ts";
-import { TransformError, ValidationError } from "./error/errors.ts";
-import { Logger } from "../logger.ts";
-import { perform } from "./error/error-utils.ts";
-import { isUserLevelMacro, macroCache } from "../s-exp/macro.ts";
+} from "../keyword/primitives.ts";
+import { sanitizeIdentifier } from "../../utils/utils.ts";
+import { Environment } from "../../environment.ts";
+import * as path from "../../platform/platform.ts";
+import { TransformError, ValidationError } from "../error/errors.ts";
+import { Logger } from "../../logger.ts";
+import { perform } from "../error/error-utils.ts";
+import { isUserLevelMacro, macroCache } from "../../s-exp/macro.ts";
 import {
   isNamespaceImport,
   isVectorExport,
   isVectorImport,
-} from "./hql_ast.ts";
+} from "../type/hql_ast.ts";
 
 // Initialize logger for this module
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");

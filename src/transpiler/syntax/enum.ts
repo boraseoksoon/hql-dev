@@ -1,10 +1,10 @@
 // src/transpiler/enum-handler.ts
 // A unified module for handling enum operations across the transpiler
 
-import * as IR from "../hql_ir.ts";
-import { ListNode, SymbolNode } from "../hql_ast.ts";
+import * as IR from "../type/hql_ir.ts";
+import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
-import { sanitizeIdentifier } from "../../utils.ts";
+import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { Logger } from "../../logger.ts";
 import { perform } from "../error/error-utils.ts";
 import * as ts from "npm:typescript";

@@ -11,10 +11,10 @@ import {
   createStageErrorHandler
 } from "./error-handling.ts";
 import { Logger } from "../../logger.ts";
-import { parse } from "../parser.ts";
-import { transformSyntax } from "../syntax-transformer.ts";
-import { transformToIR } from "../hql-ast-to-hql-ir.ts";
-import { generateTypeScript } from "../ts-ast-to-ts-code.ts";
+import { parse } from "../pipeline/parser.ts";
+import { transformSyntax } from "../pipeline/syntax-transformer.ts";
+import { transformToIR } from "../pipeline/hql-ast-to-hql-ir.ts";
+import { generateTypeScript } from "../pipeline/ts-ast-to-ts-code.ts";
 import { transformAST } from "../../transformer.ts";
 import { processHql } from "../hql-transpiler.ts";
 

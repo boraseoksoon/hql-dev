@@ -1,8 +1,8 @@
 // src/transpiler/purity.ts
 
-import { HQLNode, ListNode, SymbolNode } from "./hql_ast.ts";
-import { ValidationError } from "./error/errors.ts";
-import { Logger } from "../logger.ts";
+import { HQLNode, ListNode, SymbolNode } from "../type/hql_ast.ts";
+import { ValidationError } from "../error/errors.ts";
+import { Logger } from "../../logger.ts";
 
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 

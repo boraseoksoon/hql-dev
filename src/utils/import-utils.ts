@@ -1,6 +1,6 @@
 // src/utils/import-utils.ts - Centralized import utilities to improve code organization
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { HQLNode, isImportNode } from "../transpiler/hql_ast.ts";
+import { HQLNode, isImportNode } from "../transpiler/type/hql_ast.ts";
 import { Environment } from "../environment.ts";
 import { Logger } from "../logger.ts";
 import { ImportError } from "../transpiler/error/errors.ts";

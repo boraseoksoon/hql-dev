@@ -1,13 +1,13 @@
 // src/transformer.ts - Prevents duplicate import errors
 
-import { transformToIR } from "./transpiler/hql-ast-to-hql-ir.ts";
-import { generateTypeScript } from "./transpiler/ts-ast-to-ts-code.ts";
+import { transformToIR } from "./transpiler/pipeline/hql-ast-to-hql-ir.ts";
+import { generateTypeScript } from "./transpiler/pipeline/ts-ast-to-ts-code.ts";
 import { expandMacros } from "./s-exp/macro.ts";
 import { Logger } from "./logger.ts";
 import { Environment } from "./environment.ts";
-import { RUNTIME_FUNCTIONS } from "./transpiler/runtime.ts";
-import { isImportNode } from "./transpiler/hql_ast.ts";
-import { HQLNode } from "./transpiler/hql_ast.ts";
+import { RUNTIME_FUNCTIONS } from "./transpiler/runtime/runtime.ts";
+import { isImportNode } from "./transpiler/type/hql_ast.ts";
+import { HQLNode } from "./transpiler/type/hql_ast.ts";
 import {
   extractImportInfo,
   findExistingImports,

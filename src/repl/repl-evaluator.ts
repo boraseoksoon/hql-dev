@@ -1,7 +1,7 @@
 // src/s-exp/repl-evaluator.ts - Evaluator for the REPL that maintains state
 
-import { parse } from "../transpiler/parser.ts";
-import { transformSyntax } from "../transpiler/syntax-transformer.ts";
+import { parse } from "../transpiler/pipeline/parser.ts";
+import { transformSyntax } from "../transpiler/pipeline/syntax-transformer.ts";
 import { expandMacros } from "../s-exp/macro.ts";
 import { processImports } from "../imports.ts";
 import { convertToHqlAst } from "../s-exp/macro-reader.ts";
@@ -10,7 +10,7 @@ import { Logger } from "../logger.ts";
 import { REPLEnvironment } from "./repl-environment.ts";
 import { Environment, Value } from "../environment.ts";
 import { SExp } from "../s-exp/types.ts";
-import { RUNTIME_FUNCTIONS } from "../transpiler/runtime.ts";
+import { RUNTIME_FUNCTIONS } from "../transpiler/runtime/runtime.ts";
 import { 
   registerSourceFile, 
   withErrorHandling, 

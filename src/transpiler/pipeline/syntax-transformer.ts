@@ -11,11 +11,11 @@ import {
   SExp,
   SList,
   SSymbol,
-} from "../s-exp/types.ts";
-import * as enumHandler from "./syntax/enum.ts";
-import { Logger } from "../logger.ts";
-import { TransformError } from "../transpiler/error/errors.ts";
-import { perform } from "../transpiler/error/error-utils.ts";
+} from "../../s-exp/types.ts";
+import * as enumHandler from "../syntax/enum.ts";
+import { Logger } from "../../logger.ts";
+import { TransformError } from "../../transpiler/error/errors.ts";
+import { perform } from "../../transpiler/error/error-utils.ts";
 
 /**
  * Options for syntax transformation

@@ -14,7 +14,7 @@ import {
 } from "./s-exp/types.ts";
 import { Environment, Value } from "./environment.ts";
 import { defineUserMacro, evaluateForMacro } from "./s-exp/macro.ts";
-import { parse } from "./transpiler/parser.ts";
+import { parse } from "./transpiler/pipeline/parser.ts";
 import { Logger } from "./logger.ts";
 import {
   ImportError,
@@ -22,7 +22,7 @@ import {
   ValidationError,
 } from "./transpiler/error/errors.ts";
 import { checkForHqlImports, processHqlImportsInJs } from "./bundler.ts";
-import { registerTempFile } from "./temp-file-tracker.ts";
+import { registerTempFile } from "./utils/temp-file-tracker.ts";
 import {
   isHqlFile,
   isJavaScriptModule,
