@@ -188,6 +188,9 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     if (!this.initialized) return;
     
     try {
+      // Preserve original formatting and indentation
+      const originalSource = input.trim();
+      
       // Get the REPL environment to access definitions
       const replEnv = this.getREPLEnvironment();
       
@@ -214,7 +217,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
         }
         
         // Store the definition with both source code and JS output
-        this.storeDefinition(symbol, value, input, generatedJs, type);
+        this.storeDefinition(symbol, value, originalSource, generatedJs, type);
         this.moduleLogger.debug(`Tracked ${type} definition: ${symbol}`);
       }
     } catch (error: unknown) {

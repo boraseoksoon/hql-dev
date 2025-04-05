@@ -83,6 +83,7 @@ function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:list${textColor} - Show symbols in current module${headerColor}                   ║${reset}`,
     `${headerColor}║    ${commandColor}:see${textColor} - Inspect modules and symbols${headerColor}                       ║${reset}`,
     `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
+    `${headerColor}║    ${commandColor}:edit${textColor} - Open a text editor for multiline code${headerColor}            ║${reset}`,
     `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript transpiled code display${headerColor}          ║${reset}`,
     `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
   ];
@@ -330,6 +331,7 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
   }
   
   const argText = args.trim();
+  const availableModules = evaluator.getAvailableModules();
   
   // Handle special "all" cases (previously handled by :reset)
   if (argText === "all") {
@@ -395,6 +397,20 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
       return;
     }
     
+    // Validate module exists before asking for confirmation
+    if (!availableModules.includes(moduleName)) {
+      console.error(`Module '${moduleName}' does not exist.`);
+      console.log(`Use :modules to see a list of available modules.`);
+      return;
+    }
+    
+    if (moduleName === "user") {
+      console.error("The default 'user' module cannot be removed.");
+      console.log("The 'user' module is the default module that exists when the REPL starts.");
+      console.log("You can remove individual symbols from it using :remove <symbol>");
+      return;
+    }
+    
     await confirmAndExecute(
       `Remove module '${moduleName}'? This will delete all symbols in this module.`,
       () => {
@@ -410,7 +426,6 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
           }
         } else {
           console.error(`Failed to remove module '${moduleName}'. It may not exist or cannot be removed.`);
-          console.log("Note: The default 'user' module cannot be removed.");
         }
       },
       useColors
@@ -421,6 +436,17 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
   // Check for module:symbol syntax
   if (argText.includes(":")) {
     const [moduleName, symbolName] = argText.split(":");
+    
+    // Validate module exists before asking for confirmation
+    if (!availableModules.includes(moduleName)) {
+      console.error(`Module '${moduleName}' does not exist.`);
+      if (moduleName === "all") {
+        console.log(`If you meant to remove all modules, use :remove all:modules`);
+        console.log(`If you meant to remove all symbols, use :remove all:symbols`);
+      }
+      console.log(`Use :modules to see a list of available modules.`);
+      return;
+    }
     
     if (!symbolName) {
       console.error("No symbol specified. Use :remove module:symbol");
@@ -444,8 +470,38 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
     return;
   }
   
-  // If we get here, it's removing a symbol from the current module
+  // If we get here, it's a symbol name
   const symbolName = argText;
+  
+  // Check if the symbol name matches a module name - this is likely a mistake
+  if (availableModules.includes(symbolName)) {
+    // Special case for user module when trying to remove with `:remove user`
+    if (symbolName === "user") {
+      console.error(`Error: The default 'user' module cannot be removed.`);
+      console.log(`The 'user' module is the fundamental module that exists when the REPL starts.`);
+      console.log(`You can remove individual symbols from the user module with :remove <symbol-name>`);
+      console.log(`You can use :remove all to reset all modules including user to a clean state.`);
+      return;
+    }
+    
+    console.error(`'${symbolName}' is a module name, not a symbol.`);
+    console.log(`To remove a module, use :remove module:${symbolName}`);
+    return;
+  }
+  
+  // Check if symbol exists in current module before prompting
+  const currentModule = evaluator.getCurrentModule();
+  const moduleSymbols = evaluator.listModuleSymbols(currentModule);
+  if (!moduleSymbols.includes(symbolName)) {
+    console.error(`Symbol '${symbolName}' not found in module '${currentModule}'.`);
+    
+    // If it looks like they're trying to remove a module, offer guidance
+    if (symbolName !== "user" && availableModules.some(m => m.includes(symbolName) || symbolName.includes(m))) {
+      console.log(`If you're trying to remove a module, use :remove module:${symbolName}`);
+    }
+    
+    return;
+  }
   
   await confirmAndExecute(
     `Remove symbol '${symbolName}' from current module '${evaluator.getCurrentModule()}'?`,
@@ -517,6 +573,92 @@ function commandJs(showJs: boolean, setShowJs: (val: boolean) => void): void {
   } else {
     console.log("JavaScript transpiled code display is now disabled.");
   }
+}
+
+// Helper to format source code with proper indentation
+function formatSourceCode(source: string): string {
+  if (!source) return source;
+  
+  // Convert literal \n to actual newlines if present
+  let processedSource = source;
+  if (source.includes('\\n')) {
+    // Replace escaped newlines with actual newlines
+    processedSource = source.replace(/\\n/g, '\n');
+    
+    // If there are escaped quotes, handle those too
+    processedSource = processedSource.replace(/\\"/g, '"');
+    
+    // If the string is enclosed in quotes, remove them
+    if ((processedSource.startsWith('"') && processedSource.endsWith('"')) ||
+        (processedSource.startsWith("'") && processedSource.endsWith("'"))) {
+      processedSource = processedSource.substring(1, processedSource.length - 1);
+    }
+    
+    // Return the processed source with correct formatting
+    return processedSource;
+  }
+  
+  // If it's a one-liner with no newlines but has parentheses, try to format it
+  if (!processedSource.includes('\n') && (processedSource.includes('(') || processedSource.includes(')'))) {
+    let formatted = '';
+    let indent = 0;
+    let inString = false;
+    
+    for (let i = 0; i < processedSource.length; i++) {
+      const char = processedSource[i];
+      
+      // Handle string literals to avoid formatting inside them
+      if (char === '"' && (i === 0 || processedSource[i - 1] !== '\\')) {
+        inString = !inString;
+        formatted += char;
+        continue;
+      }
+      
+      if (!inString) {
+        if (char === '(') {
+          formatted += char;
+          indent += 2;
+          // Add newline and indentation after opening paren if not followed by another paren
+          if (i + 1 < processedSource.length && processedSource[i + 1] !== '(' && processedSource[i + 1] !== ')') {
+            formatted += '\n' + ' '.repeat(indent);
+          }
+        } else if (char === ')') {
+          indent = Math.max(0, indent - 2);
+          // Add newline before closing paren if not following another paren
+          if (i > 0 && processedSource[i - 1] !== '(' && processedSource[i - 1] !== ')') {
+            formatted += '\n' + ' '.repeat(indent);
+          }
+          formatted += char;
+        } else if (char === ' ' && 
+                  (i > 0 && processedSource[i - 1] === '(')) {
+          // Skip extra space after opening paren
+          continue;
+        } else if (char === ' ' && 
+                  (i + 1 < processedSource.length && processedSource[i + 1] === ')')) {
+          // Skip extra space before closing paren
+          continue;
+        } else {
+          // For normal characters, check if we need a newline
+          if (char === ' ' && i > 0 && 
+              processedSource[i - 1] !== ' ' && processedSource[i - 1] !== '(' && 
+              !inString) {
+            // Add newline after a form
+            formatted += '\n' + ' '.repeat(indent) + char;
+          } else {
+            formatted += char;
+          }
+        }
+      } else {
+        // Inside string, just add the character
+        formatted += char;
+      }
+    }
+    
+    return formatted;
+  }
+  
+  // If it already has newlines, don't mess with it
+  return processedSource;
 }
 
 // New command to show symbol definitions
@@ -630,7 +772,7 @@ function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColors: bo
     // Display the source code - prefer HQL source over JS
     if (definition.source) {
       console.log(colorText("HQL Source:", colors.fg.sicpGreen, useColors));
-      console.log(definition.source);
+      console.log(formatSourceCode(definition.source));
     }
     
     // Only show the JS source if specifically enabled
@@ -681,7 +823,7 @@ function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColors: bo
       // Display the source code - prefer HQL source over JS
       if (definition.source) {
         console.log(colorText("HQL Source:", colors.fg.sicpGreen, useColors));
-        console.log(definition.source);
+        console.log(formatSourceCode(definition.source));
       }
       
       // Only show the JS source if specifically enabled
@@ -797,6 +939,7 @@ interface ReadLineResult {
   text: string;
   fromHistory: boolean;
   controlD: boolean;
+  indent?: string;
 }
 
 async function readLineWithHistory(
@@ -827,6 +970,31 @@ async function readLineWithHistory(
     }
   };
 
+  // Calculate appropriate indentation for next line
+  const getIndentation = (): string => {
+    if (!state.multilineMode) return "";
+    
+    const lastLine = state.multilineInput.split("\n").pop() || "";
+    
+    // Extract current indentation level
+    const currentIndent = lastLine.match(/^(\s*)/)?.[1] || "";
+    
+    // Check if we need additional indentation for a new block
+    const shouldIndentMore = (
+      lastLine.trim().endsWith("(") || 
+      lastLine.includes("(let ") || 
+      lastLine.includes("(fn ") || 
+      lastLine.includes("(defn ") || 
+      lastLine.includes("(if ") ||
+      lastLine.includes("(when ") ||
+      lastLine.includes("(do ")
+    );
+    
+    return shouldIndentMore 
+      ? currentIndent + "  " // Add two spaces for deeper nesting
+      : currentIndent;       // Maintain current indentation
+  };
+
   while (true) {
     const key = await keypress();
 
@@ -841,14 +1009,33 @@ async function readLineWithHistory(
       }
     } else if (key?.key === "return") {
       await Deno.stdout.write(encoder.encode("\n"));
+      
+      // If in multiline mode and Enter is pressed, auto-indent the next line
+      if (state.multilineMode) {
+        // Return current input plus automatic indentation for continuation
+        const indent = getIndentation();
+        if (currentInput.trim() && (history.length === 0 || history[history.length - 1] !== currentInput)) {
+          // Only add non-empty lines to history
+          history.push(currentInput);
+        }
+        return { text: currentInput, fromHistory: historyNavigated, controlD: false, indent };
+      }
+      
       if (currentInput.trim() && (history.length === 0 || history[history.length - 1] !== currentInput)) {
         history.push(currentInput);
       }
       return { text: currentInput, fromHistory: historyNavigated, controlD: false };
     } else if (key?.key === "backspace") {
       if (cursorPos > 0) {
-        currentInput = currentInput.slice(0, cursorPos - 1) + currentInput.slice(cursorPos);
-        cursorPos--;
+        // Handle backspace at start of indentation specially
+        if (state.multilineMode && cursorPos <= 2 && /^\s{1,2}$/.test(currentInput.slice(0, cursorPos))) {
+          // If it's just indentation, remove it all at once
+          currentInput = currentInput.slice(cursorPos);
+          cursorPos = 0;
+        } else {
+          currentInput = currentInput.slice(0, cursorPos - 1) + currentInput.slice(cursorPos);
+          cursorPos--;
+        }
         await redrawLine();
       }
     } else if (key?.key === "delete") {
@@ -883,8 +1070,16 @@ async function readLineWithHistory(
         await redrawLine();
       }
     } else if (key?.key === "tab") {
-      currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
-      cursorPos += 2;
+      // Smarter tab handling - insert spaces at beginning of line or simply insert 2 spaces
+      if (cursorPos === 0 || /^\s*$/.test(currentInput.slice(0, cursorPos))) {
+        // At beginning of line or only whitespace before cursor, insert 2 spaces
+        currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
+        cursorPos += 2;
+      } else {
+        // In the middle of code, just insert 2 spaces
+        currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
+        cursorPos += 2;
+      }
       await redrawLine();
     } else if (key?.key === "home") {
       cursorPos = 0;
@@ -970,8 +1165,15 @@ async function handleReplLine(
   state.parenBalance = updateParenBalance(lineResult.text, state.parenBalance);
 
   if (state.multilineMode) {
-    // If coming from history navigation, do not add an extra newline.
-    state.multilineInput += lineResult.fromHistory ? lineResult.text : lineResult.text + "\n";
+    // Apply indentation if provided
+    const lineToAdd = lineResult.indent && !lineResult.fromHistory
+      ? lineResult.indent + lineResult.text
+      : lineResult.text;
+      
+    // Append the line to multiline input
+    state.multilineInput += lineResult.fromHistory ? lineToAdd : lineToAdd + "\n";
+    
+    // Check if we're done with multiline input
     if (state.parenBalance <= 0) {
       state.multilineMode = false;
       await processInput(state.multilineInput, evaluator, history, options, state);
@@ -1321,6 +1523,9 @@ async function handleCommand(
     case "remove":
       await commandRemove(evaluator, args, options.useColors, state);
       break;
+    case "edit":
+      await commandEdit(evaluator, args, options, state);
+      break;
     default:
       if (cmd === "js") {
         commandJs(options.showJs, options.replState.setShowJs);
@@ -1595,8 +1800,12 @@ function getDetailedHelp(command: string, useColors: boolean): string {
       `  ${exampleColor}:remove all${textColor} - Reset the entire environment${reset}`,
       ``,
       `${headerColor}Notes:${reset}`,
-      `  - All operations require confirmation (type 'y' or 'yes')${reset}`,
+      `  - The command validates that modules and symbols exist before asking for confirmation${reset}`,
+      `  - The ${commandColor}module:${textColor} prefix is required when removing a module to prevent ambiguity${reset}`,
+      `    If you had both a module named "math" and a symbol named "math", ${commandColor}:remove math${reset}`,
+      `    would be ambiguous without the prefix.${reset}`,
       `  - The default "user" module cannot be removed${reset}`,
+      `  - All operations require confirmation (type 'y' or 'yes')${reset}`,
       `  - These operations cannot be undone${reset}`
     ],
     
@@ -1612,6 +1821,26 @@ function getDetailedHelp(command: string, useColors: boolean): string {
       `${headerColor}Notes:${reset}`,
       `  - This only affects the display, not the execution of code`,
       `  - When enabled, symbol definitions shown with :see will include JS code`
+    ],
+    
+    "edit": [
+      `${headerColor}Command: ${commandColor}:edit${reset}`,
+      ``,
+      `${textColor}Open a text editor for writing multiline HQL code.${reset}`,
+      `${textColor}This provides a comfortable environment for writing complex code.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:edit${textColor} - Open an editor with a blank file${reset}`,
+      `  ${commandColor}:edit <symbol>${textColor} - Edit an existing function or variable${reset}`,
+      ``,
+      `${headerColor}Examples:${reset}`,
+      `  ${exampleColor}:edit${textColor} - Open the editor for writing new code${reset}`,
+      `  ${exampleColor}:edit factorial${textColor} - Edit the existing 'factorial' function${reset}`,
+      ``,
+      `${headerColor}Notes:${reset}`,
+      `  - Uses your EDITOR or VISUAL environment variable (defaults to vi)${reset}`,
+      `  - The code will be evaluated when you exit the editor${reset}`,
+      `  - Lines starting with semicolons (;) are treated as comments${reset}`
     ]
   };
   
@@ -1627,4 +1856,114 @@ function getDetailedHelp(command: string, useColors: boolean): string {
   }
   
   return helpTopics[command].join('\n');
+}
+
+// Helper function to get the user's preferred editor
+function getPreferredEditor(): string {
+  return Deno.env.get("EDITOR") || Deno.env.get("VISUAL") || "vi";
+}
+
+// Command to open a temporary file for multiline editing
+async function commandEdit(evaluator: ModuleAwareEvaluator, args: string, options: ProcessOptions, state: ReplState): Promise<void> {
+  const tempDir = await Deno.makeTempDir({ prefix: "hql-repl-" });
+  const tempFile = `${tempDir}/temp-edit.hql`;
+  
+  // Initial content for the file - either existing code or a template
+  let initialContent = "";
+  
+  if (args.trim()) {
+    // If a symbol name is provided, try to get its source
+    try {
+      const symbolName = args.trim();
+      const definition = evaluator.getSymbolDefinition(symbolName);
+      
+      if (definition && definition.source) {
+        // Use the source code if available
+        initialContent = definition.source;
+        
+        // Handle escaped newlines
+        if (initialContent.includes("\\n")) {
+          initialContent = initialContent.replace(/\\n/g, "\n");
+          // Remove surrounding quotes if present
+          if ((initialContent.startsWith('"') && initialContent.endsWith('"')) ||
+              (initialContent.startsWith("'") && initialContent.endsWith("'"))) {
+            initialContent = initialContent.substring(1, initialContent.length - 1);
+          }
+        }
+      } else {
+        console.log(`No source found for symbol '${symbolName}'. Starting with an empty editor.`);
+      }
+    } catch (error) {
+      console.error(`Error loading source: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } else if (state.multilineMode) {
+    // If we're in multiline mode, use the current multiline content
+    initialContent = state.multilineInput;
+  }
+  
+  // Add a helpful comment header
+  const header = `; HQL REPL Editor
+; Write your code below and save+exit when done.
+; Your code will be evaluated when you return to the REPL.
+;
+; Current module: ${evaluator.getCurrentModule()}
+;
+`;
+  
+  try {
+    // Write the initial content to the file
+    await Deno.writeTextFile(tempFile, header + initialContent);
+    
+    // Get the editor command
+    const editor = getPreferredEditor();
+    
+    console.log(`Opening editor (${editor})... Close the editor when finished.`);
+    
+    // Open the editor with the file using the newer Deno.Command API
+    const command = new Deno.Command(editor, {
+      args: [tempFile],
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit"
+    });
+    
+    // Execute the command and wait for it to complete
+    const { code: exitCode } = await command.output();
+    
+    if (exitCode !== 0) {
+      console.error(`Editor exited with error code: ${exitCode}`);
+      return;
+    }
+    
+    // Read the edited content
+    const editedContent = await Deno.readTextFile(tempFile);
+    
+    // Filter out comment lines and blank lines
+    const codeLines = editedContent.split('\n')
+      .filter(line => !line.trim().startsWith(';') && line.trim().length > 0);
+    
+    if (codeLines.length === 0) {
+      console.log("No code to evaluate.");
+      return;
+    }
+    
+    const hqlCode = codeLines.join('\n');
+    console.log("Evaluating edited code...");
+    
+    // Reset multiline state
+    state.multilineMode = false;
+    state.multilineInput = "";
+    
+    // Process the code
+    await processInput(hqlCode, evaluator, [], options, state);
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    // Clean up the temporary directory
+    try {
+      await Deno.remove(tempDir, { recursive: true });
+    } catch (error) {
+      console.error(`Error cleaning up temporary files: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
