@@ -6,12 +6,13 @@ import { keypress } from "https://deno.land/x/cliffy@v1.0.0-rc.3/keypress/mod.ts
 import { readLines } from "https://deno.land/std@0.224.0/io/read_lines.ts";
 import { Logger } from "../logger.ts";
 import { Environment } from "../environment.ts";
-import { REPLEvaluator } from "./repl-evaluator.ts";
+import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
 import { formatError, getSuggestion, registerSourceFile } from "../transpiler/error/error-handling.ts";
 import { ImportError, TranspilerError } from "../transpiler/error/errors.ts";
 import { historyManager } from "./history-manager.ts";
 import * as termColors from "../utils/colors.ts";
+import { persistentStateManager } from "./persistent-state-manager.ts";
 
 // Collection of special symbols for autocomplete
 const SPECIAL_SYMBOLS = new Set([
@@ -75,7 +76,10 @@ function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:quit${textColor}, ${commandColor}:exit${textColor} - Exit the REPL${headerColor}                             ║${reset}`,
     `${headerColor}║    ${commandColor}:env${textColor} - Show environment bindings${headerColor}                         ║${reset}`,
     `${headerColor}║    ${commandColor}:macros${textColor} - Show defined macros${headerColor}                            ║${reset}`,
-    `${headerColor}║    ${commandColor}:modules${textColor} - List imported modules${headerColor}                         ║${reset}`,
+    `${headerColor}║    ${commandColor}:module${textColor} - Switch or show module${headerColor}                          ║${reset}`,
+    `${headerColor}║    ${commandColor}:modules${textColor} - List available modules${headerColor}                        ║${reset}`,
+    `${headerColor}║    ${commandColor}:list${textColor} - Show symbols in current module${headerColor}                   ║${reset}`,
+    `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
     `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript output display${headerColor}                   ║${reset}`,
     `${headerColor}║    ${commandColor}:reset${textColor} - Reset REPL environment${headerColor}                          ║${reset}`,
     `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
@@ -87,13 +91,16 @@ function printError(msg: string, useColors: boolean): void {
   console.error(useColors ? `${colors.fg.red}${msg}${colors.reset}` : msg);
 }
 
-function getPrompt(multilineMode: boolean, useColors: boolean): string {
+function getPrompt(state: ReplState, useColors: boolean): string {
+  // Get the current module name
+  const moduleName = state.currentModule || "user";
+  
   if (useColors) {
-    return multilineMode
+    return state.multilineMode
       ? `${colors.fg.sicpPurple}${colors.bright}... ${colors.reset}`
-      : `${colors.fg.sicpPurple}${colors.bright}hql> ${colors.reset}`;
+      : `${colors.fg.sicpPurple}${colors.bright}hql[${colors.fg.sicpGreen}${moduleName}${colors.fg.sicpPurple}]> ${colors.reset}`;
   }
-  return multilineMode ? "... " : "hql> ";
+  return state.multilineMode ? "... " : `hql[${moduleName}]> `;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -104,12 +111,14 @@ interface ReplState {
   multilineInput: string;
   parenBalance: number;
   importHandlerActive: boolean;
+  currentModule: string;  // Added current module tracking
 }
 
 function resetReplState(state: ReplState): void {
   state.multilineMode = false;
   state.multilineInput = "";
   state.parenBalance = 0;
+  // Don't reset currentModule - it should persist
 }
 
 function updateParenBalance(line: string, currentBalance: number): number {
@@ -142,10 +151,15 @@ function commandHelp(useColors: boolean): void {
 }
 
 function commandQuit(setRunning: (val: boolean) => void): void {
+  console.log("Exiting REPL...");
+  
+  // Force save state before exit
+  persistentStateManager.forceSync();
+  
   setRunning(false);
 }
 
-function commandEnv(evaluator: REPLEvaluator, useColors: boolean, logger: Logger): void {
+function commandEnv(evaluator: ModuleAwareEvaluator, useColors: boolean, logger: Logger): void {
   const env = evaluator.getEnvironment();
   console.log(colorText("Environment bindings:", colors.fg.sicpRed + colors.bright, useColors));
   
@@ -162,8 +176,11 @@ function commandEnv(evaluator: REPLEvaluator, useColors: boolean, logger: Logger
         const value = env.lookup(symbol);
         const valueStr = formatValue(value);
         console.log(`${symbol} = ${valueStr}`);
-      } catch (error) {
-        console.log(`${symbol} = <error: ${error.message}>`);
+      } catch (error: unknown) {
+        printError(
+          error instanceof Error ? error.message : String(error),
+          useColors
+        );
       }
     });
     console.log("----------------");
@@ -203,7 +220,7 @@ function formatValue(value: any): string {
   return String(value);
 }
 
-function commandMacros(evaluator: REPLEvaluator, useColors: boolean): void {
+function commandMacros(evaluator: ModuleAwareEvaluator, useColors: boolean): void {
   console.log(colorText("Defined macros:", colors.fg.sicpRed + colors.bright, useColors));
   const environment = evaluator.getEnvironment();
   console.log("Macro names:");
@@ -223,20 +240,116 @@ function commandMacros(evaluator: REPLEvaluator, useColors: boolean): void {
   console.log("------------");
 }
 
-function commandModules(evaluator: REPLEvaluator, useColors: boolean): void {
-  console.log(colorText("Imported Modules:", colors.fg.sicpRed + colors.bright, useColors));
+function commandModules(evaluator: ModuleAwareEvaluator, useColors: boolean): void {
+  console.log(colorText("Available Modules:", colors.fg.sicpRed + colors.bright, useColors));
   
-  const modules = evaluator.getImportedModules();
-  if (modules.size === 0) {
-    console.log("No modules imported");
+  // Get all modules from our module-aware evaluator
+  const modules = evaluator.getAvailableModules();
+  const currentModule = evaluator.getCurrentModule();
+  
+  if (modules.length === 0) {
+    console.log("No modules defined");
   } else {
     console.log("Module names:");
     console.log("------------");
-    for (const [moduleName, modulePath] of modules.entries()) {
-      console.log(`- ${moduleName} from "${modulePath}"`);
+    for (const moduleName of modules) {
+      const moduleMarker = moduleName === currentModule ? "* " : "  ";
+      console.log(`${moduleMarker}${moduleName}`);
+    }
+    console.log("------------");
+    console.log("* Current module");
+  }
+}
+
+// New command to switch modules
+function commandModule(evaluator: ModuleAwareEvaluator, state: ReplState, moduleName: string): void {
+  // Check if module name is provided
+  if (!moduleName) {
+    // If no module name is provided, show the current module
+    console.log(`Current module: ${evaluator.getCurrentModule()}`);
+    return;
+  }
+  
+  try {
+    // Switch to the specified module
+    evaluator.switchModule(moduleName);
+    // Update REPL state
+    state.currentModule = moduleName;
+    console.log(`Switched to module: ${moduleName}`);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Error switching to module: ${errorMessage}`);
+  }
+}
+
+// New command to list symbols in the current module
+function commandList(evaluator: ModuleAwareEvaluator, useColors: boolean): void {
+  const currentModule = evaluator.getCurrentModule();
+  console.log(colorText(`Symbols in module '${currentModule}':`, colors.fg.sicpRed + colors.bright, useColors));
+  
+  const symbols = evaluator.listModuleSymbols();
+  
+  if (symbols.length === 0) {
+    console.log("No symbols defined");
+  } else {
+    console.log("Symbol names:");
+    console.log("------------");
+    for (const symbol of symbols.sort()) {
+      console.log(`- ${symbol}`);
     }
     console.log("------------");
   }
+}
+
+// New command to remove a symbol or module
+function commandRemove(evaluator: ModuleAwareEvaluator, state: ReplState, name: string): void {
+  if (!name) {
+    console.error("Usage: :remove <name>");
+    return;
+  }
+  
+  try {
+    // First, check if it's a module
+    const modules = evaluator.getAvailableModules();
+    if (modules.includes(name)) {
+      // It's a module, try to remove it
+      const removed = evaluator.removeModule(name);
+      if (removed) {
+        console.log(`Removed module: ${name}`);
+        // If we removed current module, update state
+        if (state.currentModule === name) {
+          state.currentModule = evaluator.getCurrentModule();
+        }
+      } else {
+        console.error(`Cannot remove module: ${name}`);
+      }
+      return;
+    }
+    
+    // If it's not a module, try as a symbol
+    const removed = evaluator.removeSymbol(name);
+    if (removed) {
+      console.log(`Removed symbol: ${name}`);
+    } else {
+      console.error(`Symbol or module not found: ${name}`);
+    }
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Error removing symbol/module: ${errorMessage}`);
+  }
+}
+
+function commandReset(evaluator: ModuleAwareEvaluator, state: ReplState, keepModules = false): void {
+  console.log(`Resetting REPL environment${keepModules ? ' (keeping modules)' : ''}...`);
+  evaluator.resetEnvironment(keepModules);
+  // Update state with current module from evaluator
+  state.currentModule = evaluator.getCurrentModule();
+  console.log("Environment reset complete.");
+}
+
+function commandDefault(cmd: string): void {
+  console.error(`Unknown command: ${cmd}`);
+  console.log("Type :help for a list of commands");
 }
 
 function commandVerbose(logger: Logger, setVerbose: (val: boolean) => void): void {
@@ -257,17 +370,6 @@ function commandExpanded(showExpanded: boolean, setShowExpanded: (val: boolean) 
 function commandJs(showJs: boolean, setShowJs: (val: boolean) => void): void {
   setShowJs(!showJs);
   console.log(`JavaScript output display ${showJs ? "enabled" : "disabled"}`);
-}
-
-function commandReset(evaluator: REPLEvaluator): void {
-  console.log("Resetting REPL environment...");
-  evaluator.resetEnvironment();
-  console.log("Environment reset complete.");
-}
-
-function commandDefault(cmd: string): void {
-  console.error(`Unknown command: ${cmd}`);
-  console.log("Type :help for a list of commands");
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -443,7 +545,7 @@ interface ProcessOptions {
 async function handleReplLine(
   lineResult: ReadLineResult,
   state: ReplState,
-  evaluator: REPLEvaluator,
+  evaluator: ModuleAwareEvaluator,
   history: string[],
   options: ProcessOptions
 ): Promise<void> {
@@ -470,83 +572,98 @@ async function handleReplLine(
 
 async function processInput(
   input: string,
-  evaluator: REPLEvaluator,
+  evaluator: ModuleAwareEvaluator,
   history: string[],
   options: ProcessOptions,
   state: ReplState
 ): Promise<void> {
-  const trimmed = input.trim();
-  if (trimmed && (history.length === 0 || history[history.length - 1] !== trimmed)) {
-    history.push(trimmed);
-    if (history.length > options.historySize) history.shift();
-  }
+  // Skip empty input
+  input = input.trim();
+  if (!input) return;
   
-  // Register the input for better error reporting
-  registerSourceFile("REPL input", input);
-  
-  // Special handling for imports
-  if (isImportExpression(trimmed)) {
-    const result = await evaluator.processImportDirectly(trimmed);
-    
-    if (result.success) {
-      console.log(options.useColors
-        ? `${colors.fg.green}${result.message}${colors.reset}`
-        : result.message);
-    } else {
-      console.error(options.useColors
-        ? `${colors.fg.red}${result.message}${colors.reset}`
-        : result.message);
-    }
-    
-    state.importHandlerActive = true;
-    return;
-  }
+  // Register input source for error context
+  registerSourceFile("REPL", input);
   
   try {
-    // Add timestamp for performance tracking
-    const startTime = performance.now();
+    // Check if this is a command (starts with ":")
+    if (input.startsWith(":")) {
+      const command = input.substring(1);
+      await handleCommand(command, state, evaluator, history, options);
+      return;
+    }
     
-    // Evaluate the input
+    // Check if this is a module switch expression
+    const isModuleSwitch = await evaluator.detectModuleSwitch(input);
+    if (isModuleSwitch) {
+      // Update state with current module
+      state.currentModule = evaluator.getCurrentModule();
+      return;
+    }
+    
+    // Add to history
+    if (history[history.length - 1] !== input) {
+      history.push(input);
+    }
+    
+    // Regular expression evaluation
+    const startTime = performance.now();
     const result = await evaluator.evaluate(input, {
-      verbose: options.logger.enabled,
+      verbose: options.logger.isVerbose,
       baseDir: options.baseDir,
       showAst: options.showAst,
       showExpanded: options.showExpanded,
       showJs: options.showJs,
     });
-    
-    // Calculate execution time
     const executionTime = performance.now() - startTime;
     
-    // Format and display the result
-    formatAndDisplayResult(result, input, options, executionTime);
-    
-    // Additional output for debug modes
+    // Display JS if enabled
     if (options.showJs) {
       printBlock("JavaScript:", result.jsCode, options.useColors);
     }
     
-    // Track symbols used
+    // Track symbol usage if provided
     if (options.trackSymbolUsage) {
       trackSymbolsInInput(input, options.trackSymbolUsage);
     }
+    
+    // Display result
+    formatAndDisplayResult(result.value, input, options, executionTime);
+    
+    // Display evaluation metrics if verbose
+    if (options.logger.isVerbose) {
+      const metrics = evaluator.getMetrics();
+      if (metrics) {
+        options.logger.log({
+          text: `Execution time: ${executionTime.toFixed(2)}ms`,
+          namespace: "repl-metrics"
+        });
+        options.logger.log({
+          text: `Parse: ${metrics.parseTimeMs.toFixed(2)}ms, ` +
+                `Transform: ${metrics.syntaxTransformTimeMs.toFixed(2)}ms, ` +
+                `Imports: ${metrics.importProcessingTimeMs.toFixed(2)}ms, ` +
+                `Macros: ${metrics.macroExpansionTimeMs.toFixed(2)}ms, ` +
+                `AST: ${metrics.astConversionTimeMs.toFixed(2)}ms, ` +
+                `JS Gen: ${metrics.codeGenerationTimeMs.toFixed(2)}ms, ` +
+                `Eval: ${metrics.evaluationTimeMs.toFixed(2)}ms`,
+          namespace: "repl-metrics"
+        });
+      }
+    }
   } catch (error: unknown) {
-    // Reset import handler flag
-    state.importHandlerActive = false;
-    
-    // Enhanced error handling
     handleError(error, options);
-    
-    // Reset state
-    resetReplState(state);
   }
 }
 
 // Helper function to format and display result
 function formatAndDisplayResult(result: any, input: string, options: ProcessOptions, executionTime: number): void {
-  if (result.value !== undefined) {
+  // Check if result is a proper object with value property
+  if (result && typeof result === 'object' && 'value' in result) {
     // Format the result value based on its type
     let displayValue = formatResultValue(result.value, options.useColors);
+    console.log(displayValue);
+  } else if (result !== undefined) {
+    // Handle direct result values (not wrapped in object)
+    let displayValue = formatResultValue(result, options.useColors);
     console.log(displayValue);
   } else if (input.trim().startsWith("(fn ") || input.trim().startsWith("(defn ")) {
     // Handle function definitions
@@ -570,7 +687,7 @@ function formatAndDisplayResult(result: any, input: string, options: ProcessOpti
   }
   
   // Show execution time if verbose
-  if (options.logger.enabled) {
+  if (options.logger.isVerbose) {
     console.log(options.useColors
       ? `${colors.fg.gray}// Execution time: ${executionTime.toFixed(2)}ms${colors.reset}`
       : `// Execution time: ${executionTime.toFixed(2)}ms`);
@@ -640,7 +757,7 @@ function handleError(error: unknown, options: ProcessOptions): void {
     const formattedError = formatError(error, { 
       useColors: options.useColors, 
       filePath: "REPL input",
-      includeStack: options.logger.enabled, // Include stack trace in verbose mode
+      includeStack: options.logger.isVerbose, // Include stack trace in verbose mode
     });
     
     // Display the detailed error
@@ -696,36 +813,56 @@ function isImportExpression(input: string): boolean {
 async function handleCommand(
   command: string,
   state: ReplState,
-  evaluator: REPLEvaluator,
+  evaluator: ModuleAwareEvaluator,
   history: string[],
   options: ProcessOptions
 ): Promise<void> {
-  const parts = command.split(" ");
+  // Split the command string into parts
+  const parts = command.trim().split(/\s+/);
   const cmd = parts[0];
+  const args = parts.slice(1).join(" ");
+
   switch (cmd) {
-    case ":help":
-    case ":h":
+    case "help":
       commandHelp(options.useColors);
       break;
-    case ":quit":
-    case ":exit":
-    case ":q":
+    case "quit":
+    case "exit":
       commandQuit(options.replState.setRunning);
       break;
-    case ":env":
+    case "env":
       commandEnv(evaluator, options.useColors, options.logger);
       break;
-    case ":macros":
+    case "macros":
       commandMacros(evaluator, options.useColors);
       break;
-    case ":modules":
-      commandModules(evaluator, options.useColors);
+    case "verbose":
+      commandVerbose(options.logger, options.replState.setVerbose);
       break;
-    case ":js":
+    case "ast":
+      commandAst(options.showAst, options.replState.setShowAst);
+      break;
+    case "expanded":
+      commandExpanded(options.showExpanded, options.replState.setShowExpanded);
+      break;
+    case "js":
       commandJs(options.showJs, options.replState.setShowJs);
       break;
-    case ":reset":
-      commandReset(evaluator);
+    case "modules":
+      commandModules(evaluator, options.useColors);
+      break;
+    case "module":
+      commandModule(evaluator, state, args);
+      break;
+    case "list":
+      commandList(evaluator, options.useColors);
+      break;
+    case "remove":
+      commandRemove(evaluator, state, args);
+      break;
+    case "reset":
+      const keepModules = args === "--keep-modules" || args === "-k";
+      commandReset(evaluator, state, keepModules);
       break;
     default:
       commandDefault(cmd);
@@ -752,7 +889,8 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     multilineMode: false, 
     multilineInput: "", 
     parenBalance: 0,
-    importHandlerActive: false
+    importHandlerActive: false,
+    currentModule: "user"  // Default module
   };
 
   const stateFunctions = {
@@ -774,14 +912,17 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
     await loadSystemMacros(env, { verbose: options.verbose, baseDir: Deno.cwd() });
     
-    // Create new evaluator
-    const evaluator = new REPLEvaluator(env, {
+    // Create new module-aware evaluator
+    const evaluator = new ModuleAwareEvaluator(env, {
       verbose: options.verbose,
       baseDir,
       showAst,
       showExpanded,
       showJs,
     });
+    
+    // Initialize with current module
+    replStateObj.currentModule = evaluator.getCurrentModule();
     
     // Log available macros in verbose mode
     if (options.verbose) {
@@ -794,7 +935,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     // Start REPL loop
     while (running) {
       try {
-        const prompt = getPrompt(replStateObj.multilineMode, useColors);
+        const prompt = getPrompt(replStateObj, useColors);
         const lineResult = await readLineWithHistory(prompt, history, replStateObj);
         
         // Save history after each command

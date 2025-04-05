@@ -22,7 +22,6 @@ function printHelp() {
   console.error("  --expanded          Show expanded forms by default");
   console.error("  --js                Show JavaScript output by default");
   console.error("  --no-colors         Disable colored output");
-  console.error("  --paste-mode        Start in paste mode for easier multi-line input");
   console.error("  --help, -h          Display this help message");
 }
 
@@ -60,7 +59,6 @@ async function run() {
     showJs?: boolean;
     initialFile?: string;
     useColors?: boolean;
-    pasteMode?: boolean;
   } = {
     verbose,
     baseDir: Deno.cwd(),
@@ -69,7 +67,6 @@ async function run() {
     showExpanded: args.includes("--expanded"),
     showJs: args.includes("--js"),
     useColors: !args.includes("--no-colors"),
-    pasteMode: args.includes("--paste-mode"),
   };
 
   // Override history size if specified
@@ -83,24 +80,26 @@ async function run() {
     }
   }
 
-  try {
-    // Handle file preloading if specified
-    const loadIndex = args.indexOf("--load");
-    if (loadIndex !== -1 && loadIndex < args.length - 1) {
-      const fileToLoad = resolve(args[loadIndex + 1]);
-      replOptions.initialFile = fileToLoad;
+  // Specify initial file to load if provided
+  const loadIndex = args.indexOf("--load");
+  if (loadIndex !== -1 && loadIndex < args.length - 1) {
+    const loadFile = args[loadIndex + 1];
+    if (loadFile) {
+      replOptions.initialFile = loadFile;
     }
+  }
 
-    // Initialize the error handling system first
-    initializeErrorHandling({
-      enableGlobalHandlers: true,
-      enableReplEnhancement: true
-    });
-
-    // Start the REPL with all configured options
+  console.log("Starting HQL REPL...");
+  
+  try {
+    // Initialize error handling
+    await initializeErrorHandling();
+    
+    // Start the REPL
     await startRepl(replOptions);
-  } catch (error) {
-    console.error(`Error starting REPL: ${error instanceof Error ? error.message : String(error)}`);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Error starting REPL: ${errorMessage}`);
     if (error instanceof Error && error.stack) {
       console.error(error.stack);
     }
@@ -108,7 +107,4 @@ async function run() {
   }
 }
 
-// Run the main function if this is the entry point
-if (import.meta.main) {
-  run();
-}
+run();

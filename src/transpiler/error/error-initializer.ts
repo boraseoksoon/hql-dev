@@ -26,11 +26,11 @@ const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
  * Initialize error handling throughout the system
  * This should be called once at application startup
  */
-export function initializeErrorHandling(options: {
+export async function initializeErrorHandling(options: {
   enableGlobalHandlers?: boolean; 
   enableReplEnhancement?: boolean;
   repl?: any;
-} = {}): void {
+} = {}): Promise<void> {
   // Set up global error handling if requested
   if (options.enableGlobalHandlers !== false) {
     setupErrorHandling();
@@ -53,12 +53,12 @@ export function initializeErrorHandling(options: {
  */
 export async function getEnhancedFunctions() {
   // Import core functions using Deno's dynamic import
-  const parserModule = await import("./transpiler/parser.ts");
-  const syntaxTransformerModule = await import("./transpiler/syntax-transformer.ts");
-  const irTransformerModule = await import("./transpiler/hql-ast-to-hql-ir.ts");
-  const tsGeneratorModule = await import("./transpiler/ts-ast-to-ts-code.ts");
-  const astTransformerModule = await import("./transformer.ts");
-  const hqlTranspilerModule = await import("./transpiler/hql-transpiler.ts");
+  const parserModule = await import("../../transpiler/pipeline/parser.ts");
+  const syntaxTransformerModule = await import("../../transpiler/pipeline/syntax-transformer.ts");
+  const irTransformerModule = await import("../../transpiler/pipeline/hql-ast-to-hql-ir.ts");
+  const tsGeneratorModule = await import("../../transpiler/pipeline/ts-ast-to-ts-code.ts");
+  const astTransformerModule = await import("../../transformer.ts");
+  const hqlTranspilerModule = await import("../../transpiler/hql-transpiler.ts");
   
   // Return enhanced versions
   return {

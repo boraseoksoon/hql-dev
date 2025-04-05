@@ -171,12 +171,23 @@ export class REPLEnvironment {
    */
   extractDefinitions(code: string): string[] {
     const defs = new Set<string>();
+    
+    // Check for variable declarations
     for (const match of code.matchAll(PATTERNS.VARIABLE_DECLARATION)) {
       if (match[1]) defs.add(match[1]);
     }
+    
+    // Check for function declarations
     for (const match of code.matchAll(PATTERNS.FUNCTION_DECLARATION)) {
       if (match[1]) defs.add(match[1]);
     }
+    
+    // Check for arrow function assignments
+    const arrowFnMatch = code.match(/const\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(\([^)]*\)|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=>/);
+    if (arrowFnMatch && arrowFnMatch[1]) {
+      defs.add(arrowFnMatch[1]);
+    }
+    
     return Array.from(defs);
   }
 
