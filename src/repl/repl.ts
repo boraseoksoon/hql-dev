@@ -83,7 +83,7 @@ function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:list${textColor} - Show symbols in current module${headerColor}                   ║${reset}`,
     `${headerColor}║    ${commandColor}:see${textColor} - Inspect modules and symbols${headerColor}                       ║${reset}`,
     `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
-    `${headerColor}║    ${commandColor}:edit${textColor} - Open a text editor for multiline code${headerColor}            ║${reset}`,
+    `${headerColor}║    ${commandColor}:write${textColor} - Open a text editor for multiline code${headerColor}           ║${reset}`,
     `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript transpiled code display${headerColor}          ║${reset}`,
     `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
   ];
@@ -277,6 +277,11 @@ function commandModules(evaluator: ModuleAwareEvaluator, useColors: boolean): vo
     console.log("------------");
     console.log("* Current module");
   }
+  
+  // Add clearer instructions about creating modules
+  console.log(colorText("\nTo create a new module or switch to a different one:", colors.fg.cyan, useColors));
+  console.log(`  Use ${colorText(":module <name>", colors.fg.sicpRed, useColors)} - This will create the module if it doesn't exist`);
+  console.log(`  Example: ${colorText(":module math", colors.fg.green, useColors)} to create or switch to a module named "math"`);
 }
 
 // New command to switch modules
@@ -1523,8 +1528,9 @@ async function handleCommand(
     case "remove":
       await commandRemove(evaluator, args, options.useColors, state);
       break;
-    case "edit":
-      await commandEdit(evaluator, args, options, state);
+    case "write":
+    case "edit": // Support both for backward compatibility
+      await commandWrite(evaluator, args, options, state);
       break;
     default:
       if (cmd === "js") {
@@ -1664,6 +1670,13 @@ function getDetailedHelp(command: string, useColors: boolean): string {
     console.log("Please use :remove all or :remove all:symbols instead.\n");
   }
   
+  // If the command is "edit", redirect to "write"
+  if (command === "edit") {
+    console.log(colorText("Note: The :edit command has been renamed to :write for better clarity.", colors.fg.yellow, useColors));
+    console.log("Both commands continue to work the same way.\n");
+    command = "write";
+  }
+  
   const helpTopics: Record<string, string[]> = {
     "help": [
       `${headerColor}Command: ${commandColor}:help${reset}`,
@@ -1720,20 +1733,22 @@ function getDetailedHelp(command: string, useColors: boolean): string {
     "module": [
       `${headerColor}Command: ${commandColor}:module${reset}`,
       ``,
-      `${textColor}Switch to a different module or display the current module.${reset}`,
+      `${textColor}Create a new module or switch to an existing module.${reset}`,
       `${textColor}Modules provide namespace isolation for your definitions.${reset}`,
       ``,
       `${headerColor}Usage:${reset}`,
       `  ${commandColor}:module${textColor} - Show the current module${reset}`,
-      `  ${commandColor}:module <name>${textColor} - Switch to the specified module${reset}`,
+      `  ${commandColor}:module <name>${textColor} - Create or switch to the specified module${reset}`,
       ``,
       `${headerColor}Examples:${reset}`,
-      `  ${exampleColor}:module math${textColor} - Switch to the "math" module${reset}`,
+      `  ${exampleColor}:module math${textColor} - Create (if new) or switch to the "math" module${reset}`,
+      `  ${exampleColor}:module user${textColor} - Switch back to the default "user" module${reset}`,
       ``,
       `${headerColor}Notes:${reset}`,
-      `  - New modules are created automatically when you switch to them`,
-      `  - The default module is named "user"`,
-      `  - Your current module appears in the prompt: ${exampleColor}hql[module]>${reset}`
+      `  - New modules are created automatically when you switch to them${reset}`,
+      `  - The default module is named "user"${reset}`,
+      `  - Your current module appears in the prompt: ${exampleColor}hql[module]>${reset}`,
+      `  - Use ${commandColor}:modules${textColor} to see a list of all available modules${reset}`
     ],
     
     "modules": [
@@ -1823,24 +1838,25 @@ function getDetailedHelp(command: string, useColors: boolean): string {
       `  - When enabled, symbol definitions shown with :see will include JS code`
     ],
     
-    "edit": [
-      `${headerColor}Command: ${commandColor}:edit${reset}`,
+    "write": [
+      `${headerColor}Command: ${commandColor}:write${reset}`,
       ``,
       `${textColor}Open a text editor for writing multiline HQL code.${reset}`,
       `${textColor}This provides a comfortable environment for writing complex code.${reset}`,
       ``,
       `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:edit${textColor} - Open an editor with a blank file${reset}`,
-      `  ${commandColor}:edit <symbol>${textColor} - Edit an existing function or variable${reset}`,
+      `  ${commandColor}:write${textColor} - Open an editor with a blank file${reset}`,
+      `  ${commandColor}:write <symbol>${textColor} - Edit an existing function or variable${reset}`,
       ``,
       `${headerColor}Examples:${reset}`,
-      `  ${exampleColor}:edit${textColor} - Open the editor for writing new code${reset}`,
-      `  ${exampleColor}:edit factorial${textColor} - Edit the existing 'factorial' function${reset}`,
+      `  ${exampleColor}:write${textColor} - Open the editor for writing new code${reset}`,
+      `  ${exampleColor}:write factorial${textColor} - Edit the existing 'factorial' function${reset}`,
       ``,
       `${headerColor}Notes:${reset}`,
       `  - Uses your EDITOR or VISUAL environment variable (defaults to vi)${reset}`,
       `  - The code will be evaluated when you exit the editor${reset}`,
-      `  - Lines starting with semicolons (;) are treated as comments${reset}`
+      `  - Lines starting with semicolons (;) are treated as comments${reset}`,
+      `  - The command ${commandColor}:edit${textColor} is an alias for ${commandColor}:write${textColor} and works the same way${reset}`
     ]
   };
   
@@ -1864,7 +1880,8 @@ function getPreferredEditor(): string {
 }
 
 // Command to open a temporary file for multiline editing
-async function commandEdit(evaluator: ModuleAwareEvaluator, args: string, options: ProcessOptions, state: ReplState): Promise<void> {
+async function commandWrite(evaluator: ModuleAwareEvaluator, args: string, options: ProcessOptions, state: ReplState): Promise<void> {
+  // Function content remains the same as commandEdit
   const tempDir = await Deno.makeTempDir({ prefix: "hql-repl-" });
   const tempFile = `${tempDir}/temp-edit.hql`;
   
