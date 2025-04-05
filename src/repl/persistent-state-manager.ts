@@ -318,7 +318,8 @@ export class PersistentStateManager {
   addDefinition(
     name: string, 
     value: any, 
-    type: 'variable' | 'function' | 'macro' = 'variable'
+    type: 'variable' | 'function' | 'macro' = 'variable',
+    metadata?: Record<string, any>
   ): void {
     if (!this.initialized) {
       throw new Error("State manager not initialized");
@@ -328,7 +329,17 @@ export class PersistentStateManager {
     const targetCollection = moduleState.definitions[`${type}s`];
     
     // Store a serializable version of the value
-    targetCollection[name] = this.makeSerializable(value);
+    const serializableValue = this.makeSerializable(value);
+    
+    // Add metadata if provided
+    if (metadata) {
+      targetCollection[name] = {
+        ...serializableValue,
+        _metadata: metadata  // Store metadata with underscore to indicate it's special
+      };
+    } else {
+      targetCollection[name] = serializableValue;
+    }
     
     // Force an immediate save for function definitions
     this.saveState(type === 'function');

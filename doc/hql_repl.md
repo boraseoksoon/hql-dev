@@ -15,6 +15,7 @@ The HQL REPL (Read-Eval-Print Loop) is designed to be a persistent, module-aware
    - Code naturally organized into modules
    - Clear module boundaries and dependency tracking
    - Intuitive module switching and management
+   - Native HQL import/export syntax for module interaction
 
 3. **Simple, Memorable Commands**
    - Minimal command set focused on common operations
@@ -43,6 +44,8 @@ The HQL REPL (Read-Eval-Print Loop) is designed to be a persistent, module-aware
    - Module removal with `:remove <name>`
    - Automatic module creation on first use
    - Module-specific state management
+   - Native HQL imports using `(import [symbol] from "module")`
+   - Native HQL exports using `(export [symbol])`
 
 4. **Persistence Layer**
    - Automatic state saving after evaluations
@@ -51,6 +54,7 @@ The HQL REPL (Read-Eval-Print Loop) is designed to be a persistent, module-aware
    - Version compatibility tracking
 
 5. **Enhanced Commands**
+   - `:see` - Powerful inspection of modules and symbols
    - `:list` - Show current module contents
    - `:remove <name>` - Remove symbol or module
    - `:reset` - Reset entire environment
@@ -137,28 +141,78 @@ Switched to module: user
 hql[user]> 
 ```
 
+#### Inspecting Modules and Symbols
+
 List all available modules:
 
 ```
-hql[user]> :modules
+hql[user]> :see
 Available Modules:
 Module names:
 ------------
-* user
-  math
+- user (3 symbols, 1 exports)
+- math (2 symbols, 0 exports)
 ------------
-* Current module
+
+Use :see <module> to view symbols in a specific module
+Use :see <module:symbol> to view a specific symbol definition
 ```
 
-List all definitions in the current module:
+List all definitions in a specific module:
 
 ```
-hql[math]> :list
+hql[math]> :see math
 Symbols in module 'math':
 Symbol names:
 ------------
 - cube
 - square
+------------
+
+Use :see math:<symbol> to view a specific symbol definition
+To use symbols from this module in HQL, import them with:
+(import [symbol1, symbol2] from "math")
+```
+
+View a specific symbol's definition:
+
+```
+hql[user]> :see math:square
+Definition of 'math:square':
+----------------
+function square(x) {
+  return x * x;
+}
+----------------
+To use this symbol in HQL, import it with:
+(import [square] from "math")
+----------------
+```
+
+#### Importing and Exporting 
+
+Use native HQL syntax for imports and exports:
+
+```
+hql[user]> (import [square, cube] from "math")
+[2 symbols imported]
+
+hql[math]> (export [square])
+square exported
+
+hql[user]> (square 4)
+16
+```
+
+You can view exports with the `:see` command:
+
+```
+hql[user]> :see math
+Symbols in module 'math':
+Symbol names:
+------------
+- cube
+- square (exported)
 ------------
 ```
 
@@ -173,12 +227,35 @@ Symbol names:
 | `:module [<name>]` | Switch to or create module. If no name is provided, shows current module | `:module math` |
 | `:modules` | List available modules | `:modules` |
 | `:list` | Show current module contents | `:list` |
+| `:see` | List all modules | `:see` |
+| `:see <module>` | Show symbols in a module | `:see math` |
+| `:see <module:symbol>` | Show definition of a specific symbol | `:see math:square` |
 | `:remove <name>` | Remove symbol or module | `:remove square` |
 | `:js` | Toggle JavaScript output display | `:js` |
 | `:reset` | Reset REPL environment | `:reset` |
 | `:verbose` | Toggle verbose logging | `:verbose` |
 | `:ast` | Toggle AST display | `:ast` |
 | `:expanded` | Toggle expanded form display | `:expanded` |
+
+### Native HQL Import/Export
+
+Instead of using special REPL commands for imports and exports, the HQL REPL now supports the language's native import and export syntax:
+
+```
+;; Import specific symbols from a module
+(import [square, cube] from "math")
+
+;; Import an entire module
+(import math from "math")
+
+;; Export specific symbols
+(export [divide, multiply])
+
+;; Export a default symbol
+(export default add)
+```
+
+These statements work the same way they do in regular HQL files, maintaining consistency between the REPL and file-based development.
 
 ### Keyboard Shortcuts
 
@@ -224,13 +301,13 @@ The REPL state is stored in a JSON file with the following structure:
       "definitions": {
         "variables": {},
         "functions": {
-          "square": { "_type": "function", "source": "function square(x) { return x * x; }" },
-          "cube": { "_type": "function", "source": "function cube(x) { return x * x * x; }" }
+          "square": { "_type": "function", "source": "function square(x) { return x * x; }", "originalSource": "(defn square [x] (* x x))" },
+          "cube": { "_type": "function", "source": "function cube(x) { return x * x * x; }", "originalSource": "(defn cube [x] (* x x x))" }
         },
         "macros": {}
       },
       "imports": [],
-      "exports": []
+      "exports": ["square"]
     }
   },
   "history": []
@@ -246,249 +323,31 @@ The REPL state is stored in:
 
 Project-specific state takes precedence when you're in a project directory.
 
+### Relationship with ESM JavaScript Modules
+
+The HQL REPL's module system is designed to align with ECMAScript modules (ESM):
+
+1. **Consistent import/export syntax** - Uses syntax similar to ES modules
+2. **Explicit exports** - Only explicitly exported symbols are available to other modules
+3. **Named imports** - Can import specific symbols from other modules
+4. **Module namespaces** - Can import entire modules as namespaces
+
+This alignment makes it easier to transition between HQL REPL sessions and file-based development.
+
 ### Best Practices
 
-1. **Module Organization**
-   - Use meaningful module names
-   - Keep related functionality together
-   - Use separate modules for different domains
-
-2. **State Management**
-   - Regularly clean up unused definitions with `:remove`
-   - Use `:reset` to clear all definitions when needed
-   - Use `:list` to see what's defined in the current module
-
-3. **Error Handling**
-   - Check for name conflicts when defining new functions
-   - Use meaningful function and variable names
+1. **Organize by purpose** - Create modules based on functionality (e.g., `math`, `http`, `ui`)
+2. **Explicit exports** - Only export what you intend to be public interface
+3. **Use descriptive names** - Module names should clearly indicate their purpose
+4. **Keep modules focused** - Each module should have a single responsibility
+5. **Document public interfaces** - Add comments to exported functions
 
 ## Future Enhancements
 
-1. **Cross-module References**
-   - Symbol imports from other modules
-   - Module dependencies tracking
-   - Protection against circular dependencies
+Planned enhancements for the HQL REPL include:
 
-2. **Enhanced Performance**
-   - Lazy loading of module contents
-   - Memory optimizations for large sessions
-   - State compaction for large state files
-
-3. **Developer Experience**
-   - Enhanced debugging tools
-   - Better visualization of state
-   - Integration with IDEs and editors 
-
-## Command Examples with Expected Output
-
-### Basic Evaluation
-```
-hql[user]> (+ 1 2 3)
-6
-
-hql[user]> (- 10 5)
-5
-
-hql[user]> (* 2 3 4)
-24
-```
-
-### Function Definition and Usage
-```
-hql[user]> (defn add-three [x] (+ x 3))
-[Function: add-three]
-
-hql[user]> (add-three 7)
-10
-
-hql[user]> (defn square [x] (* x x))
-[Function: square]
-
-hql[user]> (square 4)
-16
-```
-
-### Module Commands
-```
-hql[user]> :module
-Current module: user
-
-hql[user]> :module math
-Switched to module: math
-
-hql[math]> (defn square [x] (* x x))
-[Function: square]
-
-hql[math]> :modules
-Available Modules:
-Module names:
-------------
-  user
-* math
-------------
-* Current module
-
-hql[math]> :module user
-Switched to module: user
-```
-
-### List Command
-```
-hql[math]> :list
-Symbols in module 'math':
-Symbol names:
-------------
-- square
-------------
-
-hql[user]> :list
-Symbols in module 'user':
-Symbol names:
-------------
-- add-three
-------------
-```
-
-### Remove Command
-```
-hql[user]> (defn temporary [x] (+ x 1))
-[Function: temporary]
-
-hql[user]> :list
-Symbols in module 'user':
-Symbol names:
-------------
-- add-three
-- temporary
-------------
-
-hql[user]> :remove temporary
-Symbol 'temporary' removed from module 'user'
-
-hql[user]> :list
-Symbols in module 'user':
-Symbol names:
-------------
-- add-three
-------------
-```
-
-### Reset Command
-```
-hql[user]> :list
-Symbols in module 'user':
-Symbol names:
-------------
-- add-three
-------------
-
-hql[user]> :reset
-REPL environment has been reset
-
-hql[user]> :list
-Symbols in module 'user':
-Symbol names:
-------------
-No symbols defined
-------------
-
-hql[user]> :modules
-Available Modules:
-Module names:
-------------
-* user
-------------
-* Current module
-```
-
-### JS Toggle
-```
-hql[user]> (defn add [a b] (+ a b))
-[Function: add]
-
-hql[user]> :js
-JavaScript output enabled
-
-hql[user]> (add 2 3)
-// JavaScript:
-function add(a, b) { return a + b; }
-add(2, 3)
-// Result:
-5
-
-hql[user]> :js
-JavaScript output disabled
-
-hql[user]> (add 2 3)
-5
-```
-
-### AST Toggle
-```
-hql[user]> :ast
-AST display enabled
-
-hql[user]> (+ 1 2)
-// AST:
-{
-  "type": "CallExpression",
-  "name": "+",
-  "args": [
-    { "type": "NumericLiteral", "value": 1 },
-    { "type": "NumericLiteral", "value": 2 }
-  ]
-}
-// Result:
-3
-
-hql[user]> :ast
-AST display disabled
-
-hql[user]> (+ 1 2)
-3
-```
-
-### Expanded Toggle
-```
-hql[user]> (defmacro when [condition & body]
-  `(if ~condition (do ~@body) nil))
-[Macro: when]
-
-hql[user]> :expanded
-Expanded form display enabled
-
-hql[user]> (when true (println "Hello") (+ 1 2))
-// Expanded:
-(if true (do (println "Hello") (+ 1 2)) nil)
-// Result:
-Hello
-3
-
-hql[user]> :expanded
-Expanded form display disabled
-```
-
-### Environment Display
-```
-hql[user]> (def x 10)
-10
-
-hql[user]> (def y 20)
-20
-
-hql[user]> :env
-Environment bindings:
-user/x: 10
-user/y: 20
-```
-
-### Macros Display
-```
-hql[user]> (defmacro unless [condition & body]
-  `(if (not ~condition) (do ~@body) nil))
-[Macro: unless]
-
-hql[user]> :macros
-Defined macros:
-user/unless: (defmacro unless [condition & body] ...)
-``` 
+1. **Integration with file system** - Ability to save modules as files
+2. **Enhanced autocompletion** - Context-aware symbol completion
+3. **Interactive tutorials** - Built-in tutorials for learning HQL
+4. **Documentation browser** - Access to function documentation directly in REPL
+5. **Package management** - Integration with package management systems 

@@ -65,22 +65,25 @@ function printBanner(useColors = false): void {
   const headerColor = useColors ? colors.fg.sicpPurple + colors.bright : "";
   const textColor = useColors ? colors.fg.white : "";
   const commandColor = useColors ? colors.fg.sicpRed : "";
+  const noteColor = useColors ? colors.fg.lightGreen : "";
   const reset = useColors ? colors.reset : "";
   const banner = [
     `${headerColor}╔════════════════════════════════════════════════════════════╗${reset}`,
     `${headerColor}║                ${textColor}HQL S-Expression REPL${headerColor}                        ║${reset}`,
     `${headerColor}╠════════════════════════════════════════════════════════════╣${reset}`,
     `${headerColor}║  ${textColor}Type HQL expressions to evaluate them${headerColor}                      ║${reset}`,
+    `${headerColor}║  ${noteColor}The prompt ${textColor}hql[module]>${noteColor} shows your current module${headerColor}               ║${reset}`,
     `${headerColor}║  ${textColor}Special commands:${headerColor}                                          ║${reset}`,
     `${headerColor}║    ${commandColor}:help${textColor} - Display this help${headerColor}                                ║${reset}`,
     `${headerColor}║    ${commandColor}:quit${textColor}, ${commandColor}:exit${textColor} - Exit the REPL${headerColor}                             ║${reset}`,
     `${headerColor}║    ${commandColor}:env${textColor} - Show environment bindings${headerColor}                         ║${reset}`,
     `${headerColor}║    ${commandColor}:macros${textColor} - Show defined macros${headerColor}                            ║${reset}`,
-    `${headerColor}║    ${commandColor}:module${textColor} - Switch or show module${headerColor}                          ║${reset}`,
-    `${headerColor}║    ${commandColor}:modules${textColor} - List available modules${headerColor}                        ║${reset}`,
+    `${headerColor}║    ${commandColor}:module${textColor} - Switch to module or show current${headerColor}               ║${reset}`,
+    `${headerColor}║    ${commandColor}:modules${textColor} - List all available modules${headerColor}                    ║${reset}`,
     `${headerColor}║    ${commandColor}:list${textColor} - Show symbols in current module${headerColor}                   ║${reset}`,
+    `${headerColor}║    ${commandColor}:see${textColor} - Inspect modules and symbols${headerColor}                       ║${reset}`,
     `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
-    `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript output display${headerColor}                   ║${reset}`,
+    `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript transpiled code display${headerColor}          ║${reset}`,
     `${headerColor}║    ${commandColor}:reset${textColor} - Reset REPL environment${headerColor}                          ║${reset}`,
     `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
   ];
@@ -173,14 +176,20 @@ function commandEnv(evaluator: ModuleAwareEvaluator, useColors: boolean, logger:
     console.log("----------------");
     symbols.forEach(symbol => {
       try {
+        // Skip internal symbols and properties of objects
+        if (symbol.includes('.')) return;
+        
         const value = env.lookup(symbol);
         const valueStr = formatValue(value);
         console.log(`${symbol} = ${valueStr}`);
       } catch (error: unknown) {
-        printError(
-          error instanceof Error ? error.message : String(error),
-          useColors
-        );
+        // Don't display lookup errors - these are usually for properties
+        if (logger.isVerbose) {
+          printError(
+            `Error looking up ${symbol}: ${error instanceof Error ? error.message : String(error)}`,
+            useColors
+          );
+        }
       }
     });
     console.log("----------------");
@@ -266,7 +275,10 @@ function commandModule(evaluator: ModuleAwareEvaluator, state: ReplState, module
   // Check if module name is provided
   if (!moduleName) {
     // If no module name is provided, show the current module
-    console.log(`Current module: ${evaluator.getCurrentModule()}`);
+    console.log(colorText(`Current module: ${evaluator.getCurrentModule()}`, 
+                         colors.fg.sicpPurple + colors.bright, true));
+    console.log(`The module name appears in your prompt: hql[${evaluator.getCurrentModule()}]>`);
+    console.log(`Use :module <name> to switch to a different module`);
     return;
   }
   
@@ -373,7 +385,282 @@ function commandExpanded(showExpanded: boolean, setShowExpanded: (val: boolean) 
 function commandJs(showJs: boolean, setShowJs: (val: boolean) => void): void {
   const newValue = !showJs;
   setShowJs(newValue);
-  console.log(`JavaScript output display ${newValue ? 'enabled' : 'disabled'}`);
+  if (newValue) {
+    console.log("JavaScript transpiled code display is now enabled.");
+    console.log("For each HQL expression, you'll now see the transpiled JavaScript.");
+  } else {
+    console.log("JavaScript transpiled code display is now disabled.");
+  }
+}
+
+// New command to show symbol definitions
+function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColors: boolean, showJs: boolean = false): void {
+  // No arguments: list all modules with their exported symbols
+  if (!args || args.trim() === "") {
+    const modules = evaluator.getAvailableModules();
+    console.log(colorText("Available Modules:", colors.fg.sicpRed + colors.bright, useColors));
+    
+    if (modules.length === 0) {
+      console.log("No modules defined");
+    } else {
+      // Show a summary first
+      console.log(colorText(`Found ${modules.length} module(s)`, colors.fg.white + colors.bright, useColors));
+      console.log(colorText("Module list:", colors.fg.sicpBlue, useColors) + " " + 
+                  colorText(modules.join(", "), colors.fg.sicpPurple, useColors));
+      console.log(colorText("─".repeat(60), colors.fg.white, useColors));
+      
+      modules.forEach(moduleName => {
+        // Get symbols and exports for this module
+        const symbols = evaluator.listModuleSymbols(moduleName);
+        const exports = evaluator.getModuleExports(moduleName);
+        
+        // Show module name with better highlighting
+        console.log(colorText(`\n▶ Module: ${moduleName}`, colors.fg.sicpPurple + colors.bright, useColors));
+        
+        // Categorize symbols by type
+        const functionSymbols: string[] = [];
+        const variableSymbols: string[] = [];
+        const otherSymbols: string[] = [];
+        
+        symbols.forEach(symbol => {
+          const definition = evaluator.getSymbolDefinition(symbol, moduleName);
+          if (definition) {
+            if (typeof definition.value === 'function') {
+              functionSymbols.push(symbol);
+            } else {
+              variableSymbols.push(symbol);
+            }
+          } else {
+            otherSymbols.push(symbol);
+          }
+        });
+        
+        // Create set of exported symbols for easy lookup
+        const exportSet = new Set(exports);
+        
+        // Display all symbols grouped by type
+        if (functionSymbols.length > 0) {
+          console.log(colorText("  Functions:", colors.fg.sicpGreen, useColors));
+          functionSymbols.sort().forEach(symbol => {
+            const isExported = exportSet.has(symbol);
+            const symbolDisplay = isExported 
+              ? colorText(symbol, colors.fg.green + colors.bright, useColors) + colorText(" (exported)", colors.fg.green, useColors)
+              : symbol;
+            console.log(`    - ${symbolDisplay}`);
+          });
+        }
+        
+        if (variableSymbols.length > 0) {
+          console.log(colorText("  Variables:", colors.fg.sicpBlue, useColors));
+          variableSymbols.sort().forEach(symbol => {
+            const isExported = exportSet.has(symbol);
+            const symbolDisplay = isExported 
+              ? colorText(symbol, colors.fg.green + colors.bright, useColors) + colorText(" (exported)", colors.fg.green, useColors)
+              : symbol;
+            console.log(`    - ${symbolDisplay}`);
+          });
+        }
+        
+        if (otherSymbols.length > 0) {
+          console.log(colorText("  Other:", colors.fg.yellow, useColors));
+          otherSymbols.sort().forEach(symbol => {
+            const isExported = exportSet.has(symbol);
+            const symbolDisplay = isExported 
+              ? colorText(symbol, colors.fg.green + colors.bright, useColors) + colorText(" (exported)", colors.fg.green, useColors)
+              : symbol;
+            console.log(`    - ${symbolDisplay}`);
+          });
+        }
+        
+        // Show summary of exports if any
+        if (exports.length > 0) {
+          console.log(colorText("  Summary of exports:", colors.fg.lightGreen + colors.bright, useColors));
+          console.log(`    ${colorText(exports.join(", "), colors.fg.green, useColors)}`);
+        }
+      });
+      
+      console.log(colorText("\nUsage:", colors.fg.cyan, useColors));
+      console.log(`  :see <module> - View detailed symbols in a specific module`);
+      console.log(`  :see <module:symbol> - View a specific symbol definition`);
+    }
+    return;
+  }
+  
+  // Check if symbol contains module prefix (module:symbol format)
+  if (args.includes(':')) {
+    const [moduleName, localSymbolName] = args.split(':');
+    
+    // Try to get the symbol definition
+    const definition = evaluator.getSymbolDefinition(localSymbolName.trim(), moduleName.trim());
+    
+    if (!definition) {
+      console.error(`Symbol '${args}' not found or has no stored definition.`);
+      return;
+    }
+    
+    console.log(colorText(`Definition of '${args}':`, colors.fg.sicpRed + colors.bright, useColors));
+    console.log("----------------");
+    
+    // Display the source code - prefer HQL source over JS
+    if (definition.source) {
+      console.log(colorText("HQL Source:", colors.fg.sicpGreen, useColors));
+      console.log(definition.source);
+    }
+    
+    // Only show the JS source if specifically enabled
+    if (definition.jsSource && showJs) {
+      console.log(colorText("\nJavaScript Transpilation:", colors.fg.yellow, useColors));
+      console.log(definition.jsSource);
+    }
+    
+    // Show value if no source is available
+    if (!definition.source && !definition.jsSource) {
+      if (typeof definition.value === 'function') {
+        // For functions without source, show the function representation
+        console.log(colorText("Function:", colors.fg.sicpGreen, useColors));
+        console.log(definition.value.toString());
+      } else {
+        console.log(colorText("Value:", colors.fg.sicpBlue, useColors));
+        console.log(formatValue(definition.value));
+      }
+    }
+    
+    // Show metadata if available
+    if (definition.metadata) {
+      console.log(colorText("\nMetadata:", colors.fg.lightBlue, useColors));
+      console.log(definition.metadata);
+    }
+    
+    console.log("----------------");
+    console.log("To use this symbol in HQL, import it with:");
+    console.log(`(import [${localSymbolName.trim()}] from "${moduleName.trim()}")`);
+    console.log("----------------");
+    return;
+  }
+  
+  // Check if this might be a symbol in the current module
+  const singleArg = args.trim();
+  const currentModule = evaluator.getCurrentModule();
+  const symbols = evaluator.listModuleSymbols(currentModule);
+  
+  if (symbols.includes(singleArg)) {
+    // This is a symbol in the current module - show its definition
+    const definition = evaluator.getSymbolDefinition(singleArg, currentModule);
+    
+    if (definition) {
+      console.log(colorText(`Definition of '${singleArg}' in current module '${currentModule}':`, 
+                           colors.fg.sicpRed + colors.bright, useColors));
+      console.log("----------------");
+      
+      // Display the source code - prefer HQL source over JS
+      if (definition.source) {
+        console.log(colorText("HQL Source:", colors.fg.sicpGreen, useColors));
+        console.log(definition.source);
+      }
+      
+      // Only show the JS source if specifically enabled
+      if (definition.jsSource && showJs) {
+        console.log(colorText("\nJavaScript Transpilation:", colors.fg.yellow, useColors));
+        console.log(definition.jsSource);
+      }
+      
+      // Show value if no source is available
+      if (!definition.source && !definition.jsSource) {
+        if (typeof definition.value === 'function') {
+          // For functions without source, show the function representation
+          console.log(colorText("Function:", colors.fg.sicpGreen, useColors));
+          console.log(definition.value.toString());
+        } else {
+          console.log(colorText("Value:", colors.fg.sicpBlue, useColors));
+          console.log(formatValue(definition.value));
+        }
+      }
+      
+      // Show metadata if available
+      if (definition.metadata) {
+        console.log(colorText("\nMetadata:", colors.fg.lightBlue, useColors));
+        console.log(definition.metadata);
+      }
+      
+      console.log("----------------");
+      return;
+    }
+  }
+  
+  // If it's not a symbol in the current module, it must be a module name
+  const moduleName = singleArg;
+  const moduleSymbols = evaluator.listModuleSymbols(moduleName);
+  
+  if (!moduleSymbols || moduleSymbols.length === 0) {
+    console.error(`Module or symbol '${moduleName}' not found.`);
+    console.log(`Use :modules to see list of available modules`);
+    console.log(`To see a symbol in the current module (${currentModule}), use :see symbol`);
+    console.log(`To see a symbol in another module, use :see module:symbol`);
+    return;
+  }
+  
+  // If we reach here, it's a valid module name
+  console.log(colorText(`Symbols in module '${moduleName}':`, colors.fg.sicpRed + colors.bright, useColors));
+  
+  // Get all exported symbols for highlighting
+  const exports = evaluator.getModuleExports(moduleName);
+  const exportSet = new Set(exports);
+  
+  // Categorize symbols by type
+  const functionSymbols: string[] = [];
+  const variableSymbols: string[] = [];
+  const otherSymbols: string[] = [];
+  
+  moduleSymbols.forEach(symbol => {
+    const definition = evaluator.getSymbolDefinition(symbol, moduleName);
+    if (definition) {
+      if (typeof definition.value === 'function') {
+        functionSymbols.push(symbol);
+      } else {
+        variableSymbols.push(symbol);
+      }
+    } else {
+      otherSymbols.push(symbol);
+    }
+  });
+  
+  // Display functions
+  if (functionSymbols.length > 0) {
+    console.log(colorText("\nFunctions:", colors.fg.sicpGreen + colors.bright, useColors));
+    console.log("------------");
+    functionSymbols.sort().forEach(symbol => {
+      const isExported = exportSet.has(symbol);
+      const marker = isExported ? colorText(' (exported)', colors.fg.green, useColors) : '';
+      console.log(`- ${symbol}${marker}`);
+    });
+  }
+  
+  // Display variables
+  if (variableSymbols.length > 0) {
+    console.log(colorText("\nVariables:", colors.fg.sicpBlue + colors.bright, useColors));
+    console.log("------------");
+    variableSymbols.sort().forEach(symbol => {
+      const isExported = exportSet.has(symbol);
+      const marker = isExported ? colorText(' (exported)', colors.fg.green, useColors) : '';
+      console.log(`- ${symbol}${marker}`);
+    });
+  }
+  
+  // Display other symbols if any
+  if (otherSymbols.length > 0) {
+    console.log(colorText("\nOther Symbols:", colors.fg.yellow + colors.bright, useColors));
+    console.log("------------");
+    otherSymbols.sort().forEach(symbol => {
+      const isExported = exportSet.has(symbol);
+      const marker = isExported ? colorText(' (exported)', colors.fg.green, useColors) : '';
+      console.log(`- ${symbol}${marker}`);
+    });
+  }
+  
+  console.log("\nUse :see " + moduleName + ":<symbol> to view a specific symbol definition");
+  console.log("To use symbols from this module in HQL, import them with:");
+  console.log(`(import [symbol1, symbol2] from "${moduleName}")`);
+  console.log("------------");
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -598,10 +885,10 @@ async function processInput(
       return;
     }
     
-    // Check if this is a module switch expression
-    const isModuleSwitch = await evaluator.detectModuleSwitch(input);
-    if (isModuleSwitch) {
-      // Update state with current module
+    // Check for special HQL expressions (like imports and exports)
+    const isSpecialExpression = await evaluator.detectSpecialHqlExpressions(input);
+    if (isSpecialExpression) {
+      // The expression was handled, update state if needed
       state.currentModule = evaluator.getCurrentModule();
       return;
     }
@@ -911,6 +1198,9 @@ async function handleCommand(
       break;
     case "list":
       commandList(evaluator, options.useColors);
+      break;
+    case "see":
+      commandSee(evaluator, args, options.useColors, options.showJs);
       break;
     case "remove":
       commandRemove(evaluator, state, args);
