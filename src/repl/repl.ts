@@ -74,7 +74,7 @@ function printBanner(useColors = false): void {
     `${headerColor}║  ${textColor}Type HQL expressions to evaluate them${headerColor}                      ║${reset}`,
     `${headerColor}║  ${noteColor}The prompt ${textColor}hql[module]>${noteColor} shows your current module${headerColor}               ║${reset}`,
     `${headerColor}║  ${textColor}Special commands:${headerColor}                                          ║${reset}`,
-    `${headerColor}║    ${commandColor}:help${textColor} - Display this help${headerColor}                                ║${reset}`,
+    `${headerColor}║    ${commandColor}:help${textColor} - Display help (use ${commandColor}:help <command>${textColor} for details)${headerColor}     ║${reset}`,
     `${headerColor}║    ${commandColor}:quit${textColor}, ${commandColor}:exit${textColor} - Exit the REPL${headerColor}                             ║${reset}`,
     `${headerColor}║    ${commandColor}:env${textColor} - Show environment bindings${headerColor}                         ║${reset}`,
     `${headerColor}║    ${commandColor}:macros${textColor} - Show defined macros${headerColor}                            ║${reset}`,
@@ -84,7 +84,6 @@ function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:see${textColor} - Inspect modules and symbols${headerColor}                       ║${reset}`,
     `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
     `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript transpiled code display${headerColor}          ║${reset}`,
-    `${headerColor}║    ${commandColor}:reset${textColor} - Reset REPL environment${headerColor}                          ║${reset}`,
     `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
   ];
   banner.forEach(line => console.log(line));
@@ -149,8 +148,17 @@ function updateParenBalance(line: string, currentBalance: number): number {
    Command Handlers
    (Each command is now a separate function)
 ───────────────────────────────────────────────────────────────────────────── */
-function commandHelp(useColors: boolean): void {
-  printBanner(useColors);
+function commandHelp(args: string, useColors: boolean): void {
+  if (!args || args.trim() === "") {
+    // No arguments, just show the banner
+    printBanner(useColors);
+  } else {
+    // Show detailed help for a specific command
+    const command = args.trim().toLowerCase();
+    console.log(`Showing help for command: ${command}`); // Debug line to verify command is received
+    const helpText = getDetailedHelp(command, useColors);
+    console.log(helpText);
+  }
 }
 
 function commandQuit(setRunning: (val: boolean) => void): void {
@@ -313,50 +321,168 @@ function commandList(evaluator: ModuleAwareEvaluator, useColors: boolean): void 
   }
 }
 
-// New command to remove a symbol or module
-function commandRemove(evaluator: ModuleAwareEvaluator, state: ReplState, name: string): void {
-  if (!name) {
-    console.error("Usage: :remove <name>");
+// Updated remove command with integrated reset functionality and colon syntax
+async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useColors: boolean, state: ReplState): Promise<void> {
+  if (!args || args.trim() === "") {
+    console.error("No target specified. Use :remove <symbol>, :remove module:<name>, or :remove all");
+    console.log("For more information, try :help remove");
     return;
   }
   
-  try {
-    // First, check if it's a module
-    const modules = evaluator.getAvailableModules();
-    if (modules.includes(name)) {
-      // It's a module, try to remove it
-      const removed = evaluator.removeModule(name);
-      if (removed) {
-        console.log(`Removed module: ${name}`);
-        // If we removed current module, update state
-        if (state.currentModule === name) {
-          state.currentModule = evaluator.getCurrentModule();
-        }
-      } else {
-        console.error(`Cannot remove module: ${name}`);
-      }
+  const argText = args.trim();
+  
+  // Handle special "all" cases (previously handled by :reset)
+  if (argText === "all") {
+    // Remove everything (full reset)
+    await confirmAndExecute(
+      "Remove all modules and definitions? This will reset the entire environment.",
+      () => {
+        evaluator.resetEnvironment(false);
+        state.currentModule = evaluator.getCurrentModule();
+        console.log(colorText("Environment completely reset.", colors.fg.green, useColors));
+      },
+      useColors
+    );
+    return;
+  }
+  
+  if (argText === "all:symbols") {
+    // Clear all definitions but keep module structure
+    await confirmAndExecute(
+      "Remove all symbols from all modules but preserve module structure?",
+      () => {
+        evaluator.resetEnvironment(true);
+        state.currentModule = evaluator.getCurrentModule();
+        console.log(colorText("All symbols removed, module structure preserved.", colors.fg.green, useColors));
+      },
+      useColors
+    );
+    return;
+  }
+  
+  if (argText === "all:modules") {
+    // Remove all modules except current
+    await confirmAndExecute(
+      "Remove all modules except the current one?",
+      () => {
+        const currentModule = evaluator.getCurrentModule();
+        const modules = evaluator.getAvailableModules();
+        
+        // Remove each module except the current one
+        let removedCount = 0;
+        modules.forEach(moduleName => {
+          if (moduleName !== currentModule && moduleName !== "user") {
+            if (evaluator.removeModule(moduleName)) {
+              removedCount++;
+            }
+          }
+        });
+        
+        console.log(colorText(`Removed ${removedCount} modules. Kept '${currentModule}' as the current module.`, 
+          colors.fg.green, useColors));
+      },
+      useColors
+    );
+    return;
+  }
+  
+  // Check if we're removing a specific module using colon syntax
+  if (argText.startsWith("module:")) {
+    const moduleName = argText.substring("module:".length);
+    
+    if (!moduleName) {
+      console.error("No module name specified. Use :remove module:<name>");
       return;
     }
     
-    // If it's not a module, try as a symbol
-    const removed = evaluator.removeSymbol(name);
-    if (removed) {
-      console.log(`Removed symbol: ${name}`);
-    } else {
-      console.error(`Symbol or module not found: ${name}`);
-    }
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`Error removing symbol/module: ${errorMessage}`);
+    await confirmAndExecute(
+      `Remove module '${moduleName}'? This will delete all symbols in this module.`,
+      () => {
+        const removed = evaluator.removeModule(moduleName);
+        
+        if (removed) {
+          console.log(colorText(`Module '${moduleName}' has been removed.`, colors.fg.green, useColors));
+          
+          // If we removed the current module, update state
+          if (state.currentModule === moduleName) {
+            state.currentModule = evaluator.getCurrentModule();
+            console.log(colorText(`Switched to module: ${state.currentModule}`, colors.fg.cyan, useColors));
+          }
+        } else {
+          console.error(`Failed to remove module '${moduleName}'. It may not exist or cannot be removed.`);
+          console.log("Note: The default 'user' module cannot be removed.");
+        }
+      },
+      useColors
+    );
+    return;
   }
+  
+  // Check for module:symbol syntax
+  if (argText.includes(":")) {
+    const [moduleName, symbolName] = argText.split(":");
+    
+    if (!symbolName) {
+      console.error("No symbol specified. Use :remove module:symbol");
+      return;
+    }
+    
+    await confirmAndExecute(
+      `Remove symbol '${symbolName}' from module '${moduleName}'?`,
+      () => {
+        const removed = evaluator.removeSymbolFromModule(symbolName, moduleName);
+        
+        if (removed) {
+          console.log(colorText(`Symbol '${symbolName}' has been removed from module '${moduleName}'.`, 
+            colors.fg.green, useColors));
+        } else {
+          console.error(`Symbol '${symbolName}' not found in module '${moduleName}'.`);
+        }
+      },
+      useColors
+    );
+    return;
+  }
+  
+  // If we get here, it's removing a symbol from the current module
+  const symbolName = argText;
+  
+  await confirmAndExecute(
+    `Remove symbol '${symbolName}' from current module '${evaluator.getCurrentModule()}'?`,
+    () => {
+      const removed = evaluator.removeSymbol(symbolName);
+      
+      if (removed) {
+        console.log(colorText(`Symbol '${symbolName}' has been removed from module '${evaluator.getCurrentModule()}'.`, 
+          colors.fg.green, useColors));
+      } else {
+        console.error(`Symbol '${symbolName}' not found in module '${evaluator.getCurrentModule()}'.`);
+      }
+    },
+    useColors
+  );
 }
 
-function commandReset(evaluator: ModuleAwareEvaluator, state: ReplState, keepModules = false): void {
-  console.log(`Resetting REPL environment${keepModules ? ' (keeping modules)' : ''}...`);
-  evaluator.resetEnvironment(keepModules);
-  // Update state with current module from evaluator
-  state.currentModule = evaluator.getCurrentModule();
-  console.log("Environment reset complete.");
+// Helper function for confirmation dialogs using Deno's API
+async function confirmAndExecute(message: string, action: () => void, useColors: boolean): Promise<void> {
+  console.log(colorText(message, colors.fg.yellow, useColors));
+  console.log("Type 'y' or 'yes' to confirm: ");
+  
+  // Use Deno's prompt for user input
+  const buf = new Uint8Array(1024);
+  const n = await Deno.stdin.read(buf);
+  
+  if (n) {
+    const answer = new TextDecoder().decode(buf.subarray(0, n)).trim().toLowerCase();
+    
+    if (answer === "yes" || answer === "y") {
+      action();
+    } else {
+      console.log("Operation cancelled.");
+    }
+  } else {
+    console.log("Operation cancelled.");
+  }
 }
 
 function commandDefault(cmd: string): void {
@@ -1166,7 +1292,9 @@ async function handleCommand(
 
   switch (cmd) {
     case "help":
-      commandHelp(options.useColors);
+      // Make sure we're properly passing args to commandHelp
+      const helpArg = args.trim();
+      commandHelp(helpArg, options.useColors);
       break;
     case "quit":
     case "exit":
@@ -1178,23 +1306,11 @@ async function handleCommand(
     case "macros":
       commandMacros(evaluator, options.useColors);
       break;
-    case "verbose":
-      commandVerbose(options.logger, options.replState.setVerbose);
-      break;
-    case "ast":
-      commandAst(options.showAst, options.replState.setShowAst);
-      break;
-    case "expanded":
-      commandExpanded(options.showExpanded, options.replState.setShowExpanded);
-      break;
-    case "js":
-      commandJs(options.showJs, options.replState.setShowJs);
+    case "module":
+      commandModule(evaluator, state, args);
       break;
     case "modules":
       commandModules(evaluator, options.useColors);
-      break;
-    case "module":
-      commandModule(evaluator, state, args);
       break;
     case "list":
       commandList(evaluator, options.useColors);
@@ -1203,14 +1319,28 @@ async function handleCommand(
       commandSee(evaluator, args, options.useColors, options.showJs);
       break;
     case "remove":
-      commandRemove(evaluator, state, args);
-      break;
-    case "reset":
-      const keepModules = args === "--keep-modules" || args === "-k";
-      commandReset(evaluator, state, keepModules);
+      await commandRemove(evaluator, args, options.useColors, state);
       break;
     default:
-      commandDefault(cmd);
+      if (cmd === "js") {
+        commandJs(options.showJs, options.replState.setShowJs);
+      } else if (cmd === "verbose") {
+        commandVerbose(options.logger, options.replState.setVerbose);
+      } else if (cmd === "ast") {
+        commandAst(options.showAst, options.replState.setShowAst);
+      } else if (cmd === "expanded") {
+        commandExpanded(options.showExpanded, options.replState.setShowExpanded);
+      } else if (cmd === "colors") {
+        options.replState.setColors(!options.useColors);
+        console.log(`ANSI colors ${!options.useColors ? 'enabled' : 'disabled'}`);
+      } else if (cmd === "reset") {
+        // Redirect reset to remove all for backward compatibility
+        console.log(colorText("Note: The :reset command is deprecated.", colors.fg.yellow, options.useColors));
+        console.log("Using :remove all instead...");
+        await commandRemove(evaluator, "all", options.useColors, state);
+      } else {
+        commandDefault(cmd);
+      }
   }
 }
 
@@ -1312,4 +1442,189 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     );
     Deno.exit(1);
   }
+}
+
+// Create a function for detailed help documentation
+function getDetailedHelp(command: string, useColors: boolean): string {
+  const commandColor = useColors ? colors.fg.sicpRed : "";
+  const headerColor = useColors ? colors.fg.sicpPurple + colors.bright : "";
+  const textColor = useColors ? colors.fg.white : "";
+  const exampleColor = useColors ? colors.fg.lightGreen : "";
+  const reset = useColors ? colors.reset : "";
+  
+  // If the command is "reset", redirect to "remove"
+  if (command === "reset") {
+    command = "remove";
+    console.log(colorText("Note: The :reset command is deprecated.", colors.fg.yellow, useColors));
+    console.log("Please use :remove all or :remove all:symbols instead.\n");
+  }
+  
+  const helpTopics: Record<string, string[]> = {
+    "help": [
+      `${headerColor}Command: ${commandColor}:help${reset}`,
+      ``,
+      `${textColor}Display help information for REPL commands.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:help${textColor} - Show the main help banner${reset}`,
+      `  ${commandColor}:help <command>${textColor} - Show detailed help for a specific command${reset}`,
+      ``,
+      `${headerColor}Examples:${reset}`,
+      `  ${exampleColor}:help see${textColor} - Display detailed help for the :see command${reset}`,
+      `  ${exampleColor}:help module${textColor} - Display detailed help for the :module command${reset}`
+    ],
+    
+    "quit": [
+      `${headerColor}Command: ${commandColor}:quit${textColor} or ${commandColor}:exit${reset}`,
+      ``,
+      `${textColor}Exit the REPL and return to the command line.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:quit${reset}`,
+      `  ${commandColor}:exit${reset}`
+    ],
+    
+    "exit": [
+      `${headerColor}Command: ${commandColor}:quit${textColor} or ${commandColor}:exit${reset}`,
+      ``,
+      `${textColor}Exit the REPL and return to the command line.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:quit${reset}`,
+      `  ${commandColor}:exit${reset}`
+    ],
+    
+    "env": [
+      `${headerColor}Command: ${commandColor}:env${reset}`,
+      ``,
+      `${textColor}Display the current environment bindings (global variables and functions).${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:env${reset}`
+    ],
+    
+    "macros": [
+      `${headerColor}Command: ${commandColor}:macros${reset}`,
+      ``,
+      `${textColor}List all defined macros in the REPL environment.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:macros${reset}`
+    ],
+    
+    "module": [
+      `${headerColor}Command: ${commandColor}:module${reset}`,
+      ``,
+      `${textColor}Switch to a different module or display the current module.${reset}`,
+      `${textColor}Modules provide namespace isolation for your definitions.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:module${textColor} - Show the current module${reset}`,
+      `  ${commandColor}:module <name>${textColor} - Switch to the specified module${reset}`,
+      ``,
+      `${headerColor}Examples:${reset}`,
+      `  ${exampleColor}:module math${textColor} - Switch to the "math" module${reset}`,
+      ``,
+      `${headerColor}Notes:${reset}`,
+      `  - New modules are created automatically when you switch to them`,
+      `  - The default module is named "user"`,
+      `  - Your current module appears in the prompt: ${exampleColor}hql[module]>${reset}`
+    ],
+    
+    "modules": [
+      `${headerColor}Command: ${commandColor}:modules${reset}`,
+      ``,
+      `${textColor}List all available modules in the REPL.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:modules${reset}`,
+      ``,
+      `${headerColor}Related commands:${reset}`,
+      `  ${commandColor}:module${textColor} - Switch to a specific module${reset}`,
+      `  ${commandColor}:see${textColor} - View module contents${reset}`,
+      `  ${commandColor}:remove module:<name>${textColor} - Delete a module${reset}`
+    ],
+    
+    "list": [
+      `${headerColor}Command: ${commandColor}:list${reset}`,
+      ``,
+      `${textColor}List all symbols defined in the current module.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:list${reset}`,
+      ``,
+      `${headerColor}Related commands:${reset}`,
+      `  ${commandColor}:see${textColor} - View detailed information about modules and symbols${reset}`
+    ],
+    
+    "see": [
+      `${headerColor}Command: ${commandColor}:see${reset}`,
+      ``,
+      `${textColor}Inspect modules and symbols, showing their definitions and details.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:see${textColor} - List all modules with their exported symbols${reset}`,
+      `  ${commandColor}:see <module>${textColor} - View all symbols in a specific module${reset}`,
+      `  ${commandColor}:see <symbol>${textColor} - View a symbol in the current module${reset}`,
+      `  ${commandColor}:see <module:symbol>${textColor} - View a specific symbol in a specific module${reset}`,
+      ``,
+      `${headerColor}Examples:${reset}`,
+      `  ${exampleColor}:see math${textColor} - View all symbols in the "math" module${reset}`,
+      `  ${exampleColor}:see add${textColor} - View the definition of "add" in the current module${reset}`,
+      `  ${exampleColor}:see math:add${textColor} - View the definition of "add" in the "math" module${reset}`
+    ],
+    
+    "remove": [
+      `${headerColor}Command: ${commandColor}:remove${reset}`,
+      ``,
+      `${textColor}Remove symbols, modules, or reset the environment.${reset}`,
+      `${textColor}All remove operations require confirmation for safety.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:remove <symbol>${textColor} - Remove a symbol from the current module${reset}`,
+      `  ${commandColor}:remove module:<name>${textColor} - Remove an entire module${reset}`,
+      `  ${commandColor}:remove <module>:<symbol>${textColor} - Remove a symbol from a specific module${reset}`,
+      `  ${commandColor}:remove all${textColor} - Reset the entire environment (previously :reset)${reset}`,
+      `  ${commandColor}:remove all:symbols${textColor} - Clear all symbols but keep module structure${reset}`,
+      `  ${commandColor}:remove all:modules${textColor} - Remove all modules except the current one${reset}`,
+      ``,
+      `${headerColor}Examples:${reset}`,
+      `  ${exampleColor}:remove add${textColor} - Remove the "add" symbol from the current module${reset}`,
+      `  ${exampleColor}:remove module:math${textColor} - Remove the entire "math" module${reset}`,
+      `  ${exampleColor}:remove math:multiply${textColor} - Remove "multiply" from the "math" module${reset}`,
+      `  ${exampleColor}:remove all${textColor} - Reset the entire environment${reset}`,
+      ``,
+      `${headerColor}Notes:${reset}`,
+      `  - All operations require confirmation (type 'y' or 'yes')${reset}`,
+      `  - The default "user" module cannot be removed${reset}`,
+      `  - These operations cannot be undone${reset}`
+    ],
+    
+    "js": [
+      `${headerColor}Command: ${commandColor}:js${reset}`,
+      ``,
+      `${textColor}Toggle the display of JavaScript transpiled code.${reset}`,
+      `${textColor}When enabled, you'll see the JavaScript transpilation of each HQL expression.${reset}`,
+      ``,
+      `${headerColor}Usage:${reset}`,
+      `  ${commandColor}:js${textColor} - Toggle JavaScript display on/off${reset}`,
+      ``,
+      `${headerColor}Notes:${reset}`,
+      `  - This only affects the display, not the execution of code`,
+      `  - When enabled, symbol definitions shown with :see will include JS code`
+    ]
+  };
+  
+  // If the command is not found, provide a list of available commands
+  if (!command || !helpTopics[command]) {
+    return [
+      `${headerColor}Available Help Topics:${reset}`,
+      ``,
+      `Use ${commandColor}:help <topic>${textColor} for detailed information on a specific command.${reset}`,
+      ``,
+      `${textColor}Available topics: ${Object.keys(helpTopics).filter(k => !['exit', 'quit'].includes(k)).join(', ')}${reset}`
+    ].join('\n');
+  }
+  
+  return helpTopics[command].join('\n');
 }

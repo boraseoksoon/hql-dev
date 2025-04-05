@@ -799,4 +799,50 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     
     this.moduleLogger.debug(`Stored definition for ${symbolName} in module ${this.currentModule}`);
   }
+
+  /**
+   * Remove a symbol from a specific module
+   * @param symbolName The name of the symbol to remove
+   * @param moduleName The name of the module to remove from
+   * @returns True if the symbol was removed, false otherwise
+   */
+  removeSymbolFromModule(symbolName: string, moduleName: string): boolean {
+    if (!this.initialized) {
+      throw new Error("Module system not initialized");
+    }
+    
+    try {
+      // First check if the module exists
+      const modules = this.getAvailableModules();
+      if (!modules.includes(moduleName)) {
+        this.moduleLogger.warn(`Module '${moduleName}' does not exist`);
+        return false;
+      }
+      
+      // Switch to the module temporarily to remove the symbol
+      const currentModule = this.currentModule;
+      
+      // Save current module to switch back to
+      try {
+        // Temporarily switch to target module
+        this.switchModule(moduleName);
+        
+        // Try to remove the symbol
+        const removed = persistentStateManager.removeDefinition(symbolName);
+        
+        // Switch back to original module
+        this.switchModule(currentModule);
+        
+        return removed;
+      } catch (error) {
+        // Make sure we switch back even if there's an error
+        this.switchModule(currentModule);
+        throw error;
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.moduleLogger.error(`Error removing symbol from module: ${errorMessage}`);
+      return false;
+    }
+  }
 } 
