@@ -9,11 +9,8 @@ import { Environment } from "../environment.ts";
 import { REPLEvaluator } from "./repl-evaluator.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
 import { formatError, getSuggestion, registerSourceFile } from "../transpiler/error/error-handling.ts";
-import { ImportError, TransformError } from "../transpiler/error/errors.ts";
-import { processImports } from "../imports.ts"; 
-import { parse } from "../transpiler/pipeline/parser.ts";
+import { ImportError } from "../transpiler/error/errors.ts";
 import { historyManager } from "./history-manager.ts";
-import { clipboardHandler } from "./clipboard-handler.ts";
 
 interface ReplOptions {
   verbose?: boolean;
@@ -424,26 +421,6 @@ async function readLineWithHistory(
 
   while (true) {
     const key = await keypress();
-    
-    // Check for paste (Ctrl+V on some systems)
-    if ((key?.ctrlKey && key.key === "v") || 
-        (key?.metaKey && key.key === "v")) {
-      try {
-        // Try to get clipboard content using clipboardHandler
-        const clipboardContent = await clipboardHandler.read();
-        if (clipboardContent && clipboardContent.trim()) {
-          // Insert clipboard content at current cursor position
-          currentInput = currentInput.slice(0, cursorPos) + 
-                        clipboardContent + 
-                        currentInput.slice(cursorPos);
-          cursorPos += clipboardContent.length;
-          await redrawLine();
-        }
-      } catch (error) {
-        // Silently fail on clipboard access issues - system might not support it
-      }
-      continue;
-    }
 
     if (key?.ctrlKey && key.key === "c") {
       await Deno.stdout.write(encoder.encode("\nExiting REPL...\n"));

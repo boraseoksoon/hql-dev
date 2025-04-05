@@ -21,6 +21,9 @@ export class REPLEnvironment {
   private jsEnv: Record<string, Value> = {};
   private definitions: Set<string> = new Set();
   private logger: Logger;
+  
+  // Track modules so we can persist them between evaluations
+  private modules: Map<string, Value> = new Map();
 
   constructor(hqlEnv: Environment, options: REPLEnvironmentOptions = {}) {
     this.hqlEnv = hqlEnv;
@@ -35,6 +38,13 @@ export class REPLEnvironment {
     this.jsEnv[name] = value;
     this.definitions.add(name);
     this.hqlEnv.define(name, value);
+    
+    // If this looks like a module (object with functions/properties), also track it in modules
+    if (value !== null && typeof value === 'object') {
+      this.modules.set(name, value);
+      this.debug(`Registered module '${name}' in REPL environment`);
+    }
+    
     this.logger.debug(`Defined '${name}' in REPL environment`);
   }
 
@@ -46,17 +56,30 @@ export class REPLEnvironment {
     delete this.jsEnv[name];
     this.definitions.delete(name);
     this.hqlEnv.define(name, null);
+    this.modules.delete(name);
     this.logger.debug(`Removed '${name}' from REPL environment`);
   }
 
   getDefinedSymbols(): string[] {
     return Array.from(this.definitions);
   }
+  
+  getModules(): Map<string, Value> {
+    return new Map(this.modules);
+  }
 
   createEvalContext(): string {
-    return Array.from(this.definitions)
+    // Get all defined symbols and create variable declarations for each
+    const symbolDeclarations = Array.from(this.definitions)
       .map((name) => `const ${name} = replEnv.getJsValue("${name}");`)
       .join("\n");
+      
+    // Also make sure all modules are available globally
+    const moduleSetup = Array.from(this.modules.keys())
+      .map((name) => `globalThis.${name} = replEnv.getJsValue("${name}");`)
+      .join("\n");
+    
+    return symbolDeclarations + "\n" + moduleSetup;
   }
 
   extractDefinitions(code: string): string[] {

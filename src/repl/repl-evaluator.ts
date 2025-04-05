@@ -164,55 +164,26 @@ async evaluate(input: string, options: REPLEvalOptions = {}): Promise<REPLEvalRe
     
     // Special handling for imports - process them with existing infrastructure
     if (input.trim().startsWith("(import ")) {
-      log("Detected import statement, processing with imports.ts infrastructure");
+      // Use the specialized import handling method
+      const importResult = await this.processImportDirectly(input);
       
-      // Parse the input
-      currentTime = performance.now();
-      const sexps = await withErrorHandling(
-        () => this.parseLine(input),
-        { source: input, filePath: "REPL", context: "REPL parsing" }
-      )();
-      metrics.parseTimeMs = performance.now() - currentTime;
-      log(`Parsed ${sexps.length} expressions`);
-      
-      // Transform syntax
-      currentTime = performance.now();
-      const transformedSexps = await withErrorHandling(
-        () => transformSyntax(sexps, { verbose: options.verbose }),
-        { source: input, filePath: "REPL", context: "REPL syntax transformation" }
-      )();
-      metrics.syntaxTransformTimeMs = performance.now() - currentTime;
-      log(`Transformed to ${transformedSexps.length} expressions`);
-      
-      // Process imports
-      currentTime = performance.now();
-      await withErrorHandling(
-        async () => {
-          await processImports(transformedSexps, this.replEnv.hqlEnv, {
-            verbose: options.verbose,
-            baseDir: options.baseDir || this.baseDir
-          });
-        },
-        { source: input, filePath: "REPL", context: "REPL import processing" }
-      )();
-      metrics.importProcessingTimeMs = performance.now() - currentTime;
+      // Check if import was successful
+      if (importResult.success) {
+        log(`Import successful: ${importResult.moduleName}`);
+      } else {
+        log(`Import failed: ${importResult.message}`);
+      }
       
       // Calculate total time
       metrics.totalTimeMs = performance.now() - startTime;
       this.lastMetrics = metrics;
       
-      // Reset current file in environment
-      this.replEnv.hqlEnv.setCurrentFile(null);
-      
-      // Track imported modules
-      this.trackImportedModule(input);
-      
-      // Return a simple result indicating success
+      // Return the import result
       return {
-        value: "Import successful",
+        value: importResult.message,
         jsCode: "// Import processed directly",
-        parsedExpressions: sexps,
-        expandedExpressions: transformedSexps,
+        parsedExpressions: [],
+        expandedExpressions: [],
         executionTimeMs: metrics.totalTimeMs
       };
     }
@@ -252,46 +223,48 @@ async evaluate(input: string, options: REPLEvalOptions = {}): Promise<REPLEvalRe
     
     log("Expanding macros...");
     currentTime = performance.now();
-    const expanded = await withErrorHandling(
+    const expandedSexps = await withErrorHandling(
       () => expandMacros(transformedSexps, this.replEnv.hqlEnv, {
         verbose: options.verbose,
-        currentFile: options.baseDir || this.baseDir,
       }),
       { source: input, filePath: "REPL", context: "REPL macro expansion" }
     )();
     metrics.macroExpansionTimeMs = performance.now() - currentTime;
+    log(`Expanded to ${expandedSexps.length} expressions`);
     
-    log("Converting to HQL AST...");
+    log("Converting to AST...");
     currentTime = performance.now();
-    const hqlAst = await withErrorHandling(
-      () => convertToHqlAst(expanded, { verbose: options.verbose }),
+    const ast = await withErrorHandling(
+      () => convertToHqlAst(expandedSexps, { verbose: options.verbose }),
       { source: input, filePath: "REPL", context: "REPL AST conversion" }
     )();
     metrics.astConversionTimeMs = performance.now() - currentTime;
+    log("AST conversion completed");
     
-    log("Transforming to JavaScript...");
+    log("Generating JavaScript...");
     currentTime = performance.now();
-    const jsCode = await withTypeScriptErrorTranslation(
-      withErrorHandling(
-        () => transformAST(hqlAst, options.baseDir || this.baseDir, { 
-          verbose: options.verbose,
-          replMode: true
-        }),
-        { source: input, filePath: "REPL", context: "REPL JS transformation" }
-      )
+    const jsCode = await withErrorHandling(
+      () => transformAST(ast, options.baseDir || this.baseDir, {
+        verbose: options.verbose,
+        replMode: true
+      }),
+      { source: input, filePath: "REPL", context: "REPL JS transformation" }
     )();
     metrics.codeGenerationTimeMs = performance.now() - currentTime;
+    log("JavaScript generation completed");
     
-    // Clean, prepare, and evaluate the JavaScript
-    log("Evaluating JavaScript...");
-    currentTime = performance.now();
+    log("Cleaning up generated code...");
     const cleanedCode = this.removeRuntimeFunctions(jsCode);
     const preparedJs = this.replEnv.prepareJsForRepl(cleanedCode);
-    const result = await withErrorHandling(
+    
+    log("Evaluating JavaScript...");
+    currentTime = performance.now();
+    const value = await withErrorHandling(
       () => this.evaluateJs(preparedJs),
       { source: preparedJs, filePath: "REPL JS", context: "REPL JS evaluation" }
     )();
     metrics.evaluationTimeMs = performance.now() - currentTime;
+    log("Evaluation completed");
     
     // Reset current file in environment
     this.replEnv.hqlEnv.setCurrentFile(null);
@@ -300,26 +273,25 @@ async evaluate(input: string, options: REPLEvalOptions = {}): Promise<REPLEvalRe
     metrics.totalTimeMs = performance.now() - startTime;
     this.lastMetrics = metrics;
     
-    // Return the full result
+    // Return the evaluation result
     return {
-      value: result,
-      jsCode: preparedJs,
+      value,
+      jsCode: cleanedCode,
       parsedExpressions: sexps,
-      expandedExpressions: expanded,
-      executionTimeMs: metrics.totalTimeMs
+      expandedExpressions: expandedSexps,
+      executionTimeMs: metrics.totalTimeMs,
     };
-  } catch (error) {
-    // Enhance the error with source context
-    const enhancedError = this.enhanceError(
-      error instanceof Error ? error : new Error(String(error)),
-      { source: input, filePath: "REPL" }
-    );
-    
-    // Reset environment state
+  } catch (error: unknown) {
     this.replEnv.hqlEnv.setCurrentFile(null);
+    log(`Evaluation error: ${error instanceof Error ? error.message : String(error)}`);
     
-    // Rethrow the enhanced error
-    throw enhancedError;
+    if (error instanceof Error) {
+      // Enhance the error before throwing it
+      throw this.enhanceError(error, 
+        { source: input, filePath: "REPL" }
+      );
+    }
+    throw error;
   }
 }
 
@@ -345,15 +317,15 @@ private trackImportedModule(importStatement: string): void {
   }
 }
 
-  /**
-   * Add additional context to an error
-   */
-  private enhanceError(error: Error, context: { source: string, filePath: string }): Error {
-    // Add context information to the error message
-    error.message = `${error.message}\nLocation: ${context.filePath}\n\n${context.source.split('\n').map((line, i) => `${i+1} │ ${line}`).join('\n')}`;
-    return error;
-  }
-  
+/**
+ * Add context information to the error message
+ */
+private enhanceError(error: Error, context: { source: string; filePath: string }): Error {
+  // Add context information to the error message
+  error.message = `${error.message}\nLocation: ${context.filePath}\n\n${context.source.split('\n').map((line, i) => `${i+1} │ ${line}`).join('\n')}`;
+  return error;
+}
+
 // Additions to src/repl/repl-evaluator.ts
 // This shows just the key method needed to add for proper import handling
 
@@ -400,6 +372,24 @@ async processImportDirectly(input: string): Promise<{ success: boolean, moduleNa
       baseDir: this.baseDir
     });
     
+    // Get the imported module reference from the environment
+    const importedModule = this.replEnv.hqlEnv.lookup(importInfo.moduleName);
+    
+    // Critical step: Save the imported module in the REPL JS environment
+    // This ensures the module is accessible in future evaluations
+    if (importedModule !== undefined) {
+      // Register in our REPL environment
+      this.replEnv.setJsValue(importInfo.moduleName, importedModule);
+      
+      // Create a global reference to make it accessible in the REPL
+      const globalAssignCode = `globalThis.${importInfo.moduleName} = replEnv.getJsValue("${importInfo.moduleName}");`;
+      await this.evaluateJs(globalAssignCode);
+      
+      this.logger.debug(`Registered "${importInfo.moduleName}" in REPL environment`);
+    } else {
+      this.logger.error(`Module "${importInfo.moduleName}" was processed but not found in environment`);
+    }
+    
     // Restore the original current file
     this.replEnv.hqlEnv.setCurrentFile(originalFile);
     
@@ -414,10 +404,9 @@ async processImportDirectly(input: string): Promise<{ success: boolean, moduleNa
       moduleName: importInfo.moduleName,
       message: `Successfully imported ${importInfo.moduleName} from "${importInfo.modulePath}"`
     };
-  } catch (error) {
+  } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    this.logger.error(`Import failed: ${errorMessage}`);
-    
+    this.logger.error(`Import error: ${errorMessage}`);
     return {
       success: false,
       moduleName: 'unknown',
@@ -473,8 +462,9 @@ private extractImportInfo(sexp: any): { moduleName: string, modulePath: string }
       moduleName = this.getModuleNameFromPath(modulePath);
       return { moduleName, modulePath };
     }
-  } catch (e) {
-    this.logger.error(`Error extracting import info: ${e.message}`);
+  } catch (e: unknown) {
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    this.logger.error(`Error extracting import info: ${errorMessage}`);
   }
   
   return { moduleName, modulePath };
@@ -486,210 +476,196 @@ private extractImportInfo(sexp: any): { moduleName: string, modulePath: string }
 getImportedModules(): Map<string, string> {
   return this.importedModules ? new Map(this.importedModules) : new Map();
 }
-  
-  /**
-   * Extract a module name from a path
-   */
-  private getModuleNameFromPath(modulePath: string): string {
-    // Handle npm/jsr imports
-    if (modulePath.startsWith('npm:')) {
-      return modulePath.substring(4).split('/')[0].replace(/[-]/g, '_');
-    }
-    
-    if (modulePath.startsWith('jsr:')) {
-      return modulePath.substring(4).split('/')[0].replace(/[-]/g, '_');
-    }
-    
-    // Handle http/https URLs
-    if (modulePath.startsWith('http:') || modulePath.startsWith('https:')) {
-      try {
-        const url = new URL(modulePath);
-        const pathname = url.pathname;
-        const filename = pathname.split('/').pop() || 'module';
-        return filename.replace(/\.[^/.]+$/, '').replace(/[-]/g, '_');
-      } catch {
-        return 'remote_module';
-      }
-    }
-    
-    // Regular file path
-    const basename = path.basename(modulePath);
-    return basename.replace(/\.[^/.]+$/, '').replace(/[-]/g, '_');
+
+/**
+ * Extract a module name from a path
+ */
+private getModuleNameFromPath(modulePath: string): string {
+  // Handle npm/jsr imports
+  if (modulePath.startsWith('npm:')) {
+    return modulePath.substring(4).split('/')[0].replace(/[-]/g, '_');
   }
   
-  /**
-   * Get a list of all imported modules
-   */
-  getImportedModules(): Map<string, string> {
-    return new Map(this.importedModules);
+  // Handle jsr imports
+  if (modulePath.startsWith('jsr:')) {
+    return modulePath.substring(4).split('/')[0].replace(/[-]/g, '_');
   }
   
-  /**
-   * Get access to the environment
-   */
-  getEnvironment(): Environment {
-    return this.replEnv.hqlEnv;
-  }
-  
-  /**
-   * Get the last recorded metrics
-   */
-  getLastMetrics(): EvaluationMetrics | null {
-    return this.lastMetrics;
-  }
-  
-  /**
-   * Log performance metrics for debugging
-   */
-  logPerformanceMetrics(): void {
-    if (!this.lastMetrics) {
-      this.logger.debug("No performance metrics available");
-      return;
-    }
-    
-    this.logger.debug("Performance metrics:");
-    this.logger.debug(`Parsing: ${this.lastMetrics.parseTimeMs.toFixed(2)}ms`);
-    this.logger.debug(`Syntax Transform: ${this.lastMetrics.syntaxTransformTimeMs.toFixed(2)}ms`);
-    this.logger.debug(`Import Processing: ${this.lastMetrics.importProcessingTimeMs.toFixed(2)}ms`);
-    this.logger.debug(`Macro Expansion: ${this.lastMetrics.macroExpansionTimeMs.toFixed(2)}ms`);
-    this.logger.debug(`AST Conversion: ${this.lastMetrics.astConversionTimeMs.toFixed(2)}ms`);
-    this.logger.debug(`Code Generation: ${this.lastMetrics.codeGenerationTimeMs.toFixed(2)}ms`);
-    this.logger.debug(`Evaluation: ${this.lastMetrics.evaluationTimeMs.toFixed(2)}ms`);
-    this.logger.debug(`Total: ${this.lastMetrics.totalTimeMs.toFixed(2)}ms`);
-  }
-  
-  /**
-   * Clear the parse cache for memory management
-   */
-  clearCache(): void {
-    this.parseCache.clear();
-    this.logger.debug("Parse cache cleared");
-  }
-  
-  /**
-   * Remove runtime function declarations from code to avoid redefinition errors
-   */
-  private removeRuntimeFunctions(code: string): string {
-    // Cache the function names for efficiency
-    if (!this.runtimeFunctionNames) {
-      this.runtimeFunctionNames = this.extractRuntimeFunctionNames();
-    }
-    
-    // For each runtime function, remove its function declaration
-    let cleanedCode = code;
-    for (const funcName of this.runtimeFunctionNames) {
-      // Use a more specific regex that doesn't break other functions
-      const funcRegex = new RegExp(`function\\s+${funcName}\\s*\\([^)]*\\)\\s*\\{[\\s\\S]*?\\}`, 'g');
-      cleanedCode = cleanedCode.replace(funcRegex, '');
-    }
-    
-    return cleanedCode.trim();
-  }
-  
-  /**
-   * Extract function names from runtime code - cached for performance
-   */
-  private extractRuntimeFunctionNames(): string[] {
-    const runtimeFunctionNames: string[] = [];
-    const funcNameRegex = /function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
-    const runtimeCode = RUNTIME_FUNCTIONS;
-    
-    let match;
-    while ((match = funcNameRegex.exec(runtimeCode)) !== null) {
-      if (match[1]) {
-        runtimeFunctionNames.push(match[1]);
-      }
-    }
-    
-    return runtimeFunctionNames;
-  }
-  
-  /**
-   * Evaluate JavaScript code with environment context
-   */
-  private async evaluateJs(code: string): Promise<Value> {
-    // Create a function with access to the REPL environment
-    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+  // Handle http/https URLs
+  if (modulePath.startsWith('http:') || modulePath.startsWith('https:')) {
     try {
-      // Create context with all defined symbols
-      const context = this.replEnv.createEvalContext();
+      const url = new URL(modulePath);
+      const pathname = url.pathname;
+      const filename = pathname.split('/').pop() || 'module';
+      return filename.replace(/\.[^/.]+$/, '').replace(/[-]/g, '_');
+    } catch (error: unknown) {
+      return 'remote_module';
+    }
+  }
+  
+  // Regular file path
+  const basename = path.basename(modulePath);
+  return basename.replace(/\.[^/.]+$/, '').replace(/[-]/g, '_');
+}
+
+/**
+ * Get access to the environment
+ */
+getEnvironment(): Environment {
+  return this.replEnv.hqlEnv;
+}
+
+/**
+ * Get the last recorded metrics
+ */
+getLastMetrics(): EvaluationMetrics | null {
+  return this.lastMetrics;
+}
+
+/**
+ * Log performance metrics for debugging
+ */
+logPerformanceMetrics(): void {
+  if (!this.lastMetrics) {
+    this.logger.debug("No performance metrics available");
+    return;
+  }
+  
+  this.logger.debug("Performance metrics:");
+  this.logger.debug(`Parsing: ${this.lastMetrics.parseTimeMs.toFixed(2)}ms`);
+  this.logger.debug(`Syntax Transform: ${this.lastMetrics.syntaxTransformTimeMs.toFixed(2)}ms`);
+  this.logger.debug(`Import Processing: ${this.lastMetrics.importProcessingTimeMs.toFixed(2)}ms`);
+  this.logger.debug(`Macro Expansion: ${this.lastMetrics.macroExpansionTimeMs.toFixed(2)}ms`);
+  this.logger.debug(`AST Conversion: ${this.lastMetrics.astConversionTimeMs.toFixed(2)}ms`);
+  this.logger.debug(`Code Generation: ${this.lastMetrics.codeGenerationTimeMs.toFixed(2)}ms`);
+  this.logger.debug(`Evaluation: ${this.lastMetrics.evaluationTimeMs.toFixed(2)}ms`);
+  this.logger.debug(`Total: ${this.lastMetrics.totalTimeMs.toFixed(2)}ms`);
+}
+
+/**
+ * Clear the parse cache for memory management
+ */
+clearCache(): void {
+  this.parseCache.clear();
+  this.logger.debug("Parse cache cleared");
+}
+
+/**
+ * Remove runtime function declarations from code to avoid redefinition errors
+ */
+private removeRuntimeFunctions(code: string): string {
+  // Cache the function names for efficiency
+  if (!this.runtimeFunctionNames) {
+    this.runtimeFunctionNames = this.extractRuntimeFunctionNames();
+  }
+  
+  // For each runtime function, remove its function declaration
+  let cleanedCode = code;
+  for (const funcName of this.runtimeFunctionNames) {
+    // Use a more specific regex that doesn't break other functions
+    const funcRegex = new RegExp(`function\\s+${funcName}\\s*\\([^)]*\\)\\s*\\{[\\s\\S]*?\\}`, 'g');
+    cleanedCode = cleanedCode.replace(funcRegex, '');
+  }
+  
+  return cleanedCode.trim();
+}
+
+/**
+ * Extract function names from runtime code - cached for performance
+ */
+private extractRuntimeFunctionNames(): string[] {
+  const runtimeFunctionNames: string[] = [];
+  const funcNameRegex = /function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
+  const runtimeCode = RUNTIME_FUNCTIONS;
+  
+  let match;
+  while ((match = funcNameRegex.exec(runtimeCode)) !== null) {
+    if (match[1]) {
+      runtimeFunctionNames.push(match[1]);
+    }
+  }
+  
+  return runtimeFunctionNames;
+}
+
+/**
+ * Evaluate JavaScript code within the REPL environment
+ * Enhanced to preserve imported modules in the global context
+ */
+private async evaluateJs(code: string): Promise<Value> {
+  try {
+    // Get all the variables defined in the REPL environment
+    const context = this.replEnv.createEvalContext();
+    
+    // Create all imported modules as global variables to ensure they persist
+    const importedModulesSetup = Array.from(this.importedModules.entries())
+      .map(([name, _]) => {
+        return `if (typeof ${name} === 'undefined' && replEnv.hasJsValue("${name}")) {
+          globalThis.${name} = replEnv.getJsValue("${name}");
+        }`;
+      })
+      .join('\n');
+    
+    // Wrap the code in a function that has access to the REPL environment
+    // Include the setup for imported modules to ensure they're available
+    const wrappedCode = `
+      ${context}
+      ${importedModulesSetup}
       
-      // Create a wrapped function that executes and returns the code's result
-      const wrappedCode = `
-        try {
-          ${context}
-          
-          // Execute code and return its result
-          const result = (async () => {
-            ${code}
-          })();
-          
-          ${this.logger.isVerbose ? 'console.log("DEBUG: Evaluation result type:", typeof result);' : ''}
-          return result;
-        } catch (error) {
-          // Enhanced error handling
-          if (error instanceof Error) {
-            // Add line number information if available
-            if (error.stack) {
-              const lineMatch = error.stack.match(/at eval.*<anonymous>:(\\d+):(\\d+)/);
-              if (lineMatch && lineMatch[1] && lineMatch[2]) {
-                const lineNum = lineMatch[1];
-                const colNum = lineMatch[2];
-                error.message = \`Error at line \${lineNum}, column \${colNum}: \${error.message}\`;
-              }
-            }
-          }
-          console.error("Evaluation error:", error);
-          throw error;
-        }
-      `;
-      
-      if (this.logger.isVerbose) {
-        console.log("DEBUG: Evaluating wrapped code:");
-        console.log(wrappedCode);
-      }
-      
-      // Create and execute the function
-      const fn = new AsyncFunction(
-        "replEnv", 
-        wrappedCode + "\n//# sourceURL=repl-eval.js"
-      );
-      
-      return await fn(this.replEnv);
-    } catch (error) {
-      this.logger.error(`Evaluation error: ${error instanceof Error ? error.message : String(error)}`);
+      ${code}
+    `;
+    
+    // Create a function that has access to the REPL environment
+    // This ensures that variables defined in the REPL environment are available
+    // deno-lint-ignore no-explicit-any
+    const fn = new Function(
+      "replEnv",
+      wrappedCode + "\n//# sourceURL=repl-eval.js"
+    ) as (env: REPLEnvironment) => any;
+    
+    // Call the function with the REPL environment
+    return await fn(this.replEnv);
+  } catch (error: unknown) {
+    // Format the error message
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.logger.error(`JavaScript evaluation error: ${errorMessage}`);
+    
+    // Rethrow the error
+    if (error instanceof Error) {
       throw error;
     }
+    throw new Error(String(error));
   }
+}
+
+/**
+ * Clear the REPL environment
+ */
+resetEnvironment(): void {
+  // Create a new environment with the same settings
+  const oldEnv = this.replEnv.hqlEnv;
+  // Create a new environment using the correct constructor
+  const newEnv = new Environment(null, this.logger);
   
-  /**
-   * Clear the REPL environment
-   */
-  resetEnvironment(): void {
-    // Create a new environment with the same settings
-    const oldEnv = this.replEnv.hqlEnv;
-    // Create a new environment using the correct constructor
-    const newEnv = new Environment(null, this.logger);
-    
-    // Initialize with the same macros
-    oldEnv.macros.forEach((macro, name) => {
-      newEnv.defineMacro(name, macro);
-    });
-    
-    // Create a new REPL environment
-    this.replEnv = new REPLEnvironment(newEnv, { 
-      verbose: this.logger.isVerbose 
-    });
-    
-    // Clear caches
-    this.clearCache();
-    this.importCache.clear();
-    this.importedModules.clear();
-    this.runtimeFunctionsInitialized = false;
-    
-    // Re-initialize runtime functions
-    this.initializeRuntimeFunctions();
-    
-    this.logger.debug("REPL environment reset");
-  }
+  // Initialize with the same macros
+  oldEnv.macros.forEach((macro, name) => {
+    newEnv.defineMacro(name, macro);
+  });
+  
+  // Create a new REPL environment
+  this.replEnv = new REPLEnvironment(newEnv, { 
+    verbose: this.logger.isVerbose 
+  });
+  
+  // Clear caches
+  this.clearCache();
+  this.importCache.clear();
+  this.importedModules.clear();
+  this.runtimeFunctionsInitialized = false;
+  
+  // Re-initialize runtime functions
+  this.initializeRuntimeFunctions();
+  
+  this.logger.debug("REPL environment reset");
+}
 }
