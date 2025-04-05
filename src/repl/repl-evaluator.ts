@@ -571,6 +571,18 @@ export class REPLEvaluator {
    */
   private async evaluateJs(code: string): Promise<Value> {
     try {
+      // Check for function/variable redeclaration before evaluation
+      const redeclarations = this.detectRedeclarations(code);
+      if (redeclarations.length > 0) {
+        // Throw a special error for redeclarations that can be handled by the REPL
+        const message = `Identifier '${redeclarations[0]}' has already been declared`;
+        const error = new Error(message);
+        // Add a custom property to distinguish this type of error
+        (error as any).isRedeclarationError = true;
+        (error as any).identifiers = redeclarations;
+        throw error;
+      }
+      
       // Get all the variables defined in the REPL environment
       const context = this.replEnv.createEvalContext();
       
@@ -607,6 +619,11 @@ export class REPLEvaluator {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(`JavaScript evaluation error: ${errorMessage}`);
       
+      // Check if this is a redeclaration error
+      if (error instanceof Error && (error as any).isRedeclarationError) {
+        throw error; // Pass it up to be handled by the REPL
+      }
+      
       // Rethrow the error
       if (error instanceof Error) {
         // Use common error handling
@@ -618,6 +635,53 @@ export class REPLEvaluator {
       }
       throw new Error(String(error));
     }
+  }
+
+  /**
+   * Detect redeclarations of functions or variables in code
+   * Returns an array of redeclared identifiers
+   */
+  private detectRedeclarations(code: string): string[] {
+    const redeclaredIdentifiers: string[] = [];
+    
+    // Extract function declarations
+    const funcRegex = /function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
+    let match;
+    
+    while ((match = funcRegex.exec(code)) !== null) {
+      const funcName = match[1];
+      if (this.replEnv.hasJsValue(funcName)) {
+        redeclaredIdentifiers.push(funcName);
+      }
+    }
+    
+    // Extract variable declarations (const, let, var)
+    const varRegex = /(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/g;
+    while ((match = varRegex.exec(code)) !== null) {
+      const varName = match[1];
+      if (this.replEnv.hasJsValue(varName)) {
+        redeclaredIdentifiers.push(varName);
+      }
+    }
+    
+    // Extract HQL function declarations (fn/defn)
+    // Detect HQL function declarations like (fn name (param) body)
+    const hqlFuncRegex = /\(\s*(?:fn|defn)\s+([a-zA-Z_$][a-zA-Z0-9_$-]*)/g;
+    while ((match = hqlFuncRegex.exec(code)) !== null) {
+      const funcName = match[1];
+      if (this.replEnv.hasJsValue(funcName)) {
+        redeclaredIdentifiers.push(funcName);
+      }
+    }
+    
+    return redeclaredIdentifiers;
+  }
+  
+  /**
+   * Forcibly redefine a symbol, overwriting any existing definition
+   */
+  async forceDefine(code: string): Promise<Value> {
+    return this.evaluateJs(code);
   }
 
   /**

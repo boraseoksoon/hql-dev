@@ -353,23 +353,27 @@ function commandDefault(cmd: string): void {
 }
 
 function commandVerbose(logger: Logger, setVerbose: (val: boolean) => void): void {
-  setVerbose(!logger.isVerbose);
-  console.log(`Verbose mode ${logger.isVerbose ? "enabled" : "disabled"}`);
+  const newValue = !logger.isVerbose;
+  setVerbose(newValue);
+  console.log(`Verbose mode ${newValue ? 'enabled' : 'disabled'}`);
 }
 
 function commandAst(showAst: boolean, setShowAst: (val: boolean) => void): void {
-  setShowAst(!showAst);
-  console.log(`AST display ${showAst ? "enabled" : "disabled"}`);
+  const newValue = !showAst;
+  setShowAst(newValue);
+  console.log(`AST display ${newValue ? 'enabled' : 'disabled'}`);
 }
 
 function commandExpanded(showExpanded: boolean, setShowExpanded: (val: boolean) => void): void {
-  setShowExpanded(!showExpanded);
-  console.log(`Expanded form display ${showExpanded ? "enabled" : "disabled"}`);
+  const newValue = !showExpanded;
+  setShowExpanded(newValue);
+  console.log(`Expanded form display ${newValue ? 'enabled' : 'disabled'}`);
 }
 
 function commandJs(showJs: boolean, setShowJs: (val: boolean) => void): void {
-  setShowJs(!showJs);
-  console.log(`JavaScript output display ${showJs ? "enabled" : "disabled"}`);
+  const newValue = !showJs;
+  setShowJs(newValue);
+  console.log(`JavaScript output display ${newValue ? 'enabled' : 'disabled'}`);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -561,7 +565,9 @@ async function handleReplLine(
       resetReplState(state);
     }
   } else if (lineResult.text.startsWith(":")) {
-    await handleCommand(lineResult.text, state, evaluator, history, options);
+    // Strip the leading colon
+    const command = lineResult.text.substring(1);
+    await handleCommand(command, state, evaluator, history, options);
   } else if (state.parenBalance > 0) {
     state.multilineMode = true;
     state.multilineInput = lineResult.text + "\n";
@@ -600,6 +606,38 @@ async function processInput(
       return;
     }
     
+    // Pre-check for HQL function redeclarations
+    const hqlFuncMatch = input.match(/\(\s*(?:fn|defn)\s+([a-zA-Z_$][a-zA-Z0-9_$-]*)/);
+    if (hqlFuncMatch && hqlFuncMatch[1]) {
+      const funcName = hqlFuncMatch[1];
+      const replEnv = (evaluator as any).getREPLEnvironment();
+      
+      // Check if function already exists
+      if (replEnv.hasJsValue(funcName)) {
+        console.log(`Symbol '${funcName}' already exists. Overwrite? (y/n)`);
+        
+        // Read response
+        const response = await readLineWithHistory("> ", [], { 
+          multilineMode: false, 
+          multilineInput: "", 
+          parenBalance: 0,
+          importHandlerActive: false,
+          currentModule: state.currentModule
+        });
+        
+        // If confirmed, force redefine
+        if (response.text.trim().toLowerCase() === "y") {
+          console.log(`Overwriting '${funcName}'...`);
+          const result = await evaluator.forceDefine(input);
+          formatAndDisplayResult(result, input, options, performance.now());
+          return;
+        } else {
+          console.log(`Keeping existing definition for '${funcName}'`);
+          return;
+        }
+      }
+    }
+    
     // Add to history
     if (history[history.length - 1] !== input) {
       history.push(input);
@@ -607,47 +645,64 @@ async function processInput(
     
     // Regular expression evaluation
     const startTime = performance.now();
-    const result = await evaluator.evaluate(input, {
-      verbose: options.logger.isVerbose,
-      baseDir: options.baseDir,
-      showAst: options.showAst,
-      showExpanded: options.showExpanded,
-      showJs: options.showJs,
-    });
-    const executionTime = performance.now() - startTime;
-    
-    // Display JS if enabled
-    if (options.showJs) {
-      printBlock("JavaScript:", result.jsCode, options.useColors);
-    }
-    
-    // Track symbol usage if provided
-    if (options.trackSymbolUsage) {
-      trackSymbolsInInput(input, options.trackSymbolUsage);
-    }
-    
-    // Display result
-    formatAndDisplayResult(result.value, input, options, executionTime);
-    
-    // Display evaluation metrics if verbose
-    if (options.logger.isVerbose) {
-      const metrics = evaluator.getMetrics();
-      if (metrics) {
-        options.logger.log({
-          text: `Execution time: ${executionTime.toFixed(2)}ms`,
-          namespace: "repl-metrics"
-        });
-        options.logger.log({
-          text: `Parse: ${metrics.parseTimeMs.toFixed(2)}ms, ` +
-                `Transform: ${metrics.syntaxTransformTimeMs.toFixed(2)}ms, ` +
-                `Imports: ${metrics.importProcessingTimeMs.toFixed(2)}ms, ` +
-                `Macros: ${metrics.macroExpansionTimeMs.toFixed(2)}ms, ` +
-                `AST: ${metrics.astConversionTimeMs.toFixed(2)}ms, ` +
-                `JS Gen: ${metrics.codeGenerationTimeMs.toFixed(2)}ms, ` +
-                `Eval: ${metrics.evaluationTimeMs.toFixed(2)}ms`,
-          namespace: "repl-metrics"
-        });
+    try {
+      const result = await evaluator.evaluate(input, {
+        verbose: options.logger.isVerbose,
+        baseDir: options.baseDir,
+        showAst: options.showAst,
+        showExpanded: options.showExpanded,
+        showJs: options.showJs,
+      });
+      const executionTime = performance.now() - startTime;
+      
+      // Display JS if enabled
+      if (options.showJs) {
+        printBlock("JavaScript:", result.jsCode, options.useColors);
       }
+      
+      // Track symbol usage if provided
+      if (options.trackSymbolUsage) {
+        trackSymbolsInInput(input, options.trackSymbolUsage);
+      }
+      
+      // Display result
+      formatAndDisplayResult(result.value, input, options, executionTime);
+    } catch (error) {
+      // Check if this is a redeclaration error
+      if (error instanceof Error && 
+         (error.message.includes("has already been declared") || 
+          (error as any).isRedeclarationError)) {
+        
+        const identifiers = (error as any).identifiers || [];
+        const identifier = identifiers.length > 0 ? 
+                          identifiers[0] : 
+                          error.message.match(/Identifier '([^']+)' has/)?.[1] || "symbol";
+        
+        // Ask for confirmation to overwrite
+        console.log(`Symbol '${identifier}' already exists. Overwrite? (y/n)`);
+        
+        // Read response
+        const response = await readLineWithHistory("> ", [], { 
+          multilineMode: false, 
+          multilineInput: "", 
+          parenBalance: 0,
+          importHandlerActive: false,
+          currentModule: state.currentModule
+        });
+        
+        // If confirmed, force redefine
+        if (response.text.trim().toLowerCase() === "y") {
+          console.log(`Overwriting '${identifier}'...`);
+          const result = await evaluator.forceDefine(input);
+          formatAndDisplayResult(result, input, options, performance.now() - startTime);
+        } else {
+          console.log(`Keeping existing definition for '${identifier}'`);
+        }
+        return;
+      }
+      
+      // For other errors, just rethrow
+      throw error;
     }
   } catch (error: unknown) {
     handleError(error, options);
@@ -897,9 +952,9 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     setRunning: (val: boolean) => { running = val; },
     setVerbose: logger.setEnabled.bind(logger),
     setColors: (val: boolean) => { /* update local flag if needed */ },
-    setShowAst: (val: boolean) => { /* update local flag if needed */ },
-    setShowExpanded: (val: boolean) => { /* update local flag if needed */ },
-    setShowJs: (val: boolean) => { /* update local flag if needed */ },
+    setShowAst: (val: boolean) => { options.showAst = val; },
+    setShowExpanded: (val: boolean) => { options.showExpanded = val; },
+    setShowJs: (val: boolean) => { options.showJs = val; },
   };
 
   const trackSymbolUsage = (symbol: string) => logger.debug(`Symbol used: ${symbol}`);

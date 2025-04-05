@@ -4,10 +4,9 @@
 import { REPLEvaluator, REPLEvalOptions, REPLEvalResult } from "./repl-evaluator.ts";
 import { Environment, Value } from "../environment.ts";
 import { Logger } from "../logger.ts";
-import { persistentStateManager, ModuleState } from "./persistent-state-manager.ts";
-import { REPLEnvironment, ModuleExports } from "./repl-environment.ts";
+import { persistentStateManager } from "./persistent-state-manager.ts";
+import { REPLEnvironment } from "./repl-environment.ts";
 import { parse } from "../transpiler/pipeline/parser.ts";
-import { SExp } from "../s-exp/types.ts";
 
 /**
  * Options for the module-aware evaluator
@@ -156,6 +155,33 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
   }
   
   /**
+   * Force define a symbol, overwriting any existing definition
+   */
+  override async forceDefine(code: string): Promise<any> {
+    if (!this.initialized) {
+      throw new Error("Module system not initialized");
+    }
+    
+    // First attempt to remove any existing symbol that might conflict
+    const funcMatch = code.match(/function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/);
+    const varMatch = code.match(/(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/);
+    const hqlFuncMatch = code.match(/\(\s*(?:fn|defn)\s+([a-zA-Z_$][a-zA-Z0-9_$-]*)/);
+    
+    if (funcMatch && funcMatch[1]) {
+      this.removeSymbol(funcMatch[1]);
+    } else if (varMatch && varMatch[1]) {
+      this.removeSymbol(varMatch[1]);
+    } else if (hqlFuncMatch && hqlFuncMatch[1]) {
+      this.removeSymbol(hqlFuncMatch[1]);
+    }
+    
+    // Now evaluate normally
+    return this.evaluate(code, {
+      verbose: this.moduleLogger.isVerbose,
+    });
+  }
+  
+  /**
    * Handle tracking of definitions from an evaluation
    */
   private trackDefinitions(input: string, result: Value, generatedJs: string): void {
@@ -214,7 +240,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
   /**
    * Get the REPLEnvironment from the parent class
    */
-  private getREPLEnvironment(): REPLEnvironment {
+  getREPLEnvironment(): REPLEnvironment {
     const env = this.getEnvironment();
     // This is a bit of a hack to access the private replEnv member
     // of the parent class, but it's necessary for our implementation
