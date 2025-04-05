@@ -9,8 +9,16 @@ import { Environment } from "../environment.ts";
 import { REPLEvaluator } from "./repl-evaluator.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
 import { formatError, getSuggestion, registerSourceFile } from "../transpiler/error/error-handling.ts";
-import { ImportError } from "../transpiler/error/errors.ts";
+import { ImportError, TranspilerError } from "../transpiler/error/errors.ts";
 import { historyManager } from "./history-manager.ts";
+import * as termColors from "../utils/colors.ts";
+
+// Collection of special symbols for autocomplete
+const SPECIAL_SYMBOLS = new Set([
+  "if", "when", "unless", "fn", "defn", "lambda", "let", "do", "cond", "case", 
+  "while", "for", "import", "export", "loop", "recur", "try", "catch",
+  "true", "false", "nil", "null", "undefined", "console.log", "print"
+]);
 
 interface ReplOptions {
   verbose?: boolean;
@@ -21,51 +29,23 @@ interface ReplOptions {
   showJs?: boolean;
   initialFile?: string;
   useColors?: boolean;
-  pasteMode?: boolean;
+  enableCompletion?: boolean;  // New option for symbol completion
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Color and Output Utilities
 ───────────────────────────────────────────────────────────────────────────── */
-export const colors = {
-  reset: "\x1b[0m",
-  bright: "\x1b[1m",
-  dim: "\x1b[2m",
-  underscore: "\x1b[4m",
-  blink: "\x1b[5m",
-  reverse: "\x1b[7m",
-  hidden: "\x1b[8m",
-  fg: {
-    black: "\x1b[30m",
-    red: "\x1b[31m",
-    sicpRed: "\x1b[38;2;220;50;47m",
-    green: "\x1b[32m",
-    yellow: "\x1b[33m",
-    blue: "\x1b[34m",
-    magenta: "\x1b[35m",
-    cyan: "\x1b[36m",
-    white: "\x1b[37m",
-    crimson: "\x1b[38m",
-    sicpPurple: "\x1b[38;2;128;0;128m",
-    lightBlue: "\x1b[94m",
-    lightGreen: "\x1b[92m",
-    lightYellow: "\x1b[93m",
-    lightPurple: "\x1b[95m",
-    lightCyan: "\x1b[96m"
-  },
-  bg: {
-    black: "\x1b[40m",
-    red: "\x1b[41m",
-    green: "\x1b[42m",
-    yellow: "\x1b[43m",
-    blue: "\x1b[44m",
-    magenta: "\x1b[45m",
-    cyan: "\x1b[46m",
-    white: "\x1b[47m",
-    crimson: "\x1b[48m",
-    sicpRed: "\x1b[48;2;220;50;47m",
-    sicpPurple: "\x1b[48;2;128;0;128m"
-  }
+// Terminal color utilities
+const colors = {
+  reset: termColors.reset,
+  bright: termColors.bright,
+  dim: termColors.dim,
+  underscore: termColors.underscore,
+  blink: termColors.blink,
+  reverse: termColors.reverse,
+  hidden: termColors.hidden,
+  fg: termColors.fg,
+  bg: termColors.bg
 };
 
 function printBlock(header: string, content: string, useColors = false): void {
@@ -95,16 +75,9 @@ function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:quit${textColor}, ${commandColor}:exit${textColor} - Exit the REPL${headerColor}                             ║${reset}`,
     `${headerColor}║    ${commandColor}:env${textColor} - Show environment bindings${headerColor}                         ║${reset}`,
     `${headerColor}║    ${commandColor}:macros${textColor} - Show defined macros${headerColor}                            ║${reset}`,
-    `${headerColor}║    ${commandColor}:verbose${textColor} - Toggle verbose mode${headerColor}                           ║${reset}`,
-    `${headerColor}║    ${commandColor}:ast${textColor} - Toggle AST display${headerColor}                                ║${reset}`,
-    `${headerColor}║    ${commandColor}:expanded${textColor} - Toggle expanded form display${headerColor}                 ║${reset}`,
-    `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript output display${headerColor}                   ║${reset}`,
-    `${headerColor}║    ${commandColor}:load${textColor} <filename> - Load and evaluate a file${headerColor}              ║${reset}`,
-    `${headerColor}║    ${commandColor}:save${textColor} <filename> - Save history to a file${headerColor}                ║${reset}`,
-    `${headerColor}║    ${commandColor}:colors${textColor} - Toggle colorized output${headerColor}                        ║${reset}`,
-    `${headerColor}║    ${commandColor}:clear${textColor} - Clear the screen${headerColor}                                ║${reset}`,
-    `${headerColor}║    ${commandColor}:paste${textColor} - Enter paste mode for multi-line input${headerColor}           ║${reset}`,
     `${headerColor}║    ${commandColor}:modules${textColor} - List imported modules${headerColor}                         ║${reset}`,
+    `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript output display${headerColor}                   ║${reset}`,
+    `${headerColor}║    ${commandColor}:reset${textColor} - Reset REPL environment${headerColor}                          ║${reset}`,
     `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
   ];
   banner.forEach(line => console.log(line));
@@ -114,13 +87,7 @@ function printError(msg: string, useColors: boolean): void {
   console.error(useColors ? `${colors.fg.red}${msg}${colors.reset}` : msg);
 }
 
-function getPrompt(multilineMode: boolean, pasteMode: boolean, useColors: boolean): string {
-  if (pasteMode) {
-    return useColors 
-      ? `${colors.fg.yellow}paste> ${colors.reset}`
-      : "paste> ";
-  }
-  
+function getPrompt(multilineMode: boolean, useColors: boolean): string {
   if (useColors) {
     return multilineMode
       ? `${colors.fg.sicpPurple}${colors.bright}... ${colors.reset}`
@@ -136,7 +103,6 @@ interface ReplState {
   multilineMode: boolean;
   multilineInput: string;
   parenBalance: number;
-  pasteMode: boolean;
   importHandlerActive: boolean;
 }
 
@@ -144,7 +110,6 @@ function resetReplState(state: ReplState): void {
   state.multilineMode = false;
   state.multilineInput = "";
   state.parenBalance = 0;
-  // Don't reset paste mode here, as it should persist until explicitly exited
 }
 
 function updateParenBalance(line: string, currentBalance: number): number {
@@ -294,81 +259,10 @@ function commandJs(showJs: boolean, setShowJs: (val: boolean) => void): void {
   console.log(`JavaScript output display ${showJs ? "enabled" : "disabled"}`);
 }
 
-async function commandLoad(
-  parts: string[],
-  evaluator: REPLEvaluator,
-  history: string[],
-  logger: Logger,
-  baseDir: string,
-  historySize: number,
-  showAst: boolean,
-  showExpanded: boolean,
-  showJs: boolean,
-  useColors: boolean,
-): Promise<void> {
-  if (parts.length < 2) {
-    console.error("Usage: :load <filename>");
-    return;
-  }
-  const filePath = parts.slice(1).join(" ");
-  console.log(`Loading file: ${filePath}`);
-  try {
-    await loadAndEvaluateFile(filePath, evaluator, history, {
-      logger,
-      baseDir,
-      historySize,
-      showAst,
-      showExpanded,
-      showJs,
-      useColors,
-    });
-    console.log(`File loaded successfully: ${filePath}`);
-  } catch (error) {
-    console.error(`Error loading file: ${error instanceof Error ? error.message : error}`);
-  }
-}
-
-async function commandSave(parts: string[], history: string[]): Promise<void> {
-  if (parts.length < 2) {
-    console.error("Usage: :save <filename>");
-    return;
-  }
-  const saveFilePath = parts.slice(1).join(" ");
-  try {
-    await Deno.writeTextFile(saveFilePath, history.join("\n"));
-    console.log(`History saved to ${saveFilePath}`);
-  } catch (error) {
-    console.error(`Error saving history: ${error instanceof Error ? error.message : error}`);
-  }
-}
-
-function commandColors(setColors: (val: boolean) => void, useColors: boolean): void {
-  setColors(!useColors);
-  console.log(`Colorized output ${useColors ? "enabled" : "disabled"}`);
-}
-
-function commandClear(): void {
-  console.clear();
-}
-
-function commandPaste(state: ReplState): void {
-  state.pasteMode = !state.pasteMode;
-  if (state.pasteMode) {
-    console.log("Paste mode enabled. Enter your multi-line code and use Ctrl+D to process it.");
-    console.log("Or type ':end' on a line by itself to finish paste mode.");
-  } else {
-    console.log("Paste mode disabled.");
-  }
-}
-
 function commandReset(evaluator: REPLEvaluator): void {
   console.log("Resetting REPL environment...");
-  if (typeof evaluator.resetEnvironment === "function") {
-    evaluator.resetEnvironment();
-    console.log("Environment reset complete.");
-  } else {
-    console.log("Environment reset not supported.");
-  }
+  evaluator.resetEnvironment();
+  console.log("Environment reset complete.");
 }
 
 function commandDefault(cmd: string): void {
@@ -383,7 +277,7 @@ function commandDefault(cmd: string): void {
 interface ReadLineResult {
   text: string;
   fromHistory: boolean;
-  controlD: boolean; // Used to signal end of paste mode
+  controlD: boolean;
 }
 
 async function readLineWithHistory(
@@ -391,11 +285,6 @@ async function readLineWithHistory(
   history: string[], 
   state: ReplState
 ): Promise<ReadLineResult> {
-  // If we're in paste mode, use a different input method that supports pasting
-  if (state.pasteMode) {
-    return readPasteInput(prompt);
-  }
-
   const encoder = new TextEncoder();
   await Deno.stdout.write(encoder.encode(prompt));
   let currentInput = "", cursorPos = 0, historyIndex = history.length;
@@ -518,86 +407,13 @@ async function readLineWithHistory(
         cursorPos = newPos;
         await redrawLine();
       }
-    } else if (key?.ctrlKey && key.key === "d") {
-      if (currentInput.length === 0) {
-        await Deno.stdout.write(encoder.encode("\nExiting REPL...\n"));
-        Deno.exit(0);
-      } else if (cursorPos < currentInput.length) {
-        currentInput = currentInput.slice(0, cursorPos) + currentInput.slice(cursorPos + 1);
-        await redrawLine();
-      }
-    } else if (key?.ctrlKey && key.key === "t") {
-      if (cursorPos > 0 && cursorPos < currentInput.length) {
-        const beforeChar = currentInput[cursorPos - 1];
-        const atChar = currentInput[cursorPos];
-        currentInput = currentInput.slice(0, cursorPos - 1) + atChar + beforeChar + currentInput.slice(cursorPos + 1);
-        await redrawLine();
-      }
-    } else if (key?.sequence && !key.ctrlKey && !key.metaKey && !key.altKey) {
+    } else if (key?.sequence) {
+      // Accept sequences of any length - this handles pasted text naturally
       currentInput = currentInput.slice(0, cursorPos) + key.sequence + currentInput.slice(cursorPos);
       cursorPos += key.sequence.length;
       await redrawLine();
     }
   }
-}
-
-/**
- * Read multi-line input in paste mode
- */
-async function readPasteInput(prompt: string): Promise<ReadLineResult> {
-  const encoder = new TextEncoder();
-  await Deno.stdout.write(encoder.encode(prompt));
-  
-  let inputLines: string[] = [];
-  
-  // Create a BufReader from stdin
-  const reader = readLines(Deno.stdin);
-  
-  for await (const line of reader) {
-    if (line === ':end') {
-      // End paste mode when user types ":end"
-      await Deno.stdout.write(encoder.encode("\n"));
-      break;
-    }
-    
-    // Display the line as it's entered
-    await Deno.stdout.write(encoder.encode(line + "\n"));
-    
-    // Add to our collection
-    inputLines.push(line);
-    
-    // Check if we have a complete expression by counting parentheses
-    let balance = 0;
-    let inString = false;
-    
-    for (const inputLine of inputLines) {
-      for (let i = 0; i < inputLine.length; i++) {
-        const char = inputLine[i];
-        
-        // Handle string literals to avoid counting parens inside them
-        if (char === '"' && (i === 0 || inputLine[i - 1] !== '\\')) {
-          inString = !inString;
-          continue;
-        }
-        
-        if (!inString) {
-          if (char === "(") balance++;
-          else if (char === ")") balance--;
-        }
-      }
-    }
-    
-    // If we reach a balance of 0 and have input, we can process it
-    if (balance === 0 && inputLines.length > 0) {
-      break;
-    }
-  }
-  
-  return { 
-    text: inputLines.join('\n'), 
-    fromHistory: false,
-    controlD: false
-  };
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -631,13 +447,6 @@ async function handleReplLine(
   history: string[],
   options: ProcessOptions
 ): Promise<void> {
-  // Check for end of paste mode via Ctrl+D
-  if (lineResult.controlD && state.pasteMode) {
-    state.pasteMode = false;
-    console.log("Paste mode disabled.");
-    return;
-  }
-  
   // Process the input text
   state.parenBalance = updateParenBalance(lineResult.text, state.parenBalance);
 
@@ -672,9 +481,11 @@ async function processInput(
     if (history.length > options.historySize) history.shift();
   }
   
-  // Check for special import handling first
+  // Register the input for better error reporting
+  registerSourceFile("REPL input", input);
+  
+  // Special handling for imports
   if (isImportExpression(trimmed)) {
-    // Use the evaluator's direct import processing
     const result = await evaluator.processImportDirectly(trimmed);
     
     if (result.success) {
@@ -687,114 +498,166 @@ async function processInput(
         : result.message);
     }
     
-    // Mark that we've processed an import to prevent duplicate attempt in evaluation
     state.importHandlerActive = true;
     return;
   }
   
   try {
-    registerSourceFile("REPL input", input);
+    // Add timestamp for performance tracking
+    const startTime = performance.now();
+    
+    // Evaluate the input
     const result = await evaluator.evaluate(input, {
+      verbose: options.logger.enabled,
+      baseDir: options.baseDir,
       showAst: options.showAst,
       showExpanded: options.showExpanded,
       showJs: options.showJs,
     });
     
-    // No need to update anything related to imports here
+    // Calculate execution time
+    const executionTime = performance.now() - startTime;
     
-    if (result.value !== undefined) {
-      let displayValue = result.value;
-      if (options.useColors) {
-        if (displayValue === null)
-          displayValue = `${colors.fg.lightBlue}null${colors.reset}`;
-        else if (typeof displayValue === "number")
-          displayValue = `${colors.fg.lightGreen}${displayValue}${colors.reset}`;
-        else if (typeof displayValue === "string")
-          displayValue = `${colors.fg.lightYellow}"${displayValue}"${colors.reset}`;
-        else if (typeof displayValue === "boolean")
-          displayValue = `${colors.fg.lightPurple}${displayValue}${colors.reset}`;
-        else if (typeof displayValue === "object") {
-          try {
-            displayValue = `${colors.fg.lightCyan}${JSON.stringify(displayValue, null, 2)}${colors.reset}`;
-          } catch {
-            displayValue = `${colors.fg.lightCyan}${displayValue}${colors.reset}`;
-          }
-        }
-      }
-      console.log(displayValue);
-    } else if (input.trim().startsWith("(fn ") || input.trim().startsWith("(defn ")) {
-      const match = input.trim().match(/\(fn\s+([a-zA-Z0-9_-]+)/) ||
-                    input.trim().match(/\(defn\s+([a-zA-Z0-9_-]+)/);
-      const functionName = match ? match[1] : "anonymous";
-      console.log(options.useColors
-        ? `${colors.fg.lightGreen}Function ${functionName} defined${colors.reset}`
-        : `Function ${functionName} defined`);
-    } else if (input.trim().startsWith("(def ")) {
-      const match = input.trim().match(/\(def\s+([a-zA-Z0-9_-]+)/);
-      const varName = match ? match[1] : "value";
-      console.log(options.useColors
-        ? `${colors.fg.lightGreen}Variable ${varName} defined${colors.reset}`
-        : `Variable ${varName} defined`);
-    } else {
-      console.log(options.useColors
-        ? `${colors.fg.lightBlue}undefined${colors.reset}`
-        : "undefined");
-    }
+    // Format and display the result
+    formatAndDisplayResult(result, input, options, executionTime);
     
-    // Display additional information if requested
-    if (options.showAst)
-      printBlock("AST:", JSON.stringify(result.parsedExpressions, null, 2), options.useColors);
-    if (options.showExpanded)
-      printBlock("Expanded:", JSON.stringify(result.expandedExpressions, null, 2), options.useColors);
-    if (options.showJs)
+    // Additional output for debug modes
+    if (options.showJs) {
       printBlock("JavaScript:", result.jsCode, options.useColors);
+    }
     
-    // Track symbol usage if a tracker is provided
+    // Track symbols used
     if (options.trackSymbolUsage) {
-      const symbolRegex = /\b[a-zA-Z0-9_-]+\b/g;
-      let m;
-      while ((m = symbolRegex.exec(input)) !== null) {
-        options.trackSymbolUsage(m[0]);
-      }
+      trackSymbolsInInput(input, options.trackSymbolUsage);
     }
-  } catch (error) {
-    // Check for import-related errors and handle them specially
-    if ((error instanceof ImportError || 
-         (error instanceof Error && error.message.includes("import")) ||
-         (error.toString().includes("import"))) && 
-        !state.importHandlerActive) {
-      
-      // Try to handle this as a dynamic import if it looks like an import expression
-      if (isImportExpression(trimmed)) {
-        await handleImportExpression(trimmed, options.dynamicImporter, options.useColors);
-        return;
-      }
-    }
-    
+  } catch (error: unknown) {
     // Reset import handler flag
     state.importHandlerActive = false;
     
-    // Format and display the error
-    if (error instanceof Error) {
-      const formattedError = formatError(error, { 
-        useColors: options.useColors, 
-        filePath: "REPL input" 
-      });
-      const suggestion = getSuggestion(error);
-      console.error(options.useColors
-        ? `${colors.fg.red}${formattedError}${colors.reset}`
-        : formattedError);
-      
-      if (suggestion) {
-        console.error(options.useColors
-          ? `${colors.fg.cyan}Suggestion: ${suggestion}${colors.reset}`
-          : `Suggestion: ${suggestion}`);
+    // Enhanced error handling
+    handleError(error, options);
+    
+    // Reset state
+    resetReplState(state);
+  }
+}
+
+// Helper function to format and display result
+function formatAndDisplayResult(result: any, input: string, options: ProcessOptions, executionTime: number): void {
+  if (result.value !== undefined) {
+    // Format the result value based on its type
+    let displayValue = formatResultValue(result.value, options.useColors);
+    console.log(displayValue);
+  } else if (input.trim().startsWith("(fn ") || input.trim().startsWith("(defn ")) {
+    // Handle function definitions
+    const match = input.trim().match(/\((?:fn|defn)\s+([a-zA-Z0-9_-]+)/);
+    const functionName = match ? match[1] : "anonymous";
+    console.log(options.useColors
+      ? `${colors.fg.lightGreen}Function ${functionName} defined${colors.reset}`
+      : `Function ${functionName} defined`);
+  } else if (input.trim().startsWith("(def ")) {
+    // Handle variable definitions
+    const match = input.trim().match(/\(def\s+([a-zA-Z0-9_-]+)/);
+    const varName = match ? match[1] : "value";
+    console.log(options.useColors
+      ? `${colors.fg.lightGreen}Variable ${varName} defined${colors.reset}`
+      : `Variable ${varName} defined`);
+  } else {
+    // Handle undefined results
+    console.log(options.useColors
+      ? `${colors.fg.lightBlue}undefined${colors.reset}`
+      : "undefined");
+  }
+  
+  // Show execution time if verbose
+  if (options.logger.enabled) {
+    console.log(options.useColors
+      ? `${colors.fg.gray}// Execution time: ${executionTime.toFixed(2)}ms${colors.reset}`
+      : `// Execution time: ${executionTime.toFixed(2)}ms`);
+  }
+}
+
+// Helper to format result values with proper coloring
+function formatResultValue(value: any, useColors: boolean): string {
+  if (value === null) {
+    return useColors ? `${colors.fg.lightBlue}null${colors.reset}` : "null";
+  }
+  
+  if (value === undefined) {
+    return useColors ? `${colors.fg.lightBlue}undefined${colors.reset}` : "undefined";
+  }
+  
+  if (typeof value === "number") {
+    return useColors ? `${colors.fg.lightGreen}${value}${colors.reset}` : String(value);
+  }
+  
+  if (typeof value === "string") {
+    return useColors ? `${colors.fg.lightYellow}"${value}"${colors.reset}` : `"${value}"`;
+  }
+  
+  if (typeof value === "boolean") {
+    return useColors ? `${colors.fg.lightPurple}${value}${colors.reset}` : String(value);
+  }
+  
+  if (typeof value === "function") {
+    return useColors 
+      ? `${colors.fg.lightCyan}[Function${value.name ? ': ' + value.name : ''}]${colors.reset}`
+      : `[Function${value.name ? ': ' + value.name : ''}]`;
+  }
+  
+  if (typeof value === "object") {
+    try {
+      if (Array.isArray(value)) {
+        // Format arrays more nicely
+        const json = JSON.stringify(value, null, 2);
+        return useColors ? `${colors.fg.lightCyan}${json}${colors.reset}` : json;
       }
-    } else {
-      console.error(options.useColors
-        ? `${colors.fg.red}Error: ${String(error)}${colors.reset}`
-        : `Error: ${String(error)}`);
+      
+      // Format objects
+      const json = JSON.stringify(value, null, 2);
+      return useColors ? `${colors.fg.lightCyan}${json}${colors.reset}` : json;
+    } catch {
+      return useColors ? `${colors.fg.lightCyan}[Object]${colors.reset}` : "[Object]";
     }
+  }
+  
+  return String(value);
+}
+
+// Track symbols used in input
+function trackSymbolsInInput(input: string, tracker: (symbol: string) => void): void {
+  const symbolRegex = /\b[a-zA-Z0-9_-]+\b/g;
+  let match;
+  while ((match = symbolRegex.exec(input)) !== null) {
+    tracker(match[0]);
+  }
+}
+
+// Enhanced error handling
+function handleError(error: unknown, options: ProcessOptions): void {
+  if (error instanceof Error) {
+    // Format error with source context
+    const formattedError = formatError(error, { 
+      useColors: options.useColors, 
+      filePath: "REPL input",
+      includeStack: options.logger.enabled, // Include stack trace in verbose mode
+    });
+    
+    // Display the detailed error
+    console.error(formattedError);
+    
+    // Show helpful suggestion
+    const suggestion = getSuggestion(error);
+    if (suggestion) {
+      console.error(options.useColors
+        ? `${colors.fg.cyan}Suggestion: ${suggestion}${colors.reset}`
+        : `Suggestion: ${suggestion}`);
+    }
+  } else {
+    // Fallback for non-Error objects
+    console.error(options.useColors
+      ? `${colors.fg.red}Error: ${String(error)}${colors.reset}`
+      : `Error: ${String(error)}`);
   }
 }
 
@@ -858,44 +721,8 @@ async function handleCommand(
     case ":modules":
       commandModules(evaluator, options.useColors);
       break;
-    case ":verbose":
-      commandVerbose(options.logger, options.replState.setVerbose);
-      break;
-    case ":ast":
-      commandAst(options.showAst, options.replState.setShowAst);
-      break;
-    case ":expanded":
-      commandExpanded(options.showExpanded, options.replState.setShowExpanded);
-      break;
     case ":js":
       commandJs(options.showJs, options.replState.setShowJs);
-      break;
-    case ":load":
-      await commandLoad(
-        parts, 
-        evaluator, 
-        history, 
-        options.logger, 
-        options.baseDir, 
-        options.historySize, 
-        options.showAst, 
-        options.showExpanded, 
-        options.showJs, 
-        options.useColors,
-        options.dynamicImporter
-      );
-      break;
-    case ":save":
-      await commandSave(parts, history);
-      break;
-    case ":colors":
-      commandColors(options.replState.setColors, options.useColors);
-      break;
-    case ":clear":
-      commandClear();
-      break;
-    case ":paste":
-      commandPaste(state);
       break;
     case ":reset":
       commandReset(evaluator);
@@ -917,7 +744,6 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     showExpanded = false, 
     showJs = false, 
     useColors = true,
-    pasteMode = false,
   } = options;
 
   let running = true;
@@ -926,7 +752,6 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     multilineMode: false, 
     multilineInput: "", 
     parenBalance: 0,
-    pasteMode,
     importHandlerActive: false
   };
 
@@ -958,8 +783,6 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
       showJs,
     });
     
-    // No need for a separate dynamic importer
-    
     // Log available macros in verbose mode
     if (options.verbose) {
       logger.log({ 
@@ -968,26 +791,10 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
       });
     }
 
-    // Load initial file if specified
-    if (options.initialFile) {
-      try {
-        await loadAndEvaluateFile(options.initialFile, evaluator, history, {
-          logger,
-          baseDir,
-          historySize,
-          showAst,
-          showExpanded,
-          showJs,
-          useColors,
-        });
-      } catch (error) {
-        console.error(`Error loading initial file: ${error instanceof Error ? error.message : error}`);
-      }
-    }
-
+    // Start REPL loop
     while (running) {
       try {
-        const prompt = getPrompt(replStateObj.multilineMode, replStateObj.pasteMode, useColors);
+        const prompt = getPrompt(replStateObj.multilineMode, useColors);
         const lineResult = await readLineWithHistory(prompt, history, replStateObj);
         
         // Save history after each command
@@ -1004,61 +811,19 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           showJs,
           useColors,
           trackSymbolUsage,
-
           replState: stateFunctions,
         });
       } catch (error) {
-        printError(`Error: ${error instanceof Error ? error.message : error}`, useColors);
-        resetReplState(replStateObj);
+        printError(
+          error instanceof Error ? error.message : String(error),
+          useColors
+        );
       }
     }
-    console.log("\nGoodbye!");
   } catch (error) {
-    console.error(`REPL initialization error: ${error instanceof Error ? error.message : error}`);
-    if (error instanceof Error && error.stack) console.error(error.stack);
+    console.error(
+      `REPL initialization error: ${error instanceof Error ? error.message : String(error)}`
+    );
+    Deno.exit(1);
   }
-}
-
-async function loadAndEvaluateFile(
-  filePath: string,
-  evaluator: REPLEvaluator,
-  history: string[],
-  options: {
-    logger: Logger;
-    baseDir: string;
-    historySize: number;
-    showAst: boolean;
-    showExpanded: boolean;
-    showJs: boolean;
-    useColors: boolean;
-  }
-): Promise<void> {
-  const resolvedPath = path.isAbsolute(filePath)
-    ? filePath
-    : path.join(options.baseDir, filePath);
-    
-  if (!(await exists(resolvedPath))) {
-    throw new Error(`File not found: ${resolvedPath}`);
-  }
-  
-  const fileContent = await Deno.readTextFile(resolvedPath);
-  
-  console.log(options.useColors
-    ? `${colors.fg.sicpRed}Loading file: ${resolvedPath}${colors.reset}`
-    : `Loading file: ${resolvedPath}`);
-    
-  // Create a temporary state object just for file processing
-  const tempState: ReplState = {
-    multilineMode: false,
-    multilineInput: "",
-    parenBalance: 0,
-    pasteMode: false,
-    importHandlerActive: false
-  };
-    
-  await processInput(fileContent, evaluator, history, options, tempState);
-}
-
-if (import.meta.main) {
-  startRepl();
 }

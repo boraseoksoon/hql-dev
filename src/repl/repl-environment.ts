@@ -1,10 +1,17 @@
-// src/s-exp/repl-environment.ts - Modularized environment for REPL
+// src/repl/repl-environment.ts - Enhanced environment for REPL
 
 import { Environment, Value } from "../environment.ts";
 import { Logger } from "../logger.ts";
+import { SExp } from "../s-exp/types.ts";
 
 export interface REPLEnvironmentOptions {
   verbose?: boolean;
+  historySize?: number;
+}
+
+// Type definitions for module exports
+export interface ModuleExports {
+  [key: string]: Value;
 }
 
 const PATTERNS = {
@@ -16,24 +23,53 @@ const PATTERNS = {
   EXPRESSION_OPERATORS: /[\(\)\+\-\*\/]/
 };
 
+/**
+ * Enhanced environment for the REPL that manages JavaScript values,
+ * module references, and code preparation
+ */
 export class REPLEnvironment {
   public hqlEnv: Environment;
+  
+  // JavaScript environment to store values for evaluation
   private jsEnv: Record<string, Value> = {};
+  
+  // Set of defined symbols for tracking
   private definitions: Set<string> = new Set();
-  private logger: Logger;
   
   // Track modules so we can persist them between evaluations
   private modules: Map<string, Value> = new Map();
+  
+  // Cache of S-expression evaluations for performance
+  private evalCache: Map<string, Value> = new Map();
+  
+  // Maximum eval cache size to avoid memory leaks
+  private maxEvalCacheSize = 100;
+  
+  // Logger for debugging
+  private logger: Logger;
 
   constructor(hqlEnv: Environment, options: REPLEnvironmentOptions = {}) {
     this.hqlEnv = hqlEnv;
     this.logger = new Logger(options.verbose ?? false);
+    
+    // Set maximum cache size if provided
+    if (options.historySize && options.historySize > 0) {
+      this.maxEvalCacheSize = options.historySize;
+    }
+    
+    this.debug("REPL environment initialized");
   }
 
+  /**
+   * Get a JavaScript value by name
+   */
   getJsValue(name: string): Value {
     return this.jsEnv[name];
   }
 
+  /**
+   * Set a JavaScript value and define it in the HQL environment
+   */
   setJsValue(name: string, value: Value): void {
     this.jsEnv[name] = value;
     this.definitions.add(name);
@@ -48,10 +84,16 @@ export class REPLEnvironment {
     this.logger.debug(`Defined '${name}' in REPL environment`);
   }
 
+  /**
+   * Check if a JavaScript value exists
+   */
   hasJsValue(name: string): boolean {
     return this.definitions.has(name);
   }
 
+  /**
+   * Remove a JavaScript value
+   */
   removeJsValue(name: string): void {
     delete this.jsEnv[name];
     this.definitions.delete(name);
@@ -60,14 +102,56 @@ export class REPLEnvironment {
     this.logger.debug(`Removed '${name}' from REPL environment`);
   }
 
+  /**
+   * Get a list of all defined symbols
+   */
   getDefinedSymbols(): string[] {
     return Array.from(this.definitions);
   }
   
+  /**
+   * Get all tracked modules
+   */
   getModules(): Map<string, Value> {
     return new Map(this.modules);
   }
+  
+  /**
+   * Get a module by name
+   */
+  getModule(name: string): Value | undefined {
+    return this.modules.get(name);
+  }
+  
+  /**
+   * Check if a module is defined
+   */
+  hasModule(name: string): boolean {
+    return this.modules.has(name);
+  }
+  
+  /**
+   * Import module exports into the REPL environment
+   */
+  importModuleExports(moduleName: string, moduleObj: Record<string, unknown>): void {
+    // Register the module itself
+    this.setJsValue(moduleName, moduleObj as Value);
+    
+    // If it has named exports, register each of them
+    for (const [key, value] of Object.entries(moduleObj)) {
+      if (key !== 'default') {
+        const exportName = `${moduleName}_${key}`;
+        this.setJsValue(exportName, value as Value);
+        this.debug(`Registered export '${exportName}' from module '${moduleName}'`);
+      }
+    }
+    
+    this.debug(`Imported module '${moduleName}' with ${Object.keys(moduleObj).length} exports`);
+  }
 
+  /**
+   * Create a JavaScript evaluation context with all defined symbols
+   */
   createEvalContext(): string {
     // Get all defined symbols and create variable declarations for each
     const symbolDeclarations = Array.from(this.definitions)
@@ -82,6 +166,9 @@ export class REPLEnvironment {
     return symbolDeclarations + "\n" + moduleSetup;
   }
 
+  /**
+   * Extract defined symbols from JavaScript code
+   */
   extractDefinitions(code: string): string[] {
     const defs = new Set<string>();
     for (const match of code.matchAll(PATTERNS.VARIABLE_DECLARATION)) {
@@ -93,6 +180,9 @@ export class REPLEnvironment {
     return Array.from(defs);
   }
 
+  /**
+   * Create code that registers all extracted definitions
+   */
   private createRegistrationCode(definitions: string[]): string {
     return "\n\n// Register definitions\n" +
       definitions
@@ -103,6 +193,81 @@ export class REPLEnvironment {
         .join("\n");
   }
 
+  /**
+   * Check if a value is cacheable
+   */
+  private isValueCacheable(value: unknown): boolean {
+    const valueType = typeof value;
+    // Only cache primitives and small objects
+    return (
+      valueType === 'string' ||
+      valueType === 'number' ||
+      valueType === 'boolean' ||
+      valueType === 'undefined' ||
+      value === null ||
+      (valueType === 'object' && 
+       value !== null && 
+       Object.keys(value as object).length < 10)
+    );
+  }
+  
+  /**
+   * Cache a S-expression evaluation result
+   */
+  cacheEvaluation(expr: SExp | string, value: Value): void {
+    // Convert SExp to string if needed
+    const exprKey = typeof expr === 'string' ? expr : JSON.stringify(expr);
+    
+    // Only cache if the value is cacheable
+    if (this.isValueCacheable(value)) {
+      // Limit cache size
+      if (this.evalCache.size >= this.maxEvalCacheSize) {
+        // Remove oldest entry (first key)
+        const firstKey = this.evalCache.keys().next().value;
+        if (firstKey) {
+          this.evalCache.delete(firstKey);
+        }
+      }
+      
+      this.evalCache.set(exprKey, value);
+      
+      // Safe substring to handle possible null or undefined
+      const shortExprLength = Math.min(exprKey.length, 30);
+      const shortExpr = shortExprLength === exprKey.length 
+        ? exprKey 
+        : exprKey.substring(0, shortExprLength) + '...';
+      
+      this.debug(`Cached evaluation result for expression: ${shortExpr}`);
+    }
+  }
+  
+  /**
+   * Get a cached evaluation result
+   */
+  getCachedEvaluation(expr: SExp | string): Value | undefined {
+    const exprKey = typeof expr === 'string' ? expr : JSON.stringify(expr);
+    return this.evalCache.get(exprKey);
+  }
+  
+  /**
+   * Check if an evaluation is cached
+   */
+  hasEvaluationCached(expr: SExp | string): boolean {
+    const exprKey = typeof expr === 'string' ? expr : JSON.stringify(expr);
+    return this.evalCache.has(exprKey);
+  }
+  
+  /**
+   * Clear evaluation cache
+   */
+  clearEvalCache(): void {
+    this.evalCache.clear();
+    this.debug("Evaluation cache cleared");
+  }
+
+  /**
+   * Process the last expression to add return statement if needed
+   */
   private processLastExpression(code: string): string {
     const lines = code.split("\n");
     let lastIndex = lines.length - 1;
@@ -139,12 +304,18 @@ export class REPLEnvironment {
     return lines.join("\n");
   }
 
+  /**
+   * Log debug message if verbose
+   */
   private debug(message: string): void {
     if (this.logger.isVerbose) {
-      console.log(`DEBUG: ${message}`);
+      this.logger.debug(message);
     }
   }
 
+  /**
+   * Prepare JavaScript code for REPL evaluation
+   */
   prepareJsForRepl(jsCode: string): string {
     const definitions = this.extractDefinitions(jsCode);
     this.debug(`Extracted definitions: ${JSON.stringify(definitions)}`);
