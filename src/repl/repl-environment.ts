@@ -39,11 +39,17 @@ export class REPLEnvironment {
   // Track modules so we can persist them between evaluations
   private modules: Map<string, Value> = new Map();
   
+  // Track which module each symbol belongs to
+  private symbolModules: Map<string, string> = new Map();
+  
   // Cache of S-expression evaluations for performance
   private evalCache: Map<string, Value> = new Map();
   
   // Maximum eval cache size to avoid memory leaks
   private maxEvalCacheSize = 100;
+  
+  // Current active module
+  private currentModule = "user";
   
   // Logger for debugging
   private logger: Logger;
@@ -61,19 +67,56 @@ export class REPLEnvironment {
   }
 
   /**
+   * Set the current active module
+   */
+  setCurrentModule(moduleName: string): void {
+    this.currentModule = moduleName;
+    this.debug(`REPLEnvironment active module set to: ${moduleName}`);
+  }
+  
+  /**
+   * Get the current active module
+   */
+  getCurrentModule(): string {
+    return this.currentModule;
+  }
+
+  /**
+   * Create a namespaced symbol name for internal use
+   * This prevents conflicts between modules
+   */
+  private getNamespacedName(name: string, moduleName?: string): string {
+    const module = moduleName || this.currentModule;
+    return `${module}:${name}`;
+  }
+
+  /**
    * Get a JavaScript value by name
    */
-  getJsValue(name: string): Value {
-    return this.jsEnv[name];
+  getJsValue(name: string, moduleName?: string): Value {
+    const namespacedName = this.getNamespacedName(name, moduleName);
+    return this.jsEnv[namespacedName];
   }
 
   /**
    * Set a JavaScript value and define it in the HQL environment
    */
-  setJsValue(name: string, value: Value): void {
-    this.jsEnv[name] = value;
-    this.definitions.add(name);
-    this.hqlEnv.define(name, value);
+  setJsValue(name: string, value: Value, moduleName?: string): void {
+    const module = moduleName || this.currentModule;
+    const namespacedName = this.getNamespacedName(name, module);
+    
+    this.jsEnv[namespacedName] = value;
+    this.definitions.add(namespacedName);
+    this.symbolModules.set(name, module);
+    
+    // Define in HQL environment with module prefix
+    this.hqlEnv.define(namespacedName, value);
+    
+    // Also define with the original name in the current module's context
+    // This allows direct lookup within a module
+    if (module === this.currentModule) {
+      this.hqlEnv.define(name, value);
+    }
     
     // If this looks like a module (object with functions/properties), also track it in modules
     if (value !== null && typeof value === 'object') {
@@ -81,32 +124,78 @@ export class REPLEnvironment {
       this.debug(`Registered module '${name}' in REPL environment`);
     }
     
-    this.logger.debug(`Defined '${name}' in REPL environment`);
+    this.logger.debug(`Defined '${name}' in module '${module}'`);
   }
 
   /**
-   * Check if a JavaScript value exists
+   * Check if a JavaScript value exists in a specific module
    */
-  hasJsValue(name: string): boolean {
-    return this.definitions.has(name);
+  hasJsValue(name: string, moduleName?: string): boolean {
+    const namespacedName = this.getNamespacedName(name, moduleName);
+    return this.definitions.has(namespacedName);
+  }
+
+  /**
+   * Check if a symbol exists in any module
+   */
+  hasSymbolInAnyModule(name: string): boolean {
+    return this.symbolModules.has(name);
+  }
+
+  /**
+   * Get all modules where a symbol is defined
+   */
+  getSymbolModules(name: string): string[] {
+    const modules: string[] = [];
+    for (const [symbol, module] of this.symbolModules.entries()) {
+      if (symbol === name) {
+        modules.push(module);
+      }
+    }
+    return modules;
   }
 
   /**
    * Remove a JavaScript value
    */
-  removeJsValue(name: string): void {
-    delete this.jsEnv[name];
-    this.definitions.delete(name);
-    this.hqlEnv.define(name, null);
+  removeJsValue(name: string, moduleName?: string): void {
+    const module = moduleName || this.currentModule;
+    const namespacedName = this.getNamespacedName(name, module);
+    
+    delete this.jsEnv[namespacedName];
+    this.definitions.delete(namespacedName);
+    
+    // Remove the module tracking for this symbol
+    if (this.symbolModules.get(name) === module) {
+      this.symbolModules.delete(name);
+    }
+    
+    // Set to null in HQL environment to effectively remove
+    this.hqlEnv.define(namespacedName, null);
+    if (module === this.currentModule) {
+      this.hqlEnv.define(name, null);
+    }
+    
     this.modules.delete(name);
-    this.logger.debug(`Removed '${name}' from REPL environment`);
+    this.logger.debug(`Removed '${name}' from module '${module}'`);
   }
 
   /**
-   * Get a list of all defined symbols
+   * Get a list of all defined symbols in the current module
    */
-  getDefinedSymbols(): string[] {
-    return Array.from(this.definitions);
+  getDefinedSymbols(moduleName?: string): string[] {
+    const module = moduleName || this.currentModule;
+    const symbols: string[] = [];
+    
+    for (const name of this.definitions) {
+      // Extract the original symbol name from the namespaced version
+      const parts = name.split(':');
+      if (parts.length === 2 && parts[0] === module) {
+        symbols.push(parts[1]);
+      }
+    }
+    
+    return symbols;
   }
   
   /**
@@ -153,14 +242,22 @@ export class REPLEnvironment {
    * Create a JavaScript evaluation context with all defined symbols
    */
   createEvalContext(): string {
-    // Get all defined symbols and create variable declarations for each
-    const symbolDeclarations = Array.from(this.definitions)
-      .map((name) => `const ${name} = replEnv.getJsValue("${name}");`)
+    // Get current module symbols and create declarations
+    const currentModule = this.currentModule;
+    const currentModuleSymbols = this.getDefinedSymbols(currentModule);
+    
+    // Create declarations for symbols in the current module
+    const symbolDeclarations = currentModuleSymbols
+      .map((name) => `const ${name} = replEnv.getJsValue("${name}", "${currentModule}");`)
       .join("\n");
-      
-    // Also make sure all modules are available globally
+    
+    // Set up all modules
     const moduleSetup = Array.from(this.modules.keys())
-      .map((name) => `globalThis.${name} = replEnv.getJsValue("${name}");`)
+      .map((name) => {
+        // Get the module that this name belongs to
+        const moduleNamespace = this.symbolModules.get(name) || currentModule;
+        return `globalThis.${name} = replEnv.getJsValue("${name}", "${moduleNamespace}");`;
+      })
       .join("\n");
     
     return symbolDeclarations + "\n" + moduleSetup;
@@ -195,11 +292,13 @@ export class REPLEnvironment {
    * Create code that registers all extracted definitions
    */
   private createRegistrationCode(definitions: string[]): string {
+    const currentModule = this.currentModule;
+    
     return "\n\n// Register definitions\n" +
       definitions
         .map(
           (def) =>
-            `if (typeof ${def} !== 'undefined') { replEnv.setJsValue("${def}", ${def}); }`
+            `if (typeof ${def} !== 'undefined') { replEnv.setJsValue("${def}", ${def}, "${currentModule}"); }`
         )
         .join("\n");
   }

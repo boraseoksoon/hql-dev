@@ -125,6 +125,11 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     
     this.currentModule = moduleName;
     persistentStateManager.switchToModule(moduleName);
+    
+    // Update the REPLEnvironment's current module
+    const replEnv = this.getREPLEnvironment();
+    replEnv.setCurrentModule(moduleName);
+    
     this.moduleLogger.debug(`Switched to module: ${moduleName}`);
   }
   
@@ -226,18 +231,33 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       // Track each defined symbol
       for (const symbol of definedSymbols) {
-        const value = replEnv.getJsValue(symbol);
+        // First check if symbol exists in current environment
+        if (!replEnv.hasJsValue(symbol, this.currentModule)) {
+          this.moduleLogger.debug(`Symbol ${symbol} not found in environment, skipping tracking`);
+          continue;
+        }
+        
+        const value = replEnv.getJsValue(symbol, this.currentModule);
         
         // Skip if no value found
         if (value === undefined) continue;
         
-        // Determine the type of definition
+        // Determine the type of definition more accurately
         let type: 'variable' | 'function' | 'macro' = 'variable';
         
+        // Check for function type
         if (typeof value === 'function') {
           type = 'function';
-        } else if (value && typeof value === 'object' && 'transformSExp' in value) {
+          this.moduleLogger.debug(`Detected ${symbol} as a function`);
+        } 
+        // Check for macro type
+        else if (value && typeof value === 'object' && 'transformSExp' in value) {
           type = 'macro';
+          this.moduleLogger.debug(`Detected ${symbol} as a macro`);
+        }
+        // All other types are variables
+        else {
+          this.moduleLogger.debug(`Detected ${symbol} as a variable with type: ${typeof value}`);
         }
         
         // Store the definition with both source code and JS output
@@ -254,6 +274,10 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
    * Override evaluate to track definitions
    */
   override async evaluate(input: string, options: ModuleAwareEvalOptions = {}): Promise<REPLEvalResult> {
+    // Ensure REPLEnvironment is synced with current module
+    const replEnv = this.getREPLEnvironment();
+    replEnv.setCurrentModule(this.currentModule);
+    
     const result = await super.evaluate(input, options);
     
     // Track definitions after successful evaluation
@@ -805,7 +829,9 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     return isModuleSwitch;
   }
 
-  // Fix the definition method to use the correct type parameter
+  /**
+   * Store a symbol definition with source information in persistent storage
+   */
   private storeDefinition(
     symbolName: string, 
     value: any, 
@@ -813,14 +839,40 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     jsSource: string, 
     type: 'variable' | 'function' | 'macro' = 'variable'
   ): void {
-    // Store the definition in the persistent state
-    persistentStateManager.addDefinition(symbolName, value, type, {
-      source,  // Original HQL source code
-      jsSource, // JS transpiled code (only shown if :js is enabled)
-      module: this.currentModule,
-    });
+    // Skip if not initialized
+    if (!this.initialized) return;
     
-    this.moduleLogger.debug(`Stored definition for ${symbolName} in module ${this.currentModule}`);
+    try {
+      // Auto-detect type based on value if not specified
+      let detectedType = type;
+      
+      if (type === 'variable' && typeof value === 'function') {
+        detectedType = 'function';
+      } else if (value && typeof value === 'object' && 'transformSExp' in value) {
+        detectedType = 'macro';
+      }
+      
+      // Create metadata object for source tracking
+      const metadata = {
+        source,
+        jsSource,
+        timestamp: new Date().toISOString(),
+        created: new Date().toISOString()
+      };
+      
+      // Store in persistent state manager
+      persistentStateManager.addDefinition(
+        symbolName, 
+        value, 
+        detectedType, 
+        metadata
+      );
+      
+      this.moduleLogger.debug(`Stored ${detectedType} '${symbolName}' definition in module '${this.currentModule}'`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.moduleLogger.warn(`Error storing definition: ${errorMessage}`);
+    }
   }
 
   /**
@@ -829,14 +881,14 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
    * @param moduleName The name of the module to remove from
    * @returns True if the symbol was removed, false otherwise
    */
-  removeSymbolFromModule(symbolName: string, moduleName: string): boolean {
+  async removeSymbolFromModule(symbolName: string, moduleName: string): Promise<boolean> {
     if (!this.initialized) {
       throw new Error("Module system not initialized");
     }
     
     try {
       // First check if the module exists
-      const modules = this.getAvailableModules();
+      const modules = await this.getAvailableModules();
       if (!modules.includes(moduleName)) {
         this.moduleLogger.warn(`Module '${moduleName}' does not exist`);
         return false;
@@ -848,18 +900,18 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       // Save current module to switch back to
       try {
         // Temporarily switch to target module
-        this.switchModule(moduleName);
+        await this.switchModule(moduleName);
         
         // Try to remove the symbol
         const removed = persistentStateManager.removeDefinition(symbolName);
         
         // Switch back to original module
-        this.switchModule(currentModule);
+        await this.switchModule(currentModule);
         
         return removed;
       } catch (error) {
         // Make sure we switch back even if there's an error
-        this.switchModule(currentModule);
+        await this.switchModule(currentModule);
         throw error;
       }
     } catch (error: unknown) {
@@ -867,5 +919,25 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       this.moduleLogger.error(`Error removing symbol from module: ${errorMessage}`);
       return false;
     }
+  }
+
+  /**
+   * Check if a symbol exists in a specific module
+   * This is module-aware and doesn't rely on global environment checks
+   */
+  async symbolExistsInModule(symbolName: string, moduleName: string): Promise<boolean> {
+    await this.ensureInitialized();
+    
+    const moduleState = persistentStateManager.getModuleState(moduleName);
+    if (!moduleState) return false;
+    
+    // Check all definition types
+    for (const type of ['variables', 'functions', 'macros'] as const) {
+      if (symbolName in moduleState.definitions[type]) {
+        return true;
+      }
+    }
+    
+    return false;
   }
 } 

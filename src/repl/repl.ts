@@ -764,39 +764,64 @@ async function showModuleSymbols(
 ): Promise<void> {
   // Categorize symbols by type
   const functionSymbols: string[] = [];
+  const macroSymbols: string[] = [];
   const variableSymbols: string[] = [];
   const otherSymbols: string[] = [];
   
-  // Convert all symbols to user-facing format for display
-  const userFacingSymbols = symbols.map(toUserFacingName);
-  const userFacingExports = exports.map(toUserFacingName);
+  // Create a set of exports for quick lookup
+  const exportSet = new Set(exports);
   
-  // Convert user symbols back to internal format for definition lookup
-  for (const userSymbol of userFacingSymbols) {
-    const internalSymbol = toInternalName(userSymbol);
-    // Use the original symbol from the array if it exists there, otherwise use the converted one
-    const lookupSymbol = symbols.includes(userSymbol) ? userSymbol : internalSymbol;
-    
-    const definition = await evaluator.getSymbolDefinition(lookupSymbol, moduleName);
-    if (definition) {
-      if (typeof definition.value === 'function') {
-        functionSymbols.push(userSymbol);
+  // Properly categorize each symbol by getting its definition from the module
+  for (const symbol of symbols) {
+    try {
+      // Get the symbol definition with proper module context
+      const definition = await evaluator.getSymbolDefinition(symbol, moduleName);
+      
+      if (definition) {
+        // Use the metadata to determine the symbol type
+        if (definition.metadata && definition.metadata.type) {
+          const type = definition.metadata.type;
+          if (type === 'functions') {
+            functionSymbols.push(symbol);
+          } else if (type === 'macros') {
+            macroSymbols.push(symbol);
+          } else if (type === 'variables') {
+            variableSymbols.push(symbol);
+          } else {
+            otherSymbols.push(symbol);
+          }
+        } 
+        // If no metadata, determine type based on value
+        else if (typeof definition.value === 'function') {
+          functionSymbols.push(symbol);
+        } else {
+          variableSymbols.push(symbol);
+        }
       } else {
-        variableSymbols.push(userSymbol);
+        otherSymbols.push(symbol);
       }
-    } else {
-      otherSymbols.push(userSymbol);
+    } catch (error) {
+      // If there's an error getting the definition, just put it in other symbols
+      otherSymbols.push(symbol);
     }
   }
   
-  // Create set of exported symbols for easy lookup
-  const exportSet = new Set(userFacingExports);
-  
   // Display functions
   if (functionSymbols.length > 0) {
-    console.log(colorText("Functions:", colors.fg.sicpGreen + colors.bright, useColors));
+    console.log(colorText("\nFunctions:", colors.fg.sicpBlue + colors.bright, useColors));
     console.log("------------");
     functionSymbols.sort().forEach(symbol => {
+      const isExported = exportSet.has(symbol);
+      const marker = isExported ? colorText(' (exported)', colors.fg.green, useColors) : '';
+      console.log(`- ${symbol}${marker}`);
+    });
+  }
+  
+  // Display macros
+  if (macroSymbols.length > 0) {
+    console.log(colorText("\nMacros:", colors.fg.magenta + colors.bright, useColors));
+    console.log("------------");
+    macroSymbols.sort().forEach(symbol => {
       const isExported = exportSet.has(symbol);
       const marker = isExported ? colorText(' (exported)', colors.fg.green, useColors) : '';
       console.log(`- ${symbol}${marker}`);
@@ -835,7 +860,10 @@ async function showModuleSymbols(
   console.log("\nUsage:");
   console.log(`To see a specific symbol: :see ${moduleName}:<symbol-name>`);
   console.log(`To see only exports: :see ${moduleName}:exports`);
-  if (moduleName !== evaluator.getCurrentModule()) {
+  
+  // Get current module through more reliable sync method
+  const currentModule = evaluator.getCurrentModuleSync();
+  if (moduleName !== currentModule) {
     console.log(`To use symbols from this module: (import [symbol1, symbol2] from "${moduleName}")`);
   }
 }
@@ -1094,24 +1122,6 @@ async function showSymbolDefinition(
   }
   
   console.log("----------------");
-}
-
-// Helper function to get current module
-function getCurrentModule(): string {
-  // We no longer need to rely on the global state, which can become out of sync
-  // Get the module directly from the evaluator if available
-  try {
-    // This is a bit of a hack, but ensures we're always using the single source of truth
-    // for the current module, which is the evaluator's internal state
-    if ((globalThis as any).__HQL_ACTIVE_EVALUATOR) {
-      return ((globalThis as any).__HQL_ACTIVE_EVALUATOR as ModuleAwareEvaluator).getCurrentModule();
-    }
-  } catch (e) {
-    // Fallback to the state
-  }
-  
-  // Fallback to state or default
-  return (globalThis as any).__HQL_REPL_STATE?.currentModule || "user";
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1408,31 +1418,40 @@ async function processInput(
     const hqlFuncMatch = input.match(/\(\s*(?:fn|defn)\s+([a-zA-Z_$][a-zA-Z0-9_$-]*)/);
     if (hqlFuncMatch && hqlFuncMatch[1]) {
       const funcName = hqlFuncMatch[1];
-      const replEnv = (evaluator as any).getREPLEnvironment();
       
-      // Check if function already exists
-      if (replEnv.hasJsValue(funcName)) {
-        console.log(`Symbol '${funcName}' already exists. Overwrite? (y/n)`);
+      try {
+        // Get the current module
+        const currentModule = evaluator.getCurrentModuleSync();
         
-        // Read response
-        const response = await readLineWithHistory("> ", [], { 
-          multilineMode: false, 
-          multilineInput: "", 
-          parenBalance: 0,
-          importHandlerActive: false,
-          currentModule: state.currentModule
-        });
+        // Use our proper module-aware check to only look within the current module
+        const symbolExists = await evaluator.symbolExistsInModule(funcName, currentModule);
         
-        // If confirmed, force redefine
-        if (response.text.trim().toLowerCase() === "y") {
-          console.log(`Overwriting '${funcName}'...`);
-          const result = await evaluator.forceDefine(input);
-          formatAndDisplayResult(result, input, options, performance.now());
-          return;
-        } else {
-          console.log(`Keeping existing definition for '${funcName}'`);
-          return;
+        if (symbolExists) {
+          console.log(`Symbol '${funcName}' already exists in module '${currentModule}'. Overwrite? (y/n)`);
+          
+          // Read response
+          const response = await readLineWithHistory("> ", [], { 
+            multilineMode: false, 
+            multilineInput: "", 
+            parenBalance: 0,
+            importHandlerActive: false,
+            currentModule: state.currentModule
+          });
+          
+          // If confirmed, force redefine
+          if (response.text.trim().toLowerCase() === "y") {
+            console.log(`Overwriting '${funcName}'...`);
+            const result = await evaluator.forceDefine(input);
+            formatAndDisplayResult(result, input, options, performance.now());
+            return;
+          } else {
+            console.log(`Keeping existing definition for '${funcName}'`);
+            return;
+          }
         }
+      } catch (err) {
+        // If there's an error checking for the symbol, just proceed with normal evaluation
+        console.error(`Error checking for symbol: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     

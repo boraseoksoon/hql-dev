@@ -639,13 +639,21 @@ export class REPLEvaluator {
   private detectRedeclarations(code: string): string[] {
     const redeclaredIdentifiers: string[] = [];
     
+    // Get the current module from the REPLEnvironment
+    // @ts-ignore - accessing private property for compatibility
+    const currentModule = this.replEnv.getCurrentModule ? 
+      // @ts-ignore - accessing private property for compatibility
+      this.replEnv.getCurrentModule() : 
+      "user"; // Default fallback
+    
     // Extract function declarations
     const funcRegex = /function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
     let match;
     
     while ((match = funcRegex.exec(code)) !== null) {
       const funcName = match[1];
-      if (this.replEnv.hasJsValue(funcName)) {
+      // Check only in current module
+      if (this.replEnv.hasJsValue(funcName, currentModule)) {
         redeclaredIdentifiers.push(funcName);
       }
     }
@@ -654,7 +662,8 @@ export class REPLEvaluator {
     const varRegex = /(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/g;
     while ((match = varRegex.exec(code)) !== null) {
       const varName = match[1];
-      if (this.replEnv.hasJsValue(varName)) {
+      // Check only in current module
+      if (this.replEnv.hasJsValue(varName, currentModule)) {
         redeclaredIdentifiers.push(varName);
       }
     }
@@ -664,7 +673,8 @@ export class REPLEvaluator {
     const hqlFuncRegex = /\(\s*(?:fn|defn)\s+([a-zA-Z_$][a-zA-Z0-9_$-]*)/g;
     while ((match = hqlFuncRegex.exec(code)) !== null) {
       const funcName = match[1];
-      if (this.replEnv.hasJsValue(funcName)) {
+      // Check only in current module
+      if (this.replEnv.hasJsValue(funcName, currentModule)) {
         redeclaredIdentifiers.push(funcName);
       }
     }
