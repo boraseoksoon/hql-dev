@@ -12,7 +12,7 @@ const STATE_FILE = "state.json";
 const VERSION = "1.0.0";
 
 // Default module name
-const DEFAULT_MODULE = "user";
+const DEFAULT_MODULE = "global";
 
 // Interface for module definitions
 export interface ModuleDefinitions {
@@ -128,6 +128,56 @@ export class PersistentStateManager {
   }
   
   /**
+   * Clean up any user modules and redirect to global
+   * This should be called once during initialization
+   */
+  cleanupLegacyModules(): void {
+    if (!this.initialized) return;
+    
+    // Check if "user" module somehow exists
+    if ("user" in this.currentState.modules) {
+      this.logger.debug(`Found "user" module, migrating to "global"`);
+      
+      // If both exist, merge user into global
+      if ("global" in this.currentState.modules) {
+        // Merge definitions
+        for (const type of ['variables', 'functions', 'macros'] as const) {
+          this.currentState.modules.global.definitions[type] = {
+            ...this.currentState.modules.global.definitions[type],
+            ...this.currentState.modules.user.definitions[type]
+          };
+        }
+        
+        // Merge imports and exports (avoiding duplicates)
+        const addUniqueItems = (target: string[], source: string[]) => {
+          for (const item of source) {
+            if (!target.includes(item)) {
+              target.push(item);
+            }
+          }
+        };
+        
+        addUniqueItems(this.currentState.modules.global.imports, this.currentState.modules.user.imports);
+        addUniqueItems(this.currentState.modules.global.exports, this.currentState.modules.user.exports);
+      } else {
+        // Just rename user to global
+        this.currentState.modules.global = this.currentState.modules.user;
+      }
+      
+      // Remove the user module
+      delete this.currentState.modules.user;
+      
+      // Update last module if it was set to "user"
+      if (this.currentState.lastModule === "user") {
+        this.currentState.lastModule = "global";
+      }
+      
+      // Save changes
+      this.saveState(true);
+    }
+  }
+  
+  /**
    * Initialize the state storage
    */
   async initialize(): Promise<void> {
@@ -162,6 +212,9 @@ export class PersistentStateManager {
       }
       
       this.initialized = true;
+      
+      // Make sure we clean up any stray "user" modules
+      this.cleanupLegacyModules();
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Error initializing state: ${errorMessage}`);
@@ -184,6 +237,45 @@ export class PersistentStateManager {
         this.logger.warn(`State version mismatch. Found ${loadedState.version}, expected ${VERSION}`);
         // Basic migration - keep structure but add any missing fields
         loadedState.version = VERSION;
+      }
+      
+      // Handle module migration from "user" to "global" 
+      if (loadedState.modules.user) {
+        this.logger.debug(`Migrating "user" module to "global"`);
+        
+        // If both exist, merge user into global
+        if (loadedState.modules.global) {
+          // Merge definitions
+          for (const type of ['variables', 'functions', 'macros'] as const) {
+            loadedState.modules.global.definitions[type] = {
+              ...loadedState.modules.global.definitions[type],
+              ...loadedState.modules.user.definitions[type]
+            };
+          }
+          
+          // Merge imports and exports (avoiding duplicates)
+          const addUniqueItems = (target: string[], source: string[]) => {
+            for (const item of source) {
+              if (!target.includes(item)) {
+                target.push(item);
+              }
+            }
+          };
+          
+          addUniqueItems(loadedState.modules.global.imports, loadedState.modules.user.imports);
+          addUniqueItems(loadedState.modules.global.exports, loadedState.modules.user.exports);
+        } else {
+          // Just rename user to global
+          loadedState.modules.global = loadedState.modules.user;
+        }
+        
+        // Remove the user module
+        delete loadedState.modules.user;
+        
+        // Update last module if it was set to "user"
+        if (loadedState.lastModule === "user") {
+          loadedState.lastModule = "global";
+        }
       }
       
       this.currentState = loadedState;
@@ -261,6 +353,12 @@ export class PersistentStateManager {
   switchToModule(moduleName: string): void {
     if (!this.initialized) {
       throw new Error("State manager not initialized");
+    }
+    
+    // Redirect "user" to "global" for backward compatibility
+    if (moduleName === "user") {
+      moduleName = "global";
+      this.logger.debug(`Redirecting "user" module to "global"`);
     }
     
     // Create the module if it doesn't exist
@@ -515,6 +613,44 @@ export class PersistentStateManager {
     
     // Force an immediate save
     this.doSaveState();
+  }
+
+  /**
+   * Reset all modules or keep only the structure
+   * @param keepModules If true, keep module structure but clear all definitions
+   */
+  resetAllModules(keepModules = false): void {
+    if (!this.initialized) {
+      throw new Error("State manager not initialized");
+    }
+    
+    if (keepModules) {
+      // Keep modules but clear their contents
+      const currentModuleName = this.currentState.lastModule;
+      
+      // Iterate through all modules and clear their definitions
+      for (const moduleName of Object.keys(this.currentState.modules)) {
+        this.currentState.modules[moduleName] = {
+          definitions: {
+            variables: {},
+            functions: {},
+            macros: {}
+          },
+          imports: [],
+          exports: []
+        };
+      }
+      
+      // Make sure we're still in the same module
+      this.currentState.lastModule = currentModuleName;
+    } else {
+      // Reset to a completely clean state with only the default module
+      this.currentState = this.createEmptyState();
+    }
+    
+    // Save the changes
+    this.saveState(true);
+    this.logger.debug(`Reset ${keepModules ? 'all module contents' : 'everything to default state'}`);
   }
 }
 

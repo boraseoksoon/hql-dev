@@ -85,7 +85,7 @@ function printError(msg: string, useColors: boolean): void {
 
 function getPrompt(state: ReplState, useColors: boolean): string {
   // Get the current module name
-  const moduleName = state.currentModule || "user";
+  const moduleName = state.currentModule || "global";
   
   if (useColors) {
     return state.multilineMode
@@ -253,27 +253,24 @@ function commandMacros(evaluator: ModuleAwareEvaluator, useColors: boolean): voi
 
 // Command handler for :modules command
 async function commandModules(evaluator: ModuleAwareEvaluator, useColors: boolean): Promise<void> {
-  // Get the list of modules and current module
-  const modules = await evaluator.getAvailableModules();
-  const currentModule = evaluator.getCurrentModuleSync();
+  console.log(colorText("Available modules:", colors.fg.sicpRed + colors.bright, useColors));
   
-  console.log(colorText("Available Modules:", colors.fg.sicpPurple + colors.bright, useColors));
+  const modules = await evaluator.getAvailableModules();
   
   if (modules.length === 0) {
     console.log("No modules defined");
   } else {
-    console.log("Module names:");
-    console.log("------------");
-    for (const moduleName of modules) {
-      const moduleMarker = moduleName === currentModule ? "* " : "  ";
-      console.log(`${moduleMarker}${moduleName}`);
-    }
-    console.log("------------");
-    console.log("* Current module");
+    console.log("Modules:");
+    console.log("---------");
+    modules.forEach(moduleName => {
+      const isCurrent = moduleName === evaluator.getCurrentModuleSync();
+      const displayName = isCurrent 
+        ? colorText(moduleName, colors.fg.green + colors.bright, useColors) + " (current)"
+        : moduleName;
+      console.log(`- ${displayName}`);
+    });
+    console.log("---------");
   }
-  
-  console.log("\nTo switch modules: :module <name>");
-  console.log("To see module contents: :see <module-name>");
 }
 
 // New command to switch modules
@@ -323,13 +320,13 @@ async function commandList(evaluator: ModuleAwareEvaluator, useColors: boolean):
 // Updated remove command with integrated reset functionality and colon syntax
 async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useColors: boolean, state: ReplState): Promise<void> {
   if (!args || args.trim() === "") {
-    console.error("No target specified. Use :remove <symbol>, :remove module:<name>, or :remove all");
+    console.error("No target specified. Use :remove <symbol>, :remove module:<n>, or :remove all");
     console.log("For more information, try :help remove");
     return;
   }
   
   const argText = args.trim();
-  const availableModules = evaluator.getAvailableModules();
+  const availableModules = await evaluator.getAvailableModules();
   
   // Handle special "all" cases (previously handled by :reset)
   if (argText === "all") {
@@ -338,7 +335,7 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
       "Remove all modules and definitions? This will reset the entire environment.",
       () => {
         evaluator.resetEnvironment(false);
-        state.currentModule = evaluator.getCurrentModule();
+        state.currentModule = evaluator.getCurrentModuleSync();
         console.log(colorText("Environment completely reset.", colors.fg.green, useColors));
       },
       useColors
@@ -352,7 +349,7 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
       "Remove all symbols from all modules but preserve module structure?",
       () => {
         evaluator.resetEnvironment(true);
-        state.currentModule = evaluator.getCurrentModule();
+        state.currentModule = evaluator.getCurrentModuleSync();
         console.log(colorText("All symbols removed, module structure preserved.", colors.fg.green, useColors));
       },
       useColors
@@ -365,21 +362,26 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
     await confirmAndExecute(
       "Remove all modules except the current one?",
       () => {
-        const currentModule = evaluator.getCurrentModule();
-        const modules = evaluator.getAvailableModules();
+        const currentModule = evaluator.getCurrentModuleSync();
         
-        // Remove each module except the current one
-        let removedCount = 0;
-        modules.forEach(moduleName => {
-          if (moduleName !== currentModule && moduleName !== "user") {
-            if (evaluator.removeModule(moduleName)) {
-              removedCount++;
+        // We need to handle this asynchronously inside a sync function
+        // Use an IIFE to handle this
+        (async () => {
+          const modules = await evaluator.getAvailableModules();
+          
+          // Remove each module except the current one
+          let removedCount = 0;
+          for (const moduleName of modules) {
+            if (moduleName !== currentModule && moduleName !== "user") {
+              if (await evaluator.removeModule(moduleName)) {
+                removedCount++;
+              }
             }
           }
-        });
-        
-        console.log(colorText(`Removed ${removedCount} modules. Kept '${currentModule}' as the current module.`, 
-          colors.fg.green, useColors));
+          
+          console.log(colorText(`Removed ${removedCount} modules. Kept '${currentModule}' as the current module.`, 
+            colors.fg.green, useColors));
+        })().catch(e => console.error(`Error removing modules: ${e}`));
       },
       useColors
     );
@@ -391,7 +393,7 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
     const moduleName = argText.substring("module:".length);
     
     if (!moduleName) {
-      console.error("No module name specified. Use :remove module:<name>");
+      console.error("No module name specified. Use :remove module:<n>");
       return;
     }
     
@@ -411,15 +413,15 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
     
     await confirmAndExecute(
       `Remove module '${moduleName}'? This will delete all symbols in this module.`,
-      () => {
-        const removed = evaluator.removeModule(moduleName);
+      async () => {
+        const removed = await evaluator.removeModule(moduleName);
         
         if (removed) {
           console.log(colorText(`Module '${moduleName}' has been removed.`, colors.fg.green, useColors));
           
           // If we removed the current module, update state
           if (state.currentModule === moduleName) {
-            state.currentModule = evaluator.getCurrentModule();
+            state.currentModule = evaluator.getCurrentModuleSync();
             console.log(colorText(`Switched to module: ${state.currentModule}`, colors.fg.cyan, useColors));
           }
         } else {
@@ -451,10 +453,17 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
       return;
     }
     
+    // Verify symbol exists in module before asking for confirmation
+    const moduleSymbols = await evaluator.listModuleSymbols(moduleName);
+    if (!moduleSymbols.includes(symbolName)) {
+      console.error(`Symbol '${symbolName}' not found in module '${moduleName}'.`);
+      return;
+    }
+    
     await confirmAndExecute(
       `Remove symbol '${symbolName}' from module '${moduleName}'?`,
-      () => {
-        const removed = evaluator.removeSymbolFromModule(symbolName, moduleName);
+      async () => {
+        const removed = await evaluator.removeSymbolFromModule(symbolName, moduleName);
         
         if (removed) {
           console.log(colorText(`Symbol '${symbolName}' has been removed from module '${moduleName}'.`, 
@@ -473,12 +482,12 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
   
   // Check if the symbol name matches a module name - this is likely a mistake
   if (availableModules.includes(symbolName)) {
-    // Special case for user module when trying to remove with `:remove user`
-    if (symbolName === "user") {
-      console.error(`Error: The default 'user' module cannot be removed.`);
-      console.log(`The 'user' module is the fundamental module that exists when the REPL starts.`);
-      console.log(`You can remove individual symbols from the user module with :remove <symbol-name>`);
-      console.log(`You can use :remove all to reset all modules including user to a clean state.`);
+    // Special case for global module when trying to remove with `:remove global`
+    if (symbolName === "global") {
+      console.error(`Error: The default 'global' module cannot be removed.`);
+      console.log(`The 'global' module is the fundamental module that exists when the REPL starts.`);
+      console.log(`You can remove individual symbols from the global module with :remove <symbol-name>`);
+      console.log(`You can use :remove all to reset all modules including global to a clean state.`);
       return;
     }
     
@@ -488,8 +497,8 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
   }
   
   // Check if symbol exists in current module before prompting
-  const currentModule = evaluator.getCurrentModule();
-  const moduleSymbols = evaluator.listModuleSymbols(currentModule);
+  const currentModule = evaluator.getCurrentModuleSync();
+  const moduleSymbols = await evaluator.listModuleSymbols(currentModule);
   if (!moduleSymbols.includes(symbolName)) {
     console.error(`Symbol '${symbolName}' not found in module '${currentModule}'.`);
     
@@ -502,15 +511,15 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
   }
   
   await confirmAndExecute(
-    `Remove symbol '${symbolName}' from current module '${evaluator.getCurrentModule()}'?`,
+    `Remove symbol '${symbolName}' from current module '${evaluator.getCurrentModuleSync()}'?`,
     () => {
       const removed = evaluator.removeSymbol(symbolName);
       
       if (removed) {
-        console.log(colorText(`Symbol '${symbolName}' has been removed from module '${evaluator.getCurrentModule()}'.`, 
+        console.log(colorText(`Symbol '${symbolName}' has been removed from module '${evaluator.getCurrentModuleSync()}'.`, 
           colors.fg.green, useColors));
       } else {
-        console.error(`Symbol '${symbolName}' not found in module '${evaluator.getCurrentModule()}'.`);
+        console.error(`Symbol '${symbolName}' not found in module '${evaluator.getCurrentModuleSync()}'.`);
       }
     },
     useColors
@@ -518,7 +527,7 @@ async function commandRemove(evaluator: ModuleAwareEvaluator, args: string, useC
 }
 
 // Helper function for confirmation dialogs using Deno's API
-async function confirmAndExecute(message: string, action: () => void, useColors: boolean): Promise<void> {
+async function confirmAndExecute(message: string, action: () => void | Promise<void>, useColors: boolean): Promise<void> {
   console.log(colorText(message, colors.fg.yellow, useColors));
   console.log("Type 'y' or 'yes' to confirm: ");
   
@@ -530,7 +539,7 @@ async function confirmAndExecute(message: string, action: () => void, useColors:
     const answer = new TextDecoder().decode(buf.subarray(0, n)).trim().toLowerCase();
     
     if (answer === "yes" || answer === "y") {
-      action();
+      await action();
     } else {
       console.log("Operation cancelled.");
     }
@@ -539,41 +548,38 @@ async function confirmAndExecute(message: string, action: () => void, useColors:
   }
 }
 
+// Helper for applying error suggestions
 function commandDefault(cmd: string): void {
   console.error(`Unknown command: ${cmd}`);
-  console.log("Type :help for a list of commands");
+  console.log("Use :help to see available commands");
 }
 
 function commandVerbose(logger: Logger, setVerbose: (val: boolean) => void): void {
   const newValue = !logger.isVerbose;
   setVerbose(newValue);
-  console.log(`Verbose mode ${newValue ? 'enabled' : 'disabled'}`);
+  console.log(`Verbose mode ${newValue ? "enabled" : "disabled"}`);
 }
 
 function commandAst(showAst: boolean, setShowAst: (val: boolean) => void): void {
   const newValue = !showAst;
   setShowAst(newValue);
-  console.log(`AST display ${newValue ? 'enabled' : 'disabled'}`);
+  console.log(`AST display ${newValue ? "enabled" : "disabled"}`);
 }
 
 function commandExpanded(showExpanded: boolean, setShowExpanded: (val: boolean) => void): void {
   const newValue = !showExpanded;
   setShowExpanded(newValue);
-  console.log(`Expanded form display ${newValue ? 'enabled' : 'disabled'}`);
+  console.log(`Expanded form display ${newValue ? "enabled" : "disabled"}`);
 }
 
 function commandJs(showJs: boolean, setShowJs: (val: boolean) => void): void {
   const newValue = !showJs;
   setShowJs(newValue);
-  if (newValue) {
-    console.log("JavaScript transpiled code display is now enabled.");
-    console.log("For each HQL expression, you'll now see the transpiled JavaScript.");
-  } else {
-    console.log("JavaScript transpiled code display is now disabled.");
-  }
+  console.log(`JavaScript code display ${newValue ? "enabled" : "disabled"}`);
 }
 
-// Helper to format source code with proper indentation
+// Helper for formatting source code in output
+// Added to standardize code display formats across the REPL
 function formatSourceCode(source: string): string {
   // Replace escaped newlines with actual newlines
   let formattedSource = source;
@@ -764,51 +770,41 @@ async function showModuleSymbols(
 ): Promise<void> {
   // Categorize symbols by type
   const functionSymbols: string[] = [];
-  const macroSymbols: string[] = [];
   const variableSymbols: string[] = [];
   const otherSymbols: string[] = [];
   
-  // Create a set of exports for quick lookup
-  const exportSet = new Set(exports);
+  // Convert all symbols to user-facing format for display
+  const userFacingSymbols = symbols.map(toUserFacingName);
+  const userFacingExports = exports.map(toUserFacingName);
   
-  // Properly categorize each symbol by getting its definition from the module
-  for (const symbol of symbols) {
-    try {
-      // Get the symbol definition with proper module context
-      const definition = await evaluator.getSymbolDefinition(symbol, moduleName);
-      
-      if (definition) {
-        // Use the metadata to determine the symbol type
-        if (definition.metadata && definition.metadata.type) {
-          const type = definition.metadata.type;
-          if (type === 'functions') {
-            functionSymbols.push(symbol);
-          } else if (type === 'macros') {
-            macroSymbols.push(symbol);
-          } else if (type === 'variables') {
-            variableSymbols.push(symbol);
-          } else {
-            otherSymbols.push(symbol);
-          }
-        } 
-        // If no metadata, determine type based on value
-        else if (typeof definition.value === 'function') {
-          functionSymbols.push(symbol);
-        } else {
-          variableSymbols.push(symbol);
-        }
+  // Convert user symbols back to internal format for definition lookup
+  for (const userSymbol of userFacingSymbols) {
+    const internalSymbol = toInternalName(userSymbol);
+    // Use the original symbol from the array if it exists there, otherwise use the converted one
+    const lookupSymbol = symbols.includes(userSymbol) ? userSymbol : internalSymbol;
+    
+    const definition = await evaluator.getSymbolDefinition(lookupSymbol, moduleName);
+    if (definition) {
+      // Check metadata.type first, which is more reliable
+      if (definition.metadata && definition.metadata.type === "functions") {
+        functionSymbols.push(userSymbol);
+      } else if (typeof definition.value === 'function') {
+        // Fallback to checking the value type
+        functionSymbols.push(userSymbol);
       } else {
-        otherSymbols.push(symbol);
+        variableSymbols.push(userSymbol);
       }
-    } catch (error) {
-      // If there's an error getting the definition, just put it in other symbols
-      otherSymbols.push(symbol);
+    } else {
+      otherSymbols.push(userSymbol);
     }
   }
   
+  // Create set of exported symbols for easy lookup
+  const exportSet = new Set(userFacingExports);
+  
   // Display functions
   if (functionSymbols.length > 0) {
-    console.log(colorText("\nFunctions:", colors.fg.sicpBlue + colors.bright, useColors));
+    console.log(colorText("Functions:", colors.fg.sicpGreen + colors.bright, useColors));
     console.log("------------");
     functionSymbols.sort().forEach(symbol => {
       const isExported = exportSet.has(symbol);
@@ -817,20 +813,10 @@ async function showModuleSymbols(
     });
   }
   
-  // Display macros
-  if (macroSymbols.length > 0) {
-    console.log(colorText("\nMacros:", colors.fg.magenta + colors.bright, useColors));
-    console.log("------------");
-    macroSymbols.sort().forEach(symbol => {
-      const isExported = exportSet.has(symbol);
-      const marker = isExported ? colorText(' (exported)', colors.fg.green, useColors) : '';
-      console.log(`- ${symbol}${marker}`);
-    });
-  }
-  
   // Display variables
   if (variableSymbols.length > 0) {
-    console.log(colorText("\nVariables:", colors.fg.sicpBlue + colors.bright, useColors));
+    if (functionSymbols.length > 0) console.log("");
+    console.log(colorText("Variables:", colors.fg.sicpBlue + colors.bright, useColors));
     console.log("------------");
     variableSymbols.sort().forEach(symbol => {
       const isExported = exportSet.has(symbol);
@@ -841,7 +827,8 @@ async function showModuleSymbols(
   
   // Display other symbols if any
   if (otherSymbols.length > 0) {
-    console.log(colorText("\nOther Symbols:", colors.fg.yellow + colors.bright, useColors));
+    if (functionSymbols.length > 0 || variableSymbols.length > 0) console.log("");
+    console.log(colorText("Other Symbols:", colors.fg.yellow + colors.bright, useColors));
     console.log("------------");
     otherSymbols.sort().forEach(symbol => {
       const isExported = exportSet.has(symbol);
@@ -860,10 +847,7 @@ async function showModuleSymbols(
   console.log("\nUsage:");
   console.log(`To see a specific symbol: :see ${moduleName}:<symbol-name>`);
   console.log(`To see only exports: :see ${moduleName}:exports`);
-  
-  // Get current module through more reliable sync method
-  const currentModule = evaluator.getCurrentModuleSync();
-  if (moduleName !== currentModule) {
+  if (moduleName !== evaluator.getCurrentModuleSync()) {
     console.log(`To use symbols from this module: (import [symbol1, symbol2] from "${moduleName}")`);
   }
 }
@@ -932,63 +916,90 @@ async function showAllModulesDetails(evaluator: ModuleAwareEvaluator, useColors:
 }
 
 // Helper function to show only module names
-function showAllModuleNames(evaluator: ModuleAwareEvaluator, useColors: boolean): void {
-  const modules = evaluator.getAvailableModules();
-  const currentModule = evaluator.getCurrentModule();
+async function showAllModuleNames(evaluator: ModuleAwareEvaluator, useColors: boolean): Promise<void> {
+  console.log(colorText("All available modules:", colors.fg.sicpRed + colors.bright, useColors));
   
-  console.log(colorText("Available Modules:", colors.fg.sicpRed + colors.bright, useColors));
-  console.log(colorText("─".repeat(60), colors.fg.white, useColors));
+  const modules = await evaluator.getAvailableModules();
   
   if (modules.length === 0) {
-    console.log("No modules defined in the system.");
+    console.log("No modules defined");
     return;
   }
   
   console.log("Module names:");
-  console.log("------------");
-  
+  console.log("-------------");
   modules.forEach(moduleName => {
-    const marker = moduleName === currentModule ? "* " : "  ";
-    console.log(`${marker}${moduleName}`);
+    console.log(`- ${moduleName}`);
   });
-  
-  console.log("------------");
-  console.log("* Current module");
-  
-  console.log("\nUsage:");
-  console.log("To create or switch to a module: :module <name>");
-  console.log("To see a specific module's details: :see <module-name>");
+  console.log("-------------");
+  console.log(`Total: ${modules.length} modules`);
 }
 
 // Helper function to show all symbols across all modules
-function showAllSymbols(evaluator: ModuleAwareEvaluator, useColors: boolean, showJs: boolean): void {
-  const modules = evaluator.getAvailableModules();
+async function showAllSymbols(evaluator: ModuleAwareEvaluator, useColors: boolean, showJs: boolean): Promise<void> {
+  console.log(colorText("All symbols across all modules:", colors.fg.sicpRed + colors.bright, useColors));
   
-  console.log(colorText("All Symbols (Across All Modules):", colors.fg.sicpRed + colors.bright, useColors));
-  console.log(colorText("─".repeat(60), colors.fg.white, useColors));
+  const modules = await evaluator.getAvailableModules();
   
   if (modules.length === 0) {
-    console.log("No modules or symbols defined in the system.");
+    console.log("No modules defined");
     return;
   }
   
   let totalSymbols = 0;
   
-  modules.forEach(moduleName => {
-    const symbols = evaluator.listModuleSymbols(moduleName);
-    totalSymbols += symbols.length;
+  // Sort modules alphabetically
+  modules.sort();
+  
+  for (const moduleName of modules) {
+    const symbols = await evaluator.listModuleSymbols(moduleName);
     
-    if (symbols.length === 0) {
+    if (symbols.length > 0) {
+      console.log(`\n${colorText(`Module: ${moduleName}`, colors.fg.sicpPurple, useColors)}`);
+      console.log("-".repeat(moduleName.length + 8));
+      
+      for (const symbolName of symbols) {
+        console.log(`- ${symbolName}`);
+        totalSymbols++;
+      }
+    }
+  }
+  
+  console.log(`\nTotal: ${totalSymbols} symbols in ${modules.length} modules`);
+  
+  console.log("\nUse :see <module>:<symbol> to examine a specific symbol");
+  console.log("Use :see <module> to see detailed info about a module");
+}
+
+// Helper function to show exports from a module
+function showModuleExports(evaluator: ModuleAwareEvaluator, moduleName: string, useColors: boolean): void {
+  console.log(colorText("Module Exports:", colors.fg.sicpGreen + colors.bright, useColors));
+  
+  const exports = evaluator.getModuleExports(moduleName);
+  
+  const isCurrentModule = moduleName === evaluator.getCurrentModuleSync();
+  const title = isCurrentModule ? 
+    `Exports from Current Module (${moduleName}):` : 
+    `Exports from Module '${moduleName}':`;
+  
+  console.log(colorText(title, colors.fg.lightGreen, useColors));
+  console.log(colorText("─".repeat(60), colors.fg.white, useColors));
+  
+  // Make this function async and immediately invoke it
+  (async () => {
+    const exportList = await exports;
+    
+    if (exportList.length === 0) {
+      console.log(`No symbols exported from module '${moduleName}'.`);
       return;
     }
     
-    console.log(colorText(`\nModule: ${moduleName}`, colors.fg.sicpPurple + colors.bright, useColors));
+    console.log("Exported symbols:");
     console.log("------------");
     
-    symbols.sort().forEach(symbol => {
-      const definition = evaluator.getSymbolDefinition(symbol, moduleName);
-      const exports = evaluator.getModuleExports(moduleName);
-      const isExported = exports.includes(symbol);
+    const sortedExports = [...exportList].sort();
+    for (const symbol of sortedExports) {
+      const definition = await evaluator.getSymbolDefinition(symbol, moduleName);
       
       let typeInfo = "unknown";
       if (definition) {
@@ -999,57 +1010,13 @@ function showAllSymbols(evaluator: ModuleAwareEvaluator, useColors: boolean, sho
         }
       }
       
-      const exportMarker = isExported ? colorText(" (exported)", colors.fg.green, useColors) : "";
-      console.log(`- ${moduleName}:${symbol} [${typeInfo}]${exportMarker}`);
-    });
-  });
-  
-  console.log(colorText("\nSummary:", colors.fg.cyan, useColors));
-  console.log(`Total: ${totalSymbols} symbols across ${modules.length} modules`);
-  
-  console.log("\nUsage:");
-  console.log("To see a specific symbol: :see <module-name>:<symbol-name>");
-  console.log("To see a specific module: :see <module-name>");
-}
-
-// Helper function to show exports from a module
-function showModuleExports(evaluator: ModuleAwareEvaluator, moduleName: string, useColors: boolean): void {
-  const exports = evaluator.getModuleExports(moduleName);
-  
-  const isCurrentModule = moduleName === evaluator.getCurrentModule();
-  const title = isCurrentModule ? 
-    `Exports from Current Module (${moduleName}):` : 
-    `Exports from Module '${moduleName}':`;
-  
-  console.log(colorText(title, colors.fg.sicpRed + colors.bright, useColors));
-  console.log(colorText("─".repeat(60), colors.fg.white, useColors));
-  
-  if (exports.length === 0) {
-    console.log(`No symbols exported from module '${moduleName}'.`);
-    return;
-  }
-  
-  console.log(colorText("Exported Symbols:", colors.fg.lightGreen, useColors));
-  console.log("------------");
-  
-  exports.sort().forEach(symbol => {
-    const definition = evaluator.getSymbolDefinition(symbol, moduleName);
-    
-    let typeInfo = "unknown";
-    if (definition) {
-      if (typeof definition.value === 'function') {
-        typeInfo = "function";
-      } else {
-        typeInfo = "variable";
-      }
+      console.log(`- ${symbol} (${typeInfo})`);
     }
     
-    console.log(`- ${symbol} [${typeInfo}]`);
-  });
-  
-  console.log("\nUsage:");
-  console.log(`To import these symbols: (import [${exports.length > 0 ? exports[0] + ", ..." : "symbol"}] from "${moduleName}")`);
-  console.log(`To see a specific symbol definition: :see ${moduleName}:<symbol-name>`);
+    console.log("\nUsage:");
+    console.log(`To import these symbols: (import [${exportList.length > 0 ? exportList[0] + ", ..." : "symbol"}] from "${moduleName}")`);
+    console.log(`To see a specific symbol definition: :see ${moduleName}:<symbol-name>`);
+  })();
 }
 
 // Helper function to show a symbol definition
@@ -1410,7 +1377,7 @@ async function processInput(
     const isSpecialExpression = await evaluator.detectSpecialHqlExpressions(input);
     if (isSpecialExpression) {
       // The expression was handled, update state if needed
-      state.currentModule = evaluator.getCurrentModule();
+      state.currentModule = evaluator.getCurrentModuleSync();
       return;
     }
     
@@ -1418,40 +1385,31 @@ async function processInput(
     const hqlFuncMatch = input.match(/\(\s*(?:fn|defn)\s+([a-zA-Z_$][a-zA-Z0-9_$-]*)/);
     if (hqlFuncMatch && hqlFuncMatch[1]) {
       const funcName = hqlFuncMatch[1];
+      const replEnv = (evaluator as any).getREPLEnvironment();
       
-      try {
-        // Get the current module
-        const currentModule = evaluator.getCurrentModuleSync();
+      // Check if function already exists
+      if (replEnv.hasJsValue(funcName)) {
+        console.log(`Symbol '${funcName}' already exists. Overwrite? (y/n)`);
         
-        // Use our proper module-aware check to only look within the current module
-        const symbolExists = await evaluator.symbolExistsInModule(funcName, currentModule);
+        // Read response
+        const response = await readLineWithHistory("> ", [], { 
+          multilineMode: false, 
+          multilineInput: "", 
+          parenBalance: 0,
+          importHandlerActive: false,
+          currentModule: state.currentModule
+        });
         
-        if (symbolExists) {
-          console.log(`Symbol '${funcName}' already exists in module '${currentModule}'. Overwrite? (y/n)`);
-          
-          // Read response
-          const response = await readLineWithHistory("> ", [], { 
-            multilineMode: false, 
-            multilineInput: "", 
-            parenBalance: 0,
-            importHandlerActive: false,
-            currentModule: state.currentModule
-          });
-          
-          // If confirmed, force redefine
-          if (response.text.trim().toLowerCase() === "y") {
-            console.log(`Overwriting '${funcName}'...`);
-            const result = await evaluator.forceDefine(input);
-            formatAndDisplayResult(result, input, options, performance.now());
-            return;
-          } else {
-            console.log(`Keeping existing definition for '${funcName}'`);
-            return;
-          }
+        // If confirmed, force redefine
+        if (response.text.trim().toLowerCase() === "y") {
+          console.log(`Overwriting '${funcName}'...`);
+          const result = await evaluator.forceDefine(input);
+          formatAndDisplayResult(result, input, options, performance.now());
+          return;
+        } else {
+          console.log(`Keeping existing definition for '${funcName}'`);
+          return;
         }
-      } catch (err) {
-        // If there's an error checking for the symbol, just proceed with normal evaluation
-        console.error(`Error checking for symbol: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     
@@ -1665,67 +1623,72 @@ async function handleCommand(
   history: string[],
   options: ProcessOptions
 ): Promise<void> {
-  // Split the command string into parts
-  const parts = command.trim().split(/\s+/);
-  const cmd = parts[0];
-  const args = parts.slice(1).join(" ");
-
-  switch (cmd) {
-    case "help": {
-      // Make sure we're properly passing args to commandHelp
-      const helpArg = args.trim();
-      commandHelp(helpArg, options.useColors);
-      break;
+  // Split command into parts (e.g., :command arg1 arg2)
+  const [cmd, ...args] = command.trim().split(/\s+/);
+  const argsText = args.join(" ");
+  
+  const cmdLower = cmd.toLowerCase();
+  
+  try {
+    // Multi-command support for convenience (e.g., q instead of quit)
+    if (cmdLower === "help" || cmdLower === "h") {
+      commandHelp(argsText, options.useColors);
     }
-    case "quit":
-    case "exit":
+    else if (cmdLower === "quit" || cmdLower === "q" || cmdLower === "exit") {
       commandQuit(options.replState.setRunning);
-      break;
-    case "env":
+    }
+    else if (cmdLower === "env" || cmdLower === "e") {
       commandEnv(evaluator, options.useColors, options.logger);
-      break;
-    case "macros":
+    }
+    else if (cmdLower === "macros" || cmdLower === "m") {
       commandMacros(evaluator, options.useColors);
-      break;
-    case "module":
-      await commandModule(evaluator, state, args);
-      break;
-    case "modules":
+    }
+    else if (cmdLower === "modules" || cmdLower === "mod") {
       await commandModules(evaluator, options.useColors);
-      break;
-    case "list":
+    }
+    else if (cmdLower === "module") {
+      await commandModule(evaluator, state, argsText);
+    }
+    else if (cmdLower === "list" || cmdLower === "ls") {
       await commandList(evaluator, options.useColors);
-      break;
-    case "see":
-      await commandSee(evaluator, args, options.useColors, options.showJs);
-      break;
-    case "remove":
-      await commandRemove(evaluator, args, options.useColors, state);
-      break;
-    case "write":
-    case "edit": // Support both for backward compatibility
-      await commandWrite(evaluator, args, options, state);
-      break;
-    default:
-      if (cmd === "js") {
-        commandJs(options.showJs, options.replState.setShowJs);
-      } else if (cmd === "verbose") {
-        commandVerbose(options.logger, options.replState.setVerbose);
-      } else if (cmd === "ast") {
-        commandAst(options.showAst, options.replState.setShowAst);
-      } else if (cmd === "expanded") {
-        commandExpanded(options.showExpanded, options.replState.setShowExpanded);
-      } else if (cmd === "colors") {
-        options.replState.setColors(!options.useColors);
-        console.log(`ANSI colors ${!options.useColors ? 'enabled' : 'disabled'}`);
-      } else if (cmd === "reset") {
-        // Redirect reset to remove all for backward compatibility
-        console.log(colorText("Note: The :reset command is deprecated.", colors.fg.yellow, options.useColors));
-        console.log("Using :remove all instead...");
-        await commandRemove(evaluator, "all", options.useColors, state);
-      } else {
-        commandDefault(cmd);
-      }
+    }
+    else if (cmdLower === "remove" || cmdLower === "rm") {
+      await commandRemove(evaluator, argsText, options.useColors, state);
+    }
+    else if (cmdLower === "see") {
+      await commandSee(evaluator, argsText, options.useColors, options.showJs);
+    }
+    else if (cmdLower === "verbose") {
+      commandVerbose(options.logger, options.replState.setVerbose);
+    }
+    else if (cmdLower === "ast") {
+      commandAst(options.showAst, options.replState.setShowAst);
+    }
+    else if (cmdLower === "expanded") {
+      commandExpanded(options.showExpanded, options.replState.setShowExpanded);
+    }
+    else if (cmdLower === "js") {
+      commandJs(options.showJs, options.replState.setShowJs);
+    }
+    else if (cmdLower === "colors") {
+      options.replState.setColors(!options.useColors);
+      console.log(`Display colors: ${!options.useColors ? "enabled" : "disabled"}`);
+    }
+    else if (cmdLower === "reset") {
+      // The :reset command is now integrated with :remove for simplicity
+      // Just delegate to the appropriate :remove command
+      await commandRemove(evaluator, "all", options.useColors, state);
+    }
+    else if (cmdLower === "write" || cmdLower === "w") {
+      await commandWrite(evaluator, argsText, options, state);
+    }
+    else {
+      // Unknown command
+      commandDefault(cmd);
+    }
+  } catch (error: unknown) {
+    // Handle errors in command processing
+    handleError(error, options);
   }
 }
 
@@ -1750,7 +1713,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     multilineInput: "", 
     parenBalance: 0,
     importHandlerActive: false,
-    currentModule: "user"  // Default module
+    currentModule: "global"  // Default module
   };
 
   const stateFunctions = {
@@ -1787,8 +1750,8 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     // Store evaluator in global state for consistent access
     (globalThis as any).__HQL_ACTIVE_EVALUATOR = evaluator;
     
-    // Ensure the evaluator is fully initialized and synchronized to the "user" module
-    await evaluator.switchModule("user");
+    // Ensure the evaluator is fully initialized and synchronized to the "global" module
+    await evaluator.switchModule("global");
     
     // Initialize with current module from evaluator - use the sync version since we just initialized
     replStateObj.currentModule = evaluator.getCurrentModuleSync();
@@ -2095,7 +2058,7 @@ async function commandWrite(evaluator: ModuleAwareEvaluator, args: string, optio
     // If a symbol name is provided, try to get its source
     try {
       const symbolName = args.trim();
-      const definition = evaluator.getSymbolDefinition(symbolName);
+      const definition = await evaluator.getSymbolDefinition(symbolName);
       
       if (definition && definition.source) {
         // Use the source code if available
@@ -2126,7 +2089,7 @@ async function commandWrite(evaluator: ModuleAwareEvaluator, args: string, optio
 ; Write your code below and save+exit when done.
 ; Your code will be evaluated when you return to the REPL.
 ;
-; Current module: ${evaluator.getCurrentModule()}
+; Current module: ${await evaluator.getCurrentModule()}
 ;
 `;
   

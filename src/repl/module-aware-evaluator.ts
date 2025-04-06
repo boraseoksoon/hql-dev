@@ -21,7 +21,7 @@ export interface ModuleAwareEvalOptions extends REPLEvalOptions {
 export class ModuleAwareEvaluator extends REPLEvaluator {
   // Use a different name to avoid conflict with the parent class
   private moduleLogger: Logger;
-  private currentModule: string = "user";
+  private currentModule: string = "global";
   private initialized = false;
   
   constructor(env: Environment, options: ModuleAwareEvalOptions = {}) {
@@ -29,9 +29,9 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     this.moduleLogger = new Logger(options.verbose ?? false);
     
     // Initialize state manager - but we need to ensure initialization completes
-    // We can't make the constructor async, so initialize with default "user" here,
+    // We can't make the constructor async, so initialize with default "global" here,
     // and complete the full initialization when needed
-    this.currentModule = "user";
+    this.currentModule = "global";
   }
   
   /**
@@ -44,9 +44,9 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     try {
       await persistentStateManager.initialize();
       
-      // Explicitly set current module to "user", then tell the state manager
-      this.currentModule = "user";
-      persistentStateManager.switchToModule("user");
+      // Explicitly set current module to "global", then tell the state manager
+      this.currentModule = "global";
+      persistentStateManager.switchToModule("global");
       
       this.initialized = true;
       this.moduleLogger.debug(`Initialized module system with current module: ${this.currentModule}`);
@@ -104,7 +104,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     if (!this.initialized) {
       // We're asking for the module before initialization is complete
       // Return the default in this case
-      return "user";
+      return "global";
     }
     return this.currentModule;
   }
@@ -375,13 +375,18 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       super.resetEnvironment();
       // Restore module name
       this.currentModule = currentModule;
+      // Reset just the content of all modules, keeping their structure
+      persistentStateManager.resetAllModules(true);
       persistentStateManager.switchToModule(currentModule);
     } else {
       // Reset to default module
-      this.currentModule = "user";
+      this.currentModule = "global";
+      // Call parent reset
       super.resetEnvironment();
+      // Reset all modules and return to default
+      persistentStateManager.resetAllModules(false);
       // Tell the state manager we're back to the default module
-      persistentStateManager.switchToModule("user");
+      persistentStateManager.switchToModule("global");
     }
   }
   
