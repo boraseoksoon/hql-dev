@@ -155,8 +155,12 @@ function commandHelp(args: string, useColors: boolean): void {
     printBanner(useColors);
   } else {
     // Show detailed help for a specific command
-    const command = args.trim().toLowerCase();
-    console.log(`Showing help for command: ${command}`); // Debug line to verify command is received
+    // Remove any leading colon to support both `:help command` and `:help :command` formats
+    let command = args.trim().toLowerCase();
+    if (command.startsWith(':')) {
+      command = command.substring(1);
+    }
+    console.log(`Showing help for command: ${command}`);
     const helpText = getDetailedHelp(command, useColors);
     console.log(helpText);
   }
@@ -258,12 +262,13 @@ function commandMacros(evaluator: ModuleAwareEvaluator, useColors: boolean): voi
   console.log("------------");
 }
 
-function commandModules(evaluator: ModuleAwareEvaluator, useColors: boolean): void {
-  console.log(colorText("Available Modules:", colors.fg.sicpRed + colors.bright, useColors));
+// Command handler for :modules command
+async function commandModules(evaluator: ModuleAwareEvaluator, useColors: boolean): Promise<void> {
+  // Get the list of modules and current module
+  const modules = await evaluator.getAvailableModules();
+  const currentModule = evaluator.getCurrentModuleSync();
   
-  // Get all modules from our module-aware evaluator
-  const modules = evaluator.getAvailableModules();
-  const currentModule = evaluator.getCurrentModule();
+  console.log(colorText("Available Modules:", colors.fg.sicpPurple + colors.bright, useColors));
   
   if (modules.length === 0) {
     console.log("No modules defined");
@@ -278,29 +283,27 @@ function commandModules(evaluator: ModuleAwareEvaluator, useColors: boolean): vo
     console.log("* Current module");
   }
   
-  // Add clearer instructions about creating modules
-  console.log(colorText("\nTo create a new module or switch to a different one:", colors.fg.cyan, useColors));
-  console.log(`  Use ${colorText(":module <name>", colors.fg.sicpRed, useColors)} - This will create the module if it doesn't exist`);
-  console.log(`  Example: ${colorText(":module math", colors.fg.green, useColors)} to create or switch to a module named "math"`);
+  console.log("\nTo switch modules: :module <name>");
+  console.log("To see module contents: :see <module-name>");
 }
 
 // New command to switch modules
-function commandModule(evaluator: ModuleAwareEvaluator, state: ReplState, moduleName: string): void {
+async function commandModule(evaluator: ModuleAwareEvaluator, state: ReplState, moduleName: string): Promise<void> {
   // Check if module name is provided
   if (!moduleName) {
     // If no module name is provided, show the current module
-    console.log(colorText(`Current module: ${evaluator.getCurrentModule()}`, 
+    console.log(colorText(`Current module: ${evaluator.getCurrentModuleSync()}`, 
                          colors.fg.sicpPurple + colors.bright, true));
-    console.log(`The module name appears in your prompt: hql[${evaluator.getCurrentModule()}]>`);
-    console.log(`Use :module <name> to switch to a different module`);
+    console.log(`The module name appears in your prompt: hql[${evaluator.getCurrentModuleSync()}]>`);
+    console.log(`Use :module <n> to switch to a different module`);
     return;
   }
   
   try {
     // Switch to the specified module
-    evaluator.switchModule(moduleName);
+    await evaluator.switchModule(moduleName);
     // Update REPL state
-    state.currentModule = moduleName;
+    state.currentModule = evaluator.getCurrentModuleSync();
     console.log(`Switched to module: ${moduleName}`);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -308,12 +311,12 @@ function commandModule(evaluator: ModuleAwareEvaluator, state: ReplState, module
   }
 }
 
-// New command to list symbols in the current module
-function commandList(evaluator: ModuleAwareEvaluator, useColors: boolean): void {
-  const currentModule = evaluator.getCurrentModule();
-  console.log(colorText(`Symbols in module '${currentModule}':`, colors.fg.sicpRed + colors.bright, useColors));
+// Command handler for :list command
+async function commandList(evaluator: ModuleAwareEvaluator, useColors: boolean): Promise<void> {
+  console.log(colorText("Symbols in current module:", colors.fg.sicpBlue + colors.bright, useColors));
   
-  const symbols = evaluator.listModuleSymbols();
+  // Get list of symbols from current module
+  const symbols = await evaluator.listModuleSymbols();
   
   if (symbols.length === 0) {
     console.log("No symbols defined");
@@ -324,6 +327,7 @@ function commandList(evaluator: ModuleAwareEvaluator, useColors: boolean): void 
       console.log(`- ${symbol}`);
     }
     console.log("------------");
+    console.log(`To see details about a symbol: ${colorText(":see <symbol-name>", colors.fg.sicpGreen, useColors)}`);
   }
 }
 
@@ -667,225 +671,126 @@ function formatSourceCode(source: string): string {
 }
 
 // New command to show symbol definitions
-function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColors: boolean, showJs: boolean = false): void {
-  // No arguments: list all modules with their exported symbols
+async function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColors: boolean, showJs: boolean = false): Promise<void> {
+  // First get the ACTUAL current module directly from the evaluator
+  // This should always return the true current module - using sync since evaluator is already initialized
+  const currentModule = evaluator.getCurrentModuleSync();
+  
+  // Parse the arguments to determine what to show
   if (!args || args.trim() === "") {
-    const modules = evaluator.getAvailableModules();
-    console.log(colorText("Available Modules:", colors.fg.sicpRed + colors.bright, useColors));
+    // :see - Show all information for the current module
+    console.log(colorText(`Current Module: ${currentModule}`, colors.fg.sicpPurple + colors.bright, useColors));
+    console.log(colorText("─".repeat(60), colors.fg.white, useColors));
     
-    if (modules.length === 0) {
-      console.log("No modules defined");
-    } else {
-      // Show a summary first
-      console.log(colorText(`Found ${modules.length} module(s)`, colors.fg.white + colors.bright, useColors));
-      console.log(colorText("Module list:", colors.fg.sicpBlue, useColors) + " " + 
-                  colorText(modules.join(", "), colors.fg.sicpPurple, useColors));
-      console.log(colorText("─".repeat(60), colors.fg.white, useColors));
-      
-      modules.forEach(moduleName => {
-        // Get symbols and exports for this module
-        const symbols = evaluator.listModuleSymbols(moduleName);
-        const exports = evaluator.getModuleExports(moduleName);
-        
-        // Show module name with better highlighting
-        console.log(colorText(`\n▶ Module: ${moduleName}`, colors.fg.sicpPurple + colors.bright, useColors));
-        
-        // Categorize symbols by type
-        const functionSymbols: string[] = [];
-        const variableSymbols: string[] = [];
-        const otherSymbols: string[] = [];
-        
-        symbols.forEach(symbol => {
-          const definition = evaluator.getSymbolDefinition(symbol, moduleName);
-          if (definition) {
-            if (typeof definition.value === 'function') {
-              functionSymbols.push(symbol);
-            } else {
-              variableSymbols.push(symbol);
-            }
-          } else {
-            otherSymbols.push(symbol);
-          }
-        });
-        
-        // Create set of exported symbols for easy lookup
-        const exportSet = new Set(exports);
-        
-        // Display all symbols grouped by type
-        if (functionSymbols.length > 0) {
-          console.log(colorText("  Functions:", colors.fg.sicpGreen, useColors));
-          functionSymbols.sort().forEach(symbol => {
-            const isExported = exportSet.has(symbol);
-            const symbolDisplay = isExported 
-              ? colorText(symbol, colors.fg.green + colors.bright, useColors) + colorText(" (exported)", colors.fg.green, useColors)
-              : symbol;
-            console.log(`    - ${symbolDisplay}`);
-          });
-        }
-        
-        if (variableSymbols.length > 0) {
-          console.log(colorText("  Variables:", colors.fg.sicpBlue, useColors));
-          variableSymbols.sort().forEach(symbol => {
-            const isExported = exportSet.has(symbol);
-            const symbolDisplay = isExported 
-              ? colorText(symbol, colors.fg.green + colors.bright, useColors) + colorText(" (exported)", colors.fg.green, useColors)
-              : symbol;
-            console.log(`    - ${symbolDisplay}`);
-          });
-        }
-        
-        if (otherSymbols.length > 0) {
-          console.log(colorText("  Other:", colors.fg.yellow, useColors));
-          otherSymbols.sort().forEach(symbol => {
-            const isExported = exportSet.has(symbol);
-            const symbolDisplay = isExported 
-              ? colorText(symbol, colors.fg.green + colors.bright, useColors) + colorText(" (exported)", colors.fg.green, useColors)
-              : symbol;
-            console.log(`    - ${symbolDisplay}`);
-          });
-        }
-        
-        // Show summary of exports if any
-        if (exports.length > 0) {
-          console.log(colorText("  Summary of exports:", colors.fg.lightGreen + colors.bright, useColors));
-          console.log(`    ${colorText(exports.join(", "), colors.fg.green, useColors)}`);
-        }
-      });
-      
-      console.log(colorText("\nUsage:", colors.fg.cyan, useColors));
-      console.log(`  :see <module> - View detailed symbols in a specific module`);
-      console.log(`  :see <module:symbol> - View a specific symbol definition`);
+    const symbols = await evaluator.listModuleSymbols(currentModule);
+    const exports = await evaluator.getModuleExports(currentModule);
+    
+    if (symbols.length === 0) {
+      console.log("This module contains no symbols.");
+      return;
     }
+    
+    // Show the module details using the retrieved module name
+    await showModuleSymbols(evaluator, currentModule, symbols, exports, useColors, showJs);
     return;
   }
   
-  // Check if symbol contains module prefix (module:symbol format)
-  if (args.includes(':')) {
-    const [moduleName, localSymbolName] = args.split(':');
+  const argsText = args.trim();
+  
+  // Special cases for "all" commands
+  if (argsText === "all") {
+    // :see all - Show all information across all modules
+    await showAllModulesDetails(evaluator, useColors, showJs);
+    return;
+  }
+  
+  if (argsText === "all:modules") {
+    // :see all:modules - Show all module names
+    await showAllModuleNames(evaluator, useColors);
+    return;
+  }
+  
+  if (argsText === "all:symbols") {
+    // :see all:symbols - Show all symbols across all modules
+    await showAllSymbols(evaluator, useColors, showJs);
+    return;
+  }
+  
+  if (argsText === "exports") {
+    // :see exports - Show all exports from the current module
+    await showModuleExports(evaluator, currentModule, useColors);
+    return;
+  }
+  
+  // Check if it's using module:symbol or module:exports format
+  if (argsText.includes(':')) {
+    const [moduleName, specifier] = argsText.split(':');
     
-    // Try to get the symbol definition
-    const definition = evaluator.getSymbolDefinition(localSymbolName.trim(), moduleName.trim());
+    const availableModules = await evaluator.getAvailableModules();
+    if (!availableModules.includes(moduleName)) {
+      console.error(`Module '${moduleName}' not found.`);
+      console.log(`Available modules: ${availableModules.join(', ')}`);
+      return;
+    }
+    
+    if (specifier === "exports") {
+      // :see module:exports - Show exports from a specific module
+      await showModuleExports(evaluator, moduleName, useColors);
+      return;
+    }
+    
+    // :see module:symbol - Show a specific symbol from a module
+    const symbolName = specifier.trim();
+    const definition = await evaluator.getSymbolDefinition(symbolName, moduleName);
     
     if (!definition) {
-      console.error(`Symbol '${args}' not found or has no stored definition.`);
+      console.error(`Symbol '${symbolName}' not found in module '${moduleName}'.`);
       return;
     }
     
-    console.log(colorText(`Definition of '${args}':`, colors.fg.sicpRed + colors.bright, useColors));
-    console.log("----------------");
-    
-    // Display the source code - prefer HQL source over JS
-    if (definition.source) {
-      console.log(colorText("HQL Source:", colors.fg.sicpGreen, useColors));
-      console.log(formatSourceCode(definition.source));
-    }
-    
-    // Only show the JS source if specifically enabled
-    if (definition.jsSource && showJs) {
-      console.log(colorText("\nJavaScript Transpilation:", colors.fg.yellow, useColors));
-      console.log(definition.jsSource);
-    }
-    
-    // Show value if no source is available
-    if (!definition.source && !definition.jsSource) {
-      if (typeof definition.value === 'function') {
-        // For functions without source, show the function representation
-        console.log(colorText("Function:", colors.fg.sicpGreen, useColors));
-        console.log(definition.value.toString());
-      } else {
-        console.log(colorText("Value:", colors.fg.sicpBlue, useColors));
-        console.log(formatValue(definition.value));
-      }
-    }
-    
-    // Show metadata if available
-    if (definition.metadata) {
-      console.log(colorText("\nMetadata:", colors.fg.lightBlue, useColors));
-      console.log(definition.metadata);
-    }
-    
-    console.log("----------------");
-    console.log("To use this symbol in HQL, import it with:");
-    console.log(`(import [${localSymbolName.trim()}] from "${moduleName.trim()}")`);
-    console.log("----------------");
+    await showSymbolDefinition(symbolName, moduleName, definition, useColors, showJs);
     return;
   }
   
-  // Check if this might be a symbol in the current module
-  const singleArg = args.trim();
-  const currentModule = evaluator.getCurrentModule();
-  const symbols = evaluator.listModuleSymbols(currentModule);
-  
-  if (symbols.includes(singleArg)) {
-    // This is a symbol in the current module - show its definition
-    const definition = evaluator.getSymbolDefinition(singleArg, currentModule);
-    
-    if (definition) {
-      console.log(colorText(`Definition of '${singleArg}' in current module '${currentModule}':`, 
-                           colors.fg.sicpRed + colors.bright, useColors));
-      console.log("----------------");
-      
-      // Display the source code - prefer HQL source over JS
-      if (definition.source) {
-        console.log(colorText("HQL Source:", colors.fg.sicpGreen, useColors));
-        console.log(formatSourceCode(definition.source));
-      }
-      
-      // Only show the JS source if specifically enabled
-      if (definition.jsSource && showJs) {
-        console.log(colorText("\nJavaScript Transpilation:", colors.fg.yellow, useColors));
-        console.log(definition.jsSource);
-      }
-      
-      // Show value if no source is available
-      if (!definition.source && !definition.jsSource) {
-        if (typeof definition.value === 'function') {
-          // For functions without source, show the function representation
-          console.log(colorText("Function:", colors.fg.sicpGreen, useColors));
-          console.log(definition.value.toString());
-        } else {
-          console.log(colorText("Value:", colors.fg.sicpBlue, useColors));
-          console.log(formatValue(definition.value));
-        }
-      }
-      
-      // Show metadata if available
-      if (definition.metadata) {
-        console.log(colorText("\nMetadata:", colors.fg.lightBlue, useColors));
-        console.log(definition.metadata);
-      }
-      
-      console.log("----------------");
-      return;
-    }
-  }
-  
-  // If it's not a symbol in the current module, it must be a module name
-  const moduleName = singleArg;
-  const moduleSymbols = evaluator.listModuleSymbols(moduleName);
-  
-  if (!moduleSymbols || moduleSymbols.length === 0) {
-    console.error(`Module or symbol '${moduleName}' not found.`);
-    console.log(`Use :modules to see list of available modules`);
-    console.log(`To see a symbol in the current module (${currentModule}), use :see symbol`);
-    console.log(`To see a symbol in another module, use :see module:symbol`);
+  // Check if it's a module name
+  const availableModules = await evaluator.getAvailableModules();
+  if (availableModules.includes(argsText)) {
+    // :see module-name - Show all information for a specific module
+    await showModuleDetails(evaluator, argsText, useColors, showJs);
     return;
   }
   
-  // If we reach here, it's a valid module name
-  console.log(colorText(`Symbols in module '${moduleName}':`, colors.fg.sicpRed + colors.bright, useColors));
+  // Otherwise it's likely a symbol in the current module
+  const symbolName = argsText;
+  const definition = await evaluator.getSymbolDefinition(symbolName, currentModule);
   
-  // Get all exported symbols for highlighting
-  const exports = evaluator.getModuleExports(moduleName);
-  const exportSet = new Set(exports);
+  if (!definition) {
+    console.error(`Symbol '${symbolName}' not found in current module '${currentModule}'.`);
+    const moduleSymbols = await evaluator.listModuleSymbols(currentModule);
+    console.log(`Available symbols in module '${currentModule}': ${moduleSymbols.join(', ')}`);
+    return;
+  }
   
+  // :see symbol-name - Show a specific symbol from current module
+  await showSymbolDefinition(symbolName, currentModule, definition, useColors, showJs);
+}
+
+// Helper function to show module symbols 
+async function showModuleSymbols(
+  evaluator: ModuleAwareEvaluator, 
+  moduleName: string, 
+  symbols: string[], 
+  exports: string[], 
+  useColors: boolean, 
+  showJs: boolean
+): Promise<void> {
   // Categorize symbols by type
   const functionSymbols: string[] = [];
   const variableSymbols: string[] = [];
   const otherSymbols: string[] = [];
   
-  moduleSymbols.forEach(symbol => {
-    const definition = evaluator.getSymbolDefinition(symbol, moduleName);
+  for (const symbol of symbols) {
+    const definition = await evaluator.getSymbolDefinition(symbol, moduleName);
     if (definition) {
       if (typeof definition.value === 'function') {
         functionSymbols.push(symbol);
@@ -895,11 +800,14 @@ function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColors: bo
     } else {
       otherSymbols.push(symbol);
     }
-  });
+  }
+  
+  // Create set of exported symbols for easy lookup
+  const exportSet = new Set(exports);
   
   // Display functions
   if (functionSymbols.length > 0) {
-    console.log(colorText("\nFunctions:", colors.fg.sicpGreen + colors.bright, useColors));
+    console.log(colorText("Functions:", colors.fg.sicpGreen + colors.bright, useColors));
     console.log("------------");
     functionSymbols.sort().forEach(symbol => {
       const isExported = exportSet.has(symbol);
@@ -930,10 +838,282 @@ function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColors: bo
     });
   }
   
-  console.log("\nUse :see " + moduleName + ":<symbol> to view a specific symbol definition");
-  console.log("To use symbols from this module in HQL, import them with:");
-  console.log(`(import [symbol1, symbol2] from "${moduleName}")`);
+  // Show summary of exports if any
+  if (exports.length > 0) {
+    console.log(colorText("\nExports Summary:", colors.fg.lightGreen + colors.bright, useColors));
+    console.log("------------");
+    console.log(colorText(exports.join(", "), colors.fg.green, useColors));
+  }
+  
+  console.log("\nUsage:");
+  console.log(`To see a specific symbol: :see ${moduleName}:<symbol-name>`);
+  console.log(`To see only exports: :see ${moduleName}:exports`);
+  if (moduleName !== evaluator.getCurrentModule()) {
+    console.log(`To use symbols from this module: (import [symbol1, symbol2] from "${moduleName}")`);
+  }
+}
+
+// Helper function to show all details about a specific module
+async function showModuleDetails(evaluator: ModuleAwareEvaluator, moduleName: string, useColors: boolean, showJs: boolean): Promise<void> {
+  // Important: Use the passed moduleName directly, don't fetch it again from the evaluator
+  // This avoids potential inconsistencies in module state
+  
+  const currentModule = evaluator.getCurrentModuleSync();
+  const isCurrentModule = moduleName === currentModule;
+  
+  const symbols = await evaluator.listModuleSymbols(moduleName);
+  const exports = await evaluator.getModuleExports(moduleName);
+  
+  // Show module header with clear indication
+  if (isCurrentModule) {
+    console.log(colorText(`Current Module: ${moduleName}`, colors.fg.sicpPurple + colors.bright, useColors));
+  } else {
+    console.log(colorText(`Module: ${moduleName}`, colors.fg.sicpPurple + colors.bright, useColors));
+  }
+  console.log(colorText("─".repeat(60), colors.fg.white, useColors));
+  
+  if (symbols.length === 0) {
+    console.log("This module contains no symbols.");
+    return;
+  }
+  
+  // Use the shared function to display module symbols
+  await showModuleSymbols(evaluator, moduleName, symbols, exports, useColors, showJs);
+}
+
+// Helper function to show information about all modules
+async function showAllModulesDetails(evaluator: ModuleAwareEvaluator, useColors: boolean, showJs: boolean): Promise<void> {
+  const modules = await evaluator.getAvailableModules();
+  const currentModule = evaluator.getCurrentModuleSync();
+  
+  console.log(colorText("System-wide Information (All Modules):", colors.fg.sicpRed + colors.bright, useColors));
+  console.log(colorText("─".repeat(60), colors.fg.white, useColors));
+  
+  if (modules.length === 0) {
+    console.log("No modules defined in the system.");
+    return;
+  }
+  
+  for (const moduleName of modules) {
+    const symbolList = await evaluator.listModuleSymbols(moduleName);
+    const exportList = await evaluator.getModuleExports(moduleName);
+    const symbolCount = symbolList.length;
+    const exportCount = exportList.length;
+    const isCurrent = moduleName === currentModule;
+    
+    const prefix = isCurrent ? "* " : "  ";
+    const currentTag = isCurrent ? colorText(" (current)", colors.fg.cyan, useColors) : "";
+    
+    console.log(`${prefix}${colorText(moduleName, colors.fg.sicpPurple + colors.bright, useColors)}${currentTag} - ${symbolCount} symbols, ${exportCount} exports`);
+  }
+  
+  console.log(colorText("─".repeat(60), colors.fg.white, useColors));
+  console.log("* Current module");
+  
+  console.log("\nUsage:");
+  console.log("To see a specific module: :see <module-name>");
+  console.log("To see only module names: :see all:modules");
+  console.log("To see all symbols across all modules: :see all:symbols");
+}
+
+// Helper function to show only module names
+function showAllModuleNames(evaluator: ModuleAwareEvaluator, useColors: boolean): void {
+  const modules = evaluator.getAvailableModules();
+  const currentModule = evaluator.getCurrentModule();
+  
+  console.log(colorText("Available Modules:", colors.fg.sicpRed + colors.bright, useColors));
+  console.log(colorText("─".repeat(60), colors.fg.white, useColors));
+  
+  if (modules.length === 0) {
+    console.log("No modules defined in the system.");
+    return;
+  }
+  
+  console.log("Module names:");
   console.log("------------");
+  
+  modules.forEach(moduleName => {
+    const marker = moduleName === currentModule ? "* " : "  ";
+    console.log(`${marker}${moduleName}`);
+  });
+  
+  console.log("------------");
+  console.log("* Current module");
+  
+  console.log("\nUsage:");
+  console.log("To create or switch to a module: :module <name>");
+  console.log("To see a specific module's details: :see <module-name>");
+}
+
+// Helper function to show all symbols across all modules
+function showAllSymbols(evaluator: ModuleAwareEvaluator, useColors: boolean, showJs: boolean): void {
+  const modules = evaluator.getAvailableModules();
+  
+  console.log(colorText("All Symbols (Across All Modules):", colors.fg.sicpRed + colors.bright, useColors));
+  console.log(colorText("─".repeat(60), colors.fg.white, useColors));
+  
+  if (modules.length === 0) {
+    console.log("No modules or symbols defined in the system.");
+    return;
+  }
+  
+  let totalSymbols = 0;
+  
+  modules.forEach(moduleName => {
+    const symbols = evaluator.listModuleSymbols(moduleName);
+    totalSymbols += symbols.length;
+    
+    if (symbols.length === 0) {
+      return;
+    }
+    
+    console.log(colorText(`\nModule: ${moduleName}`, colors.fg.sicpPurple + colors.bright, useColors));
+    console.log("------------");
+    
+    symbols.sort().forEach(symbol => {
+      const definition = evaluator.getSymbolDefinition(symbol, moduleName);
+      const exports = evaluator.getModuleExports(moduleName);
+      const isExported = exports.includes(symbol);
+      
+      let typeInfo = "unknown";
+      if (definition) {
+        if (typeof definition.value === 'function') {
+          typeInfo = "function";
+        } else {
+          typeInfo = "variable";
+        }
+      }
+      
+      const exportMarker = isExported ? colorText(" (exported)", colors.fg.green, useColors) : "";
+      console.log(`- ${moduleName}:${symbol} [${typeInfo}]${exportMarker}`);
+    });
+  });
+  
+  console.log(colorText("\nSummary:", colors.fg.cyan, useColors));
+  console.log(`Total: ${totalSymbols} symbols across ${modules.length} modules`);
+  
+  console.log("\nUsage:");
+  console.log("To see a specific symbol: :see <module-name>:<symbol-name>");
+  console.log("To see a specific module: :see <module-name>");
+}
+
+// Helper function to show exports from a module
+function showModuleExports(evaluator: ModuleAwareEvaluator, moduleName: string, useColors: boolean): void {
+  const exports = evaluator.getModuleExports(moduleName);
+  
+  const isCurrentModule = moduleName === evaluator.getCurrentModule();
+  const title = isCurrentModule ? 
+    `Exports from Current Module (${moduleName}):` : 
+    `Exports from Module '${moduleName}':`;
+  
+  console.log(colorText(title, colors.fg.sicpRed + colors.bright, useColors));
+  console.log(colorText("─".repeat(60), colors.fg.white, useColors));
+  
+  if (exports.length === 0) {
+    console.log(`No symbols exported from module '${moduleName}'.`);
+    return;
+  }
+  
+  console.log(colorText("Exported Symbols:", colors.fg.lightGreen, useColors));
+  console.log("------------");
+  
+  exports.sort().forEach(symbol => {
+    const definition = evaluator.getSymbolDefinition(symbol, moduleName);
+    
+    let typeInfo = "unknown";
+    if (definition) {
+      if (typeof definition.value === 'function') {
+        typeInfo = "function";
+      } else {
+        typeInfo = "variable";
+      }
+    }
+    
+    console.log(`- ${symbol} [${typeInfo}]`);
+  });
+  
+  console.log("\nUsage:");
+  console.log(`To import these symbols: (import [${exports.length > 0 ? exports[0] + ", ..." : "symbol"}] from "${moduleName}")`);
+  console.log(`To see a specific symbol definition: :see ${moduleName}:<symbol-name>`);
+}
+
+// Helper function to show a symbol definition
+function showSymbolDefinition(symbolName: string, moduleName: string, definition: any, useColors: boolean, showJs: boolean): void {
+  const currentModule = getCurrentModule();
+  const isCurrentModule = moduleName === currentModule;
+  const title = isCurrentModule ? 
+    `Definition of '${symbolName}' in current module:` : 
+    `Definition of '${moduleName}:${symbolName}':`;
+  
+  console.log(colorText(title, colors.fg.sicpRed + colors.bright, useColors));
+  console.log("----------------");
+  
+  // Display the source code - prefer HQL source over JS
+  if (definition.source) {
+    console.log(colorText("HQL Source:", colors.fg.sicpGreen, useColors));
+    console.log(formatSourceCode(definition.source));
+  }
+  
+  // Only show the JS source if specifically enabled
+  if (definition.jsSource && showJs) {
+    console.log(colorText("\nJavaScript Transpilation:", colors.fg.yellow, useColors));
+    console.log(definition.jsSource);
+  }
+  
+  // Show value if no source is available
+  if (!definition.source && !definition.jsSource) {
+    if (typeof definition.value === 'function') {
+      // For functions without source, show the function representation
+      console.log(colorText("Function:", colors.fg.sicpGreen, useColors));
+      console.log(definition.value.toString());
+    } else {
+      console.log(colorText("Value:", colors.fg.sicpBlue, useColors));
+      console.log(formatValue(definition.value));
+    }
+  }
+  
+  // Show metadata if available
+  if (definition.metadata) {
+    console.log(colorText("\nMetadata:", colors.fg.lightBlue, useColors));
+    console.log(definition.metadata);
+  }
+  
+  console.log("----------------");
+  
+  // Show export status
+  if (definition.exports) {
+    const isExported = definition.exports.includes(symbolName);
+    if (isExported) {
+      console.log(colorText("This symbol is exported from its module.", colors.fg.green, useColors));
+    } else {
+      console.log(colorText("This symbol is not exported from its module.", colors.fg.yellow, useColors));
+    }
+  }
+  
+  if (!isCurrentModule) {
+    console.log("\nTo use this symbol in HQL, import it with:");
+    console.log(`(import [${symbolName}] from "${moduleName}")`);
+  }
+  
+  console.log("----------------");
+}
+
+// Helper function to get current module
+function getCurrentModule(): string {
+  // We no longer need to rely on the global state, which can become out of sync
+  // Get the module directly from the evaluator if available
+  try {
+    // This is a bit of a hack, but ensures we're always using the single source of truth
+    // for the current module, which is the evaluator's internal state
+    if ((globalThis as any).__HQL_ACTIVE_EVALUATOR) {
+      return ((globalThis as any).__HQL_ACTIVE_EVALUATOR as ModuleAwareEvaluator).getCurrentModule();
+    }
+  } catch (e) {
+    // Fallback to the state
+  }
+  
+  // Fallback to state or default
+  return (globalThis as any).__HQL_REPL_STATE?.currentModule || "user";
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1514,16 +1694,16 @@ async function handleCommand(
       commandMacros(evaluator, options.useColors);
       break;
     case "module":
-      commandModule(evaluator, state, args);
+      await commandModule(evaluator, state, args);
       break;
     case "modules":
-      commandModules(evaluator, options.useColors);
+      await commandModules(evaluator, options.useColors);
       break;
     case "list":
-      commandList(evaluator, options.useColors);
+      await commandList(evaluator, options.useColors);
       break;
     case "see":
-      commandSee(evaluator, args, options.useColors, options.showJs);
+      await commandSee(evaluator, args, options.useColors, options.showJs);
       break;
     case "remove":
       await commandRemove(evaluator, args, options.useColors, state);
@@ -1607,8 +1787,20 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
       showJs,
     });
     
-    // Initialize with current module
-    replStateObj.currentModule = evaluator.getCurrentModule();
+    // Initialize the evaluator - this is crucial
+    await evaluator.initialize();
+    
+    // Store evaluator in global state for consistent access
+    (globalThis as any).__HQL_ACTIVE_EVALUATOR = evaluator;
+    
+    // Ensure the evaluator is fully initialized and synchronized to the "user" module
+    await evaluator.switchModule("user");
+    
+    // Initialize with current module from evaluator - use the sync version since we just initialized
+    replStateObj.currentModule = evaluator.getCurrentModuleSync();
+    
+    // Store the REPL state in global for access from other components
+    (globalThis as any).__HQL_REPL_STATE = replStateObj;
     
     // Log available macros in verbose mode
     if (options.verbose) {
@@ -1629,6 +1821,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
         
         if (!lineResult.text.trim() && !lineResult.controlD) continue;
         
+        // Await the result of handling the line
         await handleReplLine(lineResult, replStateObj, evaluator, history, {
           logger,
           baseDir,
@@ -1663,6 +1856,11 @@ function getDetailedHelp(command: string, useColors: boolean): string {
   const exampleColor = useColors ? colors.fg.lightGreen : "";
   const reset = useColors ? colors.reset : "";
   
+  // Remove any leading colon (in case it wasn't stripped by commandHelp)
+  if (command.startsWith(':')) {
+    command = command.substring(1);
+  }
+  
   // If the command is "reset", redirect to "remove"
   if (command === "reset") {
     command = "remove";
@@ -1686,9 +1884,11 @@ function getDetailedHelp(command: string, useColors: boolean): string {
       `${headerColor}Usage:${reset}`,
       `  ${commandColor}:help${textColor} - Show the main help banner${reset}`,
       `  ${commandColor}:help <command>${textColor} - Show detailed help for a specific command${reset}`,
+      `  ${commandColor}:help :<command>${textColor} - Also supported (with or without colon)${reset}`,
       ``,
       `${headerColor}Examples:${reset}`,
       `  ${exampleColor}:help see${textColor} - Display detailed help for the :see command${reset}`,
+      `  ${exampleColor}:help :see${textColor} - Same as above, both formats work${reset}`,
       `  ${exampleColor}:help module${textColor} - Display detailed help for the :module command${reset}`
     ],
     
@@ -1783,15 +1983,24 @@ function getDetailedHelp(command: string, useColors: boolean): string {
       `${textColor}Inspect modules and symbols, showing their definitions and details.${reset}`,
       ``,
       `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:see${textColor} - List all modules with their exported symbols${reset}`,
-      `  ${commandColor}:see <module>${textColor} - View all symbols in a specific module${reset}`,
-      `  ${commandColor}:see <symbol>${textColor} - View a symbol in the current module${reset}`,
-      `  ${commandColor}:see <module:symbol>${textColor} - View a specific symbol in a specific module${reset}`,
+      `  ${commandColor}:see${textColor} - Show all symbols and exports in the current module${reset}`,
+      `  ${commandColor}:see <symbol>${textColor} - Show a specific symbol in the current module${reset}`,
+      `  ${commandColor}:see exports${textColor} - Show all exports from the current module${reset}`,
+      `  ${commandColor}:see all${textColor} - Show all information across all modules${reset}`,
+      `  ${commandColor}:see all:modules${textColor} - Show all module names in the system${reset}`,
+      `  ${commandColor}:see all:symbols${textColor} - Show all symbols across all modules${reset}`,
+      `  ${commandColor}:see <module>${textColor} - Show all symbols and exports in a specific module${reset}`,
+      `  ${commandColor}:see <module>:<symbol>${textColor} - Show a specific symbol in a specific module${reset}`,
+      `  ${commandColor}:see <module>:exports${textColor} - Show exports from a specific module${reset}`,
       ``,
       `${headerColor}Examples:${reset}`,
-      `  ${exampleColor}:see math${textColor} - View all symbols in the "math" module${reset}`,
-      `  ${exampleColor}:see add${textColor} - View the definition of "add" in the current module${reset}`,
-      `  ${exampleColor}:see math:add${textColor} - View the definition of "add" in the "math" module${reset}`
+      `  ${exampleColor}:see${textColor} - Show all symbols in the current module${reset}`,
+      `  ${exampleColor}:see add${textColor} - Show the definition of "add" in the current module${reset}`,
+      `  ${exampleColor}:see exports${textColor} - Show all exports from the current module${reset}`,
+      `  ${exampleColor}:see all${textColor} - Show information about all modules${reset}`,
+      `  ${exampleColor}:see math${textColor} - Show all symbols in the "math" module${reset}`,
+      `  ${exampleColor}:see math:multiply${textColor} - Show the definition of "multiply" in the "math" module${reset}`,
+      `  ${exampleColor}:see math:exports${textColor} - Show all exports from the "math" module${reset}`
     ],
     
     "remove": [

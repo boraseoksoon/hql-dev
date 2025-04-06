@@ -41,7 +41,7 @@ The HQL REPL (Read-Eval-Print Loop) is designed to be a persistent, module-aware
    - Current module display in prompt (`hql[module-name]>`)
    - Module switching via `:module <name>`
    - Module listing with `:modules`
-   - Module removal with `:remove <name>`
+   - Module removal with `:remove module:<name>`
    - Automatic module creation on first use
    - Module-specific state management
    - Native HQL imports using `(import [symbol] from "module")`
@@ -56,8 +56,10 @@ The HQL REPL (Read-Eval-Print Loop) is designed to be a persistent, module-aware
 5. **Enhanced Commands**
    - `:see` - Powerful inspection of modules and symbols
    - `:list` - Show current module contents
-   - `:remove <name>` - Remove symbol or module
-   - `:reset` - Reset entire environment
+   - `:remove <symbol>` - Remove individual symbol
+   - `:remove module:<name>` - Remove an entire module
+   - `:remove all` - Reset entire environment
+   - `:write` - Open a text editor for multiline code editing
 
 ## Using the REPL
 
@@ -216,6 +218,34 @@ Symbol names:
 ------------
 ```
 
+### Working with Multiline Code
+
+You can write multiline code by starting an expression and pressing Enter when the parentheses aren't balanced:
+
+```
+hql[user]> (defn factorial [n]
+  (if (= n 0)
+    1
+    (* n (factorial (- n 1)))))
+[Function: factorial]
+```
+
+For more advanced multiline editing, use the `:write` command to open your text editor:
+
+```
+hql[user]> :write
+Opening editor (vim)... Close the editor when finished.
+```
+
+This opens your default editor (set via EDITOR environment variable) where you can write complex code with proper indentation, then save and close to evaluate it in the REPL.
+
+You can also edit existing symbols:
+
+```
+hql[user]> :write factorial
+Opening editor (vim)... Close the editor when finished.
+```
+
 ### Command Reference
 
 | Command | Description | Example |
@@ -227,12 +257,23 @@ Symbol names:
 | `:module [<name>]` | Switch to or create module. If no name is provided, shows current module | `:module math` |
 | `:modules` | List available modules | `:modules` |
 | `:list` | Show current module contents | `:list` |
-| `:see` | List all modules | `:see` |
-| `:see <module>` | Show symbols in a module | `:see math` |
-| `:see <module:symbol>` | Show definition of a specific symbol | `:see math:square` |
-| `:remove <name>` | Remove symbol or module | `:remove square` |
+| `:see` | Show all symbols and exports in the current module | `:see` |
+| `:see <symbol>` | Show a specific symbol in the current module | `:see factorial` |
+| `:see exports` | Show all exports from the current module | `:see exports` |
+| `:see all` | Show all information across all modules | `:see all` |
+| `:see all:symbols` | Show all symbols across all modules | `:see all:symbols` |
+| `:see all:modules` | Show all module names in the system | `:see all:modules` |
+| `:see <module>` | Show all symbols and exports in a specific module | `:see math` |
+| `:see <module>:<symbol>` | Show a specific symbol in a specific module | `:see math:square` |
+| `:see <module>:exports` | Show exports from a specific module | `:see math:exports` |
+| `:remove <symbol>` | Remove symbol from current module | `:remove square` |
+| `:remove module:<name>` | Remove an entire module | `:remove module:math` |
+| `:remove <module>:<symbol>` | Remove symbol from specific module | `:remove math:square` |
+| `:remove all` | Reset entire environment | `:remove all` |
+| `:remove all:symbols` | Clear all symbols but keep modules | `:remove all:symbols` |
+| `:remove all:modules` | Remove all modules except current | `:remove all:modules` |
+| `:write [<symbol>]` | Open text editor for multiline code | `:write` or `:write factorial` |
 | `:js` | Toggle JavaScript output display | `:js` |
-| `:reset` | Reset REPL environment | `:reset` |
 | `:verbose` | Toggle verbose logging | `:verbose` |
 | `:ast` | Toggle AST display | `:ast` |
 | `:expanded` | Toggle expanded form display | `:expanded` |
@@ -342,12 +383,96 @@ This alignment makes it easier to transition between HQL REPL sessions and file-
 4. **Keep modules focused** - Each module should have a single responsibility
 5. **Document public interfaces** - Add comments to exported functions
 
-## Future Enhancements
+## Planned Enhancements
 
-Planned enhancements for the HQL REPL include:
+### File-Based Module System (In Progress)
 
-1. **Integration with file system** - Ability to save modules as files
-2. **Enhanced autocompletion** - Context-aware symbol completion
-3. **Interactive tutorials** - Built-in tutorials for learning HQL
-4. **Documentation browser** - Access to function documentation directly in REPL
-5. **Package management** - Integration with package management systems 
+In the next version, the REPL will fully integrate with the file system to:
+
+1. **Directly map modules to .hql files** - Each module will correspond to a .hql file on disk
+2. **Automatic synchronization** - Changes in the REPL will update the corresponding file
+3. **Seamless transitions** - Move easily between file editing and REPL interactions
+4. **Consistent module semantics** - REPL modules will behave exactly like imported files
+
+This will create complete consistency between REPL modules and HQL files:
+```
+hql[user]> :module math
+```
+Will create/edit `math.hql` automatically.
+
+### Database-Backed Persistence (Future)
+
+To support production-grade use cases with high performance and reliability, future versions will:
+
+1. **Replace file-based storage** with a proper database system
+2. **Support high-volume usage** for production environments
+3. **Implement transaction guarantees** for data integrity
+4. **Enable multi-user concurrent access** for collaborative development
+5. **Support efficient querying** of modules and symbols
+
+This will allow the REPL to serve as a central component in larger systems, supporting thousands of concurrent users while maintaining data integrity.
+
+The REPL persistence layer is a critical foundation of the HQL ecosystem. Once the MVP phase is complete, a vertical improvement strategy will focus on strengthening this foundation rather than horizontal expansion with more options. The goal is to:
+
+- Create a robust, reliable persistence layer using modern database technologies available in Deno
+- Replace the fragile and brittle file system approach for long-term stability
+- Enable the REPL to function as a central server component that can handle millions of parallel requests
+- Ensure user data is treated as critical infrastructure with appropriate safeguards
+- Position the REPL as a fundamental component of larger systems, with proxies to handle scale
+
+While these enhancements are important for the future, the current focus remains on delivering a complete MVP that establishes the core functionality and user experience.
+
+### Additional Future Enhancements
+
+1. **Enhanced autocompletion** - Context-aware symbol completion
+2. **Interactive tutorials** - Built-in tutorials for learning HQL
+3. **Documentation browser** - Access to function documentation directly in REPL
+4. **Package management** - Integration with package management systems
+
+## Command Reference Details
+
+### The `:see` Command
+
+The `:see` command provides a consistent and powerful way to inspect REPL content. It follows a logical pattern that makes it intuitive to use:
+
+**Current Module Context:**
+- `:see` - Show all information (symbols, exports, etc.) for the current module
+- `:see symbol-name` - Show information for a specific symbol in the current module
+- `:see exports` - Show all exported symbols from the current module
+
+**System-Wide Context:**
+- `:see all` - Show all information across all modules in the system
+- `:see all:symbols` - Show all symbols across all modules
+- `:see all:modules` - Show all module names available in the system
+
+**Specific Module Context:**
+- `:see module-name` - Show all information for a specific module
+- `:see module-name:symbol-name` - Show information for a specific symbol in a specific module
+- `:see module-name:exports` - Show exported symbols from a specific module
+
+Examples:
+
+```
+hql[user]> :see
+// Shows all symbols and exports in the 'user' module
+
+hql[user]> :see factorial
+// Shows details of the 'factorial' function in the current module
+
+hql[user]> :see exports
+// Shows all exported symbols from the current 'user' module
+
+hql[user]> :see all:modules
+// Lists all modules in the system
+
+hql[user]> :see math
+// Shows all symbols and exports in the 'math' module
+
+hql[user]> :see math:square
+// Shows details of the 'square' function in the 'math' module
+
+hql[user]> :see math:exports
+// Shows all exported symbols from the 'math' module
+```
+
+This consistent approach means users can easily navigate from broad system-wide views down to specific symbol details using a predictable pattern. 

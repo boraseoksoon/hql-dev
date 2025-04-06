@@ -28,17 +28,26 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     super(env, options);
     this.moduleLogger = new Logger(options.verbose ?? false);
     
-    // Initialize state manager
-    this.initializeModuleSystem();
+    // Initialize state manager - but we need to ensure initialization completes
+    // We can't make the constructor async, so initialize with default "user" here,
+    // and complete the full initialization when needed
+    this.currentModule = "user";
   }
   
   /**
    * Initialize the module system
+   * This must be called and awaited before using any module-aware functions
    */
-  private async initializeModuleSystem(): Promise<void> {
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+    
     try {
       await persistentStateManager.initialize();
-      this.currentModule = persistentStateManager.getCurrentModule();
+      
+      // Explicitly set current module to "user", then tell the state manager
+      this.currentModule = "user";
+      persistentStateManager.switchToModule("user");
+      
       this.initialized = true;
       this.moduleLogger.debug(`Initialized module system with current module: ${this.currentModule}`);
       
@@ -47,6 +56,14 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.moduleLogger.error(`Failed to initialize module system: ${errorMessage}`);
+      throw error; // Re-throw to notify caller of failure
+    }
+  }
+  
+  // Update all methods that check this.initialized to call this.initialize() if needed
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
     }
   }
   
@@ -54,7 +71,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
    * Restore all module states from persistent storage
    */
   private async restoreAllModuleStates(): Promise<void> {
-    if (!this.initialized) return;
+    await this.ensureInitialized();
     
     try {
       // Get all available modules
@@ -75,24 +92,36 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
   /**
    * Get the current module name
    */
-  getCurrentModule(): string {
+  async getCurrentModule(): Promise<string> {
+    await this.ensureInitialized();
+    return this.currentModule;
+  }
+  
+  /**
+   * Get current module name synchronously - only use when initialization is confirmed
+   */
+  getCurrentModuleSync(): string {
+    if (!this.initialized) {
+      // We're asking for the module before initialization is complete
+      // Return the default in this case
+      return "user";
+    }
     return this.currentModule;
   }
   
   /**
    * Get all available module names
    */
-  getAvailableModules(): string[] {
+  async getAvailableModules(): Promise<string[]> {
+    await this.ensureInitialized();
     return persistentStateManager.getModuleNames();
   }
   
   /**
    * Switch to a different module
    */
-  switchModule(moduleName: string): void {
-    if (!this.initialized) {
-      throw new Error("Module system not initialized");
-    }
+  async switchModule(moduleName: string): Promise<void> {
+    await this.ensureInitialized();
     
     this.currentModule = moduleName;
     persistentStateManager.switchToModule(moduleName);
@@ -102,21 +131,16 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
   /**
    * Remove a module
    */
-  removeModule(moduleName: string): boolean {
-    if (!this.initialized) {
-      throw new Error("Module system not initialized");
-    }
-    
+  async removeModule(moduleName: string): Promise<boolean> {
+    await this.ensureInitialized();
     return persistentStateManager.removeModule(moduleName);
   }
   
   /**
    * List the symbols in a module
    */
-  listModuleSymbols(moduleName?: string): string[] {
-    if (!this.initialized) {
-      throw new Error("Module system not initialized");
-    }
+  async listModuleSymbols(moduleName?: string): Promise<string[]> {
+    await this.ensureInitialized();
     
     const targetModule = moduleName || this.currentModule;
     const moduleState = persistentStateManager.getModuleState(targetModule);
@@ -390,15 +414,13 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
   /**
    * Get the definition and source information for a symbol
    */
-  getSymbolDefinition(symbolName: string, moduleName?: string): { 
+  async getSymbolDefinition(symbolName: string, moduleName?: string): Promise<{ 
     value: any; 
     source?: string; 
     jsSource?: string;
     metadata?: Record<string, any>;
-  } | null {
-    if (!this.initialized) {
-      throw new Error("Module system not initialized");
-    }
+  } | null> {
+    await this.ensureInitialized();
     
     // Use the provided module name or current module
     const targetModule = moduleName || this.currentModule;
@@ -591,10 +613,8 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
   /**
    * Get all exports from a module
    */
-  getModuleExports(moduleName?: string): string[] {
-    if (!this.initialized) {
-      throw new Error("Module system not initialized");
-    }
+  async getModuleExports(moduleName?: string): Promise<string[]> {
+    await this.ensureInitialized();
     
     const targetModule = moduleName || this.currentModule;
     const moduleState = persistentStateManager.getModuleState(targetModule);
