@@ -628,7 +628,17 @@ function formatSourceCode(source: string): string {
   return indentedLines.join('\n');
 }
 
-// New command to show symbol definitions
+// Helper function to convert from user-facing hyphenated names to internal underscore names
+function toInternalName(name: string): string {
+  return name.replace(/-/g, '_');
+}
+
+// Helper function to convert from internal underscore names to user-facing hyphenated names
+function toUserFacingName(name: string): string {
+  return name.replace(/_/g, '-');
+}
+
+// Command handler for :see command
 async function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColors: boolean, showJs: boolean = false): Promise<void> {
   // First get the ACTUAL current module directly from the evaluator
   // This should always return the true current module - using sync since evaluator is already initialized
@@ -698,15 +708,23 @@ async function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColo
     }
     
     // :see module:symbol - Show a specific symbol from a module
-    const symbolName = specifier.trim();
-    const definition = await evaluator.getSymbolDefinition(symbolName, moduleName);
+    const userSymbolName = specifier.trim();
+    const internalSymbolName = toInternalName(userSymbolName);
+    
+    // Try both the user-provided name and the internal name
+    let definition = await evaluator.getSymbolDefinition(userSymbolName, moduleName);
     
     if (!definition) {
-      console.error(`Symbol '${symbolName}' not found in module '${moduleName}'.`);
+      definition = await evaluator.getSymbolDefinition(internalSymbolName, moduleName);
+    }
+    
+    if (!definition) {
+      console.error(`Symbol '${userSymbolName}' not found in module '${moduleName}'.`);
       return;
     }
     
-    await showSymbolDefinition(evaluator, symbolName, moduleName, definition, useColors, showJs);
+    // Use the user's original symbol name for display
+    await showSymbolDefinition(evaluator, userSymbolName, moduleName, definition, useColors, showJs);
     return;
   }
   
@@ -719,18 +737,31 @@ async function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColo
   }
   
   // Otherwise it's likely a symbol in the current module
-  const symbolName = argsText;
-  const definition = await evaluator.getSymbolDefinition(symbolName, currentModule);
+  const userSymbolName = argsText;
+  const internalSymbolName = toInternalName(userSymbolName);
+  
+  // Try to look up the symbol using both the user-provided name and the internal name
+  let definition = await evaluator.getSymbolDefinition(userSymbolName, currentModule);
+  
+  // If not found with original name, try with converted name
+  if (!definition) {
+    definition = await evaluator.getSymbolDefinition(internalSymbolName, currentModule);
+  }
   
   if (!definition) {
-    console.error(`Symbol '${symbolName}' not found in current module '${currentModule}'.`);
+    console.error(`Symbol '${userSymbolName}' not found in current module '${currentModule}'.`);
     const moduleSymbols = await evaluator.listModuleSymbols(currentModule);
-    console.log(`Available symbols in module '${currentModule}': ${moduleSymbols.join(', ')}`);
+    
+    // Convert internal names to user-facing names for display
+    const userFacingSymbols = moduleSymbols.map(toUserFacingName);
+    
+    console.log(`Available symbols in module '${currentModule}': ${userFacingSymbols.join(', ')}`);
     return;
   }
   
   // :see symbol-name - Show a specific symbol from current module
-  await showSymbolDefinition(evaluator, symbolName, currentModule, definition, useColors, showJs);
+  // Pass the user-provided name for display purposes, even if we found it via internal name
+  await showSymbolDefinition(evaluator, userSymbolName, currentModule, definition, useColors, showJs);
 }
 
 // Helper function to show module symbols 
@@ -747,21 +778,30 @@ async function showModuleSymbols(
   const variableSymbols: string[] = [];
   const otherSymbols: string[] = [];
   
-  for (const symbol of symbols) {
-    const definition = await evaluator.getSymbolDefinition(symbol, moduleName);
+  // Convert all symbols to user-facing format for display
+  const userFacingSymbols = symbols.map(toUserFacingName);
+  const userFacingExports = exports.map(toUserFacingName);
+  
+  // Convert user symbols back to internal format for definition lookup
+  for (const userSymbol of userFacingSymbols) {
+    const internalSymbol = toInternalName(userSymbol);
+    // Use the original symbol from the array if it exists there, otherwise use the converted one
+    const lookupSymbol = symbols.includes(userSymbol) ? userSymbol : internalSymbol;
+    
+    const definition = await evaluator.getSymbolDefinition(lookupSymbol, moduleName);
     if (definition) {
       if (typeof definition.value === 'function') {
-        functionSymbols.push(symbol);
+        functionSymbols.push(userSymbol);
       } else {
-        variableSymbols.push(symbol);
+        variableSymbols.push(userSymbol);
       }
     } else {
-      otherSymbols.push(symbol);
+      otherSymbols.push(userSymbol);
     }
   }
   
   // Create set of exported symbols for easy lookup
-  const exportSet = new Set(exports);
+  const exportSet = new Set(userFacingExports);
   
   // Display functions
   if (functionSymbols.length > 0) {
