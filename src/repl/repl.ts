@@ -101,7 +101,7 @@ function getPrompt(state: ReplState, useColors: boolean): string {
   if (useColors) {
     return state.multilineMode
       ? `${colors.fg.sicpPurple}${colors.bright}... ${colors.reset}`
-      : `${colors.fg.sicpPurple}${colors.bright}hql[${colors.fg.sicpGreen}${moduleName}${colors.fg.sicpPurple}]> ${colors.reset}`;
+      : `${colors.fg.sicpPurple}${colors.bright}hql[${colors.fg.sicpRed}${moduleName}${colors.fg.sicpPurple}]> ${colors.reset}`;
   }
   return state.multilineMode ? "... " : `hql[${moduleName}]> `;
 }
@@ -586,88 +586,46 @@ function commandJs(showJs: boolean, setShowJs: (val: boolean) => void): void {
 
 // Helper to format source code with proper indentation
 function formatSourceCode(source: string): string {
-  if (!source) return source;
+  // Replace escaped newlines with actual newlines
+  let formattedSource = source;
   
-  // Convert literal \n to actual newlines if present
-  let processedSource = source;
+  // If the source is a string with quotes and escaped newlines, clean it up
   if (source.includes('\\n')) {
+    // Remove surrounding quotes if present
+    if ((source.startsWith('"') && source.endsWith('"')) || 
+        (source.startsWith("'") && source.endsWith("'"))) {
+      formattedSource = source.slice(1, -1);
+    }
+    
     // Replace escaped newlines with actual newlines
-    processedSource = source.replace(/\\n/g, '\n');
+    formattedSource = formattedSource.replace(/\\n/g, '\n');
     
-    // If there are escaped quotes, handle those too
-    processedSource = processedSource.replace(/\\"/g, '"');
-    
-    // If the string is enclosed in quotes, remove them
-    if ((processedSource.startsWith('"') && processedSource.endsWith('"')) ||
-        (processedSource.startsWith("'") && processedSource.endsWith("'"))) {
-      processedSource = processedSource.substring(1, processedSource.length - 1);
-    }
-    
-    // Return the processed source with correct formatting
-    return processedSource;
+    // Replace other common escape sequences
+    formattedSource = formattedSource
+      .replace(/\\"/g, '"')
+      .replace(/\\'/g, "'")
+      .replace(/\\\\/g, '\\');
   }
   
-  // If it's a one-liner with no newlines but has parentheses, try to format it
-  if (!processedSource.includes('\n') && (processedSource.includes('(') || processedSource.includes(')'))) {
-    let formatted = '';
-    let indent = 0;
-    let inString = false;
+  // Add proper indentation for improved readability
+  const lines = formattedSource.split('\n');
+  let indentLevel = 0;
+  const indentedLines = lines.map(line => {
+    // Decrease indent level for lines with closing parentheses
+    const closingCount = (line.match(/\)/g) || []).length;
+    // Increase indent level for lines with opening parentheses
+    const openingCount = (line.match(/\(/g) || []).length;
     
-    for (let i = 0; i < processedSource.length; i++) {
-      const char = processedSource[i];
-      
-      // Handle string literals to avoid formatting inside them
-      if (char === '"' && (i === 0 || processedSource[i - 1] !== '\\')) {
-        inString = !inString;
-        formatted += char;
-        continue;
-      }
-      
-      if (!inString) {
-        if (char === '(') {
-          formatted += char;
-          indent += 2;
-          // Add newline and indentation after opening paren if not followed by another paren
-          if (i + 1 < processedSource.length && processedSource[i + 1] !== '(' && processedSource[i + 1] !== ')') {
-            formatted += '\n' + ' '.repeat(indent);
-          }
-        } else if (char === ')') {
-          indent = Math.max(0, indent - 2);
-          // Add newline before closing paren if not following another paren
-          if (i > 0 && processedSource[i - 1] !== '(' && processedSource[i - 1] !== ')') {
-            formatted += '\n' + ' '.repeat(indent);
-          }
-          formatted += char;
-        } else if (char === ' ' && 
-                  (i > 0 && processedSource[i - 1] === '(')) {
-          // Skip extra space after opening paren
-          continue;
-        } else if (char === ' ' && 
-                  (i + 1 < processedSource.length && processedSource[i + 1] === ')')) {
-          // Skip extra space before closing paren
-          continue;
-        } else {
-          // For normal characters, check if we need a newline
-          if (char === ' ' && i > 0 && 
-              processedSource[i - 1] !== ' ' && processedSource[i - 1] !== '(' && 
-              !inString) {
-            // Add newline after a form
-            formatted += '\n' + ' '.repeat(indent) + char;
-          } else {
-            formatted += char;
-          }
-        }
-      } else {
-        // Inside string, just add the character
-        formatted += char;
-      }
-    }
+    // Calculate indent for this line (based on previous line's state)
+    const currentIndent = '  '.repeat(Math.max(0, indentLevel));
     
-    return formatted;
-  }
+    // Update indent level for next line
+    indentLevel += openingCount - closingCount;
+    
+    return currentIndent + line.trim();
+  });
   
-  // If it already has newlines, don't mess with it
-  return processedSource;
+  return indentedLines.join('\n');
 }
 
 // New command to show symbol definitions
@@ -748,7 +706,7 @@ async function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColo
       return;
     }
     
-    await showSymbolDefinition(symbolName, moduleName, definition, useColors, showJs);
+    await showSymbolDefinition(evaluator, symbolName, moduleName, definition, useColors, showJs);
     return;
   }
   
@@ -772,7 +730,7 @@ async function commandSee(evaluator: ModuleAwareEvaluator, args: string, useColo
   }
   
   // :see symbol-name - Show a specific symbol from current module
-  await showSymbolDefinition(symbolName, currentModule, definition, useColors, showJs);
+  await showSymbolDefinition(evaluator, symbolName, currentModule, definition, useColors, showJs);
 }
 
 // Helper function to show module symbols 
@@ -1038,8 +996,15 @@ function showModuleExports(evaluator: ModuleAwareEvaluator, moduleName: string, 
 }
 
 // Helper function to show a symbol definition
-function showSymbolDefinition(symbolName: string, moduleName: string, definition: any, useColors: boolean, showJs: boolean): void {
-  const currentModule = getCurrentModule();
+async function showSymbolDefinition(
+  evaluator: ModuleAwareEvaluator,
+  symbolName: string, 
+  moduleName: string, 
+  definition: any, 
+  useColors: boolean, 
+  showJs: boolean
+): Promise<void> {
+  const currentModule = evaluator.getCurrentModuleSync();
   const isCurrentModule = moduleName === currentModule;
   const title = isCurrentModule ? 
     `Definition of '${symbolName}' in current module:` : 
@@ -1047,6 +1012,16 @@ function showSymbolDefinition(symbolName: string, moduleName: string, definition
   
   console.log(colorText(title, colors.fg.sicpRed + colors.bright, useColors));
   console.log("----------------");
+  
+  // Determine if this is a function or a variable
+  const isFunction = typeof definition.value === 'function';
+  
+  // For variables, always show the actual value first
+  if (!isFunction) {
+    console.log(colorText("Value:", colors.fg.sicpBlue, useColors));
+    console.log(formatValue(definition.value));
+    console.log("");
+  }
   
   // Display the source code - prefer HQL source over JS
   if (definition.source) {
@@ -1060,19 +1035,13 @@ function showSymbolDefinition(symbolName: string, moduleName: string, definition
     console.log(definition.jsSource);
   }
   
-  // Show value if no source is available
-  if (!definition.source && !definition.jsSource) {
-    if (typeof definition.value === 'function') {
-      // For functions without source, show the function representation
-      console.log(colorText("Function:", colors.fg.sicpGreen, useColors));
-      console.log(definition.value.toString());
-    } else {
-      console.log(colorText("Value:", colors.fg.sicpBlue, useColors));
-      console.log(formatValue(definition.value));
-    }
+  // Show value if no source is available for functions
+  if (!definition.source && !definition.jsSource && isFunction) {
+    console.log(colorText("Function:", colors.fg.sicpGreen, useColors));
+    console.log(definition.value.toString());
   }
   
-  // Show metadata if available
+  // Show metadata if available - include the full source in the metadata
   if (definition.metadata) {
     console.log(colorText("\nMetadata:", colors.fg.lightBlue, useColors));
     console.log(definition.metadata);
