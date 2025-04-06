@@ -1105,7 +1105,8 @@ interface ReadLineResult {
 async function readLineWithHistory(
   prompt: string, 
   history: string[], 
-  state: ReplState
+  state: ReplState,
+  tabCompletion?: TabCompletion  // Add tab completion parameter
 ): Promise<ReadLineResult> {
   const encoder = new TextEncoder();
   await Deno.stdout.write(encoder.encode(prompt));
@@ -1153,6 +1154,95 @@ async function readLineWithHistory(
     return shouldIndentMore 
       ? currentIndent + "  " // Add two spaces for deeper nesting
       : currentIndent;       // Maintain current indentation
+  };
+
+  // Handle tab completion
+  const handleTabCompletion = async (): Promise<void> => {
+    if (!tabCompletion) {
+      // If no tab completion is available, just insert spaces
+      currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
+      cursorPos += 2;
+      await redrawLine();
+      return;
+    }
+    
+    // Get completions for the current input
+    const result = await tabCompletion.getCompletions(currentInput);
+    
+    if (result.completions.length === 0) {
+      // No completions available, just insert spaces
+      currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
+      cursorPos += 2;
+      await redrawLine();
+      return;
+    }
+    
+    if (result.completions.length === 1) {
+      // Only one completion, insert it directly
+      const completion = result.completions[0];
+      const prefixLength = result.prefix.length;
+      const toInsert = completion.substring(prefixLength);
+      
+      // Replace the prefix with the completion
+      const beforeCursor = currentInput.substring(0, cursorPos);
+      const afterCursor = currentInput.substring(cursorPos);
+      
+      // Find where the prefix starts
+      const prefixStart = beforeCursor.lastIndexOf(result.prefix);
+      if (prefixStart !== -1) {
+        currentInput = beforeCursor.substring(0, prefixStart) + 
+                      completion + 
+                      afterCursor;
+        cursorPos = prefixStart + completion.length;
+        await redrawLine();
+      }
+      return;
+    }
+    
+    // Multiple completions, show them and do partial completion if possible
+    await Deno.stdout.write(encoder.encode("\n"));
+    tabCompletion.displayCompletions(result);
+    
+    // Find common prefix among completions for partial completion
+    const commonPrefix = findCommonPrefix(result.completions);
+    
+    // If we have a longer common prefix than the current input, use it
+    if (commonPrefix.length > result.prefix.length) {
+      const beforeCursor = currentInput.substring(0, cursorPos);
+      const afterCursor = currentInput.substring(cursorPos);
+      
+      // Find where the prefix starts
+      const prefixStart = beforeCursor.lastIndexOf(result.prefix);
+      if (prefixStart !== -1) {
+        currentInput = beforeCursor.substring(0, prefixStart) + 
+                      commonPrefix + 
+                      afterCursor;
+        cursorPos = prefixStart + commonPrefix.length;
+      }
+    }
+    
+    // Redraw the prompt and current input
+    await Deno.stdout.write(encoder.encode("\n" + prompt + currentInput));
+    if (cursorPos < currentInput.length) {
+      await Deno.stdout.write(encoder.encode(`\x1b[${currentInput.length - cursorPos}D`));
+    }
+  };
+  
+  // Helper function to find common prefix among strings
+  const findCommonPrefix = (strings: string[]): string => {
+    if (strings.length === 0) return "";
+    if (strings.length === 1) return strings[0];
+    
+    let prefix = strings[0];
+    for (let i = 1; i < strings.length; i++) {
+      let j = 0;
+      while (j < prefix.length && j < strings[i].length && prefix[j] === strings[i][j]) {
+        j++;
+      }
+      prefix = prefix.substring(0, j);
+      if (prefix === "") break;
+    }
+    return prefix;
   };
 
   while (true) {
@@ -1230,17 +1320,8 @@ async function readLineWithHistory(
         await redrawLine();
       }
     } else if (key?.key === "tab") {
-      // Smarter tab handling - insert spaces at beginning of line or simply insert 2 spaces
-      if (cursorPos === 0 || /^\s*$/.test(currentInput.slice(0, cursorPos))) {
-        // At beginning of line or only whitespace before cursor, insert 2 spaces
-        currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
-        cursorPos += 2;
-      } else {
-        // In the middle of code, just insert 2 spaces
-        currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
-        cursorPos += 2;
-      }
-      await redrawLine();
+      // Use tab completion instead of just inserting spaces
+      await handleTabCompletion();
     } else if (key?.key === "home") {
       cursorPos = 0;
       await redrawLine();
@@ -1704,6 +1785,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     showExpanded = false, 
     showJs = false, 
     useColors = true,
+    enableCompletion = true,  // Enable completion by default
   } = options;
 
   let running = true;
@@ -1759,6 +1841,13 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     // Store the REPL state in global for access from other components
     (globalThis as any).__HQL_REPL_STATE = replStateObj;
     
+    // Initialize tab completion if enabled
+    let tabCompletion: TabCompletion | undefined;
+    if (enableCompletion) {
+      tabCompletion = new TabCompletion(evaluator, { useColors });
+      logger.debug("Tab completion initialized");
+    }
+    
     // Log available macros in verbose mode
     if (options.verbose) {
       logger.log({ 
@@ -1771,7 +1860,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     while (running) {
       try {
         const prompt = getPrompt(replStateObj, useColors);
-        const lineResult = await readLineWithHistory(prompt, history, replStateObj);
+        const lineResult = await readLineWithHistory(prompt, history, replStateObj, tabCompletion);
         
         // Save history after each command
         historyManager.save(history.slice(-historySize));
@@ -2147,6 +2236,394 @@ async function commandWrite(evaluator: ModuleAwareEvaluator, args: string, optio
       await Deno.remove(tempDir, { recursive: true });
     } catch (error) {
       console.error(`Error cleaning up temporary files: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Tab Completion System
+───────────────────────────────────────────────────────────────────────────── */
+
+interface CompletionResult {
+  completions: string[];
+  prefix: string;
+  displayText?: string;
+}
+
+/**
+ * TabCompletion - Advanced context-aware completion system for the REPL
+ * Provides completion for commands, symbols, modules, and more
+ */
+class TabCompletion {
+  private evaluator: ModuleAwareEvaluator;
+  private commandCache: string[] = [];
+  private useColors: boolean;
+  
+  constructor(evaluator: ModuleAwareEvaluator, options: { useColors?: boolean } = {}) {
+    this.evaluator = evaluator;
+    this.useColors = options.useColors ?? true;
+    
+    // Initialize command cache
+    this.initializeCommands();
+  }
+  
+  /**
+   * Initialize the list of commands for completion
+   */
+  private initializeCommands(): void {
+    this.commandCache = [
+      "help", "quit", "exit", "env", "macros", "modules", "module",
+      "list", "remove", "see", "verbose", "ast", "expanded", "js", "colors", "write"
+    ];
+  }
+  
+  /**
+   * Get completions for the current input
+   */
+  async getCompletions(input: string): Promise<CompletionResult> {
+    // Default empty result
+    const emptyResult = { completions: [], prefix: "" };
+    
+    // No completion for empty input
+    if (!input.trim()) return emptyResult;
+    
+    // Check if this is a command (starts with ":")
+    if (input.startsWith(":")) {
+      const commandInput = input.substring(1);
+      const parts = commandInput.split(/\s+/);
+      const mainCommand = parts[0];
+      
+      // Special handling for specific commands with subcommands
+      if (parts.length > 1) {
+        if (mainCommand === "see") {
+          return await this.getSeeCommandCompletions(commandInput);
+        } else if (mainCommand === "module") {
+          return await this.getModuleNameCompletions(commandInput);
+        } else if (mainCommand === "remove") {
+          return await this.getRemoveCommandCompletions(commandInput);
+        }
+      }
+      
+      // Basic command completion
+      return this.getCommandCompletions(commandInput);
+    }
+    
+    // Check for module-related completions
+    if (input.includes("(module ")) {
+      return await this.getModuleCompletions(input);
+    }
+    
+    // Check for import completions
+    if (input.includes("(import ")) {
+      return await this.getImportCompletions(input);
+    }
+    
+    // Default to symbol completions for general expressions
+    return await this.getSymbolCompletions(input);
+  }
+  
+  /**
+   * Get completions for REPL commands
+   */
+  private getCommandCompletions(input: string): CompletionResult {
+    const lastWord = input.split(/\s+/).pop() || "";
+    const isSubcommand = input.includes(" ");
+    
+    // Filter command list based on input prefix
+    const commandMatches = this.commandCache.filter(cmd => 
+      cmd.startsWith(lastWord) && 
+      // For subcommands like ":module x" don't offer main commands
+      (!isSubcommand || input.startsWith(cmd + " "))
+    );
+    
+    // Special handling for specific commands with subcommands
+    if (isSubcommand) {
+      const mainCommand = input.split(/\s+/)[0];
+      
+      // These methods return promises, so we need to handle them differently
+      if (mainCommand === "see" || mainCommand === "module" || mainCommand === "remove") {
+        // For TypeScript compatibility, return a simple result
+        // The actual implementation will handle these specially
+        return {
+          completions: [],
+          prefix: lastWord,
+          displayText: `${mainCommand} subcommands`
+        };
+      }
+    }
+    
+    return {
+      completions: commandMatches,
+      prefix: lastWord,
+      displayText: "REPL commands"
+    };
+  }
+  
+  /**
+   * Get completions for the :see command
+   */
+  private async getSeeCommandCompletions(input: string): Promise<CompletionResult> {
+    const args = input.split(/\s+/).slice(1);
+    const currentArg = args[args.length - 1] || "";
+    
+    // Special completions for :see
+    const specialOptions = ["all", "all:modules", "all:symbols", "exports"];
+    
+    // If entering a module:symbol notation
+    if (currentArg.includes(":")) {
+      const [modulePart, symbolPart] = currentArg.split(":");
+      
+      // Suggestions for module names
+      if (!symbolPart) {
+        // Get available modules
+        const modules = await this.evaluator.getAvailableModules();
+        const moduleMatches = modules.filter(m => m.startsWith(modulePart));
+        
+        return {
+          completions: moduleMatches.map(m => `${m}:`),
+          prefix: modulePart,
+          displayText: "Modules"
+        };
+      }
+      
+      // Suggestions for symbol names within the module
+      const symbols = await this.evaluator.listModuleSymbols(modulePart);
+      const symbolMatches = symbols.filter(s => s.startsWith(symbolPart));
+      
+      return {
+        completions: symbolMatches.map(s => `${modulePart}:${s}`),
+        prefix: currentArg,
+        displayText: `Symbols in module '${modulePart}'`
+      };
+    }
+    
+    // Completions for special options and module names
+    const moduleNames = await this.evaluator.getAvailableModules();
+    
+    // Combine special options and module names
+    const allOptions = [...specialOptions, ...moduleNames];
+    const matches = allOptions.filter(opt => opt.startsWith(currentArg));
+    
+    return {
+      completions: matches,
+      prefix: currentArg,
+      displayText: "Modules and options"
+    };
+  }
+  
+  /**
+   * Get completions for the :module command
+   */
+  private async getModuleNameCompletions(input: string): Promise<CompletionResult> {
+    const currentArg = input.split(/\s+/).pop() || "";
+    
+    // Get available modules
+    const modules = await this.evaluator.getAvailableModules();
+    const matches = modules.filter(m => m.startsWith(currentArg));
+    
+    return {
+      completions: matches,
+      prefix: currentArg,
+      displayText: "Available modules"
+    };
+  }
+  
+  /**
+   * Get completions for the :remove command
+   */
+  private async getRemoveCommandCompletions(input: string): Promise<CompletionResult> {
+    const currentArg = input.split(/\s+/).pop() || "";
+    
+    // Special options for :remove
+    const specialOptions = ["all", "all:modules", "all:symbols"];
+    
+    // Check for module:symbol notation
+    if (currentArg.includes(":")) {
+      const [modulePart, symbolPart] = currentArg.split(":");
+      
+      if (!symbolPart) {
+        // Get available modules
+        const modules = await this.evaluator.getAvailableModules();
+        const moduleMatches = modules.filter(m => m.startsWith(modulePart));
+        
+        return {
+          completions: moduleMatches.map(m => `${m}:`),
+          prefix: modulePart,
+          displayText: "Modules"
+        };
+      }
+      
+      // Suggestions for symbol names within the module
+      const symbols = await this.evaluator.listModuleSymbols(modulePart);
+      const symbolMatches = symbols.filter(s => s.startsWith(symbolPart));
+      
+      return {
+        completions: symbolMatches.map(s => `${modulePart}:${s}`),
+        prefix: currentArg,
+        displayText: `Symbols in module '${modulePart}'`
+      };
+    }
+    
+    // Get current module's symbols
+    const currentModule = this.evaluator.getCurrentModuleSync();
+    const symbols = await this.evaluator.listModuleSymbols(currentModule);
+    
+    // Modules for module:symbol notation
+    const modules = await this.evaluator.getAvailableModules();
+    
+    // Combine all options (special, symbols, modules)
+    const allOptions = [
+      ...specialOptions,
+      ...symbols,
+      ...modules.map(m => `${m}:`)
+    ];
+    
+    const matches = allOptions.filter(opt => opt.startsWith(currentArg));
+    
+    return {
+      completions: matches,
+      prefix: currentArg,
+      displayText: "Symbols, modules, and options"
+    };
+  }
+  
+  /**
+   * Get completions for module names in module expressions
+   */
+  private async getModuleCompletions(input: string): Promise<CompletionResult> {
+    const match = input.match(/\(module\s+([a-zA-Z0-9_-]*)$/);
+    if (!match) return { completions: [], prefix: "" };
+    
+    const modulePrefix = match[1];
+    const modules = await this.evaluator.getAvailableModules();
+    const matches = modules.filter(m => m.startsWith(modulePrefix));
+    
+    return {
+      completions: matches,
+      prefix: modulePrefix,
+      displayText: "Module names"
+    };
+  }
+  
+  /**
+   * Get completions for import expressions
+   */
+  private async getImportCompletions(input: string): Promise<CompletionResult> {
+    // Check where we are in the import expression
+    const fromMatch = input.match(/from\s+"([a-zA-Z0-9_-]*)"$/);
+    
+    // Completing the module name after "from"
+    if (fromMatch) {
+      const modulePrefix = fromMatch[1];
+      const modules = await this.evaluator.getAvailableModules();
+      const matches = modules.filter(m => m.startsWith(modulePrefix));
+      
+      return {
+        completions: matches.map(m => `"${m}"`),
+        prefix: `"${modulePrefix}"`,
+        displayText: "Module names"
+      };
+    }
+    
+    // Check if we're completing an imported symbol name
+    const symbolMatch = input.match(/\[([^,\]]*)(,\s*[^,\]]*)*$/);
+    if (symbolMatch) {
+      // Figure out which module we're importing from
+      const fromModuleMatch = input.match(/from\s+"([a-zA-Z0-9_-]+)"/);
+      if (!fromModuleMatch) return { completions: [], prefix: "" };
+      
+      const moduleName = fromModuleMatch[1];
+      const symbols = await this.evaluator.listModuleSymbols(moduleName);
+      const exports = await this.evaluator.getModuleExports(moduleName);
+      
+      // Prefer exported symbols in suggestions
+      const sortedSymbols = [
+        ...exports,
+        ...symbols.filter(s => !exports.includes(s))
+      ];
+      
+      // Get the current symbol prefix we're completing
+      let currentSymbol = "";
+      if (symbolMatch[0].endsWith(",")) {
+        // After a comma, no prefix yet
+        currentSymbol = "";
+      } else {
+        // Get everything after the last comma or opening bracket
+        const lastCommaOrBracket = Math.max(
+          symbolMatch[0].lastIndexOf(","),
+          symbolMatch[0].lastIndexOf("[")
+        );
+        currentSymbol = symbolMatch[0].substring(lastCommaOrBracket + 1).trim();
+      }
+      
+      const matches = sortedSymbols.filter(s => s.startsWith(currentSymbol));
+      
+      return {
+        completions: matches,
+        prefix: currentSymbol,
+        displayText: `Symbols from module '${moduleName}'`
+      };
+    }
+    
+    return { completions: [], prefix: "" };
+  }
+  
+  /**
+   * Get symbol completions for general expressions
+   */
+  private async getSymbolCompletions(input: string): Promise<CompletionResult> {
+    // Find the last incomplete symbol/word
+    const lastWordMatch = input.match(/[a-zA-Z0-9_-]+$/);
+    if (!lastWordMatch) return { completions: [], prefix: "" };
+    
+    const prefix = lastWordMatch[0];
+    
+    // Get current module's symbols
+    const currentModule = this.evaluator.getCurrentModuleSync();
+    const symbols = await this.evaluator.listModuleSymbols(currentModule);
+    
+    // Get built-in symbols from the environment
+    const env = this.evaluator.getEnvironment();
+    const builtIns = env.getAllDefinedSymbols();
+    
+    // Combine current module symbols and built-ins, filtering out duplicates
+    const allSymbols = [...new Set([...symbols, ...builtIns])];
+    
+    // Filter by prefix
+    const matches = allSymbols.filter(s => s.startsWith(prefix));
+    
+    return {
+      completions: matches,
+      prefix,
+      displayText: "Symbols"
+    };
+  }
+  
+  /**
+   * Display completions with formatting
+   */
+  displayCompletions(result: CompletionResult): void {
+    if (result.completions.length === 0) {
+      console.log("No completions available");
+      return;
+    }
+    
+    const { completions, displayText } = result;
+    
+    console.log(this.useColors 
+      ? `${colors.fg.yellow}${displayText || "Completions"}:${colors.reset}`
+      : `${displayText || "Completions"}:`);
+    
+    // Group completions into columns
+    const maxWidth = Math.max(...completions.map(c => c.length)) + 2;
+    const termWidth = Deno.consoleSize().columns || 80;
+    const numColumns = Math.max(1, Math.floor(termWidth / maxWidth));
+    
+    for (let i = 0; i < completions.length; i += numColumns) {
+      const row = completions.slice(i, i + numColumns)
+        .map(c => c.padEnd(maxWidth, ' '))
+        .join('');
+      console.log(row);
     }
   }
 }
