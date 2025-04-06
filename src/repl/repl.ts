@@ -1,25 +1,14 @@
 // src/repl/enhanced-repl.ts - Comprehensive REPL with dynamic import support
 
-import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { keypress } from "https://deno.land/x/cliffy@v1.0.0-rc.3/keypress/mod.ts";
-import { readLines } from "https://deno.land/std@0.224.0/io/read_lines.ts";
 import { Logger } from "../logger.ts";
 import { Environment } from "../environment.ts";
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
 import { formatError, getSuggestion, registerSourceFile } from "../transpiler/error/error-handling.ts";
-import { ImportError, TranspilerError } from "../transpiler/error/errors.ts";
 import { historyManager } from "./history-manager.ts";
 import * as termColors from "../utils/colors.ts";
 import { persistentStateManager } from "./persistent-state-manager.ts";
-
-// Collection of special symbols for autocomplete
-const SPECIAL_SYMBOLS = new Set([
-  "if", "when", "unless", "fn", "defn", "lambda", "let", "do", "cond", "case", 
-  "while", "for", "import", "export", "loop", "recur", "try", "catch",
-  "true", "false", "nil", "null", "undefined", "console.log", "print"
-]);
 
 interface ReplOptions {
   verbose?: boolean;
@@ -1643,30 +1632,6 @@ function handleError(error: unknown, options: ProcessOptions): void {
 }
 
 /**
- * Check if an input string looks like an import statement
- */
-function isImportExpression(input: string): boolean {
-  input = input.trim();
-  
-  // Check for HQL import syntax: (import name from "path")
-  if (input.startsWith('(import ') && input.includes(' from ') && input.endsWith(')')) {
-    return true;
-  }
-  
-  // Check for vector import syntax: (import [a b c] from "path")
-  if (input.startsWith('(import [') && input.includes('] from "') && input.endsWith(')')) {
-    return true;
-  }
-  
-  // Check for simple import: (import "path")
-  if (input.startsWith('(import "') && input.endsWith('")')) {
-    return true;
-  }
-  
-  return false;
-}
-
-/**
  * Handle an import expression by using the DynamicImportHandler
  */
 // This function is no longer needed as we're using evaluator.processImportDirectly
@@ -1687,11 +1652,12 @@ async function handleCommand(
   const args = parts.slice(1).join(" ");
 
   switch (cmd) {
-    case "help":
+    case "help": {
       // Make sure we're properly passing args to commandHelp
       const helpArg = args.trim();
       commandHelp(helpArg, options.useColors);
       break;
+    }
     case "quit":
     case "exit":
       commandQuit(options.replState.setRunning);

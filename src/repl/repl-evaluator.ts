@@ -12,12 +12,7 @@ import { REPLEnvironment } from "./repl-environment.ts";
 import { Environment, Value } from "../environment.ts";
 import { SExp } from "../s-exp/types.ts";
 import { RUNTIME_FUNCTIONS } from "../transpiler/runtime/runtime.ts";
-import { 
-  registerSourceFile, 
-  withErrorHandling, 
-  withTypeScriptErrorTranslation,
-  ErrorUtils
-} from "../transpiler/error/error-handling.ts";
+import { registerSourceFile, withErrorHandling } from "../transpiler/error/error-handling.ts";
 import { report } from "../transpiler/error/errors.ts";
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 

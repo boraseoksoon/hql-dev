@@ -5,7 +5,6 @@ import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { ensureDir } from "https://deno.land/std@0.224.0/fs/ensure_dir.ts";
 import { Logger } from "../logger.ts";
-import { Value } from "../environment.ts";
 
 // Base directory for REPL persistence
 const REPL_STATE_DIR = ".hql-repl";
