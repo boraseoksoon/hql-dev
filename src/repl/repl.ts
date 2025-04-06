@@ -1384,6 +1384,7 @@ interface ProcessOptions {
   showExpanded: boolean;
   showJs: boolean;
   useColors: boolean;
+  evaluator?: ModuleAwareEvaluator;  // Add evaluator for error diagnostics
   trackSymbolUsage?: (symbol: string) => void;
   replState: {
     setRunning: (val: boolean) => void;
@@ -1405,30 +1406,35 @@ async function handleReplLine(
   // Process the input text
   state.parenBalance = updateParenBalance(lineResult.text, state.parenBalance);
 
-  if (state.multilineMode) {
-    // Apply indentation if provided
-    const lineToAdd = lineResult.indent && !lineResult.fromHistory
-      ? lineResult.indent + lineResult.text
-      : lineResult.text;
+  try {
+    if (state.multilineMode) {
+      // Apply indentation if provided
+      const lineToAdd = lineResult.indent && !lineResult.fromHistory
+        ? lineResult.indent + lineResult.text
+        : lineResult.text;
+        
+      // Append the line to multiline input
+      state.multilineInput += lineResult.fromHistory ? lineToAdd : lineToAdd + "\n";
       
-    // Append the line to multiline input
-    state.multilineInput += lineResult.fromHistory ? lineToAdd : lineToAdd + "\n";
-    
-    // Check if we're done with multiline input
-    if (state.parenBalance <= 0) {
-      state.multilineMode = false;
-      await processInput(state.multilineInput, evaluator, history, options, state);
-      resetReplState(state);
+      // Check if we're done with multiline input
+      if (state.parenBalance <= 0) {
+        state.multilineMode = false;
+        await processInput(state.multilineInput, evaluator, history, options, state);
+        resetReplState(state);
+      }
+    } else if (lineResult.text.startsWith(":")) {
+      // Strip the leading colon
+      const command = lineResult.text.substring(1);
+      await handleCommand(command, state, evaluator, history, options);
+    } else if (state.parenBalance > 0) {
+      state.multilineMode = true;
+      state.multilineInput = lineResult.text + "\n";
+    } else {
+      await processInput(lineResult.text, evaluator, history, options, state);
     }
-  } else if (lineResult.text.startsWith(":")) {
-    // Strip the leading colon
-    const command = lineResult.text.substring(1);
-    await handleCommand(command, state, evaluator, history, options);
-  } else if (state.parenBalance > 0) {
-    state.multilineMode = true;
-    state.multilineInput = lineResult.text + "\n";
-  } else {
-    await processInput(lineResult.text, evaluator, history, options, state);
+  } catch (error) {
+    // Pass evaluator for better diagnostics
+    await handleError(error, { ...options, evaluator }, lineResult.text);
   }
 }
 
@@ -1451,6 +1457,25 @@ async function processInput(
     if (input.startsWith(":")) {
       const command = input.substring(1);
       await handleCommand(command, state, evaluator, history, options);
+      return;
+    }
+    
+    // Validate syntax before proceeding
+    const validationResult = await validateSyntax(input, evaluator);
+    if (!validationResult.valid) {
+      console.error(options.useColors
+        ? `${colors.fg.red}${validationResult.error}${colors.reset}`
+        : validationResult.error);
+      
+      if (validationResult.suggestions && validationResult.suggestions.length > 0) {
+        console.log(options.useColors
+          ? `${colors.fg.yellow}Suggestions:${colors.reset}`
+          : "Suggestions:");
+        
+        for (const suggestion of validationResult.suggestions) {
+          console.log(`- ${suggestion}`);
+        }
+      }
       return;
     }
     
@@ -1561,20 +1586,30 @@ async function processInput(
       throw error;
     }
   } catch (error: unknown) {
-    handleError(error, options);
+    // Pass the evaluator and input for better error diagnostics
+    await handleError(error, { ...options, evaluator }, input);
   }
 }
 
 // Helper function to format and display result
 function formatAndDisplayResult(result: any, input: string, options: ProcessOptions, executionTime: number): void {
+  // Initialize the data formatter
+  const dataFormatter = new DataFormatter({ 
+    useColors: options.useColors,
+    maxDepth: 3, // Reasonable default
+    maxArrayItems: 50,
+    maxObjectProperties: 15,
+    maxStringLength: 1000
+  });
+  
   // Check if result is a proper object with value property
   if (result && typeof result === 'object' && 'value' in result) {
-    // Format the result value based on its type
-    let displayValue = formatResultValue(result.value, options.useColors);
+    // Use our new formatter for improved visualization
+    const displayValue = dataFormatter.format(result.value);
     console.log(displayValue);
   } else if (result !== undefined) {
     // Handle direct result values (not wrapped in object)
-    let displayValue = formatResultValue(result, options.useColors);
+    const displayValue = dataFormatter.format(result);
     console.log(displayValue);
   } else if (input.trim().startsWith("(fn ") || input.trim().startsWith("(defn ")) {
     // Handle function definitions
@@ -1605,53 +1640,6 @@ function formatAndDisplayResult(result: any, input: string, options: ProcessOpti
   }
 }
 
-// Helper to format result values with proper coloring
-function formatResultValue(value: any, useColors: boolean): string {
-  if (value === null) {
-    return useColors ? `${colors.fg.lightBlue}null${colors.reset}` : "null";
-  }
-  
-  if (value === undefined) {
-    return useColors ? `${colors.fg.lightBlue}undefined${colors.reset}` : "undefined";
-  }
-  
-  if (typeof value === "number") {
-    return useColors ? `${colors.fg.lightGreen}${value}${colors.reset}` : String(value);
-  }
-  
-  if (typeof value === "string") {
-    return useColors ? `${colors.fg.lightYellow}"${value}"${colors.reset}` : `"${value}"`;
-  }
-  
-  if (typeof value === "boolean") {
-    return useColors ? `${colors.fg.lightPurple}${value}${colors.reset}` : String(value);
-  }
-  
-  if (typeof value === "function") {
-    return useColors 
-      ? `${colors.fg.lightCyan}[Function${value.name ? ': ' + value.name : ''}]${colors.reset}`
-      : `[Function${value.name ? ': ' + value.name : ''}]`;
-  }
-  
-  if (typeof value === "object") {
-    try {
-      if (Array.isArray(value)) {
-        // Format arrays more nicely
-        const json = JSON.stringify(value, null, 2);
-        return useColors ? `${colors.fg.lightCyan}${json}${colors.reset}` : json;
-      }
-      
-      // Format objects
-      const json = JSON.stringify(value, null, 2);
-      return useColors ? `${colors.fg.lightCyan}${json}${colors.reset}` : json;
-    } catch {
-      return useColors ? `${colors.fg.lightCyan}[Object]${colors.reset}` : "[Object]";
-    }
-  }
-  
-  return String(value);
-}
-
 // Track symbols used in input
 function trackSymbolsInInput(input: string, tracker: (symbol: string) => void): void {
   const symbolRegex = /\b[a-zA-Z0-9_-]+\b/g;
@@ -1662,31 +1650,25 @@ function trackSymbolsInInput(input: string, tracker: (symbol: string) => void): 
 }
 
 // Enhanced error handling
-function handleError(error: unknown, options: ProcessOptions): void {
-  if (error instanceof Error) {
-    // Format error with source context
-    const formattedError = formatError(error, { 
-      useColors: options.useColors, 
-      filePath: "REPL input",
-      includeStack: options.logger.isVerbose, // Include stack trace in verbose mode
-    });
-    
-    // Display the detailed error
-    console.error(formattedError);
-    
-    // Show helpful suggestion
-    const suggestion = getSuggestion(error);
-    if (suggestion) {
-      console.error(options.useColors
-        ? `${colors.fg.cyan}Suggestion: ${suggestion}${colors.reset}`
-        : `Suggestion: ${suggestion}`);
-    }
-  } else {
-    // Fallback for non-Error objects
+async function handleError(error: unknown, options: ProcessOptions, input?: string): Promise<void> {
+  // Get the evaluator from options to initialize diagnostics
+  const evaluator = options.evaluator;
+  if (!evaluator) {
+    // Fallback to simple error display if no evaluator is available
     console.error(options.useColors
       ? `${colors.fg.red}Error: ${String(error)}${colors.reset}`
       : `Error: ${String(error)}`);
+    return;
   }
+  
+  // Use our enhanced error diagnostics
+  const errorDiagnostics = new ErrorDiagnostics(evaluator, { 
+    useColors: options.useColors 
+  });
+  
+  // Format the error with context and suggestions
+  const formattedError = await errorDiagnostics.formatError(error, input || "");
+  console.error(formattedError);
 }
 
 /**
@@ -1768,8 +1750,8 @@ async function handleCommand(
       commandDefault(cmd);
     }
   } catch (error: unknown) {
-    // Handle errors in command processing
-    handleError(error, options);
+    // Handle errors in command processing with our enhanced error handler
+    await handleError(error, { ...options, evaluator }, `:${command}`);
   }
 }
 
@@ -1856,6 +1838,9 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
       });
     }
 
+    // Initialize the error diagnostics
+    const errorDiagnostics = new ErrorDiagnostics(evaluator, { useColors });
+
     // Start REPL loop
     while (running) {
       try {
@@ -1876,13 +1861,24 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           showExpanded,
           showJs,
           useColors,
+          evaluator,  // Include evaluator for error diagnostics
           trackSymbolUsage,
           replState: stateFunctions,
         });
       } catch (error) {
-        printError(
-          error instanceof Error ? error.message : String(error),
-          useColors
+        await handleError(
+          error, 
+          { 
+            logger, 
+            baseDir, 
+            historySize, 
+            showAst, 
+            showExpanded, 
+            showJs, 
+            useColors, 
+            evaluator,
+            replState: stateFunctions 
+          }
         );
       }
     }
@@ -2626,4 +2622,791 @@ class TabCompletion {
       console.log(row);
     }
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Enhanced Error Handling
+───────────────────────────────────────────────────────────────────────────── */
+
+interface ErrorContext {
+  code: string;
+  position?: {
+    line: number;
+    column: number;
+  };
+  filename?: string;
+}
+
+/**
+ * Enhanced error diagnostics with suggestions and context
+ */
+class ErrorDiagnostics {
+  private evaluator: ModuleAwareEvaluator;
+  private useColors: boolean;
+  private lastErrorInput: string = '';
+  
+  constructor(evaluator: ModuleAwareEvaluator, options: { useColors?: boolean } = {}) {
+    this.evaluator = evaluator;
+    this.useColors = options.useColors ?? true;
+  }
+  
+  /**
+   * Format and enhance error messages with suggestions and context
+   */
+  async formatError(error: unknown, input: string): Promise<string> {
+    this.lastErrorInput = input;
+    
+    if (!(error instanceof Error)) {
+      return String(error);
+    }
+    
+    // Extract error information
+    const errorMessage = error.message;
+    const errorStack = error.stack || '';
+    
+    // Try to extract location information
+    const locationInfo = this.extractLocationInfo(errorStack, errorMessage);
+    
+    // Generate rich error message with context
+    let richError = this.useColors 
+      ? `${colors.fg.red}${colors.bright}Error:${colors.reset} ${errorMessage}`
+      : `Error: ${errorMessage}`;
+    
+    // Add code context if position is available
+    if (locationInfo) {
+      richError += '\n\n' + this.getCodeContext(input, locationInfo);
+    }
+    
+    // Add suggestions based on the error type
+    const suggestions = await this.generateSuggestions(error, input);
+    if (suggestions.length > 0) {
+      richError += '\n\n' + (this.useColors 
+        ? `${colors.fg.yellow}Suggestions:${colors.reset}`
+        : 'Suggestions:');
+      
+      for (const suggestion of suggestions) {
+        richError += '\n- ' + suggestion;
+      }
+    }
+    
+    return richError;
+  }
+  
+  /**
+   * Extract location information from error message or stack
+   */
+  private extractLocationInfo(stack: string, message: string): { line: number; column: number } | null {
+    // Common patterns for syntax errors
+    const syntaxErrorRegex = /at line (\d+), column (\d+)/;
+    const syntaxMatch = message.match(syntaxErrorRegex);
+    
+    if (syntaxMatch) {
+      return {
+        line: parseInt(syntaxMatch[1], 10),
+        column: parseInt(syntaxMatch[2], 10)
+      };
+    }
+    
+    // Position from the error stack
+    const stackLocationRegex = /:(\d+):(\d+)/;
+    const stackMatch = stack.match(stackLocationRegex);
+    
+    if (stackMatch) {
+      return {
+        line: parseInt(stackMatch[1], 10),
+        column: parseInt(stackMatch[2], 10)
+      };
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Get code context around the error location
+   */
+  private getCodeContext(input: string, location: { line: number; column: number }): string {
+    const lines = input.split('\n');
+    const { line, column } = location;
+    
+    // Ensure line number is valid
+    if (line <= 0 || line > lines.length) {
+      return '';
+    }
+    
+    // Get context lines (2 before and after)
+    const contextStart = Math.max(0, line - 3);
+    const contextEnd = Math.min(lines.length - 1, line + 1);
+    
+    let context = '';
+    for (let i = contextStart; i <= contextEnd; i++) {
+      const lineNum = (i + 1).toString().padStart(3);
+      const isErrorLine = i === line - 1;
+      
+      // Format the line number and code
+      if (isErrorLine) {
+        context += this.useColors 
+          ? `${colors.fg.red}${lineNum} | ${lines[i]}${colors.reset}\n`
+          : `${lineNum} | ${lines[i]}\n`;
+        
+        // Add pointer to the error location
+        const pointer = ' '.repeat(column + lineNum.length + 2) + '^';
+        context += this.useColors 
+          ? `${colors.fg.red}${pointer}${colors.reset}\n`
+          : `${pointer}\n`;
+      } else {
+        context += `${lineNum} | ${lines[i]}\n`;
+      }
+    }
+    
+    return context;
+  }
+  
+  /**
+   * Generate suggestions based on error type
+   */
+  private async generateSuggestions(error: Error, input: string): Promise<string[]> {
+    const suggestions: string[] = [];
+    const errorMessage = error.message.toLowerCase();
+    
+    // Handle specific error types
+    if (errorMessage.includes('undefined variable') || errorMessage.includes('not defined')) {
+      await this.addDidYouMeanSuggestions(error.message, suggestions);
+    } else if (errorMessage.includes('unexpected token') || errorMessage.includes('unexpected end of input')) {
+      this.addParenBalanceSuggestions(input, suggestions);
+    } else if (errorMessage.includes('expected') && errorMessage.includes('but got')) {
+      this.addSyntaxSuggestions(errorMessage, suggestions);
+    } else if (errorMessage.includes('import')) {
+      await this.addImportSuggestions(errorMessage, suggestions);
+    } else if (errorMessage.includes('type error')) {
+      this.addTypeSuggestions(errorMessage, suggestions);
+    }
+    
+    // Add function syntax check
+    this.addFunctionSyntaxSuggestions(input, suggestions);
+    
+    return suggestions;
+  }
+  
+  /**
+   * Add "did you mean?" suggestions for undefined symbols
+   */
+  private async addDidYouMeanSuggestions(errorMessage: string, suggestions: string[]): Promise<void> {
+    // Extract the undefined symbol from the error message
+    const symbolMatch = errorMessage.match(/'([^']+)'/);
+    if (!symbolMatch) return;
+    
+    const missingSymbol = symbolMatch[1];
+    
+    // Get all available symbols from current module and environment
+    const currentModule = this.evaluator.getCurrentModuleSync();
+    const moduleSymbols = await this.evaluator.listModuleSymbols(currentModule);
+    const env = this.evaluator.getEnvironment();
+    const builtIns = env.getAllDefinedSymbols();
+    
+    // Combine all symbols
+    const allSymbols = [...new Set([...moduleSymbols, ...builtIns])];
+    
+    // Find similar symbols using Levenshtein distance
+    const similarSymbols = allSymbols
+      .filter(symbol => this.levenshteinDistance(missingSymbol, symbol) <= 2)
+      .sort((a, b) => this.levenshteinDistance(missingSymbol, a) - this.levenshteinDistance(missingSymbol, b))
+      .slice(0, 3);
+    
+    if (similarSymbols.length > 0) {
+      suggestions.push(`Did you mean: ${similarSymbols.join(', ')}?`);
+    }
+    
+    // Check if this symbol exists in another module
+    const modules = await this.evaluator.getAvailableModules();
+    for (const moduleName of modules) {
+      if (moduleName === currentModule) continue;
+      
+      const otherModuleSymbols = await this.evaluator.listModuleSymbols(moduleName);
+      if (otherModuleSymbols.includes(missingSymbol)) {
+        suggestions.push(`The symbol '${missingSymbol}' exists in module '${moduleName}'. Use (import [${missingSymbol}] from "${moduleName}")`);
+        break;
+      }
+    }
+  }
+  
+  /**
+   * Calculate Levenshtein distance between two strings
+   */
+  private levenshteinDistance(a: string, b: string): number {
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+    
+    const matrix: number[][] = [];
+    
+    // Initialize the matrix
+    for (let i = 0; i <= b.length; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= a.length; j++) {
+      matrix[0][j] = j;
+    }
+    
+    // Fill the matrix
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        const cost = a[j - 1] === b[i - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,      // deletion
+          matrix[i][j - 1] + 1,      // insertion
+          matrix[i - 1][j - 1] + cost  // substitution
+        );
+      }
+    }
+    
+    return matrix[b.length][a.length];
+  }
+  
+  /**
+   * Add suggestions for paren balancing issues
+   */
+  private addParenBalanceSuggestions(input: string, suggestions: string[]): void {
+    // Count open and close parens
+    const openCount = (input.match(/\(/g) || []).length;
+    const closeCount = (input.match(/\)/g) || []).length;
+    
+    if (openCount > closeCount) {
+      const missing = openCount - closeCount;
+      suggestions.push(`Missing ${missing} closing parenthesis: ${')'.repeat(missing)}`);
+    } else if (closeCount > openCount) {
+      const extra = closeCount - openCount;
+      suggestions.push(`${extra} extra closing parenthesis. Remove ${extra} ')' characters.`);
+    }
+    
+    // Check for string literal issues
+    const unclosedString = input.match(/"[^"]*$/);
+    if (unclosedString) {
+      suggestions.push('Unclosed string literal. Add a closing " character.');
+    }
+  }
+  
+  /**
+   * Add suggestions for syntax errors
+   */
+  private addSyntaxSuggestions(errorMessage: string, suggestions: string[]): void {
+    // Extract expected and received tokens
+    const expectedMatch = errorMessage.match(/expected ([^,]+), but got/i);
+    const receivedMatch = errorMessage.match(/but got ([^.]+)/i);
+    
+    if (expectedMatch && receivedMatch) {
+      const expected = expectedMatch[1];
+      const received = receivedMatch[1];
+      
+      suggestions.push(`Expected ${expected} but got ${received}`);
+      
+      // Common fixes for specific syntax errors
+      if (expected.includes('identifier') && received.includes('string')) {
+        suggestions.push('Use symbols without quotes for identifiers (e.g., name instead of "name")');
+      } else if (expected.includes('string') && received.includes('identifier')) {
+        suggestions.push('Use quotes around string literals (e.g., "hello" instead of hello)');
+      } else if (expected.includes('(')) {
+        suggestions.push('Make sure to start a new expression with an opening parenthesis (');
+      }
+    }
+  }
+  
+  /**
+   * Add suggestions for import errors
+   */
+  private async addImportSuggestions(errorMessage: string, suggestions: string[]): Promise<void> {
+    // Extract module name if present
+    const moduleMatch = errorMessage.match(/module ['"]([^'"]+)['"]/);
+    if (!moduleMatch) return;
+    
+    const moduleName = moduleMatch[1];
+    
+    // Check for similar module names
+    const modules = await this.evaluator.getAvailableModules();
+    const similarModules = modules
+      .filter(m => this.levenshteinDistance(moduleName, m) <= 2)
+      .sort((a, b) => this.levenshteinDistance(moduleName, a) - this.levenshteinDistance(moduleName, b))
+      .slice(0, 3);
+    
+    if (similarModules.length > 0) {
+      suggestions.push(`Did you mean to import from one of these modules: ${similarModules.join(', ')}?`);
+    } else {
+      suggestions.push(`Module '${moduleName}' not found. Use :modules to list available modules.`);
+    }
+  }
+  
+  /**
+   * Add suggestions for type errors
+   */
+  private addTypeSuggestions(errorMessage: string, suggestions: string[]): void {
+    // Check for common type errors
+    if (errorMessage.includes('not a function')) {
+      suggestions.push('Make sure you are calling a function, not a value.');
+      suggestions.push('Check that the function name is spelled correctly.');
+    } else if (errorMessage.includes('cannot be used as')) {
+      suggestions.push('The types of your values don\'t match the expected types for this operation.');
+      suggestions.push('Try converting your value to the appropriate type first.');
+    }
+  }
+  
+  /**
+   * Add suggestions for common function definition errors
+   */
+  private addFunctionSyntaxSuggestions(input: string, suggestions: string[]): void {
+    // Check for function definitions with square brackets instead of parentheses
+    const fnWithBrackets = input.match(/\(\s*(fn|defn|lambda)\s+([a-zA-Z0-9_-]+)\s*\[([^\]]*)\]/i);
+    if (fnWithBrackets) {
+      const [, fnType, fnName, params] = fnWithBrackets;
+      suggestions.push(`HQL uses parentheses for function parameters, not square brackets.`);
+      suggestions.push(`Try: (${fnType} ${fnName} (${params}) ...)`);
+    }
+    
+    // Check for missing function body
+    const fnWithoutBody = input.match(/\(\s*(fn|defn|lambda)\s+([a-zA-Z0-9_-]+)\s*\([^(]*\)\s*\)/i);
+    if (fnWithoutBody) {
+      const [, fnType, fnName] = fnWithoutBody;
+      suggestions.push(`Function '${fnName}' is missing a body.`);
+      suggestions.push(`Example: (${fnType} ${fnName} (x y) (+ x y))`);
+    }
+    
+    // Check for potential parameter naming issues
+    const paramPattern = /\(\s*(fn|defn|lambda)\s+([a-zA-Z0-9_-]+)\s*\(([^)]*)\)/i;
+    const paramMatch = input.match(paramPattern);
+    if (paramMatch) {
+      const [, , , paramList] = paramMatch;
+      const params = paramList.split(/\s+/).filter(Boolean);
+      
+      // Check for duplicate parameters
+      const uniqueParams = new Set(params);
+      if (uniqueParams.size !== params.length) {
+        suggestions.push(`Function has duplicate parameter names.`);
+      }
+      
+      // Check for reserved words as parameter names
+      const reservedWords = ["def", "fn", "defn", "if", "let", "do", "when", "cond", "true", "false", "null"];
+      const usedReserved = params.filter(p => reservedWords.includes(p));
+      if (usedReserved.length > 0) {
+        suggestions.push(`Parameter names use reserved words: ${usedReserved.join(", ")}`);
+      }
+    }
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Rich Data Visualization
+───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * DataFormatter - Enhanced data visualization for the REPL
+ * Provides pretty-printing, syntax highlighting, and specialized 
+ * displays for arrays, objects, and custom types
+ */
+class DataFormatter {
+  private useColors: boolean;
+  private maxDepth: number;
+  private maxArrayItems: number;
+  private maxObjectProperties: number;
+  private maxStringLength: number;
+  
+  constructor(options: { 
+    useColors?: boolean;
+    maxDepth?: number;
+    maxArrayItems?: number;
+    maxObjectProperties?: number;
+    maxStringLength?: number;
+  } = {}) {
+    this.useColors = options.useColors ?? true;
+    this.maxDepth = options.maxDepth ?? 3;
+    this.maxArrayItems = options.maxArrayItems ?? 100;
+    this.maxObjectProperties = options.maxObjectProperties ?? 20;
+    this.maxStringLength = options.maxStringLength ?? 200;
+  }
+  
+  /**
+   * Format any value with rich visualization
+   */
+  format(value: any, currentDepth = 0): string {
+    if (value === null) {
+      return this.useColors ? `${colors.fg.lightBlue}null${colors.reset}` : "null";
+    }
+    
+    if (value === undefined) {
+      return this.useColors ? `${colors.fg.lightBlue}undefined${colors.reset}` : "undefined";
+    }
+    
+    if (typeof value === "number") {
+      return this.useColors ? `${colors.fg.lightGreen}${value}${colors.reset}` : String(value);
+    }
+    
+    if (typeof value === "boolean") {
+      return this.useColors ? `${colors.fg.lightPurple}${value}${colors.reset}` : String(value);
+    }
+    
+    if (typeof value === "string") {
+      return this.formatString(value);
+    }
+    
+    if (typeof value === "function") {
+      return this.formatFunction(value);
+    }
+    
+    if (typeof value === "symbol") {
+      return this.useColors ? `${colors.fg.lightYellow}${value.toString()}${colors.reset}` : value.toString();
+    }
+    
+    if (Array.isArray(value)) {
+      return this.formatArray(value, currentDepth);
+    }
+    
+    if (typeof value === "object") {
+      return this.formatObject(value, currentDepth);
+    }
+    
+    // Fallback for any other types
+    return String(value);
+  }
+  
+  /**
+   * Format string values with syntax highlighting and truncation
+   */
+  private formatString(value: string): string {
+    // Truncate long strings
+    let displayValue = value;
+    if (value.length > this.maxStringLength) {
+      displayValue = value.substring(0, this.maxStringLength) + "...";
+    }
+    
+    // Escape special characters
+    displayValue = displayValue
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      .replace(/\t/g, "\\t");
+    
+    return this.useColors 
+      ? `${colors.fg.lightYellow}"${displayValue}"${colors.reset}`
+      : `"${displayValue}"`;
+  }
+  
+  /**
+   * Format function values
+   */
+  private formatFunction(value: Function): string {
+    const name = value.name ? value.name : "anonymous";
+    const isArrow = value.toString().includes("=>");
+    const isAsync = value.toString().startsWith("async");
+    const functionType = isAsync ? "AsyncFunction" : isArrow ? "ArrowFunction" : "Function";
+    
+    return this.useColors 
+      ? `${colors.fg.lightCyan}[${functionType}: ${name}]${colors.reset}`
+      : `[${functionType}: ${name}]`;
+  }
+  
+  /**
+   * Format arrays with indentation and item count info
+   */
+  private formatArray(array: any[], currentDepth = 0): string {
+    if (currentDepth >= this.maxDepth) {
+      return this.useColors 
+        ? `${colors.fg.lightCyan}[Array(${array.length})]${colors.reset}`
+        : `[Array(${array.length})]`;
+    }
+    
+    if (array.length === 0) {
+      return this.useColors ? `${colors.fg.lightCyan}[]${colors.reset}` : "[]";
+    }
+    
+    const truncated = array.length > this.maxArrayItems;
+    const itemsToShow = truncated ? array.slice(0, this.maxArrayItems) : array;
+    
+    // Format with indentation for better readability
+    const indent = "  ".repeat(currentDepth + 1);
+    const nextDepth = currentDepth + 1;
+    
+    const items = itemsToShow.map(item => `${indent}${this.format(item, nextDepth)}`).join(",\n");
+    
+    let result = "[\n" + items;
+    
+    if (truncated) {
+      result += `,\n${indent}... ${array.length - this.maxArrayItems} more items`;
+    }
+    
+    result += `\n${"  ".repeat(currentDepth)}]`;
+    
+    return this.useColors ? `${colors.fg.lightCyan}${result}${colors.reset}` : result;
+  }
+  
+  /**
+   * Format objects with indentation and property count info
+   */
+  private formatObject(obj: Record<string, any>, currentDepth = 0): string {
+    // Check for specialized displays based on object type
+    if (obj instanceof Date) {
+      return this.formatDate(obj);
+    }
+    
+    if (obj instanceof RegExp) {
+      return this.formatRegExp(obj);
+    }
+    
+    if (obj instanceof Error) {
+      return this.formatError(obj);
+    }
+    
+    if (obj instanceof Map) {
+      return this.formatMap(obj, currentDepth);
+    }
+    
+    if (obj instanceof Set) {
+      return this.formatSet(obj, currentDepth);
+    }
+    
+    if (currentDepth >= this.maxDepth) {
+      const constructor = obj.constructor?.name || "Object";
+      return this.useColors 
+        ? `${colors.fg.lightCyan}[${constructor}]${colors.reset}`
+        : `[${constructor}]`;
+    }
+    
+    const keys = Object.keys(obj);
+    if (keys.length === 0) {
+      return this.useColors ? `${colors.fg.lightCyan}{}${colors.reset}` : "{}";
+    }
+    
+    const truncated = keys.length > this.maxObjectProperties;
+    const keysToShow = truncated ? keys.slice(0, this.maxObjectProperties) : keys;
+    
+    // Format with indentation for better readability
+    const indent = "  ".repeat(currentDepth + 1);
+    const nextDepth = currentDepth + 1;
+    
+    const properties = keysToShow.map(key => {
+      const keyStr = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) 
+        ? key 
+        : `"${key.replace(/"/g, '\\"')}"`;
+      
+      const keyDisplay = this.useColors ? `${colors.fg.cyan}${keyStr}${colors.reset}` : keyStr;
+      
+      return `${indent}${keyDisplay}: ${this.format(obj[key], nextDepth)}`;
+    }).join(",\n");
+    
+    let result = "{\n" + properties;
+    
+    if (truncated) {
+      result += `,\n${indent}... ${keys.length - this.maxObjectProperties} more properties`;
+    }
+    
+    result += `\n${"  ".repeat(currentDepth)}}`;
+    
+    return this.useColors ? `${colors.fg.lightCyan}${result}${colors.reset}` : result;
+  }
+  
+  /**
+   * Format Date objects
+   */
+  private formatDate(date: Date): string {
+    const formatted = date.toISOString();
+    return this.useColors
+      ? `${colors.fg.magenta}${formatted}${colors.reset} ${colors.fg.gray}[Date]${colors.reset}`
+      : `${formatted} [Date]`;
+  }
+  
+  /**
+   * Format RegExp objects
+   */
+  private formatRegExp(regex: RegExp): string {
+    return this.useColors
+      ? `${colors.fg.lightYellow}${regex.toString()}${colors.reset}`
+      : regex.toString();
+  }
+  
+  /**
+   * Format Error objects
+   */
+  private formatError(error: Error): string {
+    const formatted = `${error.name}: ${error.message}`;
+    return this.useColors
+      ? `${colors.fg.red}${formatted}${colors.reset} ${colors.fg.gray}[Error]${colors.reset}`
+      : `${formatted} [Error]`;
+  }
+  
+  /**
+   * Format Map objects
+   */
+  private formatMap(map: Map<any, any>, currentDepth = 0): string {
+    if (currentDepth >= this.maxDepth) {
+      return this.useColors 
+        ? `${colors.fg.lightCyan}Map(${map.size})${colors.reset}`
+        : `Map(${map.size})`;
+    }
+    
+    if (map.size === 0) {
+      return this.useColors ? `${colors.fg.lightCyan}Map {}${colors.reset}` : "Map {}";
+    }
+    
+    const truncated = map.size > this.maxObjectProperties;
+    const entries = Array.from(map.entries()).slice(0, this.maxObjectProperties);
+    
+    // Format with indentation for better readability
+    const indent = "  ".repeat(currentDepth + 1);
+    const nextDepth = currentDepth + 1;
+    
+    const formattedEntries = entries.map(([key, value]) => {
+      return `${indent}${this.format(key, nextDepth)} => ${this.format(value, nextDepth)}`;
+    }).join(",\n");
+    
+    let result = "Map {\n" + formattedEntries;
+    
+    if (truncated) {
+      result += `,\n${indent}... ${map.size - this.maxObjectProperties} more entries`;
+    }
+    
+    result += `\n${"  ".repeat(currentDepth)}}`;
+    
+    return this.useColors ? `${colors.fg.lightCyan}${result}${colors.reset}` : result;
+  }
+  
+  /**
+   * Format Set objects
+   */
+  private formatSet(set: Set<any>, currentDepth = 0): string {
+    if (currentDepth >= this.maxDepth) {
+      return this.useColors 
+        ? `${colors.fg.lightCyan}Set(${set.size})${colors.reset}`
+        : `Set(${set.size})`;
+    }
+    
+    if (set.size === 0) {
+      return this.useColors ? `${colors.fg.lightCyan}Set {}${colors.reset}` : "Set {}";
+    }
+    
+    const truncated = set.size > this.maxObjectProperties;
+    const values = Array.from(set.values()).slice(0, this.maxObjectProperties);
+    
+    // Format with indentation for better readability
+    const indent = "  ".repeat(currentDepth + 1);
+    const nextDepth = currentDepth + 1;
+    
+    const formattedValues = values.map(value => {
+      return `${indent}${this.format(value, nextDepth)}`;
+    }).join(",\n");
+    
+    let result = "Set {\n" + formattedValues;
+    
+    if (truncated) {
+      result += `,\n${indent}... ${set.size - this.maxObjectProperties} more values`;
+    }
+    
+    result += `\n${"  ".repeat(currentDepth)}}`;
+    
+    return this.useColors ? `${colors.fg.lightCyan}${result}${colors.reset}` : result;
+  }
+}
+
+/**
+ * Validate HQL syntax before processing, returning errors if found
+ */
+async function validateSyntax(
+  input: string, 
+  evaluator: ModuleAwareEvaluator
+): Promise<{ valid: boolean; error?: string; suggestions?: string[] }> {
+  // Skip validation for empty input
+  if (!input.trim()) {
+    return { valid: true };
+  }
+  
+  // Basic paren balance check
+  const parenBalance = calculateParenBalance(input);
+  if (parenBalance !== 0) {
+    const message = parenBalance > 0 
+      ? `Unbalanced parentheses: missing ${parenBalance} closing parenthesis` 
+      : `Unbalanced parentheses: ${Math.abs(parenBalance)} extra closing parenthesis`;
+    
+    return { 
+      valid: false, 
+      error: message,
+      suggestions: [
+        parenBalance > 0 
+          ? `Add ${parenBalance} closing parenthesis: ${')'.repeat(parenBalance)}` 
+          : `Remove ${Math.abs(parenBalance)} closing parenthesis`
+      ]
+    };
+  }
+  
+  // Check for function syntax errors
+  const fnWithBrackets = input.match(/\(\s*(fn|defn|lambda)\s+([a-zA-Z0-9_-]+)\s*\[([^\]]*)\]/i);
+  if (fnWithBrackets) {
+    const [, fnType, fnName, params] = fnWithBrackets;
+    return {
+      valid: false,
+      error: `Syntax error in function definition: HQL uses parentheses for function parameters, not square brackets`,
+      suggestions: [
+        `Try: (${fnType} ${fnName} (${params}) ...)`
+      ]
+    };
+  }
+  
+  // Check for missing function body
+  const fnWithoutBody = input.match(/\(\s*(fn|defn|lambda)\s+([a-zA-Z0-9_-]+)\s*\([^(]*\)\s*\)/i);
+  if (fnWithoutBody) {
+    const [, fnType, fnName] = fnWithoutBody;
+    return {
+      valid: false,
+      error: `Syntax error: Function '${fnName}' is missing a body`,
+      suggestions: [
+        `Example: (${fnType} ${fnName} (x y) (+ x y))`
+      ]
+    };
+  }
+  
+  // If we passed all checks, consider it valid
+  return { valid: true };
+}
+
+/**
+ * Calculate the paren balance of a string (positive means unclosed open parens)
+ */
+function calculateParenBalance(input: string): number {
+  let balance = 0;
+  let inString = false;
+  let inComment = false;
+  
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+    
+    // Handle string literals
+    if (char === '"' && (i === 0 || input[i-1] !== '\\')) {
+      inString = !inString;
+      continue;
+    }
+    
+    // Skip characters inside string literals
+    if (inString) {
+      continue;
+    }
+    
+    // Handle comments
+    if (char === ';') {
+      inComment = true;
+      continue;
+    }
+    
+    if (inComment && (char === '\n' || char === '\r')) {
+      inComment = false;
+      continue;
+    }
+    
+    // Skip characters inside comments
+    if (inComment) {
+      continue;
+    }
+    
+    // Count parens
+    if (char === '(') {
+      balance++;
+    } else if (char === ')') {
+      balance--;
+    }
+  }
+  
+  return balance;
 }
