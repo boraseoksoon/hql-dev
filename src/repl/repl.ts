@@ -2073,13 +2073,51 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     if (enableCompletion) {
       tabCompletion = {
         getCompletions: async (line: string, cursorPos: number): Promise<string[]> => {
-          // First, check if we're completing a command (starts with :)
+          // First, check for module-related commands that should autocomplete module names
+          const moduleCommands = [
+            "cd ", "ls ", ":module ", ":mod ", ":see "
+          ];
+          
+          for (const cmdPrefix of moduleCommands) {
+            if (line.trim().startsWith(cmdPrefix)) {
+              // Extract the partial module name after the command
+              const partialModule = line.trim().substring(cmdPrefix.length);
+              
+              // Get the current list of available modules (not cached - dynamic)
+              const modules = await evaluator.getAvailableModules();
+              
+              // Filter modules that match the partial input
+              return modules.filter(mod => mod.startsWith(partialModule));
+            }
+          }
+          
+          // Handle special case for :see <module>:
+          if (line.trim().startsWith(':see ') && line.includes(':')) {
+            const parts = line.trim().substring(':see '.length).split(':');
+            if (parts.length === 2) {
+              const moduleName = parts[0];
+              const partialSymbol = parts[1];
+              
+              // Get symbols from the specified module
+              try {
+                const moduleSymbols = await evaluator.listModuleSymbols(moduleName);
+                return moduleSymbols
+                  .filter(sym => sym.startsWith(partialSymbol))
+                  .map(sym => `${moduleName}:${sym}`);
+              } catch (e) {
+                // Module not found or error fetching symbols
+                return [];
+              }
+            }
+          }
+          
+          // Command completion (starts with :)
           if (line.trim().startsWith(':')) {
             const commandPart = line.trim().substring(1); // Remove the colon
             const commands = [
               "help", "quit", "exit", "env", "macros", 
               "module", "modules", "list", "see", "remove",
-              "verbose", "ast", "js"
+              "verbose", "ast", "js", "doc"
             ];
             
             // Filter commands based on what's already typed
@@ -2088,12 +2126,22 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
               .map(cmd => `:${cmd}`); // Add the colon back
           }
           
-          // Get current module exports and environment bindings
+          // CLI shortcuts like mkdir
+          if (line.trim().startsWith('mkdir ')) {
+            // For mkdir, suggest a default module name if nothing is typed yet
+            const partialName = line.trim().substring('mkdir '.length);
+            if (partialName === '') {
+              return ['my-module'];
+            }
+            return [];
+          }
+          
+          // Get current module exports and environment bindings for symbol completion
           const currentModule = replState.currentModule;
           const symbols: string[] = [];
           
           try {
-            // Get current module's symbols
+            // Get current module's symbols (always fetch fresh for dynamic updates)
             const moduleSymbols = await evaluator.listModuleSymbols(currentModule);
             symbols.push(...moduleSymbols);
             
@@ -2211,6 +2259,51 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
             historyManager.save(history.slice(-historySize));
           }
         }
+        
+        // ADD CLI COMMAND HANDLERS HERE - before any other processing
+        // Handle CLI commands directly
+        if (input.trim() === 'ls') {
+          try {
+            await commandModules(evaluator, useColors);
+          } catch (error) {
+            console.error(`Error listing modules: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          continue;
+        }
+        else if (input.trim() === 'pwd') {
+          console.log(`Current module: ${replState.currentModule}`);
+          continue;
+        }
+        else if (input.trim().startsWith('cd ')) {
+          const moduleName = input.trim().substring(3).trim();
+          if (moduleName) {
+            try {
+              await commandModule(evaluator, replState, moduleName);
+            } catch (error) {
+              console.error(`Error switching modules: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          } else {
+            console.log(`Current module: ${replState.currentModule}`);
+          }
+          continue;
+        }
+        else if (input.trim().startsWith('mkdir ')) {
+          const moduleName = input.trim().substring(6).trim();
+          if (moduleName) {
+            try {
+              // Create a module directly
+              await evaluator.evaluate(`(module ${moduleName})`, {});
+              console.log(`Created module: ${moduleName}`);
+            } catch (error) {
+              console.error(`Error creating module: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          } else {
+            console.error("Module name required: mkdir <module-name>");
+          }
+          continue;
+        }
+
+        // Rest of the existing REPL loop, handling commands starting with :, multiline mode, etc.
         
         // Handle commands or evaluate input
         if (input.startsWith(':')) {
@@ -2543,7 +2636,7 @@ function getCurrentWordInContext(line: string, cursorPos: number): string {
  * Read a line with support for arrow key navigation through history and basic editing
  */
 async function readLineWithArrowKeys(
-  prompt: string, 
+  prompt: string,
   history: string[], 
   historyIndex: number,
   tabCompletion?: TabCompletion
@@ -2619,46 +2712,71 @@ async function readLineWithArrowKeys(
     // Tab completion
     if (buf[0] === 9) { // Tab key
       if (tabCompletion) {
-        if (completions.length === 0) {
+        try {
           // Get completions
-          completions = await tabCompletion.getCompletions(input, cursorPos);
-          completionIndex = 0;
-        } else {
-          // Cycle through completions
-          completionIndex = (completionIndex + 1) % completions.length;
-        }
-        
-        if (completions.length > 0) {
-          // Apply the completion
-          if (input.trim().startsWith(':')) {
-            // Command completion - replace entire input
-            input = completions[completionIndex];
-            cursorPos = input.length;
+          if (completions.length === 0) {
+            completions = await tabCompletion.getCompletions(input, cursorPos);
+            completionIndex = 0;
           } else {
-            // Symbol completion - replace current word
-            const currentWord = getCurrentWordInContext(input, cursorPos);
-            const completion = completions[completionIndex];
-            
-            // Replace current word with completion
-            const beforeWord = input.substring(0, cursorPos - currentWord.length);
-            const afterWord = input.substring(cursorPos);
-            
-            // Create new input with completion
-            input = beforeWord + completion + afterWord;
-            
-            // Update cursor position
-            cursorPos = beforeWord.length + completion.length;
+            // Cycle through completions
+            completionIndex = (completionIndex + 1) % completions.length;
           }
           
-          // Redraw the line
-          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-          Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-          Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-          
-          // Position cursor
-          if (cursorPos < input.length) {
-            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+          if (completions.length > 0) {
+            // Apply the completion
+            if (input.trim().startsWith(':') || 
+                input.trim().startsWith('cd ') || 
+                input.trim().startsWith('ls ') || 
+                input.trim().startsWith('mkdir ')) {
+              // For commands or module operations, we need to preserve the command part
+              const cmdMatch = input.match(/^(\S+\s+)/);
+              if (cmdMatch) {
+                // Keep the command part, replace only what comes after
+                const cmdPart = cmdMatch[1];
+                const completion = completions[completionIndex];
+                input = cmdPart + completion;
+              } else {
+                // Fall back to replacing the whole input
+                input = completions[completionIndex];
+              }
+              cursorPos = input.length;
+            } else if (input.includes(':') && completions[0].includes(':')) {
+              // Special case for module:symbol syntax
+              const completion = completions[completionIndex];
+              input = completion; // Replace entire input for this case
+              cursorPos = input.length;
+            } else {
+              // Symbol completion - replace current word
+              const currentWord = getCurrentWordInContext(input, cursorPos);
+              const completion = completions[completionIndex];
+              
+              // Replace current word with completion
+              const beforeWord = input.substring(0, cursorPos - currentWord.length);
+              const afterWord = input.substring(cursorPos);
+              
+              // Create new input with completion
+              input = beforeWord + completion + afterWord;
+              
+              // Update cursor position
+              cursorPos = beforeWord.length + completion.length;
+            }
+            
+            // REMOVE ALL COMPLETION MESSAGES - just update the UI directly
+            // No messages about "Completion X/Y"
+            
+            // Redraw the line
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+            
+            // Position cursor
+            if (cursorPos < input.length) {
+              Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+            }
           }
+          // Do absolutely nothing when no completions available
+        } catch (error) {
+          // Silent error handling - don't show any errors
         }
         
         continue;
@@ -2871,14 +2989,15 @@ function getDetailedHelp(command: string, useColors: boolean): string {
     "exit": "Exit the REPL session.",
     "env": "Display all environment bindings (defined variables and functions).",
     "macros": "Show all defined macros.",
-    "module": "Switch to a different module or show the current module.",
-    "modules": "List all available modules.",
+    "module": "Switch to a different module or show the current module.\nCLI shortcut: cd <module-name> - Switch to another module\npwd - Show current module",
+    "modules": "List all available modules.\nCLI shortcut: ls - List all available modules",
     "list": "Show all symbols defined in the current module.",
     "remove": "Remove a symbol or module.",
     "see": "Inspect modules and symbols in detail.",
     "verbose": "Toggle verbose output mode or evaluate an expression with verbose output.",
     "ast": "Toggle AST display mode or show the AST for a specific expression.",
-    "js": "Show the JavaScript transpilation for a given expression."
+    "js": "Show the JavaScript transpilation for a given expression.",
+    "doc": "Show documentation for a symbol or module."
   };
   
   return helpText[command] || `No detailed help available for '${command}'.`;

@@ -278,6 +278,39 @@ Opening editor (vim)... Close the editor when finished.
 | `:ast` | Toggle AST display | `:ast` |
 | `:expanded` | Toggle expanded form display | `:expanded` |
 
+### CLI-Style Commands
+
+For convenience, the REPL also supports Unix-like shorthand commands:
+
+| Command | Equivalent | Description |
+|---------|------------|-------------|
+| `ls` | `:modules` | List all available modules |
+| `pwd` | `:module` (no args) | Show current module |
+| `cd <module>` | `:module <module>` | Switch to specified module |
+| `mkdir <module>` | Create a new module | Creates a new module |
+
+Examples:
+
+```
+hql[user]> ls
+Available modules:
+- user
+- math
+- core
+
+hql[user]> pwd
+Current module: user
+
+hql[user]> cd math
+Switched to module: math
+
+hql[math]> mkdir geometry
+Created module: geometry
+
+hql[math]> cd geometry
+Switched to module: geometry
+```
+
 ### Native HQL Import/Export
 
 Instead of using special REPL commands for imports and exports, the HQL REPL now supports the language's native import and export syntax:
