@@ -39,9 +39,9 @@ The HQL REPL (Read-Eval-Print Loop) is designed to be a persistent, module-aware
 
 3. **Module System**
    - Current module display in prompt (`hql[module-name]>`)
-   - Module switching via `:module <name>`
-   - Module listing with `:modules`
-   - Module removal with `:remove module:<name>`
+   - Module switching via `:go <module-name>` (replaces older `:module` command)
+   - Module listing with `:modules` or CLI-style `ls -m` and `ls -modules`
+   - Module removal with `:remove module:<module-name>`
    - Automatic module creation on first use
    - Module-specific state management
    - Native HQL imports using `(import [symbol] from "module")`
@@ -121,7 +121,7 @@ All definitions are automatically saved and will be available in future REPL ses
 Modules help organize your code. You can create and switch between modules:
 
 ```
-hql[user]> :module math
+hql[user]> :go math
 Switched to module: math
 
 hql[math]> (defn square [x] (* x x))
@@ -137,7 +137,7 @@ hql[math]> (cube 3)
 You can switch back to another module:
 
 ```
-hql[math]> :module user
+hql[math]> :go user
 Switched to module: user
 
 hql[user]> 
@@ -248,65 +248,74 @@ Opening editor (vim)... Close the editor when finished.
 
 ### Command Reference
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `:help` | Show help information | `:help` |
-| `:quit`, `:exit` | Exit the REPL | `:quit` |
-| `:env` | Show environment bindings | `:env` |
-| `:macros` | Show defined macros | `:macros` |
-| `:module [<name>]` | Switch to or create module. If no name is provided, shows current module | `:module math` |
-| `:modules` | List available modules | `:modules` |
-| `:list` | Show current module contents | `:list` |
-| `:see` | Show all symbols and exports in the current module | `:see` |
-| `:see <symbol>` | Show a specific symbol in the current module | `:see factorial` |
-| `:see exports` | Show all exports from the current module | `:see exports` |
-| `:see all` | Show all information across all modules | `:see all` |
-| `:see all:symbols` | Show all symbols across all modules | `:see all:symbols` |
-| `:see all:modules` | Show all module names in the system | `:see all:modules` |
-| `:see <module>` | Show all symbols and exports in a specific module | `:see math` |
-| `:see <module>:<symbol>` | Show a specific symbol in a specific module | `:see math:square` |
-| `:see <module>:exports` | Show exports from a specific module | `:see math:exports` |
-| `:remove <symbol>` | Remove symbol from current module | `:remove square` |
-| `:remove module:<name>` | Remove an entire module | `:remove module:math` |
-| `:remove <module>:<symbol>` | Remove symbol from specific module | `:remove math:square` |
-| `:remove all` | Reset entire environment | `:remove all` |
-| `:remove all:symbols` | Clear all symbols but keep modules | `:remove all:symbols` |
-| `:remove all:modules` | Remove all modules except current | `:remove all:modules` |
-| `:write [<symbol>]` | Open text editor for multiline code | `:write` or `:write factorial` |
-| `:js` | Toggle JavaScript output display | `:js` |
-| `:verbose` | Toggle verbose logging | `:verbose` |
-| `:ast` | Toggle AST display | `:ast` |
-| `:expanded` | Toggle expanded form display | `:expanded` |
+#### Core Commands
 
-### CLI-Style Commands
+| Command | Description |
+|---------|-------------|
+| `:help [command]` | Display help for a specific command or general help if no command provided |
+| `:quit`, `:exit` | Exit the REPL |
+| `:env` | Show environment bindings in the current module |
+| `:macros` | Show defined macros |
+| `:go [module]` | Switch to another module or show current if no module provided |
+| `:modules` | List all available modules |
+| `:list` | List all symbols in the current module |
+| `:find [term]` | Search for symbols and modules |
+| `:see [module/symbol]` | Inspect modules or specific symbols |
+| `:doc [symbol]` | Show documentation for a symbol |
+| `:remove [target]` | Remove a symbol, module, or reset everything |
+| `:remove -f [target]` | Force remove without confirmation |
+| `:cli` | Show available CLI shortcut commands |
 
-For convenience, the REPL also supports Unix-like shorthand commands:
+#### CLI-Style Commands
 
-| Command | Equivalent | Description |
-|---------|------------|-------------|
-| `ls` | `:modules` | List all available modules |
-| `pwd` | `:module` (no args) | Show current module |
-| `cd <module>` | `:module <module>` | Switch to specified module |
-| `mkdir <module>` | Create a new module | Creates a new module |
+HQL REPL provides Unix-like CLI commands for common operations:
 
-Examples:
+| Command | Description | Equivalent |
+|---------|-------------|------------|
+| `ls` | List symbols in current module | `:list` |
+| `ls -m`, `ls -modules` | List all available modules | `:modules` |
+| `cd [module]` | Switch to a different module | `:go` |
+| `pwd` | Show current module name | - |
+| `mkdir [module]` | Create a new module | - |
+| `find [term]` | Search for symbols and modules | `:find` |
+| `man [command]` | Show help documentation | `:help` |
+| `rm [symbol]` | Remove a symbol from current module | `:remove` |
+| `rm [module]` | Remove an entire module | `:remove module:` |
+| `rm [module]:[symbol]` | Remove a symbol from a specific module | `:remove` |
+| `rm -f [target]` | Force remove without confirmation | `:remove -f` |
+| `clear`, `cls` | Clear the terminal screen | - |
+
+### Command Examples
+
+#### Module Management
 
 ```
-hql[user]> ls
+# Switch to a module (must exist)
+hql[user]> :go math
+Switched to module: math
+
+# Attempting to switch to a non-existent module
+hql[user]> :go nonexistent
+Module 'nonexistent' does not exist.
+
 Available modules:
-- user
+------------
+- user (current)
 - math
-- core
+------------
 
-hql[user]> pwd
-Current module: user
+To create a new module, use the 'mkdir nonexistent' command.
 
+# Or use the CLI-style command
 hql[user]> cd math
 Switched to module: math
 
+# Create a new module
 hql[math]> mkdir geometry
 Created module: geometry
+Use 'cd geometry' to switch to this module.
 
+# Now you can switch to it
 hql[math]> cd geometry
 Switched to module: geometry
 ```
@@ -429,7 +438,7 @@ In the next version, the REPL will fully integrate with the file system to:
 
 This will create complete consistency between REPL modules and HQL files:
 ```
-hql[user]> :module math
+hql[user]> :go math
 ```
 Will create/edit `math.hql` automatically.
 
@@ -509,3 +518,28 @@ hql[user]> :see math:exports
 ```
 
 This consistent approach means users can easily navigate from broad system-wide views down to specific symbol details using a predictable pattern. 
+
+#### Removing Symbols and Modules
+
+```
+# Remove a symbol from the current module
+hql[math]> rm square
+Symbol 'square' removed
+
+# Remove an entire module (with confirmation)
+hql[user]> rm math
+Are you sure you want to remove module 'math'? (y/n) y
+Module 'math' has been removed.
+
+# Force remove a module without confirmation
+hql[user]> rm -f math
+Module 'math' has been removed.
+
+# Remove a specific symbol from a module
+hql[user]> rm geometry:circle
+Symbol 'circle' removed from module 'geometry'
+
+# Using the : command version
+hql[user]> :remove -f math:factorial
+Symbol 'factorial' removed from module 'math'.
+``` 

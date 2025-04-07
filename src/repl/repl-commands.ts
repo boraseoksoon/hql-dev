@@ -4,28 +4,103 @@
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { ReplState } from "./repl-state.ts";
 import { colorText, printError, printBanner } from "./repl-ui.ts";
-import { confirmAndExecute } from "./repl-input.ts";
+import { readLineWithArrowKeys } from "./repl-input.ts";
 import { getDetailedHelp, builtinDocumentation, specialFormsDocs } from "./repl-help.ts";
 import { toInternalName, toUserFacingName } from "./repl-completion.ts";
 
 /**
- * Handle the :help command
+ * Shared implementation for help commands
  */
-export function commandHelp(args: string, useColors: boolean): void {
-  if (!args || args.trim() === "") {
+export function showCommandHelp(command: string, useColors: boolean): void {
+  if (!command || command.trim() === "") {
     // No arguments, just show the banner
     printBanner(useColors);
   } else {
     // Show detailed help for a specific command
     // Remove any leading colon to support both `:help command` and `:help :command` formats
-    let command = args.trim().toLowerCase();
-    if (command.startsWith(':')) {
-      command = command.substring(1);
+    let commandName = command.trim().toLowerCase();
+    if (commandName.startsWith(':')) {
+      commandName = commandName.substring(1);
     }
-    console.log(`Showing help for command: ${command}`);
-    const helpText = getDetailedHelp(command, useColors);
+    
+    // Special handling for 'cli' to show CLI command help
+    if (commandName === 'cli') {
+      printCliHelp(useColors);
+      return;
+    }
+    
+    console.log(`Showing help for command: ${commandName}`);
+    const helpText = getDetailedHelp(commandName, useColors);
     console.log(helpText);
   }
+}
+
+/**
+ * Handle the :help command
+ */
+export function commandHelp(args: string, useColors: boolean): void {
+  showCommandHelp(args, useColors);
+}
+
+/**
+ * Print help for CLI-style commands
+ */
+export function printCliHelp(useColors: boolean): void {
+  const titleColor = useColors ? "\x1b[36;1m" : "";
+  const commandColor = useColors ? "\x1b[33;1m" : "";
+  const descColor = useColors ? "\x1b[37m" : "";
+  const reset = useColors ? "\x1b[0m" : "";
+  
+  console.log(`${titleColor}CLI-Style Commands${reset}`);
+  console.log(`${titleColor}=================\n${reset}`);
+  console.log(`The HQL REPL supports Unix-like CLI commands for common operations:\n`);
+  
+  const commands = [
+    ["ls", "List symbols in current module"],
+    ["ls -m, ls -modules", "List all available modules"],
+    ["pwd", "Show current module name"],
+    ["cd <module>", "Switch to a different module"],
+    ["mkdir <module>", "Create a new module"],
+    ["find <term>", "Search for symbols and modules"],
+    ["man [command]", "Show help documentation"],
+    ["rm <symbol>", "Remove a symbol from current module"],
+    ["rm <module>", "Remove an entire module"],
+    ["rm <module>:<symbol>", "Remove a symbol from a specific module"],
+    ["rm -f <target>", "Force remove without confirmation"],
+    ["rm -rf <target>", "Force remove recursively without confirmation"],
+    ["rm *", "Remove all symbols in current module"],
+    ["rm /", "Remove everything (all modules and symbols)"],
+    ["clear, cls", "Clear the terminal screen"]
+  ];
+  
+  commands.forEach(([cmd, desc]) => {
+    console.log(`  ${commandColor}${cmd}${reset} - ${descColor}${desc}${reset}`);
+  });
+  
+  console.log(`\n${titleColor}Examples:${reset}`);
+  console.log(`  ${commandColor}ls${reset}                    # List symbols in current module`);
+  console.log(`  ${commandColor}cd math${reset}               # Switch to 'math' module`);
+  console.log(`  ${commandColor}mkdir geometry${reset}        # Create a new 'geometry' module`);
+  console.log(`  ${commandColor}find matrix${reset}           # Search for symbols containing 'matrix'`);
+  console.log(`  ${commandColor}man find${reset}              # Show help for the 'find' command`);
+  console.log(`  ${commandColor}rm factorial${reset}          # Remove symbol 'factorial' from current module`);
+  console.log(`  ${commandColor}rm math:sqrt${reset}          # Remove 'sqrt' symbol from 'math' module`);
+  console.log(`  ${commandColor}rm -f math${reset}            # Force remove 'math' module without confirmation`);
+  console.log(`  ${commandColor}rm *${reset}                  # Remove all symbols in current module`);
+  
+  console.log(`\n${titleColor}Equivalent REPL Commands:${reset}`);
+  console.log(`  ${commandColor}ls${reset} = ${commandColor}:list${reset}`);
+  console.log(`  ${commandColor}cd${reset} = ${commandColor}:go${reset}`);
+  console.log(`  ${commandColor}find${reset} = ${commandColor}:find${reset}`);
+  console.log(`  ${commandColor}man${reset} = ${commandColor}:help${reset}`);
+  console.log(`  ${commandColor}rm${reset} = ${commandColor}:remove${reset}`);
+}
+
+/**
+ * Handle the :cli command to show available CLI commands
+ */
+export function commandCli(useColors: boolean): void {
+  printCliHelp(useColors);
 }
 
 /**
@@ -152,39 +227,174 @@ export async function commandModules(evaluator: ModuleAwareEvaluator, useColors:
   if (modules.length === 0) {
     console.log("No modules defined");
   } else {
-    console.log("Modules:");
-    console.log("---------");
-    modules.forEach(moduleName => {
-      const isCurrent = moduleName === evaluator.getCurrentModuleSync();
-      const displayName = isCurrent 
-        ? colorText(moduleName, useColors ? "\x1b[32;1m" : "", useColors) + " (current)"
-        : moduleName;
-      console.log(`- ${displayName}`);
+    // Separate modules into core and user modules
+    const coreModules = ['global', 'user'];
+    const userModules = modules.filter(m => !coreModules.includes(m));
+    
+    console.log("Core System Modules (protected):");
+    console.log("--------------------------");
+    coreModules.forEach(moduleName => {
+      if (modules.includes(moduleName)) {
+        const isCurrent = moduleName === evaluator.getCurrentModuleSync();
+        const displayName = isCurrent 
+          ? colorText(moduleName, useColors ? "\x1b[32;1m" : "", useColors) + " (current)"
+          : moduleName;
+        
+        // Add special marker for global module
+        const description = moduleName === 'global' 
+          ? " - Core system module with essential functionality"
+          : " - Protected system module";
+          
+        console.log(`- ${displayName}${colorText(description, useColors ? "\x1b[36m" : "", useColors)}`);
+      }
     });
-    console.log("---------");
+    
+    if (userModules.length > 0) {
+      console.log("\nUser Modules:");
+      console.log("-----------");
+      userModules.sort().forEach(moduleName => {
+        const isCurrent = moduleName === evaluator.getCurrentModuleSync();
+        const displayName = isCurrent 
+          ? colorText(moduleName, useColors ? "\x1b[32;1m" : "", useColors) + " (current)"
+          : moduleName;
+        console.log(`- ${displayName}`);
+      });
+    }
+    
+    console.log("-----------");
+    console.log("Tip: Use :go <module> to switch modules");
+    console.log("     Use :see <module> to view module contents");
   }
 }
 
 /**
- * Handle the :module command
+ * Handle the :go command (replaces :module)
  */
-export async function commandModule(evaluator: ModuleAwareEvaluator, state: ReplState, moduleName: string): Promise<void> {
+export async function commandGo(evaluator: ModuleAwareEvaluator, state: ReplState, moduleName: string, useColors: boolean = true): Promise<void> {
   // Check if module name is provided
   if (!moduleName) {
-    // If no module name is provided, show the current module
-    console.log(colorText(`Current module: ${evaluator.getCurrentModuleSync()}`, 
-                         useColors ? "\x1b[35;1m" : "", true));
-    console.log(`The module name appears in your prompt: hql[${evaluator.getCurrentModuleSync()}]>`);
-    console.log(`Use :module <n> to switch to a different module`);
+    // If no module name is provided, show the current module and display available modules
+    const currentModule = evaluator.getCurrentModuleSync();
+    
+    console.log(colorText(`Current module: ${currentModule}`, 
+                         useColors ? "\x1b[35;1m" : "", useColors));
+    
+    // Add special description for global module
+    if (currentModule === 'global') {
+      console.log(colorText("The 'global' module is a protected core system module that contains essential functionality.", 
+                         useColors ? "\x1b[36m" : "", useColors));
+    }
+    
+    console.log(`The module name appears in your prompt: hql[${currentModule}]>`);
+    
+    // Show available modules to help users
+    console.log("\nAvailable modules:");
+    try {
+      const modules = await evaluator.getAvailableModules();
+      if (modules.length > 0) {
+        // Separate modules into core and user modules
+        const coreModules = ['global', 'user'];
+        const userModules = modules.filter(m => !coreModules.includes(m));
+        
+        console.log("Core System Modules (protected):");
+        console.log("--------------------------");
+        coreModules.forEach(modName => {
+          if (modules.includes(modName)) {
+            const isCurrent = modName === currentModule;
+            const displayName = isCurrent 
+              ? colorText(modName, useColors ? "\x1b[32;1m" : "", useColors) + " (current)"
+              : modName;
+            
+            // Add special marker for global module
+            const description = modName === 'global' 
+              ? " - Core system module with essential functionality"
+              : " - Protected system module";
+              
+            console.log(`- ${displayName}${colorText(description, useColors ? "\x1b[36m" : "", useColors)}`);
+          }
+        });
+        
+        if (userModules.length > 0) {
+          console.log("\nUser Modules:");
+          console.log("-----------");
+          userModules.sort().forEach(modName => {
+            const isCurrent = modName === currentModule;
+            const displayName = isCurrent 
+              ? colorText(modName, useColors ? "\x1b[32;1m" : "", useColors) + " (current)"
+              : modName;
+            console.log(`- ${displayName}`);
+          });
+        }
+      } else {
+        console.log("No modules defined yet.");
+      }
+    } catch (error) {
+      // Silently handle errors getting modules list
+    }
+    
+    console.log(`\nUse :go <module-name> to switch to a different module`);
     return;
   }
   
   try {
+    // Check if the module exists first
+    const availableModules = await evaluator.getAvailableModules();
+    
+    // Special case for ".." - reject it as it causes confusion
+    if (moduleName === "..") {
+      console.error(`Module name '..' is not allowed as it can cause confusion.`);
+      console.log(`Please choose a different module name.`);
+      return;
+    }
+    
+    if (!availableModules.includes(moduleName)) {
+      console.error(`Module '${moduleName}' does not exist.`);
+      
+      // Show available modules
+      // Separate modules into core and user modules
+      const coreModules = ['global', 'user'];
+      const userModules = availableModules.filter(m => !coreModules.includes(m));
+      
+      console.log("\nAvailable modules:");
+      console.log("Core System Modules (protected):");
+      console.log("--------------------------");
+      coreModules.forEach(modName => {
+        if (availableModules.includes(modName)) {
+          const isCurrent = modName === evaluator.getCurrentModuleSync();
+          const displayName = isCurrent 
+            ? colorText(modName, useColors ? "\x1b[32;1m" : "", useColors) + " (current)"
+            : modName;
+          console.log(`- ${displayName}`);
+        }
+      });
+      
+      if (userModules.length > 0) {
+        console.log("\nUser Modules:");
+        console.log("-----------");
+        userModules.sort().forEach(modName => {
+          const isCurrent = modName === evaluator.getCurrentModuleSync();
+          const displayName = isCurrent 
+            ? colorText(modName, useColors ? "\x1b[32;1m" : "", useColors) + " (current)"
+            : modName;
+          console.log(`- ${displayName}`);
+        });
+      }
+      
+      console.log(`\nTo create a new module, use the 'mkdir ${moduleName}' command.`);
+      return;
+    }
+    
     // Switch to the specified module
     await evaluator.switchModule(moduleName);
     // Update REPL state
     state.currentModule = evaluator.getCurrentModuleSync();
     console.log(`Switched to module: ${moduleName}`);
+    
+    // Add special message when switching to global module
+    if (moduleName === 'global') {
+      console.log(colorText("Note: The 'global' module is a protected core system module that contains essential functionality.", 
+                     useColors ? "\x1b[36m" : "", useColors));
+    }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`Error switching to module: ${errorMessage}`);
@@ -192,7 +402,7 @@ export async function commandModule(evaluator: ModuleAwareEvaluator, state: Repl
 }
 
 /**
- * Handle the :list command
+ * Handle the :list command and ls CLI command
  */
 export async function commandList(evaluator: ModuleAwareEvaluator, useColors: boolean): Promise<void> {
   console.log(colorText("Symbols in current module:", useColors ? "\x1b[34;1m" : "", useColors));
@@ -214,219 +424,353 @@ export async function commandList(evaluator: ModuleAwareEvaluator, useColors: bo
 }
 
 /**
+ * Handle the :find command
+ */
+export async function commandFind(evaluator: ModuleAwareEvaluator, args: string, useColors: boolean): Promise<void> {
+  if (!args || args.trim() === "") {
+    console.log("Usage: :find <search-term>");
+    console.log("Searches for symbols and modules containing the search term");
+    return;
+  }
+  
+  const searchTerm = args.trim().toLowerCase();
+  
+  // Track all matches for reporting
+  const matchingSymbols: Record<string, string[]> = {};
+  const matchingModules: string[] = [];
+  
+  // Get all available modules
+  const modules = await evaluator.getAvailableModules();
+  
+  // Check for module name matches
+  for (const moduleName of modules) {
+    if (moduleName.toLowerCase().includes(searchTerm)) {
+      matchingModules.push(moduleName);
+    }
+    
+    // Check for symbol matches within each module
+    const moduleSymbols = await evaluator.listModuleSymbols(moduleName);
+    const matchingModuleSymbols = moduleSymbols.filter(symbol => 
+      symbol.toLowerCase().includes(searchTerm)
+    );
+    
+    if (matchingModuleSymbols.length > 0) {
+      matchingSymbols[moduleName] = matchingModuleSymbols;
+    }
+  }
+  
+  // Format and display results
+  console.log(colorText("Search results for: ", useColors ? "\x1b[35;1m" : "", useColors) + 
+    colorText(`"${searchTerm}"`, useColors ? "\x1b[33m" : "", useColors));
+  
+  if (matchingModules.length === 0 && Object.keys(matchingSymbols).length === 0) {
+    console.log("No matches found");
+    return;
+  }
+  
+  if (matchingModules.length > 0) {
+    console.log(colorText("\nMatching modules:", useColors ? "\x1b[34;1m" : "", useColors));
+    console.log("----------------");
+    for (const moduleName of matchingModules.sort()) {
+      const isCurrent = moduleName === evaluator.getCurrentModuleSync();
+      const displayName = isCurrent 
+        ? colorText(moduleName, useColors ? "\x1b[32;1m" : "", useColors) + " (current)"
+        : moduleName;
+      console.log(`- ${displayName}`);
+    }
+  }
+  
+  if (Object.keys(matchingSymbols).length > 0) {
+    console.log(colorText("\nMatching symbols:", useColors ? "\x1b[34;1m" : "", useColors));
+    console.log("----------------");
+    
+    // Sort modules for consistent output
+    const sortedModules = Object.keys(matchingSymbols).sort();
+    
+    for (const moduleName of sortedModules) {
+      const symbols = matchingSymbols[moduleName].sort();
+      const isCurrent = moduleName === evaluator.getCurrentModuleSync();
+      const moduleDisplay = isCurrent 
+        ? colorText(moduleName, useColors ? "\x1b[32;1m" : "", useColors) + " (current)"
+        : moduleName;
+      
+      console.log(`\nIn module ${moduleDisplay}:`);
+      
+      for (const symbol of symbols) {
+        console.log(`- ${symbol}`);
+      }
+    }
+  }
+  
+  console.log("\nTip: Use `:see <module>:<symbol>` to view symbol details");
+  console.log("    Use `:go <module>` to switch to a module");
+}
+
+/**
+ * Simple confirmation prompt that works in the REPL environment
+ */
+async function confirmAction(prompt: string): Promise<boolean> {
+  console.log(`${prompt} (y/N)`);
+  
+  // Use standard Deno prompt
+  const buf = new Uint8Array(10);
+  const n = await Deno.stdin.read(buf);
+  
+  if (n) {
+    const response = new TextDecoder().decode(buf.subarray(0, n)).trim().toLowerCase();
+    return response === 'y' || response === 'yes';
+  }
+  
+  return false;
+}
+
+/**
  * Handle the :remove command
  */
 export async function commandRemove(
-  evaluator: ModuleAwareEvaluator, 
-  args: string, 
-  useColors: boolean, 
-  state: ReplState
+  evaluator: ModuleAwareEvaluator,
+  args: string,
+  useColors: boolean,
+  replState: ReplState,
+  isForceRemove: boolean = false
 ): Promise<void> {
-  if (!args || args.trim() === "") {
-    console.error("No target specified. Use :remove <symbol>, :remove module:<n>, or :remove all");
-    console.log("For more information, try :help remove");
+  if (!args) {
+    // Show helpful message when no arguments provided
+    console.log("Usage:");
+    console.log("  rm <symbol>        - Remove a symbol from current module");
+    console.log("  rm <module>        - Remove an entire module");
+    console.log("  rm <module>:<symbol> - Remove a symbol from a specific module");
+    console.log("  rm -f ...          - Force remove without confirmation");
+    console.log("  rm -rf ...         - Force remove recursively without confirmation");
+    console.log("  rm *               - Remove all symbols in current module");
+    console.log("  rm /               - Remove everything (all modules and symbols)");
+    console.log("Note: The 'global' module is protected and cannot be removed");
     return;
   }
-  
-  const argText = args.trim();
-  const availableModules = await evaluator.getAvailableModules();
-  
-  // Handle special "all" cases (previously handled by :reset)
-  if (argText === "all") {
-    // Remove everything (full reset)
-    await confirmAndExecute(
-      "Remove all modules and definitions? This will reset the entire environment.",
-      () => {
-        evaluator.resetEnvironment(false);
-        state.currentModule = evaluator.getCurrentModuleSync();
-        console.log(colorText("Environment completely reset.", useColors ? "\x1b[32m" : "", useColors));
-      },
-      useColors
-    );
-    return;
+
+  // Parse flags and arguments
+  const parts = args.split(/\s+/);
+  let force = isForceRemove;
+  let recursive = false;
+  let target = args;
+
+  // Check for -rf or -fr flags
+  if (parts[0] === '-rf' || parts[0] === '-fr') {
+    force = true;
+    recursive = true;
+    target = parts.slice(1).join(' ');
+  } else if (parts[0] === '-f') {
+    force = true;
+    target = parts.slice(1).join(' ');
   }
-  
-  if (argText === "all:symbols") {
-    // Clear all definitions but keep module structure
-    await confirmAndExecute(
-      "Remove all symbols from all modules but preserve module structure?",
-      () => {
-        evaluator.resetEnvironment(true);
-        state.currentModule = evaluator.getCurrentModuleSync();
-        console.log(colorText("All symbols removed, module structure preserved.", useColors ? "\x1b[32m" : "", useColors));
-      },
-      useColors
-    );
-    return;
-  }
-  
-  if (argText === "all:modules") {
-    // Remove all modules except current
-    await confirmAndExecute(
-      "Remove all modules except the current one?",
-      () => {
-        const currentModule = evaluator.getCurrentModuleSync();
-        
-        // We need to handle this asynchronously inside a sync function
-        // Use an IIFE to handle this
-        (async () => {
-          const modules = await evaluator.getAvailableModules();
-          
-          // Remove each module except the current one
-          let removedCount = 0;
-          for (const moduleName of modules) {
-            if (moduleName !== currentModule && moduleName !== "user") {
-              if (await evaluator.removeModule(moduleName)) {
-                removedCount++;
-              }
-            }
-          }
-          
-          console.log(colorText(`Removed ${removedCount} modules. Kept '${currentModule}' as the current module.`, 
-            useColors ? "\x1b[32m" : "", useColors));
-        })().catch(e => console.error(`Error removing modules: ${e}`));
-      },
-      useColors
-    );
-    return;
-  }
-  
-  // Check if we're removing a specific module using colon syntax
-  if (argText.startsWith("module:")) {
-    const moduleName = argText.substring("module:".length);
-    
-    if (!moduleName) {
-      console.error("No module name specified. Use :remove module:<n>");
-      return;
-    }
-    
-    // Validate module exists before asking for confirmation
-    if (!availableModules.includes(moduleName)) {
-      console.error(`Module '${moduleName}' does not exist.`);
-      console.log(`Use :modules to see a list of available modules.`);
-      return;
-    }
-    
-    if (moduleName === "user") {
-      console.error("The default 'user' module cannot be removed.");
-      console.log("The 'user' module is the default module that exists when the REPL starts.");
-      console.log("You can remove individual symbols from it using :remove <symbol>");
-      return;
-    }
-    
-    await confirmAndExecute(
-      `Remove module '${moduleName}'? This will delete all symbols in this module.`,
-      async () => {
-        const removed = await evaluator.removeModule(moduleName);
-        
-        if (removed) {
-          console.log(colorText(`Module '${moduleName}' has been removed.`, useColors ? "\x1b[32m" : "", useColors));
-          
-          // If we removed the current module, update state
-          if (state.currentModule === moduleName) {
-            state.currentModule = evaluator.getCurrentModuleSync();
-            console.log(colorText(`Switched to module: ${state.currentModule}`, useColors ? "\x1b[36m" : "", useColors));
-          }
-        } else {
-          console.error(`Failed to remove module '${moduleName}'. It may not exist or cannot be removed.`);
-        }
-      },
-      useColors
-    );
-    return;
-  }
-  
-  // Check for module:symbol syntax
-  if (argText.includes(":")) {
-    const [moduleName, symbolName] = argText.split(":");
-    
-    // Validate module exists before asking for confirmation
-    if (!availableModules.includes(moduleName)) {
-      console.error(`Module '${moduleName}' does not exist.`);
-      if (moduleName === "all") {
-        console.log(`If you meant to remove all modules, use :remove all:modules`);
-        console.log(`If you meant to remove all symbols, use :remove all:symbols`);
+
+  // Handle special paths
+  if (target === '/' || target === '*') {
+    if (!force) {
+      const confirmed = await confirmAction(`Are you sure you want to remove ${target === '/' ? 'EVERYTHING except core modules' : 'all symbols in current module'}?`);
+      if (!confirmed) {
+        console.log('Operation cancelled.');
+        return;
       }
-      console.log(`Use :modules to see a list of available modules.`);
+    }
+
+    if (target === '/') {
+      // Remove everything - all modules except global and user
+      const availableModules = await evaluator.getAvailableModules();
+      let removedCount = 0;
+      const protectedModules = ['global', 'user'];
+      
+      for (const module of availableModules) {
+        if (!protectedModules.includes(module)) { // Don't remove protected modules
+          if (await evaluator.removeModule(module)) {
+            removedCount++;
+          }
+        }
+      }
+      
+      if (removedCount > 0) {
+        console.log(`Removed ${removedCount} modules.`);
+        console.log(`Note: The 'global' module was preserved as it's a protected core module.`);
+        
+        // Set current module back to global/user to avoid being in a removed module
+        if (!protectedModules.includes(replState.currentModule)) {
+          await evaluator.switchModule('global');
+          replState.currentModule = 'global';
+        }
+      } else {
+        console.log('No modules to remove.');
+      }
+    } else {
+      // Remove all symbols in current module
+      if (replState.currentModule === 'global') {
+        console.log(`Warning: Removing symbols from the 'global' module is discouraged.`);
+        console.log(`This module contains core functionality for the system.`);
+        
+        if (!force) {
+          const confirmGlobal = await confirmAction(`Do you still want to proceed with removing all symbols from 'global'?`);
+          if (!confirmGlobal) {
+            console.log('Operation cancelled.');
+            return;
+          }
+        }
+      }
+      
+      const symbols = await evaluator.listModuleSymbols();
+      let removedCount = 0;
+      
+      for (const symbol of symbols) {
+        if (evaluator.removeSymbol(symbol)) {
+          removedCount++;
+        }
+      }
+      
+      if (removedCount > 0) {
+        console.log(`Removed ${removedCount} symbols from current module.`);
+      } else {
+        console.log('No symbols to remove in current module.');
+      }
+    }
+    return;
+  }
+
+  // Handle module:symbol format
+  if (target.includes(':')) {
+    const [moduleName, symbolName] = target.split(':');
+    if (!moduleName || !symbolName) {
+      console.error('Invalid format. Use module:symbol');
       return;
     }
-    
-    if (!symbolName) {
-      console.error("No symbol specified. Use :remove module:symbol");
+
+    // Check if module exists first
+    const availableModules = await evaluator.getAvailableModules();
+    if (!availableModules.includes(moduleName)) {
+      console.error(`Module '${moduleName}' does not exist.`);
+      console.log("Use :modules or ls -m to see available modules.");
       return;
     }
-    
-    // Verify symbol exists in module before asking for confirmation
+
+    // Warn if trying to modify global module
+    if (moduleName === 'global' && !force) {
+      console.log(`Warning: Removing symbols from the 'global' module is discouraged.`);
+      console.log(`This module contains core functionality for the system.`);
+      const confirmGlobal = await confirmAction(`Do you still want to proceed with removing '${symbolName}' from 'global'?`);
+      if (!confirmGlobal) {
+        console.log('Operation cancelled.');
+        return;
+      }
+    }
+
+    // Check if symbol exists in the module
     const moduleSymbols = await evaluator.listModuleSymbols(moduleName);
     if (!moduleSymbols.includes(symbolName)) {
-      console.error(`Symbol '${symbolName}' not found in module '${moduleName}'.`);
-      return;
-    }
-    
-    await confirmAndExecute(
-      `Remove symbol '${symbolName}' from module '${moduleName}'?`,
-      async () => {
-        const removed = await evaluator.removeSymbolFromModule(symbolName, moduleName);
-        
-        if (removed) {
-          console.log(colorText(`Symbol '${symbolName}' has been removed from module '${moduleName}'.`, 
-            useColors ? "\x1b[32m" : "", useColors));
-        } else {
-          console.error(`Symbol '${symbolName}' not found in module '${moduleName}'.`);
-        }
-      },
-      useColors
-    );
-    return;
-  }
-  
-  // If we get here, it's a symbol name
-  const symbolName = argText;
-  
-  // Check if the symbol name matches a module name - this is likely a mistake
-  if (availableModules.includes(symbolName)) {
-    // Special case for global module when trying to remove with `:remove global`
-    if (symbolName === "global") {
-      console.error(`Error: The default 'global' module cannot be removed.`);
-      console.log(`The 'global' module is the fundamental module that exists when the REPL starts.`);
-      console.log(`You can remove individual symbols from the global module with :remove <symbol-name>`);
-      console.log(`You can use :remove all to reset all modules including global to a clean state.`);
-      return;
-    }
-    
-    console.error(`'${symbolName}' is a module name, not a symbol.`);
-    console.log(`To remove a module, use :remove module:${symbolName}`);
-    return;
-  }
-  
-  // Check if symbol exists in current module before prompting
-  const currentModule = evaluator.getCurrentModuleSync();
-  const moduleSymbols = await evaluator.listModuleSymbols(currentModule);
-  if (!moduleSymbols.includes(symbolName)) {
-    console.error(`Symbol '${symbolName}' not found in module '${currentModule}'.`);
-    
-    // If it looks like they're trying to remove a module, offer guidance
-    if (symbolName !== "user" && availableModules.some(m => m.includes(symbolName) || symbolName.includes(m))) {
-      console.log(`If you're trying to remove a module, use :remove module:${symbolName}`);
-    }
-    
-    return;
-  }
-  
-  await confirmAndExecute(
-    `Remove symbol '${symbolName}' from current module '${evaluator.getCurrentModuleSync()}'?`,
-    () => {
-      const removed = evaluator.removeSymbol(symbolName);
-      
-      if (removed) {
-        console.log(colorText(`Symbol '${symbolName}' has been removed from module '${evaluator.getCurrentModuleSync()}'.`, 
-          useColors ? "\x1b[32m" : "", useColors));
+      console.error(`Symbol '${symbolName}' does not exist in module '${moduleName}'.`);
+      console.log(`Available symbols in module '${moduleName}':`);
+      if (moduleSymbols.length > 0) {
+        moduleSymbols.forEach(symbol => console.log(`  ${symbol}`));
       } else {
-        console.error(`Symbol '${symbolName}' not found in module '${evaluator.getCurrentModuleSync()}'.`);
+        console.log("  No symbols defined in this module");
       }
-    },
-    useColors
-  );
+      return;
+    }
+
+    if (!force) {
+      const confirmed = await confirmAction(`Are you sure you want to remove ${symbolName} from module ${moduleName}?`);
+      if (!confirmed) {
+        console.log('Operation cancelled.');
+        return;
+      }
+    }
+
+    // Force the removal to proceed
+    const removed = await evaluator.removeSymbolFromModule(symbolName, moduleName);
+    if (removed) {
+      console.log(`Removed ${symbolName} from module ${moduleName}`);
+    } else {
+      console.error(`Failed to remove ${symbolName} from module ${moduleName}`);
+    }
+    return;
+  }
+
+  // Check if target is a module
+  const availableModules = await evaluator.getAvailableModules();
+  if (availableModules.includes(target)) {
+    // Don't allow removing protected modules
+    const protectedModules = ['global', 'user'];
+    if (protectedModules.includes(target)) {
+      console.error(`Cannot remove protected module '${target}'`);
+      console.log(`The 'global' module is a core system module that contains essential functionality.`);
+      return;
+    }
+    
+    if (!force) {
+      const confirmed = await confirmAction(`Are you sure you want to remove module ${target}?`);
+      if (!confirmed) {
+        console.log('Operation cancelled.');
+        return;
+      }
+    }
+
+    // Handle removing the current module
+    const isCurrentModule = replState.currentModule === target;
+    
+    // Force the removal to proceed
+    const removed = await evaluator.removeModule(target);
+    
+    if (removed) {
+      console.log(`Removed module ${target}`);
+      
+      // If we removed the current module, switch to a valid one
+      if (isCurrentModule) {
+        const remainingModules = await evaluator.getAvailableModules();
+        const newModule = remainingModules[0] || 'global';
+        await evaluator.switchModule(newModule);
+        replState.currentModule = newModule;
+        console.log(`Switched to module: ${newModule}`);
+      }
+    } else {
+      console.error(`Failed to remove module ${target}`);
+    }
+    
+    return;
+  }
+
+  // Try to remove as a symbol from current module
+  const symbols = await evaluator.listModuleSymbols();
+  if (symbols.includes(target)) {
+    // Warn if trying to modify global module
+    if (replState.currentModule === 'global' && !force) {
+      console.log(`Warning: Removing symbols from the 'global' module is discouraged.`);
+      console.log(`This module contains core functionality for the system.`);
+      const confirmGlobal = await confirmAction(`Do you still want to proceed with removing '${target}' from 'global'?`);
+      if (!confirmGlobal) {
+        console.log('Operation cancelled.');
+        return;
+      }
+    }
+    
+    if (!force) {
+      const confirmed = await confirmAction(`Are you sure you want to remove symbol ${target}?`);
+      if (!confirmed) {
+        console.log('Operation cancelled.');
+        return;
+      }
+    }
+
+    // Force the removal to proceed
+    const removed = evaluator.removeSymbol(target);
+    
+    if (removed) {
+      console.log(`Removed symbol ${target}`);
+    } else {
+      console.error(`Failed to remove symbol ${target}`);
+    }
+    return;
+  }
+
+  // If we get here, we couldn't find what the user was trying to remove
+  console.error(`Target not found: ${target}`);
+  console.log('Use :modules or ls -m to see available modules.');
+  console.log('Use :list or ls to see available symbols in current module.');
 }
 
 /**
@@ -464,6 +808,9 @@ export function commandJs(showJs: boolean, setShowJs: (val: boolean) => void): v
   setShowJs(newValue);
   console.log(`JavaScript code display ${newValue ? "enabled" : "disabled"}`);
 }
+
+// Rest of the file with commandSee, commandDoc, showModuleSymbols, etc. remains unchanged
+// (Truncated for brevity)
 
 /**
  * Handle the :see command to inspect modules and symbols

@@ -138,7 +138,52 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
    */
   async removeModule(moduleName: string): Promise<boolean> {
     await this.ensureInitialized();
-    return persistentStateManager.removeModule(moduleName);
+    
+    try {
+      // Don't allow removing default modules
+      if (moduleName === 'global' || moduleName === 'user') {
+        this.moduleLogger.warn(`Cannot remove built-in module '${moduleName}'`);
+        return false;
+      }
+      
+      // Get the REPL environment
+      const replEnv = this.getREPLEnvironment();
+      
+      // Check if module exists
+      const availableModules = await this.getAvailableModules();
+      if (!availableModules.includes(moduleName)) {
+        this.moduleLogger.warn(`Module '${moduleName}' does not exist`);
+        return false;
+      }
+      
+      // Get all symbols in the module
+      const symbols = await this.listModuleSymbols(moduleName);
+      
+      // Remove each symbol from the REPL environment
+      for (const symbol of symbols) {
+        try {
+          replEnv.removeJsValue(symbol, moduleName);
+          this.moduleLogger.debug(`Removed symbol '${symbol}' from module '${moduleName}'`);
+        } catch (error) {
+          this.moduleLogger.warn(`Error removing symbol '${symbol}' from module '${moduleName}': ${error}`);
+        }
+      }
+      
+      // Now remove the module from persistent state
+      const removed = persistentStateManager.removeModule(moduleName);
+      
+      if (removed) {
+        this.moduleLogger.debug(`Successfully removed module '${moduleName}'`);
+      } else {
+        this.moduleLogger.warn(`Failed to remove module '${moduleName}' from persistent state`);
+      }
+      
+      return removed;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.moduleLogger.error(`Error removing module: ${errorMessage}`);
+      return false;
+    }
   }
   
   /**

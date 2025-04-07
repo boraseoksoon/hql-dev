@@ -48,7 +48,7 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, currentModu
       try {
         // First, check for module-related commands that should autocomplete module names
         const moduleCommands = [
-          "cd ", "ls ", ":module ", ":mod ", ":see ", "mkdir "
+          "cd ", ":go ", ":goto ", ":module ", ":mod ", ":see ", "mkdir "
         ];
         
         for (const cmdPrefix of moduleCommands) {
@@ -64,7 +64,39 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, currentModu
           }
         }
         
-        // Handle special case for :see <module>:
+        // Context-specific completions for commands with subcommands/options
+        
+        // Handle :help command completion - show available commands
+        if (line.trim().startsWith(':help ')) {
+          const partialCmd = line.trim().substring(':help '.length);
+          const commands = [
+            "help", "quit", "exit", "env", "macros", 
+            "go", "modules", "list", "find", "see", "remove",
+            "verbose", "ast", "js", "doc", "cli"
+          ];
+          
+          // Return matching commands for :help context
+          return commands
+            .filter(cmd => cmd.startsWith(partialCmd))
+            .map(cmd => `:help ${cmd}`);
+        }
+        
+        // Handle man command completion - similar to help
+        if (line.trim().startsWith('man ')) {
+          const partialCmd = line.trim().substring('man '.length);
+          const commands = [
+            "help", "quit", "exit", "env", "macros", 
+            "go", "modules", "list", "find", "see", "remove",
+            "cli", "ls", "cd", "pwd", "mkdir", "man", "rm"
+          ];
+          
+          // Return matching commands for man context
+          return commands
+            .filter(cmd => cmd.startsWith(partialCmd))
+            .map(cmd => `man ${cmd}`);
+        }
+        
+        // Handle :see <module>:
         if (line.trim().startsWith(':see ') && line.includes(':')) {
           const parts = line.trim().substring(':see '.length).split(':');
           if (parts.length === 2) {
@@ -89,8 +121,8 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, currentModu
           const commandPart = line.trim().substring(1); // Remove the colon
           const commands = [
             "help", "quit", "exit", "env", "macros", 
-            "module", "modules", "list", "see", "remove",
-            "verbose", "ast", "js", "doc"
+            "go", "modules", "list", "see", "remove",
+            "find", "verbose", "ast", "js", "doc", "cli"
           ];
           
           // Filter commands based on what's already typed

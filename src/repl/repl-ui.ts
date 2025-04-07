@@ -157,40 +157,63 @@ export function formatSourceCode(source: string): string {
  * Print the REPL welcome banner with commands and info
  */
 export function printBanner(useColors = false): void {
-  const headerColor = useColors ? colors.fg.sicpPurple + colors.bright : "";
-  const textColor = useColors ? colors.fg.white : "";
-  const commandColor = useColors ? colors.fg.sicpRed : "";
-  const noteColor = useColors ? colors.fg.lightGreen : "";
-  const reset = useColors ? colors.reset : "";
-  const banner = [
-    `${headerColor}╔════════════════════════════════════════════════════════════╗${reset}`,
-    `${headerColor}║                ${textColor}HQL S-Expression REPL${headerColor}                        ║${reset}`,
-    `${headerColor}╠════════════════════════════════════════════════════════════╣${reset}`,
-    `${headerColor}║  ${textColor}Type HQL expressions to evaluate them${headerColor}                      ║${reset}`,
-    `${headerColor}║  ${noteColor}The prompt ${textColor}hql[module]>${noteColor} shows your current module${headerColor}               ║${reset}`,
-    `${headerColor}║  ${textColor}Special commands:${headerColor}                                          ║${reset}`,
-    `${headerColor}║    ${commandColor}:help${textColor} - Display help (use ${commandColor}:help <command>${textColor} for details)     ║${reset}`,
-    `${headerColor}║    ${commandColor}:quit${textColor}, ${commandColor}:exit${textColor} - Exit the REPL${headerColor}                             ║${reset}`,
-    `${headerColor}║    ${commandColor}:env${textColor} - Show environment bindings${headerColor}                         ║${reset}`,
-    `${headerColor}║    ${commandColor}:macros${textColor} - Show defined macros${headerColor}                            ║${reset}`,
-    `${headerColor}║    ${commandColor}:module${textColor} - Switch to module or show current${headerColor}               ║${reset}`,
-    `${headerColor}║    ${commandColor}:modules${textColor} - List all available modules${headerColor}                    ║${reset}`,
-    `${headerColor}║    ${commandColor}:list${textColor} - Show symbols in current module${headerColor}                   ║${reset}`,
-    `${headerColor}║    ${commandColor}:see${textColor} - Inspect modules and symbols${headerColor}                       ║${reset}`,
-    `${headerColor}║    ${commandColor}:doc${textColor} - Show documentation for a symbol or module${headerColor}         ║${reset}`,
-    `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
-    `${headerColor}║    ${commandColor}:verbose ${textColor}[expr] - Toggle verbose mode or evaluate with details${headerColor} ║${reset}`,
-    `${headerColor}║    ${commandColor}:ast ${textColor}[expr] - Toggle AST display or show AST for expression${headerColor}    ║${reset}`,
-    `${headerColor}║    ${commandColor}:js ${textColor}[expr] - Show JavaScript transpilation for expression${headerColor}      ║${reset}`,
-    `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
-  ];
-  banner.forEach(line => console.log(line));
+    const headerColor = useColors ? colors.fg.sicpPurple + colors.bright : "";
+    const textColor = useColors ? colors.fg.white : "";
+    const commandColor = useColors ? colors.fg.sicpRed : "";
+    const cliColor = useColors ? colors.fg.cyan : "";
+    const noteColor = useColors ? colors.fg.lightGreen : "";
+    const reset = useColors ? colors.reset : "";
+    const banner = [
+      `${headerColor}╔════════════════════════════════════════════════════════════╗${reset}`,
+      `${headerColor}║                ${textColor}HQL S-Expression REPL${headerColor}                        ║${reset}`,
+      `${headerColor}╠════════════════════════════════════════════════════════════╣${reset}`,
+      `${headerColor}║  ${textColor}Type HQL expressions to evaluate them${headerColor}                      ║${reset}`,
+      `${headerColor}║  ${noteColor}The prompt ${textColor}hql[module]>${noteColor} shows your current module${headerColor}               ║${reset}`,
+      `${headerColor}║  ${textColor}commands:${headerColor}                                                  ║${reset}`,
+      `${headerColor}║    ${commandColor}:help${textColor} - Display help (use ${commandColor}:help <command>${textColor} for details)     ║${reset}`,
+      `${headerColor}║    ${commandColor}:quit${textColor}, ${commandColor}:exit${textColor} - Exit the REPL${headerColor}                             ║${reset}`,
+      `${headerColor}║    ${commandColor}:env${textColor} - Show environment bindings${headerColor}                         ║${reset}`,
+      `${headerColor}║    ${commandColor}:macros${textColor} - Show defined macros${headerColor}                            ║${reset}`,
+      `${headerColor}║    ${commandColor}:go${textColor} - Switch to module or show current${headerColor}                   ║${reset}`,
+      `${headerColor}║    ${commandColor}:modules${textColor} - List all available modules${headerColor}                    ║${reset}`,
+      `${headerColor}║    ${commandColor}:list${textColor} - Show symbols in current module${headerColor}                   ║${reset}`,
+      `${headerColor}║    ${commandColor}:find${textColor} - Search for symbols and modules${headerColor}                   ║${reset}`,
+      `${headerColor}║    ${commandColor}:see${textColor} - Inspect modules and symbols${headerColor}                       ║${reset}`,
+      `${headerColor}║    ${commandColor}:doc${textColor} - Show documentation for a symbol or module${headerColor}         ║${reset}`,
+      `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
+      `${headerColor}║  ${textColor}cli:${headerColor}                                                       ║${reset}`,
+      `${headerColor}║    ${cliColor}ls${textColor} - List symbols in current module${headerColor}                        ║${reset}`,
+      `${headerColor}║    ${cliColor}cd <module>${textColor} - Switch to a different module${headerColor}                 ║${reset}`,
+      `${headerColor}║    ${cliColor}pwd${textColor} - Show current module${headerColor}                                  ║${reset}`,
+      `${headerColor}║    ${cliColor}find <term>${textColor} - Search for symbols and modules${headerColor}               ║${reset}`,
+      `${headerColor}║    ${cliColor}mkdir <module>${textColor} - Create a new module${headerColor}                       ║${reset}`,
+      `${headerColor}║    ${cliColor}man <command>${textColor} - Show help for a command${headerColor}                    ║${reset}`,
+      `${headerColor}║    ${cliColor}rm <target>${textColor} - Remove symbols or modules${headerColor}                    ║${reset}`,
+      `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
+    ];
+    banner.forEach(line => console.log(line));
 }
 
 /**
  * Pretty-print the result with proper formatting and syntax highlighting
  */
-export function prettyPrintResult(result: any, useColors: boolean): void {
+export function prettyPrintResult(result: any, useColors: boolean, verbose: boolean = false): void {
+  // Check for evaluation result objects with a "value" property (from the evaluator)
+  if (result !== null && typeof result === 'object' && 'value' in result && !verbose) {
+    // Simplified output - just show the value
+    const value = result.value;
+    
+    // Handle undefined/null returned from function definitions
+    if (value === undefined || value === null) {
+      console.log(useColors ? `${colors.fg.gray}${String(value)}${colors.reset}` : String(value));
+      return;
+    }
+    
+    // For other values, pretty print just the value
+    prettyPrintValue(value, useColors);
+    return;
+  }
+  
   if (result === undefined || result === null) {
     console.log(useColors ? `${colors.fg.gray}${String(result)}${colors.reset}` : String(result));
     return;
@@ -478,32 +501,56 @@ function prettyPrintObject(obj: object, useColors: boolean, indent: number): voi
 }
 
 /**
- * Pretty-print a simple value with color
+ * Helper function to print just a value (used for simplified output)
  */
 function prettyPrintValue(value: any, useColors: boolean): void {
   const numberColor = useColors ? colors.fg.yellow : "";
   const stringColor = useColors ? colors.fg.green : "";
+  const symbolColor = useColors ? colors.fg.sicpBlue : "";
   const boolColor = useColors ? colors.fg.magenta : "";
-  const nullColor = useColors ? colors.fg.gray : "";
   const reset = useColors ? colors.reset : "";
   
-  if (value === null || value === undefined) {
-    process.stdout.write(`${nullColor}${value}${reset}`);
+  if (value === undefined || value === null) {
+    console.log(useColors ? `${colors.fg.gray}${String(value)}${colors.reset}` : String(value));
+    return;
   }
-  else if (typeof value === 'number') {
-    process.stdout.write(`${numberColor}${value}${reset}`);
-  }
-  else if (typeof value === 'string') {
-    if (value.startsWith('"') && value.endsWith('"')) {
-      process.stdout.write(`${stringColor}${value}${reset}`);
-    } else {
-      process.stdout.write(`${stringColor}"${value}"${reset}`);
+  
+  // Handle different types directly
+  if (Array.isArray(value)) {
+    try {
+      prettyPrintArray(value, useColors, 0);
+    } catch (error) {
+      console.log(value);
     }
   }
+  else if (typeof value === 'number') {
+    console.log(`${numberColor}${value}${reset}`);
+  } 
+  else if (typeof value === 'string') {
+    if (value.startsWith('"') && value.endsWith('"')) {
+      console.log(`${stringColor}${value}${reset}`);
+    } else {
+      console.log(`${symbolColor}${value}${reset}`);
+    }
+  } 
   else if (typeof value === 'boolean') {
-    process.stdout.write(`${boolColor}${value}${reset}`);
+    console.log(`${boolColor}${value}${reset}`);
+  }
+  else if (value instanceof Map) {
+    try {
+      prettyPrintMap(value, useColors, 0);
+    } catch (error) {
+      console.log(Object.fromEntries(value));
+    }
+  }
+  else if (typeof value === 'object') {
+    try {
+      prettyPrintObject(value, useColors, 0);
+    } catch (error) {
+      console.log(value);
+    }
   }
   else {
-    process.stdout.write(String(value));
+    console.log(String(value));
   }
 }

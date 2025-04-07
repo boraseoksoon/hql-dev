@@ -118,8 +118,20 @@ export interface ReplState {
   /**
    * Update the paren balance count based on the given line
    */
-  export function updateParenBalance(line: string, currentBalance: number): number {
+  export function updateParenBalance(line: string, currentBalance: number, bracketStack: string[]): number {
     const result = getUnbalancedBrackets(line);
+    
+    // Update the provided bracket stack based on what we parsed
+    if (bracketStack) {
+      // Clear the stack first
+      bracketStack.length = 0;
+      
+      // Then add all brackets from the result
+      for (const bracket of result.bracketStack) {
+        bracketStack.push(bracket);
+      }
+    }
+    
     return currentBalance + result.balance;
   }
   
