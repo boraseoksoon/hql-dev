@@ -2073,82 +2073,85 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     if (enableCompletion) {
       tabCompletion = {
         getCompletions: async (line: string, cursorPos: number): Promise<string[]> => {
-          // First, check for module-related commands that should autocomplete module names
-          const moduleCommands = [
-            "cd ", "ls ", ":module ", ":mod ", ":see "
-          ];
-          
-          for (const cmdPrefix of moduleCommands) {
-            if (line.trim().startsWith(cmdPrefix)) {
-              // Extract the partial module name after the command
-              const partialModule = line.trim().substring(cmdPrefix.length);
-              
-              // Get the current list of available modules (not cached - dynamic)
-              const modules = await evaluator.getAvailableModules();
-              
-              // Filter modules that match the partial input
-              return modules.filter(mod => mod.startsWith(partialModule));
-            }
-          }
-          
-          // Handle special case for :see <module>:
-          if (line.trim().startsWith(':see ') && line.includes(':')) {
-            const parts = line.trim().substring(':see '.length).split(':');
-            if (parts.length === 2) {
-              const moduleName = parts[0];
-              const partialSymbol = parts[1];
-              
-              // Get symbols from the specified module
-              try {
-                const moduleSymbols = await evaluator.listModuleSymbols(moduleName);
-                return moduleSymbols
-                  .filter(sym => sym.startsWith(partialSymbol))
-                  .map(sym => `${moduleName}:${sym}`);
-              } catch (e) {
-                // Module not found or error fetching symbols
-                return [];
-              }
-            }
-          }
-          
-          // Command completion (starts with :)
-          if (line.trim().startsWith(':')) {
-            const commandPart = line.trim().substring(1); // Remove the colon
-            const commands = [
-              "help", "quit", "exit", "env", "macros", 
-              "module", "modules", "list", "see", "remove",
-              "verbose", "ast", "js", "doc"
+          try {
+            // First, check for module-related commands that should autocomplete module names
+            const moduleCommands = [
+              "cd ", "ls ", ":module ", ":mod ", ":see ", "mkdir "
             ];
             
-            // Filter commands based on what's already typed
-            return commands
-              .filter(cmd => cmd.startsWith(commandPart))
-              .map(cmd => `:${cmd}`); // Add the colon back
-          }
-          
-          // CLI shortcuts like mkdir
-          if (line.trim().startsWith('mkdir ')) {
-            // For mkdir, suggest a default module name if nothing is typed yet
-            const partialName = line.trim().substring('mkdir '.length);
-            if (partialName === '') {
-              return ['my-module'];
+            for (const cmdPrefix of moduleCommands) {
+              if (line.trim().startsWith(cmdPrefix)) {
+                // Extract the partial module name after the command
+                const partialModule = line.trim().substring(cmdPrefix.length);
+                
+                // Get the current list of available modules (not cached - dynamic)
+                const modules = await evaluator.getAvailableModules();
+                
+                // Filter modules that match the partial input
+                return modules.filter(mod => mod.startsWith(partialModule));
+              }
             }
-            return [];
-          }
-          
-          // Get current module exports and environment bindings for symbol completion
-          const currentModule = replState.currentModule;
-          const symbols: string[] = [];
-          
-          try {
+            
+            // Handle special case for :see <module>:
+            if (line.trim().startsWith(':see ') && line.includes(':')) {
+              const parts = line.trim().substring(':see '.length).split(':');
+              if (parts.length === 2) {
+                const moduleName = parts[0];
+                const partialSymbol = parts[1];
+                
+                // Get symbols from the specified module
+                try {
+                  const moduleSymbols = await evaluator.listModuleSymbols(moduleName);
+                  return moduleSymbols
+                    .filter(sym => sym.startsWith(partialSymbol))
+                    .map(sym => `${moduleName}:${sym}`);
+                } catch (e) {
+                  // Module not found or error fetching symbols
+                  return [];
+                }
+              }
+            }
+            
+            // Command completion (starts with :)
+            if (line.trim().startsWith(':')) {
+              const commandPart = line.trim().substring(1); // Remove the colon
+              const commands = [
+                "help", "quit", "exit", "env", "macros", 
+                "module", "modules", "list", "see", "remove",
+                "verbose", "ast", "js", "doc"
+              ];
+              
+              // Filter commands based on what's already typed
+              return commands
+                .filter(cmd => cmd.startsWith(commandPart))
+                .map(cmd => `:${cmd}`); // Add the colon back
+            }
+            
+            // Get current module exports and environment bindings for symbol completion
+            const currentModule = replState.currentModule;
+            const symbols: string[] = [];
+            
             // Get current module's symbols (always fetch fresh for dynamic updates)
             const moduleSymbols = await evaluator.listModuleSymbols(currentModule);
             symbols.push(...moduleSymbols);
             
+            // Get imported symbols from other modules
+            const allModules = await evaluator.getAvailableModules();
+            for (const moduleName of allModules) {
+              if (moduleName !== currentModule) {
+                // Get the exports from this module
+                const exports = await evaluator.getModuleExports(moduleName);
+                // Only add exported symbols from other modules
+                if (exports.length > 0) {
+                  symbols.push(...exports);
+                }
+              }
+            }
+            
             // Get special forms and keywords
             const specialForms = [
               // Core special forms
-              "if", "let", "lambda", "fn", "def", "import", "module", "do", "quote",
+              "if", "let", "lambda", "fn", "def", "defn", "import", "module", "do", "quote",
               // Control flow
               "loop", "recur", "when", "unless", "cond", "case",
               // Collections
@@ -2169,11 +2172,13 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
             if (currentWord) {
               return symbols.filter(sym => sym.startsWith(currentWord));
             }
+            
+            return symbols;
           } catch (error) {
-            // Ignore errors during completion
+            // Silently handle errors in completion
+            console.error(`Autocompletion error: ${error instanceof Error ? error.message : String(error)}`);
+            return [];
           }
-          
-          return symbols;
         }
       };
     }
@@ -2291,8 +2296,11 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           const moduleName = input.trim().substring(6).trim();
           if (moduleName) {
             try {
-              // Create a module directly
-              await evaluator.evaluate(`(module ${moduleName})`, {});
+              // Create a module using the evaluator's switchModule function which will create if not exists
+              await evaluator.switchModule(moduleName);
+              // Return to the original module
+              const currentModule = replState.currentModule;
+              await evaluator.switchModule(currentModule);
               console.log(`Created module: ${moduleName}`);
             } catch (error) {
               console.error(`Error creating module: ${error instanceof Error ? error.message : String(error)}`);
