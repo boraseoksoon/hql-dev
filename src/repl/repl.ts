@@ -63,7 +63,7 @@ function printBanner(useColors = false): void {
     `${headerColor}║  ${textColor}Type HQL expressions to evaluate them${headerColor}                      ║${reset}`,
     `${headerColor}║  ${noteColor}The prompt ${textColor}hql[module]>${noteColor} shows your current module${headerColor}               ║${reset}`,
     `${headerColor}║  ${textColor}Special commands:${headerColor}                                          ║${reset}`,
-    `${headerColor}║    ${commandColor}:help${textColor} - Display help (use ${commandColor}:help <command>${textColor} for details)${headerColor}     ║${reset}`,
+    `${headerColor}║    ${commandColor}:help${textColor} - Display help (use ${commandColor}:help <command>${textColor} for details)     ║${reset}`,
     `${headerColor}║    ${commandColor}:quit${textColor}, ${commandColor}:exit${textColor} - Exit the REPL${headerColor}                             ║${reset}`,
     `${headerColor}║    ${commandColor}:env${textColor} - Show environment bindings${headerColor}                         ║${reset}`,
     `${headerColor}║    ${commandColor}:macros${textColor} - Show defined macros${headerColor}                            ║${reset}`,
@@ -72,8 +72,9 @@ function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:list${textColor} - Show symbols in current module${headerColor}                   ║${reset}`,
     `${headerColor}║    ${commandColor}:see${textColor} - Inspect modules and symbols${headerColor}                       ║${reset}`,
     `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
-    `${headerColor}║    ${commandColor}:write${textColor} - Open a text editor for multiline code${headerColor}           ║${reset}`,
-    `${headerColor}║    ${commandColor}:js${textColor} - Toggle JavaScript transpiled code display${headerColor}          ║${reset}`,
+    `${headerColor}║    ${commandColor}:verbose ${textColor}[expr] - Toggle verbose mode or evaluate with details${headerColor} ║${reset}`,
+    `${headerColor}║    ${commandColor}:ast ${textColor}[expr] - Toggle AST display or show AST for expression${headerColor}    ║${reset}`,
+    `${headerColor}║    ${commandColor}:js ${textColor}[expr] - Show JavaScript transpilation for expression${headerColor}      ║${reset}`,
     `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
   ];
   banner.forEach(line => console.log(line));
@@ -98,40 +99,28 @@ function getPrompt(state: ReplState, useColors: boolean): string {
 /* ─────────────────────────────────────────────────────────────────────────────
    REPL State Helpers
 ───────────────────────────────────────────────────────────────────────────── */
+// Define the ReplState interface first - with bracketStack property
 interface ReplState {
   multilineMode: boolean;
   multilineInput: string;
   parenBalance: number;
   importHandlerActive: boolean;
-  currentModule: string;  // Added current module tracking
+  currentModule: string;
+  bracketStack: string[];  // Added to track opening brackets
 }
 
+// Then update the resetReplState function to include the bracketStack
 function resetReplState(state: ReplState): void {
   state.multilineMode = false;
   state.multilineInput = "";
   state.parenBalance = 0;
-  // Don't reset currentModule - it should persist
+  state.importHandlerActive = false;
+  state.bracketStack = [];  // Reset bracket stack
 }
 
 function updateParenBalance(line: string, currentBalance: number): number {
-  let balance = currentBalance;
-  let inString = false;
-  
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    
-    // Handle string literals to avoid counting parens inside them
-    if (char === '"' && (i === 0 || line[i - 1] !== '\\')) {
-      inString = !inString;
-      continue;
-    }
-    
-    if (!inString) {
-      if (char === "(") balance++;
-      else if (char === ")") balance--;
-    }
-  }
-  return balance;
+  const result = getUnbalancedBrackets(line);
+  return currentBalance + result.balance;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1102,583 +1091,816 @@ interface ReadLineResult {
   indent?: string;
 }
 
+/**
+ * Checks if a line needs auto-indentation based on the previous line
+ */
+function needsIndentation(previousLine: string): boolean {
+  // Check if previous line ends with opening brackets or other indicators
+  const openingTokens = ["{", "[", "(", "->", "=>", "do", "then", "else"];
+  const trimmed = previousLine.trim();
+  
+  if (trimmed.length === 0) return false;
+  
+  // Check for typical functional constructs that need indentation
+  const functionalConstructs = [
+    /\(\s*fn\s+[^)]*$/,                  // (fn name
+    /\(\s*defn\s+[^)]*$/,                // (defn name
+    /\(\s*let\s+[^)]*$/,                 // (let [bindings]
+    /\(\s*if\s+[^)]*$/,                  // (if condition
+    /\(\s*when\s+[^)]*$/,                // (when condition
+    /\(\s*cond\s*$/,                     // (cond
+    /\(\s*case\s+[^)]*$/,                // (case value
+    /\(\s*map\s+[^)]*$/,                 // (map func
+    /\(\s*filter\s+[^)]*$/,              // (filter pred
+    /\(\s*reduce\s+[^)]*$/,              // (reduce func
+    /\(\s*for\s+[^)]*$/,                 // (for [bindings]
+    /\(\s*loop\s+[^)]*$/,                // (loop [bindings]
+    /\(\s*doseq\s+[^)]*$/,               // (doseq [bindings]
+    /\(\s*import\s+[^)]*$/,              // (import [...] from
+    /\(\s*export\s+[^)]*$/,              // (export [...])
+    /\[\s*[^]]*$/,                       // [ not closed
+    /\{\s*[^}]*$/                        // { not closed
+  ];
+  
+  // Check for opening bracket at the end
+  for (const token of openingTokens) {
+    if (trimmed.endsWith(token)) {
+      return true;
+    }
+  }
+  
+  // Check for functional constructs
+  for (const pattern of functionalConstructs) {
+    if (pattern.test(trimmed)) {
+      return true;
+    }
+  }
+  
+  // Check if we're in the middle of an unclosed bracket
+  const balanceResult = getUnbalancedBrackets(previousLine);
+  return balanceResult.openCount > balanceResult.closeCount;
+}
+
+/**
+ * Calculate proper indentation level based on the previous lines
+ */
+function calculateIndentation(lines: string[], lineIndex: number, defaultIndent = 2): string {
+  if (lineIndex <= 0) return "";
+  
+  const currentLine = lines[lineIndex].trimLeft();
+  const previousLine = lines[lineIndex - 1];
+  
+  // Get base indentation from the previous line
+  const previousIndent = getIndentation(previousLine);
+  
+  // Check for dedenting patterns (closing brackets)
+  if (currentLine.startsWith(")") || 
+      currentLine.startsWith("]") || 
+      currentLine.startsWith("}")) {
+    // Dedent one level
+    return previousIndent.slice(0, Math.max(0, previousIndent.length - defaultIndent));
+  }
+  
+  // Check if previous line should trigger an indent
+  if (needsIndentation(previousLine)) {
+    return previousIndent + " ".repeat(defaultIndent);
+  }
+  
+  // Otherwise, maintain the same indentation
+  return previousIndent;
+}
+
+/**
+ * Extract indentation string from a line
+ */
+function getIndentation(line: string): string {
+  const match = line.match(/^(\s*)/);
+  return match ? match[1] : "";
+}
+
+/**
+ * Get detailed information about bracket balance in a string
+ */
+function getUnbalancedBrackets(text: string): { 
+  openCount: number; 
+  closeCount: number; 
+  balance: number;
+  lastOpenType?: string;
+  lastCloseType?: string;
+  bracketStack: string[];
+} {
+  const result = {
+    openCount: 0,
+    closeCount: 0,
+    balance: 0,
+    lastOpenType: undefined as string | undefined,
+    lastCloseType: undefined as string | undefined,
+    bracketStack: [] as string[]
+  };
+  
+  const openBrackets = ["(", "[", "{"];
+  const closeBrackets = [")", "]", "}"];
+  const bracketPairs: Record<string, string> = {
+    "(": ")",
+    "[": "]",
+    "{": "}"
+  };
+  
+  // Skip content in string literals
+  let inString = false;
+  let escapeNext = false;
+  
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    
+    // Handle string literals
+    if (char === '"' && !escapeNext) {
+      inString = !inString;
+      continue;
+    }
+    
+    if (inString) {
+      if (char === '\\') {
+        escapeNext = !escapeNext;
+      } else {
+        escapeNext = false;
+      }
+      continue;
+    }
+    
+    // Process brackets
+    if (openBrackets.includes(char)) {
+      result.openCount++;
+      result.balance++;
+      result.lastOpenType = char;
+      result.bracketStack.push(char);
+    } else if (closeBrackets.includes(char)) {
+      result.closeCount++;
+      result.balance--;
+      result.lastCloseType = char;
+      
+      // Check if this is a matching close bracket
+      const lastOpen = result.bracketStack.pop();
+      if (lastOpen && bracketPairs[lastOpen] !== char) {
+        // Mismatched brackets
+        result.lastCloseType = `mismatched:${char}`;
+      }
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Get suggestion for fixing unbalanced brackets
+ */
+function getSuggestedClosing(bracketStack: string[]): string {
+  if (bracketStack.length === 0) return "";
+  
+  const bracketPairs: Record<string, string> = {
+    "(": ")",
+    "[": "]",
+    "{": "}"
+  };
+  
+  // Build closing sequence in reverse order
+  return bracketStack
+    .map(bracket => bracketPairs[bracket] || "")
+    .reverse()
+    .join("");
+}
+
+// Update existing readLineWithHistory function with enhanced bracket tracking
 async function readLineWithHistory(
   prompt: string, 
   history: string[], 
   state: ReplState,
-  tabCompletion?: TabCompletion  // Add tab completion parameter
+  tabCompletion?: TabCompletion
 ): Promise<ReadLineResult> {
-  const encoder = new TextEncoder();
-  await Deno.stdout.write(encoder.encode(prompt));
-  let currentInput = "", cursorPos = 0, historyIndex = history.length;
-  let historyNavigated = false;
+  // ... existing code ...
 
-  const redrawLine = async () => {
-    await Deno.stdout.write(encoder.encode("\r\x1b[K" + prompt + currentInput));
-    if (cursorPos < currentInput.length) {
-      await Deno.stdout.write(encoder.encode(`\x1b[${currentInput.length - cursorPos}D`));
-    }
-  };
-
-  const deleteWord = async () => {
-    if (cursorPos > 0) {
-      let newPos = cursorPos - 1;
-      while (newPos > 0 && /\s/.test(currentInput[newPos])) newPos--;
-      while (newPos > 0 && !/\s/.test(currentInput[newPos - 1])) newPos--;
-      currentInput = currentInput.slice(0, newPos) + currentInput.slice(cursorPos);
-      cursorPos = newPos;
-      await redrawLine();
-    }
-  };
-
-  // Calculate appropriate indentation for next line
+  // Enhanced getIndentation function
   const getIndentation = (): string => {
-    if (!state.multilineMode) return "";
+    let baseIndent = "";
     
-    const lastLine = state.multilineInput.split("\n").pop() || "";
+    // Adjust indentation based on line content for multiline mode
+    if (state.multilineMode && state.multilineInput) {
+      const lines = state.multilineInput.split("\n");
+      const newLineIndex = lines.length;
+      baseIndent = calculateIndentation(lines, newLineIndex);
+    }
     
-    // Extract current indentation level
-    const currentIndent = lastLine.match(/^(\s*)/)?.[1] || "";
-    
-    // Check if we need additional indentation for a new block
-    const shouldIndentMore = (
-      lastLine.trim().endsWith("(") || 
-      lastLine.includes("(let ") || 
-      lastLine.includes("(fn ") || 
-      lastLine.includes("(defn ") || 
-      lastLine.includes("(if ") ||
-      lastLine.includes("(when ") ||
-      lastLine.includes("(do ")
-    );
-    
-    return shouldIndentMore 
-      ? currentIndent + "  " // Add two spaces for deeper nesting
-      : currentIndent;       // Maintain current indentation
+    return baseIndent;
   };
 
-  // Handle tab completion
-  const handleTabCompletion = async (): Promise<void> => {
-    if (!tabCompletion) {
-      // If no tab completion is available, just insert spaces
-      currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
-      cursorPos += 2;
-      await redrawLine();
-      return;
-    }
-    
-    // Get completions for the current input
-    const result = await tabCompletion.getCompletions(currentInput);
-    
-    if (result.completions.length === 0) {
-      // No completions available, just insert spaces
-      currentInput = currentInput.slice(0, cursorPos) + "  " + currentInput.slice(cursorPos);
-      cursorPos += 2;
-      await redrawLine();
-      return;
-    }
-    
-    if (result.completions.length === 1) {
-      // Only one completion, insert it directly
-      const completion = result.completions[0];
-      const prefixLength = result.prefix.length;
-      const toInsert = completion.substring(prefixLength);
-      
-      // Replace the prefix with the completion
-      const beforeCursor = currentInput.substring(0, cursorPos);
-      const afterCursor = currentInput.substring(cursorPos);
-      
-      // Find where the prefix starts
-      const prefixStart = beforeCursor.lastIndexOf(result.prefix);
-      if (prefixStart !== -1) {
-        currentInput = beforeCursor.substring(0, prefixStart) + 
-                      completion + 
-                      afterCursor;
-        cursorPos = prefixStart + completion.length;
-        await redrawLine();
-      }
-      return;
-    }
-    
-    // Multiple completions, show them and do partial completion if possible
-    await Deno.stdout.write(encoder.encode("\n"));
-    tabCompletion.displayCompletions(result);
-    
-    // Find common prefix among completions for partial completion
-    const commonPrefix = findCommonPrefix(result.completions);
-    
-    // If we have a longer common prefix than the current input, use it
-    if (commonPrefix.length > result.prefix.length) {
-      const beforeCursor = currentInput.substring(0, cursorPos);
-      const afterCursor = currentInput.substring(cursorPos);
-      
-      // Find where the prefix starts
-      const prefixStart = beforeCursor.lastIndexOf(result.prefix);
-      if (prefixStart !== -1) {
-        currentInput = beforeCursor.substring(0, prefixStart) + 
-                      commonPrefix + 
-                      afterCursor;
-        cursorPos = prefixStart + commonPrefix.length;
-      }
-    }
-    
-    // Redraw the prompt and current input
-    await Deno.stdout.write(encoder.encode("\n" + prompt + currentInput));
-    if (cursorPos < currentInput.length) {
-      await Deno.stdout.write(encoder.encode(`\x1b[${currentInput.length - cursorPos}D`));
+  // ... existing code ...
+  
+  // Enhanced balance tracking
+  const updateBalanceTracking = (line: string): void => {
+    if (!state.multilineMode) {
+      const balanceResult = getUnbalancedBrackets(line);
+      state.parenBalance = balanceResult.balance;
+      state.bracketStack = balanceResult.bracketStack;
+    } else {
+      // For multiline mode, track balance across all content
+      const balanceResult = getUnbalancedBrackets(state.multilineInput + "\n" + line);
+      state.parenBalance = balanceResult.balance;
+      state.bracketStack = balanceResult.bracketStack;
     }
   };
   
-  // Helper function to find common prefix among strings
-  const findCommonPrefix = (strings: string[]): string => {
-    if (strings.length === 0) return "";
-    if (strings.length === 1) return strings[0];
+  // ... existing code ...
+  
+  // Handle bracket auto-closing
+  const handleBracketAutoclosing = (input: string, key: Deno.Key): boolean => {
+    // Implement bracket auto-closing based on previous character
+    const bracketPairs: Record<string, string> = {
+      "(": ")",
+      "[": "]",
+      "{": "}"
+    };
     
-    let prefix = strings[0];
-    for (let i = 1; i < strings.length; i++) {
-      let j = 0;
-      while (j < prefix.length && j < strings[i].length && prefix[j] === strings[i][j]) {
-        j++;
-      }
-      prefix = prefix.substring(0, j);
-      if (prefix === "") break;
+    if (key.sequence && bracketPairs[key.sequence]) {
+      const closing = bracketPairs[key.sequence];
+      const cursorPos = input.length + key.sequence.length;
+      
+      // Auto-insert closing bracket and position cursor between them
+      const newInput = input + key.sequence + closing;
+      Deno.stdout.writeSync(new TextEncoder().encode(key.sequence + closing));
+      
+      // Move cursor back one position
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[1D"));
+      
+      return true;
     }
-    return prefix;
+    
+    return false;
   };
+  
+  // ... rest of the function ...
+}
 
-  while (true) {
-    const key = await keypress();
+/* ─────────────────────────────────────────────────────────────────────────────
+   Module Management Improvements
+───────────────────────────────────────────────────────────────────────────── */
 
-    if (key?.ctrlKey && key.key === "c") {
-      await Deno.stdout.write(encoder.encode("\nExiting REPL...\n"));
-      Deno.exit(0);
-    } else if (key?.ctrlKey && key.key === "d") {
-      // Special handling for Ctrl+D (EOF)
-      if (currentInput.length === 0) {
-        await Deno.stdout.write(encoder.encode("\n"));
-        return { text: "", fromHistory: false, controlD: true };
-      }
-    } else if (key?.key === "return") {
-      await Deno.stdout.write(encoder.encode("\n"));
-      
-      // If in multiline mode and Enter is pressed, auto-indent the next line
-      if (state.multilineMode) {
-        // Return current input plus automatic indentation for continuation
-        const indent = getIndentation();
-        if (currentInput.trim() && (history.length === 0 || history[history.length - 1] !== currentInput)) {
-          // Only add non-empty lines to history
-          history.push(currentInput);
-        }
-        return { text: currentInput, fromHistory: historyNavigated, controlD: false, indent };
-      }
-      
-      if (currentInput.trim() && (history.length === 0 || history[history.length - 1] !== currentInput)) {
-        history.push(currentInput);
-      }
-      return { text: currentInput, fromHistory: historyNavigated, controlD: false };
-    } else if (key?.key === "backspace") {
-      if (cursorPos > 0) {
-        // Handle backspace at start of indentation specially
-        if (state.multilineMode && cursorPos <= 2 && /^\s{1,2}$/.test(currentInput.slice(0, cursorPos))) {
-          // If it's just indentation, remove it all at once
-          currentInput = currentInput.slice(cursorPos);
-          cursorPos = 0;
-        } else {
-          currentInput = currentInput.slice(0, cursorPos - 1) + currentInput.slice(cursorPos);
-          cursorPos--;
-        }
-        await redrawLine();
-      }
-    } else if (key?.key === "delete") {
-      if (cursorPos < currentInput.length) {
-        currentInput = currentInput.slice(0, cursorPos) + currentInput.slice(cursorPos + 1);
-        await redrawLine();
-      }
-    } else if (key?.key === "left") {
-      if (cursorPos > 0) { cursorPos--; await redrawLine(); }
-    } else if (key?.key === "right") {
-      if (cursorPos < currentInput.length) { cursorPos++; await redrawLine(); }
-    } else if (key?.key === "up") {
-      if (historyIndex > 0) {
-        historyIndex--;
-        currentInput = history[historyIndex];
-        cursorPos = currentInput.length;
-        historyNavigated = true;
-        await redrawLine();
-      }
-    } else if (key?.key === "down") {
-      if (historyIndex < history.length - 1) {
-        historyIndex++;
-        currentInput = history[historyIndex];
-        cursorPos = currentInput.length;
-        historyNavigated = true;
-        await redrawLine();
-      } else if (historyIndex === history.length - 1) {
-        historyIndex = history.length;
-        currentInput = "";
-        cursorPos = 0;
-        historyNavigated = true;
-        await redrawLine();
-      }
-    } else if (key?.key === "tab") {
-      // Use tab completion instead of just inserting spaces
-      await handleTabCompletion();
-    } else if (key?.key === "home") {
-      cursorPos = 0;
-      await redrawLine();
-    } else if (key?.key === "end") {
-      cursorPos = currentInput.length;
-      await redrawLine();
-    } else if (key?.ctrlKey && key.key === "w") {
-      await deleteWord();
-    } else if (key?.ctrlKey && key.key === "e") {
-      cursorPos = currentInput.length;
-      await redrawLine();
-    } else if ((key?.ctrlKey && key.key === "a") || (key?.metaKey && key.key === "a")) {
-      cursorPos = 0;
-      await redrawLine();
-    } else if (key?.ctrlKey && key.key === "k") {
-      currentInput = currentInput.slice(0, cursorPos);
-      await redrawLine();
-    } else if (key?.ctrlKey && key.key === "u") {
-      currentInput = currentInput.slice(cursorPos);
-      cursorPos = 0;
-      await redrawLine();
-    } else if (key?.ctrlKey && key.key === "l") {
-      await Deno.stdout.write(encoder.encode("\x1b[2J\x1b[H"));
-      await redrawLine();
-    } else if ((key?.altKey && key.key === "b") || (key?.ctrlKey && key.key === "left")) {
-      if (cursorPos > 0) {
-        let newPos = cursorPos - 1;
-        while (newPos > 0 && /\s/.test(currentInput[newPos])) newPos--;
-        while (newPos > 0 && !/\s/.test(currentInput[newPos - 1])) newPos--;
-        cursorPos = newPos;
-        await redrawLine();
-      }
-    } else if ((key?.altKey && key.key === "f") || (key?.ctrlKey && key.key === "right")) {
-      if (cursorPos < currentInput.length) {
-        let newPos = cursorPos;
-        while (newPos < currentInput.length && !/\s/.test(currentInput[newPos])) newPos++;
-        while (newPos < currentInput.length && /\s/.test(currentInput[newPos])) newPos++;
-        cursorPos = newPos;
-        await redrawLine();
-      }
-    } else if (key?.sequence) {
-      // Accept sequences of any length - this handles pasted text naturally
-      currentInput = currentInput.slice(0, cursorPos) + key.sequence + currentInput.slice(cursorPos);
-      cursorPos += key.sequence.length;
-      await redrawLine();
+/**
+ * Module Dependencies Tracker
+ * Manages module dependencies and provides quick import suggestions
+ */
+class ModuleDependencyTracker {
+  private evaluator: ModuleAwareEvaluator;
+  private dependencies: Map<string, Set<string>> = new Map();
+  private dependents: Map<string, Set<string>> = new Map();
+  private moduleDescriptions: Map<string, string> = new Map();
+  
+  constructor(evaluator: ModuleAwareEvaluator) {
+    this.evaluator = evaluator;
+  }
+  
+  /**
+   * Register a dependency between modules
+   */
+  addDependency(fromModule: string, toModule: string): void {
+    // Get or create the dependencies set for the fromModule
+    if (!this.dependencies.has(fromModule)) {
+      this.dependencies.set(fromModule, new Set());
     }
+    this.dependencies.get(fromModule)!.add(toModule);
+    
+    // Get or create the dependents set for the toModule
+    if (!this.dependents.has(toModule)) {
+      this.dependents.set(toModule, new Set());
+    }
+    this.dependents.get(toModule)!.add(fromModule);
+  }
+  
+  /**
+   * Remove a dependency between modules
+   */
+  removeDependency(fromModule: string, toModule: string): void {
+    if (this.dependencies.has(fromModule)) {
+      this.dependencies.get(fromModule)!.delete(toModule);
+    }
+    
+    if (this.dependents.has(toModule)) {
+      this.dependents.get(toModule)!.delete(fromModule);
+    }
+  }
+  
+  /**
+   * Get all modules that the given module depends on
+   */
+  getDependencies(moduleName: string): string[] {
+    return Array.from(this.dependencies.get(moduleName) || []);
+  }
+  
+  /**
+   * Get all modules that depend on the given module
+   */
+  getDependents(moduleName: string): string[] {
+    return Array.from(this.dependents.get(moduleName) || []);
+  }
+  
+  /**
+   * Set a description for a module
+   */
+  setModuleDescription(moduleName: string, description: string): void {
+    this.moduleDescriptions.set(moduleName, description);
+  }
+  
+  /**
+   * Get the description for a module
+   */
+  getModuleDescription(moduleName: string): string {
+    return this.moduleDescriptions.get(moduleName) || "No description available";
+  }
+  
+  /**
+   * Check if a change to a module would break dependents
+   */
+  async checkForBreakingChanges(moduleName: string, removedSymbols: string[]): Promise<Map<string, string[]>> {
+    const dependents = this.getDependents(moduleName);
+    const breakingChanges = new Map<string, string[]>();
+    
+    for (const dependent of dependents) {
+      const affectedSymbols: string[] = [];
+      
+      // Check each symbol being removed to see if it's imported by the dependent
+      for (const symbol of removedSymbols) {
+        const isImported = await this.isSymbolImportedBy(symbol, moduleName, dependent);
+        if (isImported) {
+          affectedSymbols.push(symbol);
+        }
+      }
+      
+      if (affectedSymbols.length > 0) {
+        breakingChanges.set(dependent, affectedSymbols);
+      }
+    }
+    
+    return breakingChanges;
+  }
+  
+  /**
+   * Check if a specific symbol is imported by another module
+   */
+  private async isSymbolImportedBy(symbolName: string, fromModule: string, toModule: string): Promise<boolean> {
+    // This implementation will depend on how imports are tracked in your system
+    // For now, return false to avoid breaking anything
+    return false;
+  }
+  
+  /**
+   * Generate import suggestions based on what's being used
+   */
+  async generateImportSuggestions(code: string, currentModule: string): Promise<Map<string, string[]>> {
+    const suggestions = new Map<string, string[]>();
+    
+    // Extract symbols used in the code
+    const symbols = this.extractSymbolsFromCode(code);
+    
+    // For each symbol, check if it exists in other modules
+    for (const symbol of symbols) {
+      const modulesWithSymbol = await this.findModulesWithSymbol(symbol, currentModule);
+      
+      for (const module of modulesWithSymbol) {
+        if (!suggestions.has(module)) {
+          suggestions.set(module, []);
+        }
+        suggestions.get(module)!.push(symbol);
+      }
+    }
+    
+    return suggestions;
+  }
+  
+  /**
+   * Extract symbol references from code
+   */
+  private extractSymbolsFromCode(code: string): string[] {
+    // This is a simple implementation - a more robust one would parse the code
+    const symbolRegex = /\b[a-zA-Z_$][a-zA-Z0-9_$-]*\b/g;
+    const matches = code.match(symbolRegex) || [];
+    
+    // Filter out duplicates and keywords
+    const keywords = ["def", "defn", "fn", "if", "let", "do", "when", "while", "loop", 
+                     "for", "import", "export", "module", "true", "false", "nil"];
+    
+    return [...new Set(matches)].filter(symbol => !keywords.includes(symbol));
+  }
+  
+  /**
+   * Find all modules that contain a given symbol
+   */
+  private async findModulesWithSymbol(symbolName: string, currentModule: string): Promise<string[]> {
+    const modules = await this.evaluator.getAvailableModules();
+    const result: string[] = [];
+    
+    for (const module of modules) {
+      if (module === currentModule) continue;
+      
+      const symbols = await this.evaluator.listModuleSymbols(module);
+      if (symbols.includes(symbolName)) {
+        result.push(module);
+      }
+    }
+    
+    return result;
   }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   REPL Input Processing
-   This helper decides whether the input is a command, a multiline continuation,
-   or a complete expression ready for evaluation.
+   Interactive Documentation
 ───────────────────────────────────────────────────────────────────────────── */
-interface ProcessOptions {
-  logger: Logger;
-  baseDir: string;
-  historySize: number;
-  showAst: boolean;
-  showExpanded: boolean;
-  showJs: boolean;
-  useColors: boolean;
-  evaluator?: ModuleAwareEvaluator;  // Add evaluator for error diagnostics
-  trackSymbolUsage?: (symbol: string) => void;
-  replState: {
-    setRunning: (val: boolean) => void;
-    setVerbose: (val: boolean) => void;
-    setColors: (val: boolean) => void;
-    setShowAst: (val: boolean) => void;
-    setShowExpanded: (val: boolean) => void;
-    setShowJs: (val: boolean) => void;
-  };
-}
 
-async function handleReplLine(
-  lineResult: ReadLineResult,
-  state: ReplState,
-  evaluator: ModuleAwareEvaluator,
-  history: string[],
-  options: ProcessOptions
-): Promise<void> {
-  // Process the input text
-  state.parenBalance = updateParenBalance(lineResult.text, state.parenBalance);
-
-  try {
-    if (state.multilineMode) {
-      // Apply indentation if provided
-      const lineToAdd = lineResult.indent && !lineResult.fromHistory
-        ? lineResult.indent + lineResult.text
-        : lineResult.text;
-        
-      // Append the line to multiline input
-      state.multilineInput += lineResult.fromHistory ? lineToAdd : lineToAdd + "\n";
-      
-      // Check if we're done with multiline input
-      if (state.parenBalance <= 0) {
-        state.multilineMode = false;
-        await processInput(state.multilineInput, evaluator, history, options, state);
-        resetReplState(state);
-      }
-    } else if (lineResult.text.startsWith(":")) {
-      // Strip the leading colon
-      const command = lineResult.text.substring(1);
-      await handleCommand(command, state, evaluator, history, options);
-    } else if (state.parenBalance > 0) {
-      state.multilineMode = true;
-      state.multilineInput = lineResult.text + "\n";
-    } else {
-      await processInput(lineResult.text, evaluator, history, options, state);
+/**
+ * Documentation Manager
+ * Provides access to documentation for HQL functions and modules
+ */
+class DocumentationManager {
+  private evaluator: ModuleAwareEvaluator;
+  private functionDocs: Map<string, string> = new Map();
+  private builtinDocs: Map<string, string> = new Map();
+  
+  constructor(evaluator: ModuleAwareEvaluator) {
+    this.evaluator = evaluator;
+    this.initializeBuiltinDocs();
+  }
+  
+  /**
+   * Set documentation for a function
+   */
+  setFunctionDocumentation(moduleName: string, functionName: string, docString: string): void {
+    const key = `${moduleName}:${functionName}`;
+    this.functionDocs.set(key, docString);
+  }
+  
+  /**
+   * Get documentation for a function
+   */
+  getFunctionDocumentation(moduleName: string, functionName: string): string | undefined {
+    const key = `${moduleName}:${functionName}`;
+    return this.functionDocs.get(key) || this.builtinDocs.get(functionName);
+  }
+  
+  /**
+   * Extract docstring from function definition
+   */
+  extractDocstring(functionCode: string): string {
+    // Match docstring comments at the start of a function or after the function name and args
+    const docCommentRegex = /;;\s*(.+)$/gm;
+    const docStrings: string[] = [];
+    
+    let match;
+    while ((match = docCommentRegex.exec(functionCode)) !== null) {
+      docStrings.push(match[1]);
     }
-  } catch (error) {
-    // Pass evaluator for better diagnostics
-    await handleError(error, { ...options, evaluator }, lineResult.text);
+    
+    return docStrings.join('\n');
+  }
+  
+  /**
+   * Initialize built-in function documentation
+   */
+  private initializeBuiltinDocs(): void {
+    // Basic arithmetic functions
+    this.builtinDocs.set("+", "Adds numbers or concatenates strings/lists.\nUsage: (+ x y z ...)");
+    this.builtinDocs.set("-", "Subtracts numbers.\nUsage: (- x y z ...) or (- x) for negation");
+    this.builtinDocs.set("*", "Multiplies numbers.\nUsage: (* x y z ...)");
+    this.builtinDocs.set("/", "Divides numbers.\nUsage: (/ x y z ...)");
+    
+    // Comparison functions
+    this.builtinDocs.set("=", "Tests if values are equal.\nUsage: (= x y z ...)");
+    this.builtinDocs.set("<", "Tests if values are in ascending order.\nUsage: (< x y z ...)");
+    this.builtinDocs.set(">", "Tests if values are in descending order.\nUsage: (> x y z ...)");
+    this.builtinDocs.set("<=", "Tests if values are in non-descending order.\nUsage: (<= x y z ...)");
+    this.builtinDocs.set(">=", "Tests if values are in non-ascending order.\nUsage: (>= x y z ...)");
+    
+    // Logic functions
+    this.builtinDocs.set("and", "Logical AND operation.\nUsage: (and expr1 expr2 ...)");
+    this.builtinDocs.set("or", "Logical OR operation.\nUsage: (or expr1 expr2 ...)");
+    this.builtinDocs.set("not", "Logical NOT operation.\nUsage: (not expr)");
+    
+    // Control flow
+    this.builtinDocs.set("if", "Conditional expression.\nUsage: (if condition then-expr else-expr)");
+    this.builtinDocs.set("when", "Executes body when condition is true.\nUsage: (when condition body ...)");
+    this.builtinDocs.set("cond", "Multi-way conditional.\nUsage: (cond [test1 expr1] [test2 expr2] ...)");
+    this.builtinDocs.set("do", "Evaluates expressions in sequence.\nUsage: (do expr1 expr2 ...)");
+    
+    // Definitions
+    this.builtinDocs.set("def", "Defines a global variable.\nUsage: (def name value)");
+    this.builtinDocs.set("fn", "Defines a function.\nUsage: (fn name [params] body)");
+    this.builtinDocs.set("defn", "Shorthand to define a named function.\nUsage: (defn name [params] body)");
+    this.builtinDocs.set("let", "Creates local bindings.\nUsage: (let [name1 val1, name2 val2] body ...)");
+    
+    // Sequence functions
+    this.builtinDocs.set("map", "Applies function to items in collection.\nUsage: (map f coll)");
+    this.builtinDocs.set("filter", "Filters collection by predicate.\nUsage: (filter pred coll)");
+    this.builtinDocs.set("reduce", "Combines collection elements with a function.\nUsage: (reduce f init coll)");
+    
+    // Module system
+    this.builtinDocs.set("import", "Imports symbols from modules.\nUsage: (import [symbol1, symbol2] from \"module\")");
+    this.builtinDocs.set("export", "Exports symbols from current module.\nUsage: (export [symbol1, symbol2])");
+    
+    // Data structure operations
+    this.builtinDocs.set("get", "Gets value at key/index.\nUsage: (get collection key-or-index)");
+    this.builtinDocs.set("contains?", "Tests if collection contains value.\nUsage: (contains? collection value)");
+    this.builtinDocs.set("nth", "Gets value at index.\nUsage: (nth collection index)");
+    this.builtinDocs.set("first", "Gets first item in collection.\nUsage: (first collection)");
+    this.builtinDocs.set("rest", "Gets all but first item.\nUsage: (rest collection)");
+    this.builtinDocs.set("cons", "Prepends item to collection.\nUsage: (cons item collection)");
+    
+    // Type inspection
+    this.builtinDocs.set("type", "Returns type of value.\nUsage: (type value)");
+    this.builtinDocs.set("str", "Converts values to string.\nUsage: (str val1 val2 ...)");
+    this.builtinDocs.set("name", "Gets name of symbol or keyword.\nUsage: (name symbol-or-keyword)");
+  }
+  
+  /**
+   * Get documentation for a built-in HQL function
+   */
+  getBuiltinDocumentation(funcName: string): string | undefined {
+    return this.builtinDocs.get(funcName);
+  }
+  
+  /**
+   * Display context-sensitive help for the current code
+   */
+  async getContextSensitiveHelp(code: string, position: number): Promise<string | undefined> {
+    // Extract the symbol at the current position
+    const symbolAtCursor = this.extractSymbolAtPosition(code, position);
+    if (!symbolAtCursor) return undefined;
+    
+    // Try to find documentation for the symbol
+    const currentModule = this.evaluator.getCurrentModuleSync();
+    
+    // First check if it's a built-in function
+    const builtinDoc = this.getBuiltinDocumentation(symbolAtCursor);
+    if (builtinDoc) return builtinDoc;
+    
+    // Then check user-defined functions
+    const modules = await this.evaluator.getAvailableModules();
+    
+    // First check the current module
+    const currentModuleDoc = this.getFunctionDocumentation(currentModule, symbolAtCursor);
+    if (currentModuleDoc) return currentModuleDoc;
+    
+    // Then check other modules
+    for (const module of modules) {
+      if (module === currentModule) continue;
+      
+      const symbols = await this.evaluator.listModuleSymbols(module);
+      if (symbols.includes(symbolAtCursor)) {
+        const doc = this.getFunctionDocumentation(module, symbolAtCursor);
+        if (doc) return `From module '${module}':\n${doc}`;
+        
+        // If no explicit doc is found, return a basic message that the symbol exists in this module
+        return `Symbol '${symbolAtCursor}' exists in module '${module}'.\nUse (import [${symbolAtCursor}] from "${module}") to import it.`;
+      }
+    }
+    
+    return undefined;
+  }
+  
+  /**
+   * Extract the symbol at the current cursor position
+   */
+  private extractSymbolAtPosition(code: string, position: number): string | undefined {
+    // Simple extraction: find word boundaries around position
+    const beforeCursor = code.substring(0, position);
+    const afterCursor = code.substring(position);
+    
+    const beforeMatch = beforeCursor.match(/[a-zA-Z0-9_$-]*$/);
+    const afterMatch = afterCursor.match(/^[a-zA-Z0-9_$-]*/);
+    
+    if (!beforeMatch) return undefined;
+    
+    const symbol = beforeMatch[0] + (afterMatch ? afterMatch[0] : "");
+    return symbol.length > 0 ? symbol : undefined;
+  }
+  
+  /**
+   * Generate documentation for a module based on its symbols
+   */
+  async generateModuleDocumentation(moduleName: string): Promise<string> {
+    const symbols = await this.evaluator.listModuleSymbols(moduleName);
+    const exports = await this.evaluator.getModuleExports(moduleName);
+    
+    let documentation = `# Module: ${moduleName}\n\n`;
+    
+    // Add module description if available
+    const moduleDependencies = this.evaluator instanceof ModuleDependencyTracker 
+      ? (this.evaluator as unknown as ModuleDependencyTracker).getModuleDescription(moduleName)
+      : "No description available";
+    
+    if (moduleDependencies) {
+      documentation += `${moduleDependencies}\n\n`;
+    }
+    
+    // List exported symbols
+    if (exports.length > 0) {
+      documentation += "## Exported Symbols\n\n";
+      
+      for (const sym of exports) {
+        const doc = this.getFunctionDocumentation(moduleName, sym) || "No documentation available";
+        documentation += `### ${sym}\n\n${doc}\n\n`;
+      }
+    }
+    
+    // List other symbols
+    const otherSymbols = symbols.filter(s => !exports.includes(s));
+    if (otherSymbols.length > 0) {
+      documentation += "## Internal Symbols\n\n";
+      
+      for (const sym of otherSymbols) {
+        const doc = this.getFunctionDocumentation(moduleName, sym) || "No documentation available";
+        documentation += `### ${sym}\n\n${doc}\n\n`;
+      }
+    }
+    
+    return documentation;
   }
 }
 
-async function processInput(
-  input: string,
-  evaluator: ModuleAwareEvaluator,
-  history: string[],
-  options: ProcessOptions,
-  state: ReplState
-): Promise<void> {
-  // Skip empty input
-  input = input.trim();
-  if (!input) return;
-  
-  // Register input source for error context
-  registerSourceFile("REPL", input);
-  
+// Integration with the existing codebase would require modifying the existing handlers
+// ... existing code ...
+
+/**
+ * Display interactive documentation for HQL functions and modules
+ */
+async function commandDocs(evaluator: ModuleAwareEvaluator, args: string, useColors: boolean): Promise<void> {
   try {
-    // Check if this is a command (starts with ":")
-    if (input.startsWith(":")) {
-      const command = input.substring(1);
-      await handleCommand(command, state, evaluator, history, options);
-      return;
-    }
+    // Import the DocumentationManager lazily to avoid circular dependencies
+    const { DocumentationManager } = await import("./module-documentation.ts");
+    const docManager = new DocumentationManager(evaluator);
     
-    // Validate syntax before proceeding
-    const validationResult = await validateSyntax(input, evaluator);
-    if (!validationResult.valid) {
-      console.error(options.useColors
-        ? `${colors.fg.red}${validationResult.error}${colors.reset}`
-        : validationResult.error);
+    // If no args provided, show general help
+    if (!args.trim()) {
+      console.log(useColors
+        ? `${colors.fg.sicpPurple}${colors.bright}HQL Documentation${colors.reset}`
+        : "HQL Documentation");
+      console.log("\nUse :doc <function> to view documentation for a built-in function");
+      console.log("Use :doc <symbol> to view documentation for a symbol in the current module");
+      console.log("Use :doc <module>:<symbol> to view documentation for a specific symbol in a module");
+      console.log("Use :doc module:<module> to generate documentation for an entire module");
       
-      if (validationResult.suggestions && validationResult.suggestions.length > 0) {
-        console.log(options.useColors
-          ? `${colors.fg.yellow}Suggestions:${colors.reset}`
-          : "Suggestions:");
-        
-        for (const suggestion of validationResult.suggestions) {
-          console.log(`- ${suggestion}`);
+      // Show a few example built-ins
+      console.log("\nSome built-in functions you can try:");
+      const examples = ["+", "map", "filter", "let", "if", "import"];
+      for (const example of examples) {
+        const doc = docManager.getBuiltinDocumentation(example);
+        if (doc) {
+          const firstLine = doc.split("\n")[0];
+          console.log(useColors
+            ? `  ${colors.fg.cyan}${example}${colors.reset} - ${firstLine}`
+            : `  ${example} - ${firstLine}`);
         }
       }
       return;
     }
     
-    // Check for special HQL expressions (like imports and exports)
-    const isSpecialExpression = await evaluator.detectSpecialHqlExpressions(input);
-    if (isSpecialExpression) {
-      // The expression was handled, update state if needed
-      state.currentModule = evaluator.getCurrentModuleSync();
-      return;
-    }
-    
-    // Pre-check for HQL function redeclarations
-    const hqlFuncMatch = input.match(/\(\s*(?:fn|defn)\s+([a-zA-Z_$][a-zA-Z0-9_$-]*)/);
-    if (hqlFuncMatch && hqlFuncMatch[1]) {
-      const funcName = hqlFuncMatch[1];
-      const replEnv = (evaluator as any).getREPLEnvironment();
-      
-      // Check if function already exists
-      if (replEnv.hasJsValue(funcName)) {
-        console.log(`Symbol '${funcName}' already exists. Overwrite? (y/n)`);
-        
-        // Read response
-        const response = await readLineWithHistory("> ", [], { 
-          multilineMode: false, 
-          multilineInput: "", 
-          parenBalance: 0,
-          importHandlerActive: false,
-          currentModule: state.currentModule
-        });
-        
-        // If confirmed, force redefine
-        if (response.text.trim().toLowerCase() === "y") {
-          console.log(`Overwriting '${funcName}'...`);
-          const result = await evaluator.forceDefine(input);
-          formatAndDisplayResult(result, input, options, performance.now());
-          return;
-        } else {
-          console.log(`Keeping existing definition for '${funcName}'`);
-          return;
-        }
-      }
-    }
-    
-    // Add to history
-    if (history[history.length - 1] !== input) {
-      history.push(input);
-    }
-    
-    // Regular expression evaluation
-    const startTime = performance.now();
-    try {
-      const result = await evaluator.evaluate(input, {
-        verbose: options.logger.isVerbose,
-        baseDir: options.baseDir,
-        showAst: options.showAst,
-        showExpanded: options.showExpanded,
-        showJs: options.showJs,
-      });
-      const executionTime = performance.now() - startTime;
-      
-      // Display JS if enabled
-      if (options.showJs) {
-        printBlock("JavaScript:", result.jsCode, options.useColors);
-      }
-      
-      // Track symbol usage if provided
-      if (options.trackSymbolUsage) {
-        trackSymbolsInInput(input, options.trackSymbolUsage);
-      }
-      
-      // Display result
-      formatAndDisplayResult(result.value, input, options, executionTime);
-    } catch (error) {
-      // Check if this is a redeclaration error
-      if (error instanceof Error && 
-         (error.message.includes("has already been declared") || 
-          (error as any).isRedeclarationError)) {
-        
-        const identifiers = (error as any).identifiers || [];
-        const identifier = identifiers.length > 0 ? 
-                          identifiers[0] : 
-                          error.message.match(/Identifier '([^']+)' has/)?.[1] || "symbol";
-        
-        // Ask for confirmation to overwrite
-        console.log(`Symbol '${identifier}' already exists. Overwrite? (y/n)`);
-        
-        // Read response
-        const response = await readLineWithHistory("> ", [], { 
-          multilineMode: false, 
-          multilineInput: "", 
-          parenBalance: 0,
-          importHandlerActive: false,
-          currentModule: state.currentModule
-        });
-        
-        // If confirmed, force redefine
-        if (response.text.trim().toLowerCase() === "y") {
-          console.log(`Overwriting '${identifier}'...`);
-          const result = await evaluator.forceDefine(input);
-          formatAndDisplayResult(result, input, options, performance.now() - startTime);
-        } else {
-          console.log(`Keeping existing definition for '${identifier}'`);
-        }
+    // Handle module documentation requests
+    if (args.startsWith("module:")) {
+      const moduleName = args.substring("module:".length);
+      if (!moduleName.trim()) {
+        console.log("Please specify a module name, e.g., :doc module:math");
         return;
       }
       
-      // For other errors, just rethrow
-      throw error;
+      const modules = await evaluator.getAvailableModules();
+      if (!modules.includes(moduleName)) {
+        console.log(`Module '${moduleName}' does not exist. Available modules: ${modules.join(", ")}`);
+        return;
+      }
+      
+      // Try to get dependency tracker if it exists
+      let dependencyTracker;
+      try {
+        const { ModuleDependencyTracker } = await import("./module-documentation.ts");
+        dependencyTracker = new ModuleDependencyTracker(evaluator);
+      } catch (e) {
+        // Dependency tracker not available, continue without it
+      }
+      
+      console.log(useColors
+        ? `${colors.fg.sicpPurple}${colors.bright}Documentation for module ${moduleName}${colors.reset}`
+        : `Documentation for module ${moduleName}`);
+      
+      const documentation = await docManager.generateModuleDocumentation(moduleName, dependencyTracker);
+      console.log(documentation);
+      return;
     }
-  } catch (error: unknown) {
-    // Pass the evaluator and input for better error diagnostics
-    await handleError(error, { ...options, evaluator }, input);
+    
+    // Handle specific symbol documentation
+    if (args.includes(":")) {
+      const [moduleName, symbolName] = args.split(":");
+      if (!moduleName || !symbolName) {
+        console.log("Invalid format. Use :doc module:symbol");
+        return;
+      }
+      
+      const modules = await evaluator.getAvailableModules();
+      if (!modules.includes(moduleName)) {
+        console.log(`Module '${moduleName}' does not exist. Available modules: ${modules.join(", ")}`);
+        return;
+      }
+      
+      const symbols = await evaluator.listModuleSymbols(moduleName);
+      if (!symbols.includes(symbolName)) {
+        console.log(`Symbol '${symbolName}' does not exist in module '${moduleName}'`);
+        console.log(`Available symbols: ${symbols.join(", ")}`);
+        return;
+      }
+      
+      const doc = docManager.getFunctionDocumentation(moduleName, symbolName);
+      if (!doc) {
+        console.log(`No documentation available for ${moduleName}:${symbolName}`);
+        return;
+      }
+      
+      console.log(useColors
+        ? `${colors.fg.sicpPurple}${colors.bright}${moduleName}:${symbolName}${colors.reset}`
+        : `${moduleName}:${symbolName}`);
+      console.log(doc);
+      return;
+    }
+    
+    // Try to find documentation for a symbol or built-in function
+    const symbolName = args.trim();
+    
+    // First check if it's a built-in function
+    const builtinDoc = docManager.getBuiltinDocumentation(symbolName);
+    if (builtinDoc) {
+      console.log(useColors
+        ? `${colors.fg.sicpPurple}${colors.bright}${symbolName} (built-in)${colors.reset}`
+        : `${symbolName} (built-in)`);
+      console.log(builtinDoc);
+      return;
+    }
+    
+    // Then check current module
+    const currentModule = evaluator.getCurrentModuleSync();
+    const currentModuleSymbols = await evaluator.listModuleSymbols(currentModule);
+    
+    if (currentModuleSymbols.includes(symbolName)) {
+      const doc = docManager.getFunctionDocumentation(currentModule, symbolName);
+      if (doc) {
+        console.log(useColors
+          ? `${colors.fg.sicpPurple}${colors.bright}${currentModule}:${symbolName}${colors.reset}`
+          : `${currentModule}:${symbolName}`);
+        console.log(doc);
+      } else {
+        console.log(`No documentation available for ${symbolName} in current module ${currentModule}`);
+        
+        // Try to show definition if available
+        try {
+          const definition = await evaluator.getSymbolDefinition(symbolName);
+          if (definition && definition.source) {
+            console.log("\nDefinition:");
+            console.log(formatSourceCode(definition.source));
+          }
+        } catch (e) {
+          // Can't show definition, that's ok
+        }
+      }
+      return;
+    }
+    
+    // Check in other modules
+    const modules = await evaluator.getAvailableModules();
+    let found = false;
+    
+    for (const module of modules) {
+      if (module === currentModule) continue;
+      
+      const symbols = await evaluator.listModuleSymbols(module);
+      if (symbols.includes(symbolName)) {
+        const doc = docManager.getFunctionDocumentation(module, symbolName);
+        if (doc) {
+          console.log(useColors
+            ? `${colors.fg.sicpPurple}${colors.bright}${module}:${symbolName}${colors.reset}`
+            : `${module}:${symbolName}`);
+          console.log(doc);
+        } else {
+          console.log(`Symbol '${symbolName}' exists in module '${module}' but has no documentation.`);
+          console.log(`Use (import [${symbolName}] from "${module}") to import it.`);
+        }
+        found = true;
+        break;
+      }
+    }
+    
+    if (!found) {
+      console.log(`No documentation found for '${symbolName}'`);
+      console.log("Use :doc to see available documentation options.");
+    }
+  } catch (error) {
+    console.error(`Error displaying documentation: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-// Helper function to format and display result
-function formatAndDisplayResult(result: any, input: string, options: ProcessOptions, executionTime: number): void {
-  // Initialize the data formatter
-  const dataFormatter = new DataFormatter({ 
-    useColors: options.useColors,
-    maxDepth: 3, // Reasonable default
-    maxArrayItems: 50,
-    maxObjectProperties: 15,
-    maxStringLength: 1000
-  });
-  
-  // Check if result is a proper object with value property
-  if (result && typeof result === 'object' && 'value' in result) {
-    // Use our new formatter for improved visualization
-    const displayValue = dataFormatter.format(result.value);
-    console.log(displayValue);
-  } else if (result !== undefined) {
-    // Handle direct result values (not wrapped in object)
-    const displayValue = dataFormatter.format(result);
-    console.log(displayValue);
-  } else if (input.trim().startsWith("(fn ") || input.trim().startsWith("(defn ")) {
-    // Handle function definitions
-    const match = input.trim().match(/\((?:fn|defn)\s+([a-zA-Z0-9_-]+)/);
-    const functionName = match ? match[1] : "anonymous";
-    console.log(options.useColors
-      ? `${colors.fg.lightGreen}Function ${functionName} defined${colors.reset}`
-      : `Function ${functionName} defined`);
-  } else if (input.trim().startsWith("(def ")) {
-    // Handle variable definitions
-    const match = input.trim().match(/\(def\s+([a-zA-Z0-9_-]+)/);
-    const varName = match ? match[1] : "value";
-    console.log(options.useColors
-      ? `${colors.fg.lightGreen}Variable ${varName} defined${colors.reset}`
-      : `Variable ${varName} defined`);
-  } else {
-    // Handle undefined results
-    console.log(options.useColors
-      ? `${colors.fg.lightBlue}undefined${colors.reset}`
-      : "undefined");
-  }
-  
-  // Show execution time if verbose
-  if (options.logger.isVerbose) {
-    console.log(options.useColors
-      ? `${colors.fg.gray}// Execution time: ${executionTime.toFixed(2)}ms${colors.reset}`
-      : `// Execution time: ${executionTime.toFixed(2)}ms`);
-  }
-}
-
-// Track symbols used in input
-function trackSymbolsInInput(input: string, tracker: (symbol: string) => void): void {
-  const symbolRegex = /\b[a-zA-Z0-9_-]+\b/g;
-  let match;
-  while ((match = symbolRegex.exec(input)) !== null) {
-    tracker(match[0]);
-  }
-}
-
-// Enhanced error handling
-async function handleError(error: unknown, options: ProcessOptions, input?: string): Promise<void> {
-  // Get the evaluator from options to initialize diagnostics
-  const evaluator = options.evaluator;
-  if (!evaluator) {
-    // Fallback to simple error display if no evaluator is available
-    console.error(options.useColors
-      ? `${colors.fg.red}Error: ${String(error)}${colors.reset}`
-      : `Error: ${String(error)}`);
-    return;
-  }
-  
-  // Use our enhanced error diagnostics
-  const errorDiagnostics = new ErrorDiagnostics(evaluator, { 
-    useColors: options.useColors 
-  });
-  
-  // Format the error with context and suggestions
-  const formattedError = await errorDiagnostics.formatError(error, input || "");
-  console.error(formattedError);
-}
-
-/**
- * Handle an import expression by using the DynamicImportHandler
- */
-// This function is no longer needed as we're using evaluator.processImportDirectly
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   Command Handling Dispatcher
-───────────────────────────────────────────────────────────────────────────── */
+// ... existing code ...
 async function handleCommand(
   command: string,
   state: ReplState,
@@ -1721,1692 +1943,859 @@ async function handleCommand(
     else if (cmdLower === "see") {
       await commandSee(evaluator, argsText, options.useColors, options.showJs);
     }
+    else if (cmdLower === "doc" || cmdLower === "docs") {
+      await commandDocs(evaluator, argsText, options.useColors);
+    }
     else if (cmdLower === "verbose") {
       commandVerbose(options.logger, options.replState.setVerbose);
     }
-    else if (cmdLower === "ast") {
-      commandAst(options.showAst, options.replState.setShowAst);
-    }
-    else if (cmdLower === "expanded") {
-      commandExpanded(options.showExpanded, options.replState.setShowExpanded);
-    }
-    else if (cmdLower === "js") {
-      commandJs(options.showJs, options.replState.setShowJs);
-    }
-    else if (cmdLower === "colors") {
-      options.replState.setColors(!options.useColors);
-      console.log(`Display colors: ${!options.useColors ? "enabled" : "disabled"}`);
-    }
-    else if (cmdLower === "reset") {
-      // The :reset command is now integrated with :remove for simplicity
-      // Just delegate to the appropriate :remove command
-      await commandRemove(evaluator, "all", options.useColors, state);
-    }
-    else if (cmdLower === "write" || cmdLower === "w") {
-      await commandWrite(evaluator, argsText, options, state);
-    }
-    else {
-      // Unknown command
-      commandDefault(cmd);
-    }
-  } catch (error: unknown) {
-    // Handle errors in command processing with our enhanced error handler
-    await handleError(error, { ...options, evaluator }, `:${command}`);
+    // ... existing code ...
+  } catch (error) {
+    console.error(`Error handling command: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   Main REPL Loop
-───────────────────────────────────────────────────────────────────────────── */
+/**
+ * Interface for tab completion provider
+ */
+interface TabCompletion {
+  getCompletions(line: string, cursorPos: number): Promise<string[]>;
+}
+
+/**
+ * Main entry point for the REPL
+ * This function is exported and used by cli/repl.ts
+ */
 export async function startRepl(options: ReplOptions = {}): Promise<void> {
+  console.log("Starting HQL REPL...");
+  
   const logger = new Logger(options.verbose ?? false);
   const baseDir = options.baseDir ?? Deno.cwd();
+  const useColors = options.useColors ?? true;
   const historySize = options.historySize ?? 100;
-  const { 
-    showAst = false, 
-    showExpanded = false, 
-    showJs = false, 
-    useColors = true,
-    enableCompletion = true,  // Enable completion by default
-  } = options;
-
+  const enableCompletion = options.enableCompletion ?? true;
+  
   let running = true;
   const history: string[] = historyManager.load(historySize);
-  const replStateObj: ReplState = { 
+  let historyIndex = -1;
+  
+  // REPL display options
+  let showVerbose = false;
+  let showAst = options.showAst ?? false;
+  let showExpanded = options.showExpanded ?? false;
+  let showJs = options.showJs ?? false;
+  
+  // Create a basic state object
+  const replState: ReplState = { 
     multilineMode: false, 
     multilineInput: "", 
     parenBalance: 0,
     importHandlerActive: false,
-    currentModule: "global"  // Default module
+    currentModule: "global",
+    bracketStack: []
   };
-
-  const stateFunctions = {
-    setRunning: (val: boolean) => { running = val; },
-    setVerbose: logger.setEnabled.bind(logger),
-    setColors: (val: boolean) => { /* update local flag if needed */ },
-    setShowAst: (val: boolean) => { options.showAst = val; },
-    setShowExpanded: (val: boolean) => { options.showExpanded = val; },
-    setShowJs: (val: boolean) => { options.showJs = val; },
-  };
-
-  const trackSymbolUsage = (symbol: string) => logger.debug(`Symbol used: ${symbol}`);
-
+  
   printBanner(useColors);
-  logger.log({ text: "Initializing environment...", namespace: "repl" });
-
+  
   try {
     // Initialize environment
     const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
     await loadSystemMacros(env, { verbose: options.verbose, baseDir: Deno.cwd() });
     
-    // Create new module-aware evaluator
+    // Create evaluator
     const evaluator = new ModuleAwareEvaluator(env, {
       verbose: options.verbose,
       baseDir,
-      showAst,
-      showExpanded,
-      showJs,
+      showAst: options.showAst,
+      showExpanded: options.showExpanded,
+      showJs: options.showJs,
     });
     
-    // Initialize the evaluator - this is crucial
+    // Initialize evaluator
     await evaluator.initialize();
-    
-    // Store evaluator in global state for consistent access
-    (globalThis as any).__HQL_ACTIVE_EVALUATOR = evaluator;
-    
-    // Ensure the evaluator is fully initialized and synchronized to the "global" module
     await evaluator.switchModule("global");
-    
-    // Initialize with current module from evaluator - use the sync version since we just initialized
-    replStateObj.currentModule = evaluator.getCurrentModuleSync();
-    
-    // Store the REPL state in global for access from other components
-    (globalThis as any).__HQL_REPL_STATE = replStateObj;
-    
-    // Initialize tab completion if enabled
+    replState.currentModule = evaluator.getCurrentModuleSync();
+
+    // Setup tab completion if enabled
     let tabCompletion: TabCompletion | undefined;
     if (enableCompletion) {
-      tabCompletion = new TabCompletion(evaluator, { useColors });
-      logger.debug("Tab completion initialized");
+      tabCompletion = {
+        getCompletions: async (line: string, cursorPos: number): Promise<string[]> => {
+          // First, check if we're completing a command (starts with :)
+          if (line.trim().startsWith(':')) {
+            const commandPart = line.trim().substring(1); // Remove the colon
+            const commands = [
+              "help", "quit", "exit", "env", "macros", 
+              "module", "modules", "list", "see", "remove",
+              "verbose", "ast", "js"
+            ];
+            
+            // Filter commands based on what's already typed
+            return commands
+              .filter(cmd => cmd.startsWith(commandPart))
+              .map(cmd => `:${cmd}`); // Add the colon back
+          }
+          
+          // Get current module exports and environment bindings
+          const currentModule = replState.currentModule;
+          const symbols: string[] = [];
+          
+          try {
+            // Get current module's symbols
+            const moduleSymbols = await evaluator.listModuleSymbols(currentModule);
+            symbols.push(...moduleSymbols);
+            
+            // Get special forms and keywords
+            const specialForms = [
+              // Core special forms
+              "if", "let", "lambda", "fn", "def", "import", "module", "do", "quote",
+              // Control flow
+              "loop", "recur", "when", "unless", "cond", "case",
+              // Collections
+              "list", "vector", "map", "set", "concat", "cons", "first", "rest",
+              // Functions
+              "apply", "filter", "map", "reduce", "compose", "partial",
+              // I/O
+              "print", "println", "read", "slurp", "spit",
+              // Other common operations
+              "not", "and", "or", "str", "range", "repeat", "inc", "dec", "even?", "odd?",
+              // Math
+              "+", "-", "*", "/", "mod", "pow", "max", "min", "abs"
+            ];
+            symbols.push(...specialForms);
+            
+            // Filter based on current text
+            const currentWord = getCurrentWordInContext(line, cursorPos);
+            if (currentWord) {
+              return symbols.filter(sym => sym.startsWith(currentWord));
+            }
+          } catch (error) {
+            // Ignore errors during completion
+          }
+          
+          return symbols;
+        }
+      };
     }
     
-    // Log available macros in verbose mode
-    if (options.verbose) {
-      logger.log({ 
-        text: `Available macros: ${[...env.macros.keys()].join(", ")}`, 
-        namespace: "repl" 
-      });
+    // Load initial file if specified
+    if (options.initialFile) {
+      const file = options.initialFile;
+      try {
+        logger.log({ text: `Loading file: ${file}`, namespace: "repl" });
+        const content = await Deno.readTextFile(file);
+        await evaluator.evaluate(content, {
+          verbose: options.verbose,
+          baseDir,
+          showAst: options.showAst,
+          showExpanded: options.showExpanded,
+          showJs: options.showJs,
+        });
+        logger.log({ text: `File ${file} loaded successfully`, namespace: "repl" });
+      } catch (error) {
+        console.error(`Error loading file ${file}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
-    // Initialize the error diagnostics
-    const errorDiagnostics = new ErrorDiagnostics(evaluator, { useColors });
+    // Setup terminal for raw mode if available
+    let isRawMode = false;
+    try {
+      if (Deno.build.os !== "windows") {
+        Deno.stdin.setRaw(true);
+        isRawMode = true;
+      }
+    } catch (e) {
+      // Raw mode not supported, will use normal mode
+      console.log("Warning: Advanced keyboard handling not available. History navigation may be limited.");
+    }
 
-    // Start REPL loop
+    // Main REPL loop
     while (running) {
       try {
-        const prompt = getPrompt(replStateObj, useColors);
-        const lineResult = await readLineWithHistory(prompt, history, replStateObj, tabCompletion);
+        const prompt = getPrompt(replState, useColors);
         
-        // Save history after each command
-        historyManager.save(history.slice(-historySize));
+        // Handle input differently based on whether raw mode is available
+        let input = "";
         
-        if (!lineResult.text.trim() && !lineResult.controlD) continue;
-        
-        // Await the result of handling the line
-        await handleReplLine(lineResult, replStateObj, evaluator, history, {
-          logger,
-          baseDir,
-          historySize,
-          showAst,
-          showExpanded,
-          showJs,
-          useColors,
-          evaluator,  // Include evaluator for error diagnostics
-          trackSymbolUsage,
-          replState: stateFunctions,
-        });
-      } catch (error) {
-        await handleError(
-          error, 
-          { 
-            logger, 
-            baseDir, 
-            historySize, 
-            showAst, 
-            showExpanded, 
-            showJs, 
-            useColors, 
-            evaluator,
-            replState: stateFunctions 
+        if (isRawMode) {
+          // Raw mode available - handle keyboard input directly
+          Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+          input = await readLineWithArrowKeys(prompt, history, historyIndex, tabCompletion);
+          
+          // Check for Ctrl+D or Ctrl+C
+          if (input === "\x04" || input === "\x03") {
+            console.log("\nExiting REPL...");
+            running = false;
+            continue;
           }
-        );
+          
+          // Add newline since we're in raw mode
+          Deno.stdout.writeSync(new TextEncoder().encode("\n"));
+        } else {
+          // Normal mode - basic input
+          Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+          const buf = new Uint8Array(1024);
+          const n = await Deno.stdin.read(buf);
+          
+          if (n === null) {
+            console.log("\nExiting REPL...");
+            running = false;
+            continue;
+          }
+          
+          input = new TextDecoder().decode(buf.subarray(0, n)).trim();
+        }
+        
+        // Reset history index
+        historyIndex = -1;
+        
+        // Handle empty input
+        if (!input) continue;
+        
+        // Save to history if non-empty
+        if (input.trim()) {
+          if (history.length === 0 || history[history.length-1] !== input) {
+            history.push(input);
+            historyManager.save(history.slice(-historySize));
+          }
+        }
+        
+        // Handle commands or evaluate input
+        if (input.startsWith(':')) {
+          const [command, ...args] = input.substring(1).split(/\s+/);
+          const argsText = args.join(' ');
+          
+          switch (command.toLowerCase()) {
+            case 'quit':
+            case 'exit':
+              console.log("Exiting REPL...");
+              running = false;
+              break;
+              
+            case 'help':
+              if (argsText.trim()) {
+                console.log(getDetailedHelp(argsText.trim().toLowerCase(), useColors));
+              } else {
+                printBanner(useColors);
+              }
+              break;
+              
+            case 'verbose':
+              if (argsText.trim()) {
+                // :verbose expression - evaluate with verbose output
+                try {
+                  const result = await evaluator.evaluate(argsText, {
+                    verbose: true,
+                    baseDir,
+                    showAst: true,
+                    showExpanded: true,
+                    showJs: true,
+                  });
+                  
+                  // Display detailed result
+                  console.log(result);
+                } catch (error) {
+                  console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+                }
+              } else {
+                // Toggle verbose mode
+                showVerbose = !showVerbose;
+                console.log(`Verbose mode: ${showVerbose ? "ON" : "OFF"}`);
+              }
+              break;
+              
+            case 'ast':
+              if (argsText.trim()) {
+                // :ast expression - show AST for expression
+                try {
+                  const result = await evaluator.evaluate(argsText, {
+                    verbose: false,
+                    baseDir,
+                    showAst: true, 
+                    showExpanded: false,
+                    showJs: false,
+                  });
+                  
+                  if (typeof result === 'object' && result !== null) {
+                    // Only show the AST parts
+                    const { parsedExpressions } = result;
+                    console.log(JSON.stringify(parsedExpressions, null, 2));
+                  } else {
+                    console.log(result);
+                  }
+                } catch (error) {
+                  console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+                }
+              } else {
+                // Toggle AST mode
+                showAst = !showAst;
+                console.log(`AST display mode: ${showAst ? "ON" : "OFF"}`);
+              }
+              break;
+              
+            case 'js':
+              if (argsText.trim()) {
+                // :js expression - show transpiled JavaScript for expression
+                try {
+                  const result = await evaluator.evaluate(argsText, {
+                    verbose: false,
+                    baseDir,
+                    showAst: false, 
+                    showExpanded: false,
+                    showJs: true,
+                  });
+                  
+                  if (typeof result === 'object' && result !== null && 'jsSource' in result) {
+                    console.log(`=> ${result.jsSource}`);
+                  } else {
+                    console.log("No JavaScript transpilation available.");
+                  }
+                } catch (error) {
+                  console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+                }
+              } else {
+                // Toggle JS mode
+                showJs = !showJs;
+                console.log(`JavaScript display mode: ${showJs ? "ON" : "OFF"}`);
+              }
+              break;
+              
+            case 'env':
+              try {
+                // Show environment bindings
+                await commandEnv(evaluator, useColors, logger);
+              } catch (error) {
+                console.error(`Error displaying environment: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              break;
+              
+            case 'macros':
+              try {
+                // Show defined macros
+                commandMacros(evaluator, useColors);
+              } catch (error) {
+                console.error(`Error displaying macros: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              break;
+              
+            case 'module':
+              if (argsText.trim()) {
+                try {
+                  await commandModule(evaluator, replState, argsText.trim());
+                } catch (error) {
+                  console.error(`Error switching modules: ${error instanceof Error ? error.message : String(error)}`);
+                }
+              } else {
+                console.log(`Current module: ${replState.currentModule}`);
+              }
+              break;
+              
+            case 'modules':
+              try {
+                // List all available modules
+                await commandModules(evaluator, useColors);
+              } catch (error) {
+                console.error(`Error listing modules: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              break;
+              
+            case 'list':
+              try {
+                // Show symbols in current module
+                await commandList(evaluator, useColors);
+              } catch (error) {
+                console.error(`Error listing symbols: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              break;
+              
+            case 'see':
+              try {
+                // Inspect modules and symbols
+                await commandSee(evaluator, argsText, useColors, showJs);
+              } catch (error) {
+                console.error(`Error inspecting: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              break;
+              
+            case 'remove':
+              try {
+                // Remove a symbol or module
+                await commandRemove(evaluator, argsText, useColors, replState);
+              } catch (error) {
+                console.error(`Error removing: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              break;
+              
+            default:
+              console.log(`Unknown command: ${command}`);
+              break;
+          }
+          continue;
+        }
+        
+        // Check for multiline input
+        try {
+          // Update paren balance
+          replState.parenBalance = updateParenBalance(input, replState.parenBalance);
+          
+          if (replState.multilineMode) {
+            // Continue multiline input
+            replState.multilineInput += input + "\n";
+            
+            // If balance is restored, evaluate the complete input
+            if (replState.parenBalance <= 0) {
+              const fullInput = replState.multilineInput.trim();
+              const result = await evaluator.evaluate(fullInput, {
+                verbose: showVerbose,
+                baseDir,
+                showAst: showAst,
+                showExpanded: showExpanded,
+                showJs: showJs,
+              });
+              
+              if (result !== undefined) {
+                // Only show simple result by default
+                if (showVerbose) {
+                  console.log(result);
+                } else {
+                  // Check if result has a value property
+                  if (result && typeof result === 'object' && 'value' in result) {
+                    console.log(result.value);
+                  } else {
+                    console.log(result);
+                  }
+                }
+              }
+              
+              // Reset multiline state
+              replState.multilineMode = false;
+              replState.multilineInput = "";
+              replState.parenBalance = 0;
+            }
+          } else if (replState.parenBalance > 0) {
+            // Start multiline input
+            replState.multilineMode = true;
+            replState.multilineInput = input + "\n";
+          } else {
+            // Single line evaluation
+            const result = await evaluator.evaluate(input, {
+              verbose: showVerbose,
+              baseDir,
+              showAst: showAst,
+              showExpanded: showExpanded,
+              showJs: showJs,
+            });
+            
+            if (result !== undefined) {
+              // Only show simple result by default
+              if (showVerbose) {
+                console.log(result);
+              } else {
+                // Check if result has a value property
+                if (result && typeof result === 'object' && 'value' in result) {
+                  console.log(result.value);
+                } else {
+                  console.log(result);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+          
+          // Reset multiline state on error
+          replState.multilineMode = false;
+          replState.multilineInput = "";
+          replState.parenBalance = 0;
+        }
+      } catch (error) {
+        console.error(`REPL error: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    
+    // Restore terminal mode
+    if (isRawMode) {
+      try {
+        Deno.stdin.setRaw(false);
+      } catch (e) {
+        // Ignore errors when resetting raw mode
       }
     }
   } catch (error) {
-    console.error(
-      `REPL initialization error: ${error instanceof Error ? error.message : String(error)}`
-    );
+    console.error(`REPL initialization error: ${error instanceof Error ? error.message : String(error)}`);
     Deno.exit(1);
   }
 }
 
-// Create a function for detailed help documentation
-function getDetailedHelp(command: string, useColors: boolean): string {
-  const commandColor = useColors ? colors.fg.sicpRed : "";
-  const headerColor = useColors ? colors.fg.sicpPurple + colors.bright : "";
-  const textColor = useColors ? colors.fg.white : "";
-  const exampleColor = useColors ? colors.fg.lightGreen : "";
-  const reset = useColors ? colors.reset : "";
+/**
+ * Enhanced helper to extract the current word for tab completion
+ * Works with nested expressions and partial words
+ */
+function getCurrentWordInContext(line: string, cursorPos: number): string {
+  if (cursorPos <= 0 || cursorPos > line.length) return "";
   
-  // Remove any leading colon (in case it wasn't stripped by commandHelp)
-  if (command.startsWith(':')) {
-    command = command.substring(1);
+  // Get the part of the line up to the cursor
+  const beforeCursor = line.substring(0, cursorPos);
+  
+  // Find the last opening delimiter or whitespace before cursor
+  const lastDelimiter = Math.max(
+    beforeCursor.lastIndexOf('('),
+    beforeCursor.lastIndexOf('['),
+    beforeCursor.lastIndexOf('{'),
+    beforeCursor.lastIndexOf(' '),
+    beforeCursor.lastIndexOf('\n'),
+    beforeCursor.lastIndexOf('\t')
+  );
+  
+  // Extract the partial word between the delimiter and cursor
+  if (lastDelimiter >= 0) {
+    return beforeCursor.substring(lastDelimiter + 1);
   }
   
-  // If the command is "reset", redirect to "remove"
-  if (command === "reset") {
-    command = "remove";
-    console.log(colorText("Note: The :reset command is deprecated.", colors.fg.yellow, useColors));
-    console.log("Please use :remove all or :remove all:symbols instead.\n");
-  }
-  
-  // If the command is "edit", redirect to "write"
-  if (command === "edit") {
-    console.log(colorText("Note: The :edit command has been renamed to :write for better clarity.", colors.fg.yellow, useColors));
-    console.log("Both commands continue to work the same way.\n");
-    command = "write";
-  }
-  
-  const helpTopics: Record<string, string[]> = {
-    "help": [
-      `${headerColor}Command: ${commandColor}:help${reset}`,
-      ``,
-      `${textColor}Display help information for REPL commands.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:help${textColor} - Show the main help banner${reset}`,
-      `  ${commandColor}:help <command>${textColor} - Show detailed help for a specific command${reset}`,
-      `  ${commandColor}:help :<command>${textColor} - Also supported (with or without colon)${reset}`,
-      ``,
-      `${headerColor}Examples:${reset}`,
-      `  ${exampleColor}:help see${textColor} - Display detailed help for the :see command${reset}`,
-      `  ${exampleColor}:help :see${textColor} - Same as above, both formats work${reset}`,
-      `  ${exampleColor}:help module${textColor} - Display detailed help for the :module command${reset}`
-    ],
-    
-    "quit": [
-      `${headerColor}Command: ${commandColor}:quit${textColor} or ${commandColor}:exit${reset}`,
-      ``,
-      `${textColor}Exit the REPL and return to the command line.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:quit${reset}`,
-      `  ${commandColor}:exit${reset}`
-    ],
-    
-    "exit": [
-      `${headerColor}Command: ${commandColor}:quit${textColor} or ${commandColor}:exit${reset}`,
-      ``,
-      `${textColor}Exit the REPL and return to the command line.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:quit${reset}`,
-      `  ${commandColor}:exit${reset}`
-    ],
-    
-    "env": [
-      `${headerColor}Command: ${commandColor}:env${reset}`,
-      ``,
-      `${textColor}Display the current environment bindings (global variables and functions).${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:env${reset}`
-    ],
-    
-    "macros": [
-      `${headerColor}Command: ${commandColor}:macros${reset}`,
-      ``,
-      `${textColor}List all defined macros in the REPL environment.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:macros${reset}`
-    ],
-    
-    "module": [
-      `${headerColor}Command: ${commandColor}:module${reset}`,
-      ``,
-      `${textColor}Create a new module or switch to an existing module.${reset}`,
-      `${textColor}Modules provide namespace isolation for your definitions.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:module${textColor} - Show the current module${reset}`,
-      `  ${commandColor}:module <name>${textColor} - Create or switch to the specified module${reset}`,
-      ``,
-      `${headerColor}Examples:${reset}`,
-      `  ${exampleColor}:module math${textColor} - Create (if new) or switch to the "math" module${reset}`,
-      `  ${exampleColor}:module user${textColor} - Switch back to the default "user" module${reset}`,
-      ``,
-      `${headerColor}Notes:${reset}`,
-      `  - New modules are created automatically when you switch to them${reset}`,
-      `  - The default module is named "user"${reset}`,
-      `  - Your current module appears in the prompt: ${exampleColor}hql[module]>${reset}`,
-      `  - Use ${commandColor}:modules${textColor} to see a list of all available modules${reset}`
-    ],
-    
-    "modules": [
-      `${headerColor}Command: ${commandColor}:modules${reset}`,
-      ``,
-      `${textColor}List all available modules in the REPL.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:modules${reset}`,
-      ``,
-      `${headerColor}Related commands:${reset}`,
-      `  ${commandColor}:module${textColor} - Switch to a specific module${reset}`,
-      `  ${commandColor}:see${textColor} - View module contents${reset}`,
-      `  ${commandColor}:remove module:<name>${textColor} - Delete a module${reset}`
-    ],
-    
-    "list": [
-      `${headerColor}Command: ${commandColor}:list${reset}`,
-      ``,
-      `${textColor}List all symbols defined in the current module.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:list${reset}`,
-      ``,
-      `${headerColor}Related commands:${reset}`,
-      `  ${commandColor}:see${textColor} - View detailed information about modules and symbols${reset}`
-    ],
-    
-    "see": [
-      `${headerColor}Command: ${commandColor}:see${reset}`,
-      ``,
-      `${textColor}Inspect modules and symbols, showing their definitions and details.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:see${textColor} - Show all symbols and exports in the current module${reset}`,
-      `  ${commandColor}:see <symbol>${textColor} - Show a specific symbol in the current module${reset}`,
-      `  ${commandColor}:see exports${textColor} - Show all exports from the current module${reset}`,
-      `  ${commandColor}:see all${textColor} - Show all information across all modules${reset}`,
-      `  ${commandColor}:see all:modules${textColor} - Show all module names in the system${reset}`,
-      `  ${commandColor}:see all:symbols${textColor} - Show all symbols across all modules${reset}`,
-      `  ${commandColor}:see <module>${textColor} - Show all symbols and exports in a specific module${reset}`,
-      `  ${commandColor}:see <module>:<symbol>${textColor} - Show a specific symbol in a specific module${reset}`,
-      `  ${commandColor}:see <module>:exports${textColor} - Show exports from a specific module${reset}`,
-      ``,
-      `${headerColor}Examples:${reset}`,
-      `  ${exampleColor}:see${textColor} - Show all symbols in the current module${reset}`,
-      `  ${exampleColor}:see add${textColor} - Show the definition of "add" in the current module${reset}`,
-      `  ${exampleColor}:see exports${textColor} - Show all exports from the current module${reset}`,
-      `  ${exampleColor}:see all${textColor} - Show information about all modules${reset}`,
-      `  ${exampleColor}:see math${textColor} - Show all symbols in the "math" module${reset}`,
-      `  ${exampleColor}:see math:multiply${textColor} - Show the definition of "multiply" in the "math" module${reset}`,
-      `  ${exampleColor}:see math:exports${textColor} - Show all exports from the "math" module${reset}`
-    ],
-    
-    "remove": [
-      `${headerColor}Command: ${commandColor}:remove${reset}`,
-      ``,
-      `${textColor}Remove symbols, modules, or reset the environment.${reset}`,
-      `${textColor}All remove operations require confirmation for safety.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:remove <symbol>${textColor} - Remove a symbol from the current module${reset}`,
-      `  ${commandColor}:remove module:<name>${textColor} - Remove an entire module${reset}`,
-      `  ${commandColor}:remove <module>:<symbol>${textColor} - Remove a symbol from a specific module${reset}`,
-      `  ${commandColor}:remove all${textColor} - Reset the entire environment (previously :reset)${reset}`,
-      `  ${commandColor}:remove all:symbols${textColor} - Clear all symbols but keep module structure${reset}`,
-      `  ${commandColor}:remove all:modules${textColor} - Remove all modules except the current one${reset}`,
-      ``,
-      `${headerColor}Examples:${reset}`,
-      `  ${exampleColor}:remove add${textColor} - Remove the "add" symbol from the current module${reset}`,
-      `  ${exampleColor}:remove module:math${textColor} - Remove the entire "math" module${reset}`,
-      `  ${exampleColor}:remove math:multiply${textColor} - Remove "multiply" from the "math" module${reset}`,
-      `  ${exampleColor}:remove all${textColor} - Reset the entire environment${reset}`,
-      ``,
-      `${headerColor}Notes:${reset}`,
-      `  - The command validates that modules and symbols exist before asking for confirmation${reset}`,
-      `  - The ${commandColor}module:${textColor} prefix is required when removing a module to prevent ambiguity${reset}`,
-      `    If you had both a module named "math" and a symbol named "math", ${commandColor}:remove math${reset}`,
-      `    would be ambiguous without the prefix.${reset}`,
-      `  - The default "user" module cannot be removed${reset}`,
-      `  - All operations require confirmation (type 'y' or 'yes')${reset}`,
-      `  - These operations cannot be undone${reset}`
-    ],
-    
-    "js": [
-      `${headerColor}Command: ${commandColor}:js${reset}`,
-      ``,
-      `${textColor}Toggle the display of JavaScript transpiled code.${reset}`,
-      `${textColor}When enabled, you'll see the JavaScript transpilation of each HQL expression.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:js${textColor} - Toggle JavaScript display on/off${reset}`,
-      ``,
-      `${headerColor}Notes:${reset}`,
-      `  - This only affects the display, not the execution of code`,
-      `  - When enabled, symbol definitions shown with :see will include JS code`
-    ],
-    
-    "write": [
-      `${headerColor}Command: ${commandColor}:write${reset}`,
-      ``,
-      `${textColor}Open a text editor for writing multiline HQL code.${reset}`,
-      `${textColor}This provides a comfortable environment for writing complex code.${reset}`,
-      ``,
-      `${headerColor}Usage:${reset}`,
-      `  ${commandColor}:write${textColor} - Open an editor with a blank file${reset}`,
-      `  ${commandColor}:write <symbol>${textColor} - Edit an existing function or variable${reset}`,
-      ``,
-      `${headerColor}Examples:${reset}`,
-      `  ${exampleColor}:write${textColor} - Open the editor for writing new code${reset}`,
-      `  ${exampleColor}:write factorial${textColor} - Edit the existing 'factorial' function${reset}`,
-      ``,
-      `${headerColor}Notes:${reset}`,
-      `  - Uses your EDITOR or VISUAL environment variable (defaults to vi)${reset}`,
-      `  - The code will be evaluated when you exit the editor${reset}`,
-      `  - Lines starting with semicolons (;) are treated as comments${reset}`,
-      `  - The command ${commandColor}:edit${textColor} is an alias for ${commandColor}:write${textColor} and works the same way${reset}`
-    ]
-  };
-  
-  // If the command is not found, provide a list of available commands
-  if (!command || !helpTopics[command]) {
-    return [
-      `${headerColor}Available Help Topics:${reset}`,
-      ``,
-      `Use ${commandColor}:help <topic>${textColor} for detailed information on a specific command.${reset}`,
-      ``,
-      `${textColor}Available topics: ${Object.keys(helpTopics).filter(k => !['exit', 'quit'].includes(k)).join(', ')}${reset}`
-    ].join('\n');
-  }
-  
-  return helpTopics[command].join('\n');
+  // If no delimiter, use the whole string up to cursor
+  return beforeCursor;
 }
 
-// Helper function to get the user's preferred editor
-function getPreferredEditor(): string {
-  return Deno.env.get("EDITOR") || Deno.env.get("VISUAL") || "vi";
-}
-
-// Command to open a temporary file for multiline editing
-async function commandWrite(evaluator: ModuleAwareEvaluator, args: string, options: ProcessOptions, state: ReplState): Promise<void> {
-  // Function content remains the same as commandEdit
-  const tempDir = await Deno.makeTempDir({ prefix: "hql-repl-" });
-  const tempFile = `${tempDir}/temp-edit.hql`;
+/**
+ * Read a line with support for arrow key navigation through history, tab completion,
+ * and advanced keyboard shortcuts
+ */
+async function readLineWithArrowKeys(
+  prompt: string, 
+  history: string[], 
+  historyIndex: number,
+  tabCompletion?: TabCompletion
+): Promise<string> {
+  let input = "";
+  let cursorPos = 0;
+  let localHistoryIndex = historyIndex;
+  let originalInput = input;
+  let completions: string[] = [];
+  let completionIndex = -1;
   
-  // Initial content for the file - either existing code or a template
-  let initialContent = "";
-  
-  if (args.trim()) {
-    // If a symbol name is provided, try to get its source
-    try {
-      const symbolName = args.trim();
-      const definition = await evaluator.getSymbolDefinition(symbolName);
+  while (true) {
+    const buf = new Uint8Array(3);
+    const n = await Deno.stdin.read(buf);
+    
+    if (n === null) {
+      // EOF
+      return "\x04"; // Ctrl+D
+    }
+    
+    // Check for control sequences
+    if (buf[0] === 1) { // Ctrl+A - move to beginning of line
+      cursorPos = 0;
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+      continue;
+    }
+    
+    if (buf[0] === 5) { // Ctrl+E - move to end of line
+      cursorPos = input.length;
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      continue;
+    }
+    
+    if (buf[0] === 11) { // Ctrl+K - delete from cursor to end of line
+      input = input.substring(0, cursorPos);
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      continue;
+    }
+    
+    if (buf[0] === 21) { // Ctrl+U - delete from beginning of line to cursor
+      input = input.substring(cursorPos);
+      cursorPos = 0;
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      continue;
+    }
+    
+    if (buf[0] === 23) { // Ctrl+W - delete word backwards
+      const beforeCursor = input.substring(0, cursorPos);
+      // Find the start of the current word
+      const match = beforeCursor.match(/.*\s(\S+)$/);
+      if (match) {
+        const wordStart = beforeCursor.lastIndexOf(match[1]);
+        input = input.substring(0, wordStart) + input.substring(cursorPos);
+        cursorPos = wordStart;
+      } else {
+        // No word found, clear everything before cursor
+        input = input.substring(cursorPos);
+        cursorPos = 0;
+      }
       
-      if (definition && definition.source) {
-        // Use the source code if available
-        initialContent = definition.source;
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      continue;
+    }
+    
+    // Tab completion
+    if (buf[0] === 9) { // Tab key
+      if (tabCompletion) {
+        if (completions.length === 0) {
+          // Get completions
+          completions = await tabCompletion.getCompletions(input, cursorPos);
+          completionIndex = 0;
+        } else {
+          // Cycle through completions
+          completionIndex = (completionIndex + 1) % completions.length;
+        }
         
-        // Handle escaped newlines
-        if (initialContent.includes("\\n")) {
-          initialContent = initialContent.replace(/\\n/g, "\n");
-          // Remove surrounding quotes if present
-          if ((initialContent.startsWith('"') && initialContent.endsWith('"')) ||
-              (initialContent.startsWith("'") && initialContent.endsWith("'"))) {
-            initialContent = initialContent.substring(1, initialContent.length - 1);
+        if (completions.length > 0) {
+          // Apply the completion
+          if (input.trim().startsWith(':')) {
+            // Command completion - replace entire input
+            input = completions[completionIndex];
+            cursorPos = input.length;
+          } else {
+            // Symbol completion - replace current word
+            const currentWord = getCurrentWordInContext(input, cursorPos);
+            const completion = completions[completionIndex];
+            
+            // Replace current word with completion
+            const beforeWord = input.substring(0, cursorPos - currentWord.length);
+            const afterWord = input.substring(cursorPos);
+            
+            // Create new input with completion
+            input = beforeWord + completion + afterWord;
+            
+            // Update cursor position
+            cursorPos = beforeWord.length + completion.length;
+          }
+          
+          // Redraw the line
+          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+          Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+          Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+          
+          // Position cursor
+          if (cursorPos < input.length) {
+            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
           }
         }
-      } else {
-        console.log(`No source found for symbol '${symbolName}'. Starting with an empty editor.`);
+        
+        continue;
       }
-    } catch (error) {
-      console.error(`Error loading source: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  } else if (state.multilineMode) {
-    // If we're in multiline mode, use the current multiline content
-    initialContent = state.multilineInput;
-  }
-  
-  // Add a helpful comment header
-  const header = `; HQL REPL Editor
-; Write your code below and save+exit when done.
-; Your code will be evaluated when you return to the REPL.
-;
-; Current module: ${await evaluator.getCurrentModule()}
-;
-`;
-  
-  try {
-    // Write the initial content to the file
-    await Deno.writeTextFile(tempFile, header + initialContent);
-    
-    // Get the editor command
-    const editor = getPreferredEditor();
-    
-    console.log(`Opening editor (${editor})... Close the editor when finished.`);
-    
-    // Open the editor with the file using the newer Deno.Command API
-    const command = new Deno.Command(editor, {
-      args: [tempFile],
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit"
-    });
-    
-    // Execute the command and wait for it to complete
-    const { code: exitCode } = await command.output();
-    
-    if (exitCode !== 0) {
-      console.error(`Editor exited with error code: ${exitCode}`);
-      return;
+    } else {
+      // Reset completions when any other key is pressed
+      completions = [];
+      completionIndex = -1;
     }
     
-    // Read the edited content
-    const editedContent = await Deno.readTextFile(tempFile);
-    
-    // Filter out comment lines and blank lines
-    const codeLines = editedContent.split('\n')
-      .filter(line => !line.trim().startsWith(';') && line.trim().length > 0);
-    
-    if (codeLines.length === 0) {
-      console.log("No code to evaluate.");
-      return;
-    }
-    
-    const hqlCode = codeLines.join('\n');
-    console.log("Evaluating edited code...");
-    
-    // Reset multiline state
-    state.multilineMode = false;
-    state.multilineInput = "";
-    
-    // Process the code
-    await processInput(hqlCode, evaluator, [], options, state);
-  } catch (error) {
-    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    // Clean up the temporary directory
-    try {
-      await Deno.remove(tempDir, { recursive: true });
-    } catch (error) {
-      console.error(`Error cleaning up temporary files: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   Tab Completion System
-───────────────────────────────────────────────────────────────────────────── */
-
-interface CompletionResult {
-  completions: string[];
-  prefix: string;
-  displayText?: string;
-}
-
-/**
- * TabCompletion - Advanced context-aware completion system for the REPL
- * Provides completion for commands, symbols, modules, and more
- */
-class TabCompletion {
-  private evaluator: ModuleAwareEvaluator;
-  private commandCache: string[] = [];
-  private useColors: boolean;
-  
-  constructor(evaluator: ModuleAwareEvaluator, options: { useColors?: boolean } = {}) {
-    this.evaluator = evaluator;
-    this.useColors = options.useColors ?? true;
-    
-    // Initialize command cache
-    this.initializeCommands();
-  }
-  
-  /**
-   * Initialize the list of commands for completion
-   */
-  private initializeCommands(): void {
-    this.commandCache = [
-      "help", "quit", "exit", "env", "macros", "modules", "module",
-      "list", "remove", "see", "verbose", "ast", "expanded", "js", "colors", "write"
-    ];
-  }
-  
-  /**
-   * Get completions for the current input
-   */
-  async getCompletions(input: string): Promise<CompletionResult> {
-    // Default empty result
-    const emptyResult = { completions: [], prefix: "" };
-    
-    // No completion for empty input
-    if (!input.trim()) return emptyResult;
-    
-    // Check if this is a command (starts with ":")
-    if (input.startsWith(":")) {
-      const commandInput = input.substring(1);
-      const parts = commandInput.split(/\s+/);
-      const mainCommand = parts[0];
-      
-      // Special handling for specific commands with subcommands
-      if (parts.length > 1) {
-        if (mainCommand === "see") {
-          return await this.getSeeCommandCompletions(commandInput);
-        } else if (mainCommand === "module") {
-          return await this.getModuleNameCompletions(commandInput);
-        } else if (mainCommand === "remove") {
-          return await this.getRemoveCommandCompletions(commandInput);
+    // Arrow keys and special key sequences
+    if (buf[0] === 27) {
+      if (buf[1] === 91) { // ESC [ sequence
+        if (buf[2] === 65) { // Up arrow
+          if (history.length > 0) {
+            // Save current input the first time we navigate
+            if (localHistoryIndex === -1) {
+              originalInput = input;
+            }
+            
+            // Navigate up through history
+            localHistoryIndex = Math.min(localHistoryIndex + 1, history.length - 1);
+            const historyItem = history[history.length - 1 - localHistoryIndex];
+            
+            // Clear current line and reset cursor to beginning of line
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+            // Erase from cursor to end of line
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+            
+            // Show history item
+            input = historyItem;
+            Deno.stdout.writeSync(new TextEncoder().encode(input));
+            cursorPos = input.length;
+          }
+        } 
+        else if (buf[2] === 66) { // Down arrow
+          // Clear current line
+          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+          Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+          Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+          
+          if (localHistoryIndex > 0) {
+            // Navigate down through history
+            localHistoryIndex--;
+            const historyItem = history[history.length - 1 - localHistoryIndex];
+            input = historyItem;
+          } else if (localHistoryIndex === 0) {
+            // Return to original input
+            localHistoryIndex = -1;
+            input = originalInput;
+          }
+          
+          // Show the result
+          Deno.stdout.writeSync(new TextEncoder().encode(input));
+          cursorPos = input.length;
+        }
+        else if (buf[2] === 67) { // Right arrow
+          if (cursorPos < input.length) {
+            cursorPos++;
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[C")); // Move cursor right
+          }
+        }
+        else if (buf[2] === 68) { // Left arrow
+          if (cursorPos > 0) {
+            cursorPos--;
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[D")); // Move cursor left
+          }
+        }
+        // Support for Home/End keys
+        else if (buf[2] === 72 || (buf[2] === 49 && buf[3] === 126)) { // Home key
+          cursorPos = 0;
+          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+          Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+        }
+        else if (buf[2] === 70 || (buf[2] === 52 && buf[3] === 126)) { // End key
+          cursorPos = input.length;
+          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+          Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+        }
+        // Delete key
+        else if (buf[2] === 51 && buf[3] === 126) { // Delete key
+          if (cursorPos < input.length) {
+            input = input.substring(0, cursorPos) + input.substring(cursorPos + 1);
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+            // Position cursor
+            if (cursorPos < input.length) {
+              Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+            }
+          }
+        }
+        continue;
+      }
+      // Handle Alt key combinations (ESC followed by character)
+      else if (buf[1] >= 32 && buf[1] <= 126) {
+        if (buf[1] === 98 || buf[1] === 66) { // Alt+B / Alt+b (move back one word)
+          const beforeCursor = input.substring(0, cursorPos);
+          const wordMatch = beforeCursor.match(/.*\b(\w+)\s*$/);
+          if (wordMatch) {
+            const wordStart = beforeCursor.lastIndexOf(wordMatch[1]);
+            cursorPos = wordStart;
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+          }
+          continue;
+        }
+        else if (buf[1] === 102 || buf[1] === 70) { // Alt+F / Alt+f (move forward one word)
+          const afterCursor = input.substring(cursorPos);
+          const wordMatch = afterCursor.match(/^\s*(\w+)/);
+          if (wordMatch && wordMatch[1]) {
+            const wordEnd = cursorPos + wordMatch[0].length;
+            cursorPos = wordEnd;
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+          } else {
+            cursorPos = input.length;
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+          }
+          continue;
+        }
+        else if (buf[1] === 100 || buf[1] === 68) { // Alt+D / Alt+d (delete word forward)
+          const afterCursor = input.substring(cursorPos);
+          const wordMatch = afterCursor.match(/^\s*(\w+)/);
+          if (wordMatch) {
+            const wordEnd = cursorPos + wordMatch[0].length;
+            input = input.substring(0, cursorPos) + input.substring(wordEnd);
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+          }
+          continue;
         }
       }
-      
-      // Basic command completion
-      return this.getCommandCompletions(commandInput);
     }
     
-    // Check for module-related completions
-    if (input.includes("(module ")) {
-      return await this.getModuleCompletions(input);
+    // Handle Enter
+    if (buf[0] === 13) {
+      return input;
     }
     
-    // Check for import completions
-    if (input.includes("(import ")) {
-      return await this.getImportCompletions(input);
+    // Handle Ctrl+C
+    if (buf[0] === 3) {
+      Deno.stdout.writeSync(new TextEncoder().encode("^C\n"));
+      return "\x03"; // Return ETX character to signal Ctrl+C
     }
     
-    // Default to symbol completions for general expressions
-    return await this.getSymbolCompletions(input);
-  }
-  
-  /**
-   * Get completions for REPL commands
-   */
-  private getCommandCompletions(input: string): CompletionResult {
-    const lastWord = input.split(/\s+/).pop() || "";
-    const isSubcommand = input.includes(" ");
-    
-    // Filter command list based on input prefix
-    const commandMatches = this.commandCache.filter(cmd => 
-      cmd.startsWith(lastWord) && 
-      // For subcommands like ":module x" don't offer main commands
-      (!isSubcommand || input.startsWith(cmd + " "))
-    );
-    
-    // Special handling for specific commands with subcommands
-    if (isSubcommand) {
-      const mainCommand = input.split(/\s+/)[0];
-      
-      // These methods return promises, so we need to handle them differently
-      if (mainCommand === "see" || mainCommand === "module" || mainCommand === "remove") {
-        // For TypeScript compatibility, return a simple result
-        // The actual implementation will handle these specially
-        return {
-          completions: [],
-          prefix: lastWord,
-          displayText: `${mainCommand} subcommands`
-        };
+    // Handle Ctrl+D (EOF)
+    if (buf[0] === 4) {
+      if (input.length === 0) {
+        return "\x04"; // Signal EOF only if input is empty
       }
+      continue;
     }
     
-    return {
-      completions: commandMatches,
-      prefix: lastWord,
-      displayText: "REPL commands"
-    };
-  }
-  
-  /**
-   * Get completions for the :see command
-   */
-  private async getSeeCommandCompletions(input: string): Promise<CompletionResult> {
-    const args = input.split(/\s+/).slice(1);
-    const currentArg = args[args.length - 1] || "";
-    
-    // Special completions for :see
-    const specialOptions = ["all", "all:modules", "all:symbols", "exports"];
-    
-    // If entering a module:symbol notation
-    if (currentArg.includes(":")) {
-      const [modulePart, symbolPart] = currentArg.split(":");
-      
-      // Suggestions for module names
-      if (!symbolPart) {
-        // Get available modules
-        const modules = await this.evaluator.getAvailableModules();
-        const moduleMatches = modules.filter(m => m.startsWith(modulePart));
+    // Handle Backspace
+    if (buf[0] === 127 || buf[0] === 8) {
+      if (cursorPos > 0) {
+        // Remove character at cursor position
+        input = input.substring(0, cursorPos - 1) + input.substring(cursorPos);
+        cursorPos--;
         
-        return {
-          completions: moduleMatches.map(m => `${m}:`),
-          prefix: modulePart,
-          displayText: "Modules"
-        };
-      }
-      
-      // Suggestions for symbol names within the module
-      const symbols = await this.evaluator.listModuleSymbols(modulePart);
-      const symbolMatches = symbols.filter(s => s.startsWith(symbolPart));
-      
-      return {
-        completions: symbolMatches.map(s => `${modulePart}:${s}`),
-        prefix: currentArg,
-        displayText: `Symbols in module '${modulePart}'`
-      };
-    }
-    
-    // Completions for special options and module names
-    const moduleNames = await this.evaluator.getAvailableModules();
-    
-    // Combine special options and module names
-    const allOptions = [...specialOptions, ...moduleNames];
-    const matches = allOptions.filter(opt => opt.startsWith(currentArg));
-    
-    return {
-      completions: matches,
-      prefix: currentArg,
-      displayText: "Modules and options"
-    };
-  }
-  
-  /**
-   * Get completions for the :module command
-   */
-  private async getModuleNameCompletions(input: string): Promise<CompletionResult> {
-    const currentArg = input.split(/\s+/).pop() || "";
-    
-    // Get available modules
-    const modules = await this.evaluator.getAvailableModules();
-    const matches = modules.filter(m => m.startsWith(currentArg));
-    
-    return {
-      completions: matches,
-      prefix: currentArg,
-      displayText: "Available modules"
-    };
-  }
-  
-  /**
-   * Get completions for the :remove command
-   */
-  private async getRemoveCommandCompletions(input: string): Promise<CompletionResult> {
-    const currentArg = input.split(/\s+/).pop() || "";
-    
-    // Special options for :remove
-    const specialOptions = ["all", "all:modules", "all:symbols"];
-    
-    // Check for module:symbol notation
-    if (currentArg.includes(":")) {
-      const [modulePart, symbolPart] = currentArg.split(":");
-      
-      if (!symbolPart) {
-        // Get available modules
-        const modules = await this.evaluator.getAvailableModules();
-        const moduleMatches = modules.filter(m => m.startsWith(modulePart));
+        // Redraw the line
+        Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+        Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+        Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
         
-        return {
-          completions: moduleMatches.map(m => `${m}:`),
-          prefix: modulePart,
-          displayText: "Modules"
-        };
+        // Position cursor
+        if (cursorPos < input.length) {
+          Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+        }
       }
-      
-      // Suggestions for symbol names within the module
-      const symbols = await this.evaluator.listModuleSymbols(modulePart);
-      const symbolMatches = symbols.filter(s => s.startsWith(symbolPart));
-      
-      return {
-        completions: symbolMatches.map(s => `${modulePart}:${s}`),
-        prefix: currentArg,
-        displayText: `Symbols in module '${modulePart}'`
-      };
+      continue;
     }
     
-    // Get current module's symbols
-    const currentModule = this.evaluator.getCurrentModuleSync();
-    const symbols = await this.evaluator.listModuleSymbols(currentModule);
-    
-    // Modules for module:symbol notation
-    const modules = await this.evaluator.getAvailableModules();
-    
-    // Combine all options (special, symbols, modules)
-    const allOptions = [
-      ...specialOptions,
-      ...symbols,
-      ...modules.map(m => `${m}:`)
-    ];
-    
-    const matches = allOptions.filter(opt => opt.startsWith(currentArg));
-    
-    return {
-      completions: matches,
-      prefix: currentArg,
-      displayText: "Symbols, modules, and options"
-    };
-  }
-  
-  /**
-   * Get completions for module names in module expressions
-   */
-  private async getModuleCompletions(input: string): Promise<CompletionResult> {
-    const match = input.match(/\(module\s+([a-zA-Z0-9_-]*)$/);
-    if (!match) return { completions: [], prefix: "" };
-    
-    const modulePrefix = match[1];
-    const modules = await this.evaluator.getAvailableModules();
-    const matches = modules.filter(m => m.startsWith(modulePrefix));
-    
-    return {
-      completions: matches,
-      prefix: modulePrefix,
-      displayText: "Module names"
-    };
-  }
-  
-  /**
-   * Get completions for import expressions
-   */
-  private async getImportCompletions(input: string): Promise<CompletionResult> {
-    // Check where we are in the import expression
-    const fromMatch = input.match(/from\s+"([a-zA-Z0-9_-]*)"$/);
-    
-    // Completing the module name after "from"
-    if (fromMatch) {
-      const modulePrefix = fromMatch[1];
-      const modules = await this.evaluator.getAvailableModules();
-      const matches = modules.filter(m => m.startsWith(modulePrefix));
+    // Handle regular character input
+    if (buf[0] >= 32 && buf[0] <= 126) {
+      // Insert character at cursor position
+      const char = String.fromCharCode(buf[0]);
+      input = input.substring(0, cursorPos) + char + input.substring(cursorPos);
+      cursorPos++;
       
-      return {
-        completions: matches.map(m => `"${m}"`),
-        prefix: `"${modulePrefix}"`,
-        displayText: "Module names"
-      };
-    }
-    
-    // Check if we're completing an imported symbol name
-    const symbolMatch = input.match(/\[([^,\]]*)(,\s*[^,\]]*)*$/);
-    if (symbolMatch) {
-      // Figure out which module we're importing from
-      const fromModuleMatch = input.match(/from\s+"([a-zA-Z0-9_-]+)"/);
-      if (!fromModuleMatch) return { completions: [], prefix: "" };
+      // Redraw the line
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
       
-      const moduleName = fromModuleMatch[1];
-      const symbols = await this.evaluator.listModuleSymbols(moduleName);
-      const exports = await this.evaluator.getModuleExports(moduleName);
-      
-      // Prefer exported symbols in suggestions
-      const sortedSymbols = [
-        ...exports,
-        ...symbols.filter(s => !exports.includes(s))
-      ];
-      
-      // Get the current symbol prefix we're completing
-      let currentSymbol = "";
-      if (symbolMatch[0].endsWith(",")) {
-        // After a comma, no prefix yet
-        currentSymbol = "";
-      } else {
-        // Get everything after the last comma or opening bracket
-        const lastCommaOrBracket = Math.max(
-          symbolMatch[0].lastIndexOf(","),
-          symbolMatch[0].lastIndexOf("[")
-        );
-        currentSymbol = symbolMatch[0].substring(lastCommaOrBracket + 1).trim();
+      // Position cursor
+      if (cursorPos < input.length) {
+        Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
       }
-      
-      const matches = sortedSymbols.filter(s => s.startsWith(currentSymbol));
-      
-      return {
-        completions: matches,
-        prefix: currentSymbol,
-        displayText: `Symbols from module '${moduleName}'`
-      };
-    }
-    
-    return { completions: [], prefix: "" };
-  }
-  
-  /**
-   * Get symbol completions for general expressions
-   */
-  private async getSymbolCompletions(input: string): Promise<CompletionResult> {
-    // Find the last incomplete symbol/word
-    const lastWordMatch = input.match(/[a-zA-Z0-9_-]+$/);
-    if (!lastWordMatch) return { completions: [], prefix: "" };
-    
-    const prefix = lastWordMatch[0];
-    
-    // Get current module's symbols
-    const currentModule = this.evaluator.getCurrentModuleSync();
-    const symbols = await this.evaluator.listModuleSymbols(currentModule);
-    
-    // Get built-in symbols from the environment
-    const env = this.evaluator.getEnvironment();
-    const builtIns = env.getAllDefinedSymbols();
-    
-    // Combine current module symbols and built-ins, filtering out duplicates
-    const allSymbols = [...new Set([...symbols, ...builtIns])];
-    
-    // Filter by prefix
-    const matches = allSymbols.filter(s => s.startsWith(prefix));
-    
-    return {
-      completions: matches,
-      prefix,
-      displayText: "Symbols"
-    };
-  }
-  
-  /**
-   * Display completions with formatting
-   */
-  displayCompletions(result: CompletionResult): void {
-    if (result.completions.length === 0) {
-      console.log("No completions available");
-      return;
-    }
-    
-    const { completions, displayText } = result;
-    
-    console.log(this.useColors 
-      ? `${colors.fg.yellow}${displayText || "Completions"}:${colors.reset}`
-      : `${displayText || "Completions"}:`);
-    
-    // Group completions into columns
-    const maxWidth = Math.max(...completions.map(c => c.length)) + 2;
-    const termWidth = Deno.consoleSize().columns || 80;
-    const numColumns = Math.max(1, Math.floor(termWidth / maxWidth));
-    
-    for (let i = 0; i < completions.length; i += numColumns) {
-      const row = completions.slice(i, i + numColumns)
-        .map(c => c.padEnd(maxWidth, ' '))
-        .join('');
-      console.log(row);
     }
   }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   Enhanced Error Handling
-───────────────────────────────────────────────────────────────────────────── */
-
-interface ErrorContext {
-  code: string;
-  position?: {
-    line: number;
-    column: number;
+/**
+ * Helper function to get detailed help for each command
+ */
+function getDetailedHelp(command: string, useColors: boolean): string {
+  const helpText: Record<string, string> = {
+    "help": "Display help information about available commands.",
+    "quit": "Exit the REPL session.",
+    "exit": "Exit the REPL session.",
+    "env": "Display all environment bindings (defined variables and functions).",
+    "macros": "Show all defined macros.",
+    "module": "Switch to a different module or show the current module.",
+    "modules": "List all available modules.",
+    "list": "Show all symbols defined in the current module.",
+    "remove": "Remove a symbol or module.",
+    "see": "Inspect modules and symbols in detail.",
+    "verbose": "Toggle verbose output mode or evaluate an expression with verbose output.",
+    "ast": "Toggle AST display mode or show the AST for a specific expression.",
+    "js": "Show the JavaScript transpilation for a given expression."
   };
-  filename?: string;
-}
-
-/**
- * Enhanced error diagnostics with suggestions and context
- */
-class ErrorDiagnostics {
-  private evaluator: ModuleAwareEvaluator;
-  private useColors: boolean;
-  private lastErrorInput: string = '';
   
-  constructor(evaluator: ModuleAwareEvaluator, options: { useColors?: boolean } = {}) {
-    this.evaluator = evaluator;
-    this.useColors = options.useColors ?? true;
-  }
-  
-  /**
-   * Format and enhance error messages with suggestions and context
-   */
-  async formatError(error: unknown, input: string): Promise<string> {
-    this.lastErrorInput = input;
-    
-    if (!(error instanceof Error)) {
-      return String(error);
-    }
-    
-    // Extract error information
-    const errorMessage = error.message;
-    const errorStack = error.stack || '';
-    
-    // Try to extract location information
-    const locationInfo = this.extractLocationInfo(errorStack, errorMessage);
-    
-    // Generate rich error message with context
-    let richError = this.useColors 
-      ? `${colors.fg.red}${colors.bright}Error:${colors.reset} ${errorMessage}`
-      : `Error: ${errorMessage}`;
-    
-    // Add code context if position is available
-    if (locationInfo) {
-      richError += '\n\n' + this.getCodeContext(input, locationInfo);
-    }
-    
-    // Add suggestions based on the error type
-    const suggestions = await this.generateSuggestions(error, input);
-    if (suggestions.length > 0) {
-      richError += '\n\n' + (this.useColors 
-        ? `${colors.fg.yellow}Suggestions:${colors.reset}`
-        : 'Suggestions:');
-      
-      for (const suggestion of suggestions) {
-        richError += '\n- ' + suggestion;
-      }
-    }
-    
-    return richError;
-  }
-  
-  /**
-   * Extract location information from error message or stack
-   */
-  private extractLocationInfo(stack: string, message: string): { line: number; column: number } | null {
-    // Common patterns for syntax errors
-    const syntaxErrorRegex = /at line (\d+), column (\d+)/;
-    const syntaxMatch = message.match(syntaxErrorRegex);
-    
-    if (syntaxMatch) {
-      return {
-        line: parseInt(syntaxMatch[1], 10),
-        column: parseInt(syntaxMatch[2], 10)
-      };
-    }
-    
-    // Position from the error stack
-    const stackLocationRegex = /:(\d+):(\d+)/;
-    const stackMatch = stack.match(stackLocationRegex);
-    
-    if (stackMatch) {
-      return {
-        line: parseInt(stackMatch[1], 10),
-        column: parseInt(stackMatch[2], 10)
-      };
-    }
-    
-    return null;
-  }
-  
-  /**
-   * Get code context around the error location
-   */
-  private getCodeContext(input: string, location: { line: number; column: number }): string {
-    const lines = input.split('\n');
-    const { line, column } = location;
-    
-    // Ensure line number is valid
-    if (line <= 0 || line > lines.length) {
-      return '';
-    }
-    
-    // Get context lines (2 before and after)
-    const contextStart = Math.max(0, line - 3);
-    const contextEnd = Math.min(lines.length - 1, line + 1);
-    
-    let context = '';
-    for (let i = contextStart; i <= contextEnd; i++) {
-      const lineNum = (i + 1).toString().padStart(3);
-      const isErrorLine = i === line - 1;
-      
-      // Format the line number and code
-      if (isErrorLine) {
-        context += this.useColors 
-          ? `${colors.fg.red}${lineNum} | ${lines[i]}${colors.reset}\n`
-          : `${lineNum} | ${lines[i]}\n`;
-        
-        // Add pointer to the error location
-        const pointer = ' '.repeat(column + lineNum.length + 2) + '^';
-        context += this.useColors 
-          ? `${colors.fg.red}${pointer}${colors.reset}\n`
-          : `${pointer}\n`;
-      } else {
-        context += `${lineNum} | ${lines[i]}\n`;
-      }
-    }
-    
-    return context;
-  }
-  
-  /**
-   * Generate suggestions based on error type
-   */
-  private async generateSuggestions(error: Error, input: string): Promise<string[]> {
-    const suggestions: string[] = [];
-    const errorMessage = error.message.toLowerCase();
-    
-    // Handle specific error types
-    if (errorMessage.includes('undefined variable') || errorMessage.includes('not defined')) {
-      await this.addDidYouMeanSuggestions(error.message, suggestions);
-    } else if (errorMessage.includes('unexpected token') || errorMessage.includes('unexpected end of input')) {
-      this.addParenBalanceSuggestions(input, suggestions);
-    } else if (errorMessage.includes('expected') && errorMessage.includes('but got')) {
-      this.addSyntaxSuggestions(errorMessage, suggestions);
-    } else if (errorMessage.includes('import')) {
-      await this.addImportSuggestions(errorMessage, suggestions);
-    } else if (errorMessage.includes('type error')) {
-      this.addTypeSuggestions(errorMessage, suggestions);
-    }
-    
-    // Add function syntax check
-    this.addFunctionSyntaxSuggestions(input, suggestions);
-    
-    return suggestions;
-  }
-  
-  /**
-   * Add "did you mean?" suggestions for undefined symbols
-   */
-  private async addDidYouMeanSuggestions(errorMessage: string, suggestions: string[]): Promise<void> {
-    // Extract the undefined symbol from the error message
-    const symbolMatch = errorMessage.match(/'([^']+)'/);
-    if (!symbolMatch) return;
-    
-    const missingSymbol = symbolMatch[1];
-    
-    // Get all available symbols from current module and environment
-    const currentModule = this.evaluator.getCurrentModuleSync();
-    const moduleSymbols = await this.evaluator.listModuleSymbols(currentModule);
-    const env = this.evaluator.getEnvironment();
-    const builtIns = env.getAllDefinedSymbols();
-    
-    // Combine all symbols
-    const allSymbols = [...new Set([...moduleSymbols, ...builtIns])];
-    
-    // Find similar symbols using Levenshtein distance
-    const similarSymbols = allSymbols
-      .filter(symbol => this.levenshteinDistance(missingSymbol, symbol) <= 2)
-      .sort((a, b) => this.levenshteinDistance(missingSymbol, a) - this.levenshteinDistance(missingSymbol, b))
-      .slice(0, 3);
-    
-    if (similarSymbols.length > 0) {
-      suggestions.push(`Did you mean: ${similarSymbols.join(', ')}?`);
-    }
-    
-    // Check if this symbol exists in another module
-    const modules = await this.evaluator.getAvailableModules();
-    for (const moduleName of modules) {
-      if (moduleName === currentModule) continue;
-      
-      const otherModuleSymbols = await this.evaluator.listModuleSymbols(moduleName);
-      if (otherModuleSymbols.includes(missingSymbol)) {
-        suggestions.push(`The symbol '${missingSymbol}' exists in module '${moduleName}'. Use (import [${missingSymbol}] from "${moduleName}")`);
-        break;
-      }
-    }
-  }
-  
-  /**
-   * Calculate Levenshtein distance between two strings
-   */
-  private levenshteinDistance(a: string, b: string): number {
-    if (a.length === 0) return b.length;
-    if (b.length === 0) return a.length;
-    
-    const matrix: number[][] = [];
-    
-    // Initialize the matrix
-    for (let i = 0; i <= b.length; i++) {
-      matrix[i] = [i];
-    }
-    for (let j = 0; j <= a.length; j++) {
-      matrix[0][j] = j;
-    }
-    
-    // Fill the matrix
-    for (let i = 1; i <= b.length; i++) {
-      for (let j = 1; j <= a.length; j++) {
-        const cost = a[j - 1] === b[i - 1] ? 0 : 1;
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j] + 1,      // deletion
-          matrix[i][j - 1] + 1,      // insertion
-          matrix[i - 1][j - 1] + cost  // substitution
-        );
-      }
-    }
-    
-    return matrix[b.length][a.length];
-  }
-  
-  /**
-   * Add suggestions for paren balancing issues
-   */
-  private addParenBalanceSuggestions(input: string, suggestions: string[]): void {
-    // Count open and close parens
-    const openCount = (input.match(/\(/g) || []).length;
-    const closeCount = (input.match(/\)/g) || []).length;
-    
-    if (openCount > closeCount) {
-      const missing = openCount - closeCount;
-      suggestions.push(`Missing ${missing} closing parenthesis: ${')'.repeat(missing)}`);
-    } else if (closeCount > openCount) {
-      const extra = closeCount - openCount;
-      suggestions.push(`${extra} extra closing parenthesis. Remove ${extra} ')' characters.`);
-    }
-    
-    // Check for string literal issues
-    const unclosedString = input.match(/"[^"]*$/);
-    if (unclosedString) {
-      suggestions.push('Unclosed string literal. Add a closing " character.');
-    }
-  }
-  
-  /**
-   * Add suggestions for syntax errors
-   */
-  private addSyntaxSuggestions(errorMessage: string, suggestions: string[]): void {
-    // Extract expected and received tokens
-    const expectedMatch = errorMessage.match(/expected ([^,]+), but got/i);
-    const receivedMatch = errorMessage.match(/but got ([^.]+)/i);
-    
-    if (expectedMatch && receivedMatch) {
-      const expected = expectedMatch[1];
-      const received = receivedMatch[1];
-      
-      suggestions.push(`Expected ${expected} but got ${received}`);
-      
-      // Common fixes for specific syntax errors
-      if (expected.includes('identifier') && received.includes('string')) {
-        suggestions.push('Use symbols without quotes for identifiers (e.g., name instead of "name")');
-      } else if (expected.includes('string') && received.includes('identifier')) {
-        suggestions.push('Use quotes around string literals (e.g., "hello" instead of hello)');
-      } else if (expected.includes('(')) {
-        suggestions.push('Make sure to start a new expression with an opening parenthesis (');
-      }
-    }
-  }
-  
-  /**
-   * Add suggestions for import errors
-   */
-  private async addImportSuggestions(errorMessage: string, suggestions: string[]): Promise<void> {
-    // Extract module name if present
-    const moduleMatch = errorMessage.match(/module ['"]([^'"]+)['"]/);
-    if (!moduleMatch) return;
-    
-    const moduleName = moduleMatch[1];
-    
-    // Check for similar module names
-    const modules = await this.evaluator.getAvailableModules();
-    const similarModules = modules
-      .filter(m => this.levenshteinDistance(moduleName, m) <= 2)
-      .sort((a, b) => this.levenshteinDistance(moduleName, a) - this.levenshteinDistance(moduleName, b))
-      .slice(0, 3);
-    
-    if (similarModules.length > 0) {
-      suggestions.push(`Did you mean to import from one of these modules: ${similarModules.join(', ')}?`);
-    } else {
-      suggestions.push(`Module '${moduleName}' not found. Use :modules to list available modules.`);
-    }
-  }
-  
-  /**
-   * Add suggestions for type errors
-   */
-  private addTypeSuggestions(errorMessage: string, suggestions: string[]): void {
-    // Check for common type errors
-    if (errorMessage.includes('not a function')) {
-      suggestions.push('Make sure you are calling a function, not a value.');
-      suggestions.push('Check that the function name is spelled correctly.');
-    } else if (errorMessage.includes('cannot be used as')) {
-      suggestions.push('The types of your values don\'t match the expected types for this operation.');
-      suggestions.push('Try converting your value to the appropriate type first.');
-    }
-  }
-  
-  /**
-   * Add suggestions for common function definition errors
-   */
-  private addFunctionSyntaxSuggestions(input: string, suggestions: string[]): void {
-    // Check for function definitions with square brackets instead of parentheses
-    const fnWithBrackets = input.match(/\(\s*(fn|defn|lambda)\s+([a-zA-Z0-9_-]+)\s*\[([^\]]*)\]/i);
-    if (fnWithBrackets) {
-      const [, fnType, fnName, params] = fnWithBrackets;
-      suggestions.push(`HQL uses parentheses for function parameters, not square brackets.`);
-      suggestions.push(`Try: (${fnType} ${fnName} (${params}) ...)`);
-    }
-    
-    // Check for missing function body
-    const fnWithoutBody = input.match(/\(\s*(fn|defn|lambda)\s+([a-zA-Z0-9_-]+)\s*\([^(]*\)\s*\)/i);
-    if (fnWithoutBody) {
-      const [, fnType, fnName] = fnWithoutBody;
-      suggestions.push(`Function '${fnName}' is missing a body.`);
-      suggestions.push(`Example: (${fnType} ${fnName} (x y) (+ x y))`);
-    }
-    
-    // Check for potential parameter naming issues
-    const paramPattern = /\(\s*(fn|defn|lambda)\s+([a-zA-Z0-9_-]+)\s*\(([^)]*)\)/i;
-    const paramMatch = input.match(paramPattern);
-    if (paramMatch) {
-      const [, , , paramList] = paramMatch;
-      const params = paramList.split(/\s+/).filter(Boolean);
-      
-      // Check for duplicate parameters
-      const uniqueParams = new Set(params);
-      if (uniqueParams.size !== params.length) {
-        suggestions.push(`Function has duplicate parameter names.`);
-      }
-      
-      // Check for reserved words as parameter names
-      const reservedWords = ["def", "fn", "defn", "if", "let", "do", "when", "cond", "true", "false", "null"];
-      const usedReserved = params.filter(p => reservedWords.includes(p));
-      if (usedReserved.length > 0) {
-        suggestions.push(`Parameter names use reserved words: ${usedReserved.join(", ")}`);
-      }
-    }
-  }
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   Rich Data Visualization
-───────────────────────────────────────────────────────────────────────────── */
-
-/**
- * DataFormatter - Enhanced data visualization for the REPL
- * Provides pretty-printing, syntax highlighting, and specialized 
- * displays for arrays, objects, and custom types
- */
-class DataFormatter {
-  private useColors: boolean;
-  private maxDepth: number;
-  private maxArrayItems: number;
-  private maxObjectProperties: number;
-  private maxStringLength: number;
-  
-  constructor(options: { 
-    useColors?: boolean;
-    maxDepth?: number;
-    maxArrayItems?: number;
-    maxObjectProperties?: number;
-    maxStringLength?: number;
-  } = {}) {
-    this.useColors = options.useColors ?? true;
-    this.maxDepth = options.maxDepth ?? 3;
-    this.maxArrayItems = options.maxArrayItems ?? 100;
-    this.maxObjectProperties = options.maxObjectProperties ?? 20;
-    this.maxStringLength = options.maxStringLength ?? 200;
-  }
-  
-  /**
-   * Format any value with rich visualization
-   */
-  format(value: any, currentDepth = 0): string {
-    if (value === null) {
-      return this.useColors ? `${colors.fg.lightBlue}null${colors.reset}` : "null";
-    }
-    
-    if (value === undefined) {
-      return this.useColors ? `${colors.fg.lightBlue}undefined${colors.reset}` : "undefined";
-    }
-    
-    if (typeof value === "number") {
-      return this.useColors ? `${colors.fg.lightGreen}${value}${colors.reset}` : String(value);
-    }
-    
-    if (typeof value === "boolean") {
-      return this.useColors ? `${colors.fg.lightPurple}${value}${colors.reset}` : String(value);
-    }
-    
-    if (typeof value === "string") {
-      return this.formatString(value);
-    }
-    
-    if (typeof value === "function") {
-      return this.formatFunction(value);
-    }
-    
-    if (typeof value === "symbol") {
-      return this.useColors ? `${colors.fg.lightYellow}${value.toString()}${colors.reset}` : value.toString();
-    }
-    
-    if (Array.isArray(value)) {
-      return this.formatArray(value, currentDepth);
-    }
-    
-    if (typeof value === "object") {
-      return this.formatObject(value, currentDepth);
-    }
-    
-    // Fallback for any other types
-    return String(value);
-  }
-  
-  /**
-   * Format string values with syntax highlighting and truncation
-   */
-  private formatString(value: string): string {
-    // Truncate long strings
-    let displayValue = value;
-    if (value.length > this.maxStringLength) {
-      displayValue = value.substring(0, this.maxStringLength) + "...";
-    }
-    
-    // Escape special characters
-    displayValue = displayValue
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"')
-      .replace(/\n/g, "\\n")
-      .replace(/\r/g, "\\r")
-      .replace(/\t/g, "\\t");
-    
-    return this.useColors 
-      ? `${colors.fg.lightYellow}"${displayValue}"${colors.reset}`
-      : `"${displayValue}"`;
-  }
-  
-  /**
-   * Format function values
-   */
-  private formatFunction(value: Function): string {
-    const name = value.name ? value.name : "anonymous";
-    const isArrow = value.toString().includes("=>");
-    const isAsync = value.toString().startsWith("async");
-    const functionType = isAsync ? "AsyncFunction" : isArrow ? "ArrowFunction" : "Function";
-    
-    return this.useColors 
-      ? `${colors.fg.lightCyan}[${functionType}: ${name}]${colors.reset}`
-      : `[${functionType}: ${name}]`;
-  }
-  
-  /**
-   * Format arrays with indentation and item count info
-   */
-  private formatArray(array: any[], currentDepth = 0): string {
-    if (currentDepth >= this.maxDepth) {
-      return this.useColors 
-        ? `${colors.fg.lightCyan}[Array(${array.length})]${colors.reset}`
-        : `[Array(${array.length})]`;
-    }
-    
-    if (array.length === 0) {
-      return this.useColors ? `${colors.fg.lightCyan}[]${colors.reset}` : "[]";
-    }
-    
-    const truncated = array.length > this.maxArrayItems;
-    const itemsToShow = truncated ? array.slice(0, this.maxArrayItems) : array;
-    
-    // Format with indentation for better readability
-    const indent = "  ".repeat(currentDepth + 1);
-    const nextDepth = currentDepth + 1;
-    
-    const items = itemsToShow.map(item => `${indent}${this.format(item, nextDepth)}`).join(",\n");
-    
-    let result = "[\n" + items;
-    
-    if (truncated) {
-      result += `,\n${indent}... ${array.length - this.maxArrayItems} more items`;
-    }
-    
-    result += `\n${"  ".repeat(currentDepth)}]`;
-    
-    return this.useColors ? `${colors.fg.lightCyan}${result}${colors.reset}` : result;
-  }
-  
-  /**
-   * Format objects with indentation and property count info
-   */
-  private formatObject(obj: Record<string, any>, currentDepth = 0): string {
-    // Check for specialized displays based on object type
-    if (obj instanceof Date) {
-      return this.formatDate(obj);
-    }
-    
-    if (obj instanceof RegExp) {
-      return this.formatRegExp(obj);
-    }
-    
-    if (obj instanceof Error) {
-      return this.formatError(obj);
-    }
-    
-    if (obj instanceof Map) {
-      return this.formatMap(obj, currentDepth);
-    }
-    
-    if (obj instanceof Set) {
-      return this.formatSet(obj, currentDepth);
-    }
-    
-    if (currentDepth >= this.maxDepth) {
-      const constructor = obj.constructor?.name || "Object";
-      return this.useColors 
-        ? `${colors.fg.lightCyan}[${constructor}]${colors.reset}`
-        : `[${constructor}]`;
-    }
-    
-    const keys = Object.keys(obj);
-    if (keys.length === 0) {
-      return this.useColors ? `${colors.fg.lightCyan}{}${colors.reset}` : "{}";
-    }
-    
-    const truncated = keys.length > this.maxObjectProperties;
-    const keysToShow = truncated ? keys.slice(0, this.maxObjectProperties) : keys;
-    
-    // Format with indentation for better readability
-    const indent = "  ".repeat(currentDepth + 1);
-    const nextDepth = currentDepth + 1;
-    
-    const properties = keysToShow.map(key => {
-      const keyStr = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) 
-        ? key 
-        : `"${key.replace(/"/g, '\\"')}"`;
-      
-      const keyDisplay = this.useColors ? `${colors.fg.cyan}${keyStr}${colors.reset}` : keyStr;
-      
-      return `${indent}${keyDisplay}: ${this.format(obj[key], nextDepth)}`;
-    }).join(",\n");
-    
-    let result = "{\n" + properties;
-    
-    if (truncated) {
-      result += `,\n${indent}... ${keys.length - this.maxObjectProperties} more properties`;
-    }
-    
-    result += `\n${"  ".repeat(currentDepth)}}`;
-    
-    return this.useColors ? `${colors.fg.lightCyan}${result}${colors.reset}` : result;
-  }
-  
-  /**
-   * Format Date objects
-   */
-  private formatDate(date: Date): string {
-    const formatted = date.toISOString();
-    return this.useColors
-      ? `${colors.fg.magenta}${formatted}${colors.reset} ${colors.fg.gray}[Date]${colors.reset}`
-      : `${formatted} [Date]`;
-  }
-  
-  /**
-   * Format RegExp objects
-   */
-  private formatRegExp(regex: RegExp): string {
-    return this.useColors
-      ? `${colors.fg.lightYellow}${regex.toString()}${colors.reset}`
-      : regex.toString();
-  }
-  
-  /**
-   * Format Error objects
-   */
-  private formatError(error: Error): string {
-    const formatted = `${error.name}: ${error.message}`;
-    return this.useColors
-      ? `${colors.fg.red}${formatted}${colors.reset} ${colors.fg.gray}[Error]${colors.reset}`
-      : `${formatted} [Error]`;
-  }
-  
-  /**
-   * Format Map objects
-   */
-  private formatMap(map: Map<any, any>, currentDepth = 0): string {
-    if (currentDepth >= this.maxDepth) {
-      return this.useColors 
-        ? `${colors.fg.lightCyan}Map(${map.size})${colors.reset}`
-        : `Map(${map.size})`;
-    }
-    
-    if (map.size === 0) {
-      return this.useColors ? `${colors.fg.lightCyan}Map {}${colors.reset}` : "Map {}";
-    }
-    
-    const truncated = map.size > this.maxObjectProperties;
-    const entries = Array.from(map.entries()).slice(0, this.maxObjectProperties);
-    
-    // Format with indentation for better readability
-    const indent = "  ".repeat(currentDepth + 1);
-    const nextDepth = currentDepth + 1;
-    
-    const formattedEntries = entries.map(([key, value]) => {
-      return `${indent}${this.format(key, nextDepth)} => ${this.format(value, nextDepth)}`;
-    }).join(",\n");
-    
-    let result = "Map {\n" + formattedEntries;
-    
-    if (truncated) {
-      result += `,\n${indent}... ${map.size - this.maxObjectProperties} more entries`;
-    }
-    
-    result += `\n${"  ".repeat(currentDepth)}}`;
-    
-    return this.useColors ? `${colors.fg.lightCyan}${result}${colors.reset}` : result;
-  }
-  
-  /**
-   * Format Set objects
-   */
-  private formatSet(set: Set<any>, currentDepth = 0): string {
-    if (currentDepth >= this.maxDepth) {
-      return this.useColors 
-        ? `${colors.fg.lightCyan}Set(${set.size})${colors.reset}`
-        : `Set(${set.size})`;
-    }
-    
-    if (set.size === 0) {
-      return this.useColors ? `${colors.fg.lightCyan}Set {}${colors.reset}` : "Set {}";
-    }
-    
-    const truncated = set.size > this.maxObjectProperties;
-    const values = Array.from(set.values()).slice(0, this.maxObjectProperties);
-    
-    // Format with indentation for better readability
-    const indent = "  ".repeat(currentDepth + 1);
-    const nextDepth = currentDepth + 1;
-    
-    const formattedValues = values.map(value => {
-      return `${indent}${this.format(value, nextDepth)}`;
-    }).join(",\n");
-    
-    let result = "Set {\n" + formattedValues;
-    
-    if (truncated) {
-      result += `,\n${indent}... ${set.size - this.maxObjectProperties} more values`;
-    }
-    
-    result += `\n${"  ".repeat(currentDepth)}}`;
-    
-    return this.useColors ? `${colors.fg.lightCyan}${result}${colors.reset}` : result;
-  }
-}
-
-/**
- * Validate HQL syntax before processing, returning errors if found
- */
-async function validateSyntax(
-  input: string, 
-  evaluator: ModuleAwareEvaluator
-): Promise<{ valid: boolean; error?: string; suggestions?: string[] }> {
-  // Skip validation for empty input
-  if (!input.trim()) {
-    return { valid: true };
-  }
-  
-  // Basic paren balance check
-  const parenBalance = calculateParenBalance(input);
-  if (parenBalance !== 0) {
-    const message = parenBalance > 0 
-      ? `Unbalanced parentheses: missing ${parenBalance} closing parenthesis` 
-      : `Unbalanced parentheses: ${Math.abs(parenBalance)} extra closing parenthesis`;
-    
-    return { 
-      valid: false, 
-      error: message,
-      suggestions: [
-        parenBalance > 0 
-          ? `Add ${parenBalance} closing parenthesis: ${')'.repeat(parenBalance)}` 
-          : `Remove ${Math.abs(parenBalance)} closing parenthesis`
-      ]
-    };
-  }
-  
-  // Check for function syntax errors
-  const fnWithBrackets = input.match(/\(\s*(fn|defn|lambda)\s+([a-zA-Z0-9_-]+)\s*\[([^\]]*)\]/i);
-  if (fnWithBrackets) {
-    const [, fnType, fnName, params] = fnWithBrackets;
-    return {
-      valid: false,
-      error: `Syntax error in function definition: HQL uses parentheses for function parameters, not square brackets`,
-      suggestions: [
-        `Try: (${fnType} ${fnName} (${params}) ...)`
-      ]
-    };
-  }
-  
-  // Check for missing function body
-  const fnWithoutBody = input.match(/\(\s*(fn|defn|lambda)\s+([a-zA-Z0-9_-]+)\s*\([^(]*\)\s*\)/i);
-  if (fnWithoutBody) {
-    const [, fnType, fnName] = fnWithoutBody;
-    return {
-      valid: false,
-      error: `Syntax error: Function '${fnName}' is missing a body`,
-      suggestions: [
-        `Example: (${fnType} ${fnName} (x y) (+ x y))`
-      ]
-    };
-  }
-  
-  // If we passed all checks, consider it valid
-  return { valid: true };
-}
-
-/**
- * Calculate the paren balance of a string (positive means unclosed open parens)
- */
-function calculateParenBalance(input: string): number {
-  let balance = 0;
-  let inString = false;
-  let inComment = false;
-  
-  for (let i = 0; i < input.length; i++) {
-    const char = input[i];
-    
-    // Handle string literals
-    if (char === '"' && (i === 0 || input[i-1] !== '\\')) {
-      inString = !inString;
-      continue;
-    }
-    
-    // Skip characters inside string literals
-    if (inString) {
-      continue;
-    }
-    
-    // Handle comments
-    if (char === ';') {
-      inComment = true;
-      continue;
-    }
-    
-    if (inComment && (char === '\n' || char === '\r')) {
-      inComment = false;
-      continue;
-    }
-    
-    // Skip characters inside comments
-    if (inComment) {
-      continue;
-    }
-    
-    // Count parens
-    if (char === '(') {
-      balance++;
-    } else if (char === ')') {
-      balance--;
-    }
-  }
-  
-  return balance;
+  return helpText[command] || `No detailed help available for '${command}'.`;
 }
