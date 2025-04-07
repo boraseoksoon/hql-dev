@@ -1,11 +1,9 @@
 // src/repl/repl.ts
-// Main entry point for the REPL - exports the startRepl function
+// Main entry point for the REPL - exports the startRepl function and other components
 
 import { startRepl, ReplOptions } from "./repl-core.ts";
 
-// Allow standalone execution
 if (import.meta.main) {
-  // Parse command line arguments if any
   const args = Deno.args;
   
   const options: ReplOptions = {

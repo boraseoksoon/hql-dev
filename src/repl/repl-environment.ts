@@ -49,7 +49,7 @@ export class REPLEnvironment {
   private maxEvalCacheSize = 100;
   
   // Current active module
-  private currentModule = "user";
+  private currentModule = "global";
   
   // Logger for debugging
   private logger: Logger;

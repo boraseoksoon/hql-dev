@@ -7,6 +7,7 @@ import { Logger } from "../logger.ts";
 import { persistentStateManager } from "./persistent-state-manager.ts";
 import { REPLEnvironment } from "./repl-environment.ts";
 import { parse } from "../transpiler/pipeline/parser.ts";
+import { moduleUtils } from "./repl-common.ts";
 
 /**
  * Options for the module-aware evaluator
@@ -28,9 +29,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     super(env, options);
     this.moduleLogger = new Logger(options.verbose ?? false);
     
-    // Initialize state manager - but we need to ensure initialization completes
-    // We can't make the constructor async, so initialize with default "global" here,
-    // and complete the full initialization when needed
+    // Initialize with default "global" module
     this.currentModule = "global";
   }
   
@@ -990,4 +989,4 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     
     return false;
   }
-} 
+}
