@@ -220,7 +220,18 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     
     if (removed) {
       // Also remove it from the environment
-      this.getREPLEnvironment().removeJsValue(name);
+      const replEnv = this.getREPLEnvironment();
+      
+      // Make sure the environment is synchronized with the correct module
+      replEnv.setCurrentModule(this.currentModule);
+      
+      // First clean up any references to this symbol
+      replEnv.removeJsValue(name);
+      
+      // Force a refresh of the environment data
+      const keys = replEnv.getDefinedSymbols(this.currentModule);
+      this.moduleLogger.debug(`After removal, remaining symbols in module ${this.currentModule}: ${keys.join(', ')}`);
+      
       this.moduleLogger.debug(`Removed symbol '${name}' from environment`);
     }
     
@@ -945,22 +956,37 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       // Switch to the module temporarily to remove the symbol
       const currentModule = this.currentModule;
+      const replEnv = this.getREPLEnvironment();
       
       // Save current module to switch back to
       try {
         // Temporarily switch to target module
         await this.switchModule(moduleName);
         
+        // Update REPLEnvironment to match the current module
+        replEnv.setCurrentModule(moduleName);
+        
         // Try to remove the symbol
         const removed = persistentStateManager.removeDefinition(symbolName);
         
+        if (removed) {
+          // Also clean up from the environment
+          replEnv.removeJsValue(symbolName, moduleName);
+          
+          // Log remaining symbols for debugging
+          const remainingSymbols = replEnv.getDefinedSymbols(moduleName);
+          this.moduleLogger.debug(`After removal, remaining symbols in module ${moduleName}: ${remainingSymbols.join(', ')}`);
+        }
+        
         // Switch back to original module
         await this.switchModule(currentModule);
+        replEnv.setCurrentModule(currentModule);
         
         return removed;
       } catch (error) {
         // Make sure we switch back even if there's an error
         await this.switchModule(currentModule);
+        replEnv.setCurrentModule(currentModule);
         throw error;
       }
     } catch (error: unknown) {

@@ -26,7 +26,7 @@ export function getDetailedHelp(command: string, useColors: boolean = true): str
   
   // Define help text for each command
   const helpText: Record<string, string> = {
-    "help": "Display help information about commands.\nUsage: :help or :help <command>\nCLI equivalent: man <command>",
+    "help": "Display help information about commands.\nUsage: :help or :help <command>\nExamples:\n  :help ls - View available options for the ls command\n  :help list - View available options for the list command\nCLI equivalent: man <command>",
     
     "quit": "Exit the REPL.\nUsage: :quit or :exit\nAliases: :exit",
     "exit": "Exit the REPL.\nUsage: :exit or :quit\nAliases: :quit",
@@ -37,7 +37,7 @@ export function getDetailedHelp(command: string, useColors: boolean = true): str
     
     "modules": "List all available modules.\nUsage: :modules\nCLI equivalent: ls -m or ls -modules",
     
-    "list": "Show symbols in current module.\nUsage: :list\nCLI equivalent: ls",
+    "list": "Show symbols in current module.\nUsage: :list\nOptions:\n  :list -m, :list -modules: List all available modules\n  :list -all: List all symbols across all modules\nCLI equivalent: ls",
     
     "go": "Switch to a different module or show the current module.\nUsage: :go <module-name>\nCLI equivalent: cd <module-name>",
     
@@ -74,7 +74,7 @@ CLI equivalent: rm <target>`,
     "cli": "Show available CLI-style commands.\nUsage: :cli",
     
     // CLI command help
-    "ls": "List symbols in current module.\nUsage: ls\nOptions:\n  ls -m, ls -modules: List all modules\nREPL equivalent: :list",
+    "ls": "List symbols in current module.\nUsage: ls\nOptions:\n  ls -m, ls -modules: List all modules\n  ls -all: List all symbols across all modules\nREPL equivalent: :list",
     
     "cd": "Switch to a different module.\nUsage: cd <module-name>\nREPL equivalent: :go <module-name>",
     

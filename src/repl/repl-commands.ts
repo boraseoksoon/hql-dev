@@ -506,6 +506,7 @@ export function printCliHelp(useColors: boolean): void {
   const commands = [
     ["ls", "List symbols in current module"],
     ["ls -m, ls -modules", "List all available modules"],
+    ["ls -all", "List all symbols across all modules"],
     ["pwd", "Show current module name"],
     ["cd <module>", "Switch to a different module"],
     ["mkdir <module>", "Create a new module"],
@@ -551,6 +552,8 @@ export function showCommandHelp(command: string, useColors: boolean): void {
   if (!command || command.trim() === "") {
     // No arguments, just show the banner
     printBanner(useColors);
+    console.log("\nTip: Use :help <command> to see detailed help and options for specific commands");
+    console.log("     For example: :help ls - shows all available options for the ls command");
   } else {
     // Show detailed help for a specific command
     // Remove any leading colon to support both `:help command` and `:help :command` formats

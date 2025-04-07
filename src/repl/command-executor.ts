@@ -72,6 +72,12 @@ export async function executeCommand(
       return true;
     }
     
+    // Special case for ls -all to show all symbols across all modules
+    if (command === 'list' && args === '-all') {
+      await commandSee(evaluator, 'all:symbols', useColors, options.showJs);
+      return true;
+    }
+    
     switch (command) {
       // Help command
       case 'help':

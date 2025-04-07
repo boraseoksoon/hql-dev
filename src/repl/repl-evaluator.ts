@@ -562,13 +562,15 @@ export class REPLEvaluator {
 
   /**
    * Evaluate JavaScript code within the REPL environment
-   * Enhanced to preserve imported modules in the global context
    */
   private async evaluateJs(code: string): Promise<Value> {
     try {
       // Check for function/variable redeclaration before evaluation
       const redeclarations = this.detectRedeclarations(code);
       if (redeclarations.length > 0) {
+        // Log details about the redeclaration for debugging
+        this.logger.debug(`Redeclaration detected: ${redeclarations.join(', ')}`);
+        
         // Throw a special error for redeclarations that can be handled by the REPL
         const message = `Identifier '${redeclarations[0]}' has already been declared`;
         const error = new Error(message);
@@ -640,11 +642,15 @@ export class REPLEvaluator {
     const redeclaredIdentifiers: string[] = [];
     
     // Get the current module from the REPLEnvironment
-    // @ts-ignore - accessing private property for compatibility
     const currentModule = this.replEnv.getCurrentModule ? 
-      // @ts-ignore - accessing private property for compatibility
       this.replEnv.getCurrentModule() : 
       "user"; // Default fallback
+    
+    // Get current module symbols from the environment to check against
+    const currentModuleSymbols = new Set(this.replEnv.getDefinedSymbols(currentModule));
+    
+    this.logger.debug(`Checking for redeclarations in module "${currentModule}"`);
+    this.logger.debug(`Current module symbols: ${Array.from(currentModuleSymbols).join(', ')}`);
     
     // Extract function declarations
     const funcRegex = /function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
@@ -652,8 +658,9 @@ export class REPLEvaluator {
     
     while ((match = funcRegex.exec(code)) !== null) {
       const funcName = match[1];
-      // Check only in current module
-      if (this.replEnv.hasJsValue(funcName, currentModule)) {
+      // Check if symbol is actually in the current module's defined symbols list
+      if (currentModuleSymbols.has(funcName)) {
+        this.logger.debug(`Found function redeclaration: ${funcName}`);
         redeclaredIdentifiers.push(funcName);
       }
     }
@@ -662,8 +669,9 @@ export class REPLEvaluator {
     const varRegex = /(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/g;
     while ((match = varRegex.exec(code)) !== null) {
       const varName = match[1];
-      // Check only in current module
-      if (this.replEnv.hasJsValue(varName, currentModule)) {
+      // Check if symbol is actually in the current module's defined symbols list
+      if (currentModuleSymbols.has(varName)) {
+        this.logger.debug(`Found variable redeclaration: ${varName}`);
         redeclaredIdentifiers.push(varName);
       }
     }
@@ -673,8 +681,9 @@ export class REPLEvaluator {
     const hqlFuncRegex = /\(\s*(?:fn|defn)\s+([a-zA-Z_$][a-zA-Z0-9_$-]*)/g;
     while ((match = hqlFuncRegex.exec(code)) !== null) {
       const funcName = match[1];
-      // Check only in current module
-      if (this.replEnv.hasJsValue(funcName, currentModule)) {
+      // Check if symbol is actually in the current module's defined symbols list
+      if (currentModuleSymbols.has(funcName)) {
+        this.logger.debug(`Found HQL function redeclaration: ${funcName}`);
         redeclaredIdentifiers.push(funcName);
       }
     }
