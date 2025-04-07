@@ -22,6 +22,21 @@ interface ReplOptions {
   enableCompletion?: boolean;  // New option for symbol completion
 }
 
+// Add the ProcessOptions interface near the other interface declarations (around line 20)
+interface ProcessOptions {
+  useColors: boolean;
+  logger: Logger;
+  verbose?: boolean;
+  showAst?: boolean;
+  showExpanded?: boolean;
+  showJs?: boolean;
+  baseDir?: string;
+  replState: {
+    setRunning: (val: boolean) => void;
+    setVerbose: (val: boolean) => void;
+  };
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    Color and Output Utilities
 ───────────────────────────────────────────────────────────────────────────── */
@@ -71,6 +86,7 @@ function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:modules${textColor} - List all available modules${headerColor}                    ║${reset}`,
     `${headerColor}║    ${commandColor}:list${textColor} - Show symbols in current module${headerColor}                   ║${reset}`,
     `${headerColor}║    ${commandColor}:see${textColor} - Inspect modules and symbols${headerColor}                       ║${reset}`,
+    `${headerColor}║    ${commandColor}:doc${textColor} - Show documentation for a symbol or module${headerColor}         ║${reset}`,
     `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
     `${headerColor}║    ${commandColor}:verbose ${textColor}[expr] - Toggle verbose mode or evaluate with details${headerColor} ║${reset}`,
     `${headerColor}║    ${commandColor}:ast ${textColor}[expr] - Toggle AST display or show AST for expression${headerColor}    ║${reset}`,
@@ -84,16 +100,27 @@ function printError(msg: string, useColors: boolean): void {
   console.error(useColors ? `${colors.fg.red}${msg}${colors.reset}` : msg);
 }
 
+/**
+ * Get the appropriate prompt based on REPL state
+ */
 function getPrompt(state: ReplState, useColors: boolean): string {
-  // Get the current module name
-  const moduleName = state.currentModule || "global";
-  
-  if (useColors) {
-    return state.multilineMode
-      ? `${colors.fg.sicpPurple}${colors.bright}... ${colors.reset}`
-      : `${colors.fg.sicpPurple}${colors.bright}hql[${colors.fg.sicpRed}${moduleName}${colors.fg.sicpPurple}]> ${colors.reset}`;
+  if (state.importHandlerActive) {
+    return useColors ? `${colors.fg.sicpRed}import>${colors.reset} ` : "import> ";
   }
-  return state.multilineMode ? "... " : `hql[${moduleName}]> `;
+  
+  if (state.multilineMode) {
+    // Make the continuation prompt have the same width as the main prompt
+    // but reduce padding by 3 spaces to avoid pushing code too far right
+    const moduleNameLength = state.currentModule.length;
+    // Calculate padding needed to match width of hql[module]>
+    const paddingLength = 4 + moduleNameLength + 2 - 3; // "hql[" + module + "]>" minus 3 spaces
+    const padding = " ".repeat(paddingLength);
+    return useColors ? `${colors.fg.gray}...${padding}${colors.reset} ` : `...${padding} `;
+  }
+  
+  return useColors
+    ? `${colors.fg.sicpBlue}hql${colors.reset}${colors.fg.sicpRed}[${state.currentModule}]${colors.reset}> `
+    : `hql[${state.currentModule}]> `;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1180,6 +1207,7 @@ function getIndentation(line: string): string {
 
 /**
  * Get detailed information about bracket balance in a string
+ * Enhanced to track bracket types and positions
  */
 function getUnbalancedBrackets(text: string): { 
   openCount: number; 
@@ -1188,6 +1216,7 @@ function getUnbalancedBrackets(text: string): {
   lastOpenType?: string;
   lastCloseType?: string;
   bracketStack: string[];
+  lastOpenIndex?: number;
 } {
   const result = {
     openCount: 0,
@@ -1195,7 +1224,8 @@ function getUnbalancedBrackets(text: string): {
     balance: 0,
     lastOpenType: undefined as string | undefined,
     lastCloseType: undefined as string | undefined,
-    bracketStack: [] as string[]
+    bracketStack: [] as string[],
+    lastOpenIndex: undefined as number | undefined
   };
   
   const openBrackets = ["(", "[", "{"];
@@ -1206,12 +1236,26 @@ function getUnbalancedBrackets(text: string): {
     "{": "}"
   };
   
-  // Skip content in string literals
+  // Skip content in string literals and comments
   let inString = false;
+  let inComment = false;
   let escapeNext = false;
   
   for (let i = 0; i < text.length; i++) {
     const char = text[i];
+    
+    // Handle comments
+    if (char === ';' && !inString) {
+      inComment = true;
+      continue;
+    }
+    
+    if (inComment) {
+      if (char === '\n') {
+        inComment = false;
+      }
+      continue;
+    }
     
     // Handle string literals
     if (char === '"' && !escapeNext) {
@@ -1233,6 +1277,7 @@ function getUnbalancedBrackets(text: string): {
       result.openCount++;
       result.balance++;
       result.lastOpenType = char;
+      result.lastOpenIndex = i;
       result.bracketStack.push(char);
     } else if (closeBrackets.includes(char)) {
       result.closeCount++;
@@ -1274,21 +1319,24 @@ function getSuggestedClosing(bracketStack: string[]): string {
 async function readLineWithHistory(
   prompt: string, 
   history: string[], 
-  state: ReplState,
+  historyIndex: number,
   tabCompletion?: TabCompletion
-): Promise<ReadLineResult> {
+): Promise<string> {
   // ... existing code ...
 
   // Enhanced getIndentation function
   const getIndentation = (): string => {
     let baseIndent = "";
     
+    // Remove this problematic section that references undefined state variable
+    /*
     // Adjust indentation based on line content for multiline mode
     if (state.multilineMode && state.multilineInput) {
       const lines = state.multilineInput.split("\n");
       const newLineIndex = lines.length;
       baseIndent = calculateIndentation(lines, newLineIndex);
     }
+    */
     
     return baseIndent;
   };
@@ -1297,6 +1345,8 @@ async function readLineWithHistory(
   
   // Enhanced balance tracking
   const updateBalanceTracking = (line: string): void => {
+    // Remove this problematic section that references undefined state variable
+    /*
     if (!state.multilineMode) {
       const balanceResult = getUnbalancedBrackets(line);
       state.parenBalance = balanceResult.balance;
@@ -1307,12 +1357,13 @@ async function readLineWithHistory(
       state.parenBalance = balanceResult.balance;
       state.bracketStack = balanceResult.bracketStack;
     }
+    */
   };
   
   // ... existing code ...
   
   // Handle bracket auto-closing
-  const handleBracketAutoclosing = (input: string, key: Deno.Key): boolean => {
+  const handleBracketAutoclosing = (input: string, key: any): boolean => {
     // Implement bracket auto-closing based on previous character
     const bracketPairs: Record<string, string> = {
       "(": ")",
@@ -1338,6 +1389,7 @@ async function readLineWithHistory(
   };
   
   // ... rest of the function ...
+  return ""; // Add this temporary return
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2317,6 +2369,15 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
               }
               break;
               
+            case 'doc':
+              try {
+                // Show documentation for a symbol or module
+                await commandDoc(evaluator, argsText, useColors);
+              } catch (error) {
+                console.error(`Error showing documentation: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              break;
+              
             case 'remove':
               try {
                 // Remove a symbol or module
@@ -2339,13 +2400,65 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           replState.parenBalance = updateParenBalance(input, replState.parenBalance);
           
           if (replState.multilineMode) {
-            // Continue multiline input
-            replState.multilineInput += input + "\n";
+            // Continue multiline input - simple approach
+            // Don't manipulate indentation on every line, just append the input
+            replState.multilineInput += "\n" + input;
             
             // If balance is restored, evaluate the complete input
             if (replState.parenBalance <= 0) {
               const fullInput = replState.multilineInput.trim();
-              const result = await evaluator.evaluate(fullInput, {
+              
+              try {
+                const result = await evaluator.evaluate(fullInput, {
+                  verbose: showVerbose,
+                  baseDir,
+                  showAst: showAst,
+                  showExpanded: showExpanded,
+                  showJs: showJs,
+                });
+                
+                if (result !== undefined) {
+                  // Only show simple result by default
+                  if (showVerbose) {
+                    console.log(result);
+                  } else {
+                    // Check if result has a value property
+                    if (result && typeof result === 'object' && 'value' in result) {
+                      prettyPrintResult(result.value, useColors);
+                    } else {
+                      prettyPrintResult(result, useColors);
+                    }
+                  }
+                }
+              } catch (error) {
+                console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              
+              // Reset multiline state
+              replState.multilineMode = false;
+              replState.multilineInput = "";
+              replState.parenBalance = 0;
+              replState.bracketStack = [];
+            } else {
+              // We're still in multiline mode
+              // Just add a newline and show the continuation prompt
+              if (isRawMode) {
+                Deno.stdout.writeSync(new TextEncoder().encode("\n"));
+              }
+            }
+          } else if (replState.parenBalance > 0) {
+            // Start multiline input mode
+            replState.multilineMode = true;
+            replState.multilineInput = input;
+            
+            // Just add a newline for multiline input
+            if (isRawMode) {
+              Deno.stdout.writeSync(new TextEncoder().encode("\n"));
+            }
+          } else {
+            // Single line evaluation
+            try {
+              const result = await evaluator.evaluate(input, {
                 verbose: showVerbose,
                 baseDir,
                 showAst: showAst,
@@ -2360,44 +2473,14 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
                 } else {
                   // Check if result has a value property
                   if (result && typeof result === 'object' && 'value' in result) {
-                    console.log(result.value);
+                    prettyPrintResult(result.value, useColors);
                   } else {
-                    console.log(result);
+                    prettyPrintResult(result, useColors);
                   }
                 }
               }
-              
-              // Reset multiline state
-              replState.multilineMode = false;
-              replState.multilineInput = "";
-              replState.parenBalance = 0;
-            }
-          } else if (replState.parenBalance > 0) {
-            // Start multiline input
-            replState.multilineMode = true;
-            replState.multilineInput = input + "\n";
-          } else {
-            // Single line evaluation
-            const result = await evaluator.evaluate(input, {
-              verbose: showVerbose,
-              baseDir,
-              showAst: showAst,
-              showExpanded: showExpanded,
-              showJs: showJs,
-            });
-            
-            if (result !== undefined) {
-              // Only show simple result by default
-              if (showVerbose) {
-                console.log(result);
-              } else {
-                // Check if result has a value property
-                if (result && typeof result === 'object' && 'value' in result) {
-                  console.log(result.value);
-                } else {
-                  console.log(result);
-                }
-              }
+            } catch (error) {
+              console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
             }
           }
         } catch (error) {
@@ -2457,8 +2540,7 @@ function getCurrentWordInContext(line: string, cursorPos: number): string {
 }
 
 /**
- * Read a line with support for arrow key navigation through history, tab completion,
- * and advanced keyboard shortcuts
+ * Read a line with support for arrow key navigation through history and basic editing
  */
 async function readLineWithArrowKeys(
   prompt: string, 
@@ -2775,6 +2857,8 @@ async function readLineWithArrowKeys(
       }
     }
   }
+  
+  return input;
 }
 
 /**
@@ -2798,4 +2882,625 @@ function getDetailedHelp(command: string, useColors: boolean): string {
   };
   
   return helpText[command] || `No detailed help available for '${command}'.`;
+}
+
+/**
+ * Calculate basic indentation for multiline code
+ */
+function getAutoIndentation(prevLines: string, currentLine: string): string {
+  // Default indent is 2 spaces
+  const baseIndent = "  ";
+  
+  // Get the last line from the previous input
+  const lines = prevLines.split("\n");
+  const lastLine = lines[lines.length - 1] || "";
+  
+  // Extract the existing indentation from the last line
+  const existingIndent = lastLine.match(/^(\s*)/)?.[1] || "";
+  
+  // Check if last line opens a new block (ends with open paren/bracket/brace)
+  const openBlockRegex = /[\(\[\{]\s*$/;
+  if (openBlockRegex.test(lastLine)) {
+    // Add one more level of indentation
+    return existingIndent + baseIndent;
+  }
+  
+  // Check if current line closes a block (starts with close paren/bracket/brace)
+  const closeBlockRegex = /^\s*[\)\]\}]/;
+  if (closeBlockRegex.test(currentLine)) {
+    // Reduce indentation by one level if possible
+    if (existingIndent.length >= baseIndent.length) {
+      return existingIndent.substring(0, existingIndent.length - baseIndent.length);
+    }
+  }
+  
+  // For normal lines, maintain the same indentation as the previous line
+  return existingIndent;
+}
+
+/**
+ * Command for showing documentation about a symbol or module
+ * Enhanced with better formatting and special forms support
+ */
+async function commandDoc(evaluator: ModuleAwareEvaluator, target: string, useColors: boolean): Promise<void> {
+  if (!target.trim()) {
+    console.log(`${useColors ? colors.fg.yellow : ""}Usage: :doc <symbol> or :doc <module>/*${useColors ? colors.reset : ""}`);
+    return;
+  }
+  
+  const symbolColor = useColors ? colors.fg.sicpRed : "";
+  const textColor = useColors ? colors.fg.white : "";
+  const headerColor = useColors ? colors.fg.sicpPurple + colors.bright : "";
+  const noteColor = useColors ? colors.fg.green : "";
+  const reset = useColors ? colors.reset : "";
+  
+  // Check if it's a module reference (with "/*" suffix or "module:" prefix)
+  if (target.endsWith("/*") || target.startsWith("module:")) {
+    let moduleName: string;
+    if (target.startsWith("module:")) {
+      moduleName = target.substring("module:".length);
+    } else {
+      moduleName = target.slice(0, -2).trim();
+    }
+    
+    try {
+      // Display module documentation
+      // Check if module exists
+      try {
+        await evaluator.switchModule(moduleName);
+        // Switch back to original module
+        await evaluator.switchModule(evaluator.getCurrentModuleSync());
+      } catch (e) {
+        console.log(`${symbolColor}Module '${moduleName}' not found.${reset}`);
+        return;
+      }
+      
+      // Get module exports
+      const moduleExports = await evaluator.getModuleExports(moduleName);
+      
+      console.log(`${headerColor}Module: ${symbolColor}${moduleName}${reset}`);
+      console.log(`${headerColor}================${reset}`);
+      
+      if (moduleExports && moduleExports.length > 0) {
+        console.log(`${textColor}Exported symbols:${reset}`);
+        
+        // Group exports by type for better organization
+        const functions: string[] = [];
+        const variables: string[] = [];
+        const macros: string[] = [];
+        const other: string[] = [];
+        
+        for (const symbol of moduleExports) {
+          try {
+            // Get the symbol's documentation and type if available
+            const symbolWithDoc = await evaluator.getSymbolDefinition(`${moduleName}/${symbol}`);
+            
+            if (symbolWithDoc && typeof symbolWithDoc === 'object') {
+              // Try to determine the symbol type
+              if (symbolWithDoc.type === 'function' || typeof symbolWithDoc.value === 'function') {
+                functions.push(symbol);
+              } else if (symbolWithDoc.type === 'macro') {
+                macros.push(symbol);
+              } else if (symbolWithDoc.type === 'var' || symbolWithDoc.value !== undefined) {
+                variables.push(symbol);
+              } else {
+                other.push(symbol);
+              }
+            } else {
+              other.push(symbol);
+            }
+          } catch (e) {
+            other.push(symbol);
+          }
+        }
+        
+        // Display sorted exports by category
+        if (functions.length > 0) {
+          console.log(`  ${noteColor}Functions:${reset}`);
+          functions.sort().forEach(fn => console.log(`    ${symbolColor}${fn}${reset}`));
+        }
+        
+        if (macros.length > 0) {
+          console.log(`  ${noteColor}Macros:${reset}`);
+          macros.sort().forEach(macro => console.log(`    ${symbolColor}${macro}${reset}`));
+        }
+        
+        if (variables.length > 0) {
+          console.log(`  ${noteColor}Variables:${reset}`);
+          variables.sort().forEach(v => console.log(`    ${symbolColor}${v}${reset}`));
+        }
+        
+        if (other.length > 0) {
+          console.log(`  ${noteColor}Other:${reset}`);
+          other.sort().forEach(o => console.log(`    ${symbolColor}${o}${reset}`));
+        }
+      } else {
+        console.log(`${textColor}No exported symbols.${reset}`);
+      }
+    } catch (error) {
+      console.error(`${colors.fg.red}Error accessing module: ${error instanceof Error ? error.message : String(error)}${reset}`);
+    }
+  } else {
+    // Handle symbol documentation
+    try {
+      // Check if it's a special form
+      const specialForms: Record<string, string[]> = {
+        "if": [
+          "Conditional expression.",
+          "Syntax: (if condition then-expr else-expr)",
+          "Evaluates condition. If true, evaluates and returns then-expr, otherwise else-expr."
+        ],
+        "when": [
+          "Conditional execution when true.",
+          "Syntax: (when condition body...)",
+          "If condition is true, evaluates body expressions in order and returns the last one."
+        ],
+        "unless": [
+          "Conditional execution when false.",
+          "Syntax: (unless condition body...)",
+          "If condition is false, evaluates body expressions in order and returns the last one."
+        ],
+        "cond": [
+          "Multi-way conditional.",
+          "Syntax: (cond [test1 expr1] [test2 expr2] ... [else default])",
+          "Evaluates each test in order, returning the result for the first true test."
+        ],
+        "case": [
+          "Pattern matching on a value.",
+          "Syntax: (case value [pattern1 result1] [pattern2 result2] ... [_ default])",
+          "Matches value against each pattern and returns the corresponding result."
+        ],
+        "let": [
+          "Local variable bindings.",
+          "Syntax: (let [var1 val1, var2 val2, ...] body...)",
+          "Binds variables to values within the scope of body expressions."
+        ],
+        "fn": [
+          "Named function definition.",
+          "Syntax: (fn add (x y) -> (+ x y))",
+          "Defines a named function with the given parameters and return type. The -> indicates the return type."
+        ],
+        "lambda": [
+          "Anonymous function.",
+          "Syntax: (lambda (params...) -> body...)",
+          "Creates an anonymous function with the given parameters and body. The -> indicates the return type."
+        ],
+        "do": [
+          "Sequential execution.",
+          "Syntax: (do expr1 expr2 ... exprN)",
+          "Evaluates expressions in sequence and returns the value of the last one."
+        ],
+        "quote": [
+          "Prevents evaluation.",
+          "Syntax: (quote expr) or 'expr",
+          "Returns the expression without evaluating it."
+        ],
+        "->": [
+          "Threading macro (pipe).",
+          "Syntax: (-> initial-value (op1 args...) (op2 args...))",
+          "Threads initial-value as the first argument through each operation."
+        ],
+        "->>": [
+          "Threading macro (last position).",
+          "Syntax: (->> initial-value (op1 args...) (op2 args...))",
+          "Threads initial-value as the last argument through each operation."
+        ],
+        "module": [
+          "Module definition.",
+          "Syntax: (module name body...)",
+          "Creates a new module or enters the context of an existing module."
+        ],
+        "import": [
+          "Import symbols from modules.",
+          "Syntax: (import [sym1, sym2] from \"module-name\")",
+          "Makes specified symbols from the module available in the current scope."
+        ],
+        "export": [
+          "Export symbols from a module.",
+          "Syntax: (export symbol1 symbol2 ...)",
+          "Makes specified symbols available for import by other modules."
+        ]
+      };
+      
+      if (target in specialForms) {
+        console.log(`${headerColor}Special Form: ${symbolColor}${target}${reset}`);
+        console.log(`${headerColor}================${reset}`);
+        specialForms[target].forEach(line => console.log(`${noteColor}${line}${reset}`));
+        return;
+      }
+      
+      // Try to get documentation for a regular symbol
+      console.log(`${headerColor}Symbol: ${symbolColor}${target}${reset}`);
+      console.log(`${headerColor}================${reset}`);
+      
+      try {
+        // Try to get the symbol definition
+        const symbolDef = await evaluator.getSymbolDefinition(target);
+        
+        if (symbolDef) {
+          // Display the type of symbol
+          let symbolType = "Unknown";
+          if (typeof symbolDef === 'function') {
+            symbolType = "Function";
+          } else if (typeof symbolDef === 'object' && symbolDef !== null) {
+            if (symbolDef.metadata && typeof symbolDef.metadata === 'object' && 'type' in symbolDef.metadata) {
+              symbolType = String(symbolDef.metadata.type).charAt(0).toUpperCase() + String(symbolDef.metadata.type).slice(1);
+            } else if (typeof symbolDef.value === 'function') {
+              symbolType = "Function";
+            } else if (Array.isArray(symbolDef.value)) {
+              symbolType = "List/Vector";
+            } else if (typeof symbolDef.value === 'object' && symbolDef.value !== null) {
+              symbolType = "Map/Object";
+            } else {
+              symbolType = "Variable";
+            }
+          }
+          
+          console.log(`${textColor}Type: ${symbolType}${reset}`);
+          
+          // Extract documentation string if available
+          let docString = "";
+          if (typeof symbolDef === 'object' && symbolDef !== null && 
+              symbolDef.metadata && typeof symbolDef.metadata === 'object' && 
+              'docstring' in symbolDef.metadata) {
+            docString = String(symbolDef.metadata.docstring);
+          } else if (typeof symbolDef === 'function' && 
+                    'docstring' in symbolDef && symbolDef.docstring) {
+            docString = String(symbolDef.docstring);
+          }
+          
+          if (docString) {
+            console.log(`${textColor}Documentation: ${noteColor}${docString}${reset}`);
+          } else {
+            console.log(`${textColor}No documentation available.${reset}`);
+          }
+          
+          // Show usage example for functions
+          if (symbolType === "Function") {
+            let argsString = "";
+            if (typeof symbolDef === 'object' && symbolDef !== null && 
+                symbolDef.metadata && typeof symbolDef.metadata === 'object' && 
+                'params' in symbolDef.metadata) {
+              const params = symbolDef.metadata.params;
+              argsString = Array.isArray(params) ? params.join(" ") : String(params);
+            } else if (typeof symbolDef === 'function' && 
+                      'length' in symbolDef && typeof symbolDef.length === 'number') {
+              argsString = Array(symbolDef.length).fill("arg")
+                .map((arg, i) => `${arg}${i+1}`).join(" ");
+            }
+            
+            console.log(`${textColor}Usage: ${symbolColor}(${target} ${argsString})${reset}`);
+          }
+        } else {
+          console.log(`${textColor}Symbol not found or has no documentation.${reset}`);
+        }
+      } catch (e) {
+        console.log(`${textColor}Symbol '${target}' not found or has no documentation.${reset}`);
+        console.log(`${textColor}Try using ${symbolColor}:see ${target}${textColor} for more information.${reset}`);
+      }
+    } catch (error) {
+      console.error(`${colors.fg.red}Error retrieving documentation: ${error instanceof Error ? error.message : String(error)}${reset}`);
+    }
+  }
+}
+
+/**
+ * Pretty-print the result with proper formatting and syntax highlighting
+ */
+function prettyPrintResult(result: any, useColors: boolean): void {
+  if (result === undefined || result === null) {
+    console.log(useColors ? `${colors.fg.gray}${String(result)}${colors.reset}` : String(result));
+    return;
+  }
+  
+  // Safety check - for objects that might have custom toString/valueOf methods
+  try {
+    // Handle arrays - fix for nested arrays
+    if (Array.isArray(result)) {
+      // Use console.log as a fallback if prettyPrintArray fails
+      try {
+        prettyPrintArray(result, useColors, 0);
+      } catch (error) {
+        // Fallback to standard console.log if pretty printing fails
+        console.log(result);
+      }
+      return;
+    }
+    
+    const numberColor = useColors ? colors.fg.yellow : "";
+    const stringColor = useColors ? colors.fg.green : "";
+    const keywordColor = useColors ? colors.fg.sicpRed : "";
+    const symbolColor = useColors ? colors.fg.sicpBlue : "";
+    const bracketColor = useColors ? colors.fg.gray : "";
+    const boolColor = useColors ? colors.fg.magenta : "";
+    const reset = useColors ? colors.reset : "";
+    
+    // Handle different types of values 
+    if (typeof result === 'number') {
+      console.log(`${numberColor}${result}${reset}`);
+    } 
+    else if (typeof result === 'string') {
+      // Check if it's a string value (with quotes) or a symbol
+      if (result.startsWith('"') && result.endsWith('"')) {
+        console.log(`${stringColor}${result}${reset}`);
+      } else {
+        console.log(`${symbolColor}${result}${reset}`);
+      }
+    } 
+    else if (typeof result === 'boolean') {
+      console.log(`${boolColor}${result}${reset}`);
+    }
+    else if (result instanceof Map) {
+      try {
+        prettyPrintMap(result, useColors, 0);
+      } catch (error) {
+        // Fallback to standard JSON representation
+        console.log(Object.fromEntries(result));
+      }
+    }
+    else if (typeof result === 'object') {
+      try {
+        prettyPrintObject(result, useColors, 0);
+      } catch (error) {
+        // Fallback to standard console.log
+        console.log(result);
+      }
+    }
+    else {
+      // Default fallback for any other types
+      console.log(String(result));
+    }
+  } catch (error) {
+    // Final fallback for any unexpected errors
+    console.log(`Error displaying result: ${String(result)}`);
+  }
+}
+
+/**
+ * Pretty-print an array with indentation, with additional error handling
+ */
+function prettyPrintArray(arr: any[], useColors: boolean, indent: number): void {
+  const numberColor = useColors ? colors.fg.yellow : "";
+  const stringColor = useColors ? colors.fg.green : "";
+  const bracketColor = useColors ? colors.fg.gray : "";
+  const commaColor = useColors ? colors.fg.gray : "";
+  const reset = useColors ? colors.reset : "";
+  
+  if (!arr || !Array.isArray(arr)) {
+    // Safety check - if not actually an array, fall back to console.log
+    console.log(arr);
+    return;
+  }
+  
+  if (arr.length === 0) {
+    console.log(`${bracketColor}[]${reset}`);
+    return;
+  }
+  
+  // For short arrays with simple values, print on a single line
+  if (arr.length <= 5 && arr.every(item => 
+    typeof item !== 'object' || item === null || 
+    (Array.isArray(item) && item.length === 0))) {
+    try {
+      const items = arr.map(item => {
+        if (typeof item === 'number') return `${numberColor}${item}${reset}`;
+        if (typeof item === 'string') return `${stringColor}"${item}"${reset}`;
+        if (item === null) return "null";
+        if (Array.isArray(item)) return `${bracketColor}[]${reset}`;
+        return String(item);
+      });
+      
+      console.log(`${bracketColor}[${reset}${items.join(`${commaColor}, ${reset}`)}${bracketColor}]${reset}`);
+      return;
+    } catch (error) {
+      // If we can't pretty print the simple array, fall back to basic formatting
+      console.log(arr);
+      return;
+    }
+  }
+  
+  // For more complex arrays, print with indentation
+  const indentStr = ' '.repeat(indent);
+  const innerIndentStr = ' '.repeat(indent + 2);
+  
+  try {
+    console.log(`${bracketColor}[${reset}`);
+    
+    for (let i = 0; i < arr.length; i++) {
+      const item = arr[i];
+      try {
+        process.stdout.write(innerIndentStr);
+        
+        if (Array.isArray(item)) {
+          prettyPrintArray(item, useColors, indent + 2);
+        } 
+        else if (item instanceof Map) {
+          prettyPrintMap(item, useColors, indent + 2);
+        }
+        else if (item !== null && typeof item === 'object') {
+          prettyPrintObject(item, useColors, indent + 2);
+        }
+        else if (typeof item === 'number') {
+          process.stdout.write(`${numberColor}${item}${reset}`);
+        }
+        else if (typeof item === 'string') {
+          if (item.startsWith('"') && item.endsWith('"')) {
+            process.stdout.write(`${stringColor}${item}${reset}`);
+          } else {
+            process.stdout.write(`${stringColor}"${item}"${reset}`);
+          }
+        }
+        else {
+          process.stdout.write(String(item || 'null'));
+        }
+        
+        if (i < arr.length - 1) {
+          console.log(',');
+        } else {
+          console.log();
+        }
+      } catch (itemError) {
+        // If an individual item fails, print it plainly and continue
+        console.log(`${String(item)},`);
+      }
+    }
+    
+    console.log(`${indentStr}${bracketColor}]${reset}`);
+  } catch (error) {
+    // If the complex formatting fails, fall back to standard output
+    console.log(`${indentStr}${JSON.stringify(arr, null, 2)}`);
+  }
+}
+
+/**
+ * Pretty-print a Map object with indentation
+ */
+function prettyPrintMap(map: Map<any, any>, useColors: boolean, indent: number): void {
+  const bracketColor = useColors ? colors.fg.gray : "";
+  const keyColor = useColors ? colors.fg.sicpRed : "";
+  const reset = useColors ? colors.reset : "";
+  
+  if (map.size === 0) {
+    console.log(`${bracketColor}{}${reset}`);
+    return;
+  }
+  
+  const indentStr = ' '.repeat(indent);
+  const innerIndentStr = ' '.repeat(indent + 2);
+  
+  console.log(`${bracketColor}{${reset}`);
+  
+  let i = 0;
+  for (const [key, value] of map.entries()) {
+    process.stdout.write(`${innerIndentStr}${keyColor}${key}${reset}: `);
+    
+    if (Array.isArray(value)) {
+      prettyPrintArray(value, useColors, indent + 2);
+    } 
+    else if (value instanceof Map) {
+      prettyPrintMap(value, useColors, indent + 2);
+    }
+    else if (value !== null && typeof value === 'object') {
+      prettyPrintObject(value, useColors, indent + 2);
+    }
+    else {
+      prettyPrintValue(value, useColors);
+    }
+    
+    if (i < map.size - 1) {
+      console.log(',');
+    } else {
+      console.log();
+    }
+    i++;
+  }
+  
+  console.log(`${indentStr}${bracketColor}}${reset}`);
+}
+
+/**
+ * Pretty-print an object with indentation and error handling
+ */
+function prettyPrintObject(obj: object, useColors: boolean, indent: number): void {
+  const bracketColor = useColors ? colors.fg.gray : "";
+  const keyColor = useColors ? colors.fg.sicpRed : "";
+  const reset = useColors ? colors.reset : "";
+  
+  if (!obj || typeof obj !== 'object') {
+    // Safety check
+    console.log(obj);
+    return;
+  }
+  
+  const keys = Object.keys(obj);
+  if (keys.length === 0) {
+    console.log(`${bracketColor}{}${reset}`);
+    return;
+  }
+  
+  const indentStr = ' '.repeat(indent);
+  const innerIndentStr = ' '.repeat(indent + 2);
+  
+  try {
+    console.log(`${bracketColor}{${reset}`);
+    
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      try {
+        // Skip internal metadata properties unless we're at the top level
+        if (key === '_metadata' && indent > 0) {
+          continue;
+        }
+        
+        const value = (obj as any)[key];
+        
+        process.stdout.write(`${innerIndentStr}${keyColor}${key}${reset}: `);
+        
+        if (Array.isArray(value)) {
+          prettyPrintArray(value, useColors, indent + 2);
+        } 
+        else if (value instanceof Map) {
+          prettyPrintMap(value, useColors, indent + 2);
+        }
+        else if (value !== null && typeof value === 'object') {
+          prettyPrintObject(value, useColors, indent + 2);
+        }
+        else {
+          prettyPrintValue(value, useColors);
+        }
+        
+        if (i < keys.length - 1) {
+          console.log(',');
+        } else {
+          console.log();
+        }
+      } catch (itemError) {
+        // If an individual property fails, print it plainly and continue
+        const value = (obj as any)[key];
+        const valueStr = typeof value === 'object' ? '[Object]' : String(value || 'null');
+        console.log(`${innerIndentStr}${key}: ${valueStr},`);
+      }
+    }
+    
+    console.log(`${indentStr}${bracketColor}}${reset}`);
+  } catch (error) {
+    // Fall back to standard output if pretty printing fails
+    try {
+      console.log(`${indentStr}${JSON.stringify(obj, null, 2)}`);
+    } catch {
+      // Last resort fallback
+      console.log(obj);
+    }
+  }
+}
+
+/**
+ * Pretty-print a simple value with color
+ */
+function prettyPrintValue(value: any, useColors: boolean): void {
+  const numberColor = useColors ? colors.fg.yellow : "";
+  const stringColor = useColors ? colors.fg.green : "";
+  const boolColor = useColors ? colors.fg.magenta : "";
+  const nullColor = useColors ? colors.fg.gray : "";
+  const reset = useColors ? colors.reset : "";
+  
+  if (value === null || value === undefined) {
+    process.stdout.write(`${nullColor}${value}${reset}`);
+  }
+  else if (typeof value === 'number') {
+    process.stdout.write(`${numberColor}${value}${reset}`);
+  }
+  else if (typeof value === 'string') {
+    if (value.startsWith('"') && value.endsWith('"')) {
+      process.stdout.write(`${stringColor}${value}${reset}`);
+    } else {
+      process.stdout.write(`${stringColor}"${value}"${reset}`);
+    }
+  }
+  else if (typeof value === 'boolean') {
+    process.stdout.write(`${boolColor}${value}${reset}`);
+  }
+  else {
+    process.stdout.write(String(value));
+  }
 }
