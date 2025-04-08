@@ -4,14 +4,6 @@
     "transpile": "deno run -A cli/transpile.ts",
     "repl":"deno run -A ./cli/repl.ts",
     "run": "deno run -A cli/run.ts",
-    "test-repl": "deno run -A test/repl/run-tests.ts",
-    "test-repl-core": "deno run -A test/repl/run-tests.ts core",
-    "test-repl-command": "deno run -A test/repl/run-tests.ts command",
-    "test-repl-module": "deno run -A test/repl/run-tests.ts module",
-    "test-repl-error": "deno run -A test/repl/run-tests.ts error",
-    "test-repl-persistence": "deno run -A test/repl/run-tests.ts persistence",
-    "test-repl-input": "deno run -A test/repl/run-tests.ts input",
-    "test-repl-integration": "deno run -A test/repl/run-tests.ts integration",
     "test-hql-spec": "deno task run ./doc/hql_spec.hql",
     "test-new-front-end-transpiler": "deno run -A ./cli/run.ts ./examples/macro.hql && deno task test-hql-spec",
     "full-macro-test": "deno run -A ./cli/run.ts ./examples/import/simple2/b.hql && deno run -A ./cli/run.ts ./examples/import/simple/b.hql && deno run -A ./cli/run.ts ./examples/import/module2.hql",
@@ -27,6 +19,6 @@
     "test-method-chain-call": "deno run -A ./cli/run.ts ./examples/traditional-method-chain-invocation.hql && deno run -A ./cli/run.ts ./examples/dot-access-method-chain-invocation.hql",
     "test-enum": "deno run -A ./cli/run.ts ./examples/enum.hql && deno run -A ./cli/run.ts ./examples/fn+enum.hql",
     "test-type":"deno run -A ./cli/run.ts ./examples/array+type.hql",
-    "test-bug": "deno run -A ./cli/run.ts ./examples/bug.hql"
+    "test-bug": "deno run -A ./cli/run.ts ./examples/dependency-test/macro-a.hql"
   }
 }
