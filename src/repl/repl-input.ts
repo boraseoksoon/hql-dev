@@ -93,10 +93,8 @@ export async function readLineWithArrowKeys(
       Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K")); // Clear from cursor to end of line
       Deno.stdout.writeSync(new TextEncoder().encode(prompt + input)); // Write prompt and input
       
-      // Position cursor at the right location
-      if (cursorPos < input.length) {
-        Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`)); // Move cursor to exact position
-      }
+      // Always explicitly position cursor - don't depend on terminal behavior
+      Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`)); 
       
       continue;
     }
@@ -105,25 +103,30 @@ export async function readLineWithArrowKeys(
     // Check for control sequences
     if (buf[0] === 1) { // Ctrl+A - move to beginning of line
       cursorPos = 0;
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
+      Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
       justPasted = false; // Reset paste state
       continue;
     }
     
     if (buf[0] === 5) { // Ctrl+E - move to end of line
       cursorPos = input.length;
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
+      Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
       justPasted = false; // Reset paste state
       continue;
     }
     
     if (buf[0] === 11) { // Ctrl+K - delete from cursor to end of line
       input = input.substring(0, cursorPos);
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
+      Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
       justPasted = false; // Reset paste state
       continue;
     }
@@ -131,9 +134,10 @@ export async function readLineWithArrowKeys(
     if (buf[0] === 21) { // Ctrl+U - delete from beginning of line to cursor
       input = input.substring(cursorPos);
       cursorPos = 0;
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
+      Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
       justPasted = false; // Reset paste state
       continue;
     }
@@ -200,14 +204,12 @@ export async function readLineWithArrowKeys(
       pastedLines = [];
       
       // Redraw the line without adding a newline
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));     // Move cursor to beginning of line
-      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K")); // Clear from cursor to end of line
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input)); // Write prompt and input
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
       
-      // Position cursor at the right location
-      if (cursorPos < input.length) {
-        Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`)); // Move cursor to exact position
-      }
+      // Force cursor position to be at the right location
+      Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
       
       continue;
     }
@@ -266,14 +268,12 @@ export async function readLineWithArrowKeys(
             }
             
             // Redraw the line
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
             
-            // Position cursor
-            if (cursorPos < input.length) {
-              Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
-            }
+            // Force cursor position to be at the right location
+            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
           }
           // Do absolutely nothing when no completions available
         } catch (error) {
@@ -305,22 +305,20 @@ export async function readLineWithArrowKeys(
             const historyItem = history[history.length - 1 - localHistoryIndex];
             
             // Clear current line and reset cursor to beginning of line
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            // Erase from cursor to end of line
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
             
             // Show history item
             input = historyItem;
-            Deno.stdout.writeSync(new TextEncoder().encode(input));
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
             cursorPos = input.length;
+            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
           }
         } 
         else if (buf[2] === 66) { // Down arrow
           // Clear current line
-          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-          Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-          Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+          Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+          Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
           
           if (localHistoryIndex > 0) {
             // Navigate down through history
@@ -334,31 +332,44 @@ export async function readLineWithArrowKeys(
           }
           
           // Show the result
-          Deno.stdout.writeSync(new TextEncoder().encode(input));
+          Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
           cursorPos = input.length;
+          Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
         }
         else if (buf[2] === 67) { // Right arrow
           if (cursorPos < input.length) {
             cursorPos++;
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[C")); // Move cursor right
+            // Instead of using escape sequence, redraw the entire line with correct cursor position
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
+            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
           }
         }
         else if (buf[2] === 68) { // Left arrow
           if (cursorPos > 0) {
             cursorPos--;
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[D")); // Move cursor left
+            // Instead of using escape sequence, redraw the entire line with correct cursor position
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
+            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
           }
         }
         // Support for Home/End keys
         else if (buf[2] === 72 || (buf[2] === 49 && buf[3] === 126)) { // Home key
           cursorPos = 0;
-          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-          Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+          Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+          Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+          Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
+          Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
         }
         else if (buf[2] === 70 || (buf[2] === 52 && buf[3] === 126)) { // End key
           cursorPos = input.length;
-          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-          Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+          Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+          Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+          Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
+          Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
         }
         // Delete key
         else if (buf[2] === 51 && buf[3] === 126) { // Delete key
@@ -382,8 +393,10 @@ export async function readLineWithArrowKeys(
           if (wordMatch) {
             const wordStart = beforeCursor.lastIndexOf(wordMatch[1]);
             cursorPos = wordStart;
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+            // Use consistent cursor positioning approach
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
             Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
           }
           continue;
@@ -394,13 +407,18 @@ export async function readLineWithArrowKeys(
           if (wordMatch && wordMatch[1]) {
             const wordEnd = cursorPos + wordMatch[0].length;
             cursorPos = wordEnd;
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+            // Use consistent cursor positioning approach
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
             Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
           } else {
             cursorPos = input.length;
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+            // Use consistent cursor positioning approach
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
+            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
           }
           continue;
         }
@@ -410,9 +428,10 @@ export async function readLineWithArrowKeys(
           if (wordMatch) {
             const wordEnd = cursorPos + wordMatch[0].length;
             input = input.substring(0, cursorPos) + input.substring(wordEnd);
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+            // Use consistent cursor positioning approach
+            Deno.stdout.writeSync(new TextEncoder().encode("\r"));                 // Return to start of line
+            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));            // Clear to end of line
+            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));      // Write prompt and input
             Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
           }
           continue;
@@ -482,16 +501,16 @@ export async function readLineWithArrowKeys(
     if (buf[0] >= 32 && buf[0] <= 126) {
       const char = String.fromCharCode(buf[0]);
       
-      // Insert character at cursor position (no auto-closing brackets)
+      // Insert character at current cursor position
       input = input.substring(0, cursorPos) + char + input.substring(cursorPos);
       cursorPos++;
       
-      // Redraw the line
+      // Always redraw the entire line
       Deno.stdout.writeSync(new TextEncoder().encode("\r"));                  // Return to start of line
       Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));             // Clear to end of line
       Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));       // Write prompt and input
       
-      // Force cursor position to be at the right location, regardless of input length
+      // ALWAYS explicitly position cursor regardless of cursor position
       Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
       
       // Reset any completion state when typing regular characters
