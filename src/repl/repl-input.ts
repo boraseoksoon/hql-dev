@@ -135,10 +135,6 @@ export async function readLineWithArrowKeys(
     // Check if it is a paste operation (more than 3 bytes read).
     if (n > 3) {
       const pastedContent = new TextDecoder().decode(buf.subarray(0, n)).trim();
-      // Save current state in case we need to use it later
-      const prevInput = input;
-      const prevCursorPos = cursorPos;
-      
       // Process the pasted content.
       const result = processPastedContent(pastedContent, input, cursorPos, pastedLines);
       input = result.input;
@@ -207,16 +203,43 @@ export async function readLineWithArrowKeys(
     // ----------------------
     if (key === TAB && tabCompletion) {
       justPasted = false;
+      
+      // Track some state for property completions
+      let isPropertyCompletion = false;
+      let objectPart = "";
+      
+      if (input.includes('.')) {
+        const dotIndex = input.lastIndexOf('.');
+        objectPart = input.substring(0, dotIndex + 1);
+        isPropertyCompletion = true;
+      }
+      
       try {
+        // Get completions if we don't have any yet
         if (completions.length === 0) {
           completions = await tabCompletion.getCompletions(input, cursorPos);
           completionIndex = 0;
         } else {
+          // Cycle to next completion
           completionIndex = (completionIndex + 1) % completions.length;
         }
 
         if (completions.length > 0) {
           const completion = completions[completionIndex];
+          
+          // Handle property access completions
+          if (isPropertyCompletion && completion.includes('.')) {
+            // Extract just the property part from the completion
+            const propDotIndex = completion.indexOf('.');
+            const propPart = completion.substring(propDotIndex + 1);
+            
+            // Replace everything from dot onwards with the new property
+            input = objectPart + propPart;
+            cursorPos = input.length;
+            redrawLine(prompt, input, cursorPos);
+            continue;
+          }
+          
           // For certain commands, preserve the command part
           if (input.trim().startsWith(':') ||
               input.trim().startsWith('cd ') ||

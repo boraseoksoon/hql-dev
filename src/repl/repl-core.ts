@@ -238,22 +238,11 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
             resetReplState(replState);
           }
           
-          // First check for special HQL expressions like imports/exports/module switches
-          if (await evaluator.detectSpecialHqlExpressions(input)) {
-            continue;
-          }
-          
-          // Evaluate the HQL expression
-          const result = await evaluator.evaluate(input, {
-            verbose: showVerbose,
-            baseDir,
-            showAst,
-            showExpanded,
-            showJs,
-          });
-          
-          // Print result
-          if (result !== undefined) {
+          // Handle standard evaluation or other commands
+          const result = await evaluator.evaluate(input, { verbose: showVerbose });
+
+          // Display the result
+          if (result.value !== undefined) {
             prettyPrintResult(result, useColors, showVerbose);
           }
         } catch (error) {

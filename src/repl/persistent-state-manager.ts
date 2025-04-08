@@ -466,17 +466,28 @@ export class PersistentStateManager {
     
     if (typeof value === 'object') {
       if (Array.isArray(value)) {
-        // For arrays, recursively make elements serializable
+        // For arrays, recursively make elements serializable (limited depth?)
+        // For now, keep as is, assuming arrays aren't excessively deep/complex.
         return value.map(item => this.makeSerializable(item));
-      }
+      } 
       
-      // For objects, recursively make properties serializable
-      const result: Record<string, any> = {};
-      for (const [key, propValue] of Object.entries(value)) {
-        if (key.startsWith('_')) continue; // Skip private properties
-        result[key] = this.makeSerializable(propValue);
+      // --- Add Check for Complex Objects ---
+      // If it's an object but not a plain Array, store a placeholder 
+      // to avoid deep serialization issues with external modules like express.
+      // This is a heuristic; might need refinement.
+      else {
+        // Return a simple placeholder instead of recursing
+        return { _type: "external_object", representation: "[External Object]" };
+        /* // Original recursive serialization for objects:
+        const result: Record<string, any> = {};
+        for (const [key, propValue] of Object.entries(value)) {
+          if (key.startsWith('_')) continue; // Skip private properties
+          result[key] = this.makeSerializable(propValue);
+        }
+        return result;
+        */
       }
-      return result;
+      // --- End Check ---
     }
     
     // Primitives can be serialized directly

@@ -954,9 +954,23 @@ export async function commandRemove(
         }
       }
       
-      if (removedCount > 0) {
-        console.log(`Removed ${removedCount} modules.`);
-        console.log(`Note: The 'global' module was preserved as it's a protected core module.`);
+      // Also remove all symbols from the global module
+      let removedSymbols = 0;
+      const globalSymbols = await evaluator.listModuleSymbols('global');
+      for (const symbol of globalSymbols) {
+        if (evaluator.removeSymbol(symbol)) {
+          removedSymbols++;
+        }
+      }
+      
+      if (removedCount > 0 || removedSymbols > 0) {
+        if (removedCount > 0) {
+          console.log(`Removed ${removedCount} modules.`);
+        }
+        if (removedSymbols > 0) {
+          console.log(`Removed ${removedSymbols} symbols from the global module.`);
+        }
+        console.log(`Note: The 'global' module itself was preserved as it's a protected core module.`);
         
         // Set current module back to global/user to avoid being in a removed module
         if (!protectedModules.includes(replState.currentModule)) {
@@ -964,7 +978,7 @@ export async function commandRemove(
           replState.currentModule = 'global';
         }
       } else {
-        console.log('No modules to remove.');
+        console.log('No modules or symbols to remove.');
       }
     } else {
       // Remove all symbols in current module

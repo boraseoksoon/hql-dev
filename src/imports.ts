@@ -31,7 +31,7 @@ import {
   registerModulePath,
 } from "./utils/import-utils.ts";
 
-interface ImportProcessorOptions {
+export interface ImportProcessorOptions {
   verbose?: boolean;
   baseDir?: string;
   tempDir?: string;
