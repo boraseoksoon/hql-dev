@@ -347,6 +347,11 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
           const importExpr = firstExpr as SList;
           this.moduleLogger.debug(`Detected HQL import statement: ${input}`);
 
+          // Store the import statement for later restoration if saveState option is not explicitly false
+          if (options.saveState !== false) {
+            await this.storeImportStatement(input);
+          }
+
           const importOptions: ImportProcessorOptions = {
             verbose: this.moduleLogger.isVerbose,
             baseDir: Deno.cwd(), // Use current working directory for relative paths in REPL
@@ -392,11 +397,10 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
                   this.moduleLogger.warn(`Symbol '${symbolName}' from import not found via lookup after processing.`);
                 }
               }
-            } catch (trackingError) {
-              this.moduleLogger.error(`Error tracking imported definitions: ${trackingError}`);
+            } catch (error) {
+              this.moduleLogger.warn(`Failed to track import definitions: ${error}`);
             }
-            // --- End Tracking ---
-
+            
             // Import successful, return a neutral result including required fields
             return {
               value: null,
@@ -421,7 +425,6 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       // If parsing fails, let the standard evaluation handle it (it will likely fail too, but consistently)
       this.moduleLogger.warn(`Parsing error during import check, falling back to standard evaluation: ${parseError}`);
     }
-    // --- End Import Handling ---
 
     // If not an import or parsing failed, proceed with standard evaluation
     const result = await super.evaluate(input, options);
@@ -554,6 +557,9 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
         return;
       }
       
+      // Re-import any stored import statements first
+      await this.restoreImports(moduleName);
+      
       // Get the REPL environment
       const replEnv = this.getREPLEnvironment();
       
@@ -582,6 +588,14 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
                 this.moduleLogger.error(`Failed to restore function '${name}': ${fnError instanceof Error ? fnError.message : String(fnError)}`);
                 continue; // Skip this function if we can't restore it
               }
+            } else if (rawValue._type === 'external_object') {
+              // This is an external object reference (like from an import)
+              // We've already re-imported it above, so just look it up in the environment
+              value = replEnv.getJsValue(name);
+              if (value === undefined) {
+                this.moduleLogger.warn(`External object '${name}' not found in environment after imports`);
+                continue;
+              }
             } else {
               // Other serialized types we don't know how to handle yet
               value = rawValue as unknown as Value;
@@ -601,6 +615,38 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.moduleLogger.error(`Error restoring module state: ${errorMessage}`);
+    }
+  }
+  
+  /**
+   * Restore imports for a module from the persistent state
+   */
+  private async restoreImports(moduleName: string): Promise<void> {
+    try {
+      // Get stored import statements for this module
+      const importStatements = persistentStateManager.getModuleMetadata(moduleName, 'importStatements') as string[];
+      
+      if (!importStatements || importStatements.length === 0) {
+        return;
+      }
+      
+      this.moduleLogger.debug(`Restoring ${importStatements.length} imports for module ${moduleName}`);
+      
+      // Execute each import statement
+      for (const importStmt of importStatements) {
+        try {
+          // Evaluate the import statement
+          await this.evaluate(importStmt, { 
+            verbose: this.moduleLogger.isVerbose,
+            saveState: false // Don't save state again while restoring
+          });
+          this.moduleLogger.debug(`Re-imported: ${importStmt}`);
+        } catch (importError) {
+          this.moduleLogger.error(`Failed to restore import: ${importStmt} - ${importError}`);
+        }
+      }
+    } catch (error) {
+      this.moduleLogger.error(`Error restoring imports: ${error}`);
     }
   }
   
@@ -876,6 +922,27 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.moduleLogger.error(`Error exporting symbol: ${errorMessage}`);
       return false;
+    }
+  }
+
+  /**
+   * Store an import statement for a module
+   */
+  async storeImportStatement(importStatement: string): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    // Parse the import statement to ensure it's valid
+    try {
+      const parsed = await parse(importStatement);
+      if (parsed.length === 0 || !isImport(parsed[0])) return;
+      
+      // Store the import statement in the persistent state
+      persistentStateManager.addModuleMetadata('importStatements', importStatement);
+      this.moduleLogger.debug(`Stored import statement: ${importStatement}`);
+    } catch (error) {
+      this.moduleLogger.error(`Failed to store import statement: ${error}`);
     }
   }
 }

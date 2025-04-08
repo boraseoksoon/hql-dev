@@ -26,6 +26,7 @@ export interface ModuleState {
   definitions: ModuleDefinitions;
   imports: string[];
   exports: string[];
+  metadata?: Record<string, any>;
 }
 
 // Interface for persistent REPL state
@@ -120,7 +121,8 @@ export class PersistentStateManager {
             macros: {}
           },
           imports: [],
-          exports: []
+          exports: [],
+          metadata: {}
         }
       },
       history: []
@@ -370,7 +372,8 @@ export class PersistentStateManager {
           macros: {}
         },
         imports: [],
-        exports: []
+        exports: [],
+        metadata: {}
       };
       this.logger.debug(`Created new module: ${moduleName}`);
     }
@@ -648,7 +651,8 @@ export class PersistentStateManager {
             macros: {}
           },
           imports: [],
-          exports: []
+          exports: [],
+          metadata: {}
         };
       }
       
@@ -662,6 +666,73 @@ export class PersistentStateManager {
     // Save the changes
     this.saveState(true);
     this.logger.debug(`Reset ${keepModules ? 'all module contents' : 'everything to default state'}`);
+  }
+
+  /**
+   * Add metadata to the current module
+   */
+  addModuleMetadata(key: string, value: any): void {
+    if (!this.initialized) {
+      throw new Error("State manager not initialized");
+    }
+    
+    const moduleState = this.getCurrentModuleState();
+    
+    // Initialize metadata object if needed
+    if (!moduleState.metadata) {
+      moduleState.metadata = {};
+    }
+    
+    // If the key already exists as an array, append to the array
+    if (Array.isArray(moduleState.metadata[key])) {
+      moduleState.metadata[key].push(value);
+    } 
+    // If key exists but is not an array, convert to array with both values
+    else if (key in moduleState.metadata) {
+      moduleState.metadata[key] = [moduleState.metadata[key], value];
+    }
+    // Otherwise, set as a new value
+    else {
+      moduleState.metadata[key] = [value];
+    }
+    
+    this.saveState();
+    this.logger.debug(`Added metadata '${key}' to module '${this.currentState.lastModule}'`);
+  }
+
+  /**
+   * Get metadata from a module
+   */
+  getModuleMetadata(moduleName: string, key: string): any {
+    if (!this.initialized) {
+      throw new Error("State manager not initialized");
+    }
+    
+    const moduleState = this.getModuleState(moduleName);
+    if (!moduleState || !moduleState.metadata) {
+      return null;
+    }
+    
+    return moduleState.metadata[key];
+  }
+
+  /**
+   * Clear a specific metadata key from a module
+   */
+  clearModuleMetadata(moduleName: string, key: string): boolean {
+    if (!this.initialized) {
+      throw new Error("State manager not initialized");
+    }
+    
+    const moduleState = this.getModuleState(moduleName);
+    if (!moduleState || !moduleState.metadata || !(key in moduleState.metadata)) {
+      return false;
+    }
+    
+    delete moduleState.metadata[key];
+    this.saveState();
+    this.logger.debug(`Cleared metadata '${key}' from module '${moduleName}'`);
+    return true;
   }
 }
 
