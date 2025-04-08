@@ -8,6 +8,8 @@ import { persistentStateManager } from "./persistent-state-manager.ts";
 import { REPLEnvironment } from "./repl-environment.ts";
 import { parse } from "../transpiler/pipeline/parser.ts";
 import { moduleUtils } from "./repl-common.ts";
+import { processImports } from "../imports.ts";
+import { transformSyntax } from "../transpiler/pipeline/syntax-transformer.ts";
 
 /**
  * Options for the module-aware evaluator
@@ -496,60 +498,50 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
   }
   
   /**
-   * Get the definition and source information for a symbol
+   * Get a symbol definition
    */
-  async getSymbolDefinition(symbolName: string, moduleName?: string): Promise<{ 
-    value: any; 
-    source?: string; 
-    jsSource?: string;
-    metadata?: Record<string, any>;
-  } | null> {
+  async getSymbolDefinition(symbolName: string, moduleName?: string): Promise<any> {
     await this.ensureInitialized();
     
-    // Use the provided module name or current module
-    const targetModule = moduleName || this.currentModule;
-    
     try {
-      // First, try to get definition from persistent state manager
-      const moduleState = persistentStateManager.getModuleState(targetModule);
-      if (!moduleState) return null;
+      const targetModule = moduleName || this.currentModule;
       
-      // Search for the symbol in different definition types
-      for (const type of ['functions', 'variables', 'macros'] as const) {
+      // First check if it exists in the persistent storage
+      const moduleState = persistentStateManager.getModuleState(targetModule);
+      if (!moduleState) {
+        return null;
+      }
+      
+      // Normalize symbol name for comparison - handle case where symbol
+      // might be different in capitalization or formatting
+      const normalizedSymbolName = symbolName.toLowerCase();
+      
+      // Look in all definition types
+      for (const type of ['variables', 'functions', 'macros'] as const) {
+        // First try exact match
         if (symbolName in moduleState.definitions[type]) {
           const definition = moduleState.definitions[type][symbolName];
-          
-          // Get the actual value from the environment
+          // Get the value from the REPL environment
           const replEnv = this.getREPLEnvironment();
-          const value = replEnv.hasJsValue(symbolName) ? replEnv.getJsValue(symbolName) : undefined;
           
-          // Check if definition has metadata where source might be stored
-          if (definition && typeof definition === 'object' && '_metadata' in definition) {
-            const metadata = definition._metadata;
-            return {
-              value,
-              source: metadata.source,
-              jsSource: metadata.jsSource,
-              metadata: {
-                type,
-                module: targetModule,
-                ...(metadata || {})
-              }
-            };
+          // Get the symbol's value from the environment
+          let value = replEnv.getJsValue(symbolName, targetModule);
+          
+          // If value not found with the exact name, try using target module prefix
+          if (value === undefined) {
+            value = replEnv.getJsValue(`${targetModule}.${symbolName}`, targetModule);
           }
           
-          // Handle serialized functions
-          if (typeof definition === 'object' && definition !== null && '_type' in definition) {
-            if (definition._type === 'function' && 'source' in definition) {
-              return {
-                value,
-                jsSource: definition.source,
-                metadata: {
-                  type,
-                  module: targetModule
-                }
-              };
-            }
+          // Return definition info
+          if (typeof definition === 'function') {
+            return {
+              value: definition,
+              source: definition.toString(),
+              metadata: {
+                type,
+                module: targetModule
+              }
+            };
           }
           
           // For regular values
@@ -564,9 +556,95 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
             }
           };
         }
+        
+        // If exact match not found, try case-insensitive lookup
+        for (const definedSymbol in moduleState.definitions[type]) {
+          if (definedSymbol.toLowerCase() === normalizedSymbolName) {
+            const definition = moduleState.definitions[type][definedSymbol];
+            // Get the value from the REPL environment
+            const replEnv = this.getREPLEnvironment();
+            
+            // Get the symbol's value from the environment
+            let value = replEnv.getJsValue(definedSymbol, targetModule);
+            
+            // If value not found with the exact name, try using target module prefix
+            if (value === undefined) {
+              value = replEnv.getJsValue(`${targetModule}.${definedSymbol}`, targetModule);
+            }
+            
+            // Return definition info
+            if (typeof definition === 'function') {
+              return {
+                value: definition,
+                source: definition.toString(),
+                metadata: {
+                  type,
+                  module: targetModule
+                }
+              };
+            }
+            
+            // For regular values
+            return {
+              value,
+              jsSource: typeof definition === 'object' && definition !== null 
+                      ? JSON.stringify(definition, null, 2) 
+                      : String(definition),
+              metadata: {
+                type,
+                module: targetModule
+              }
+            };
+          }
+        }
       }
       
       // If we're here, we didn't find the symbol in definitions
+      // Try directly looking up in the environment
+      const env = this.getEnvironment();
+      let value;
+      
+      // Try different ways to find the value
+      try {
+        // Try just the symbol name
+        value = env.lookup(symbolName);
+      } catch (e) {
+        // Not found directly
+      }
+      
+      if (value === undefined) {
+        try {
+          // Try with module prefix
+          value = env.lookup(`${targetModule}.${symbolName}`);
+        } catch (e) {
+          // Not found with prefix
+        }
+      }
+      
+      // Also check direct global access (for external modules)
+      if (value === undefined) {
+        try {
+          const global = globalThis as Record<string, unknown>;
+          if (global[symbolName] !== undefined) {
+            value = global[symbolName];
+          }
+        } catch (e) {
+          // Not found in global
+        }
+      }
+      
+      // If we have a value now, return it
+      if (value !== undefined) {
+        return {
+          value,
+          jsSource: typeof value === 'function' ? value.toString() : undefined,
+          metadata: {
+            module: targetModule,
+            note: "Symbol found in runtime environment"
+          }
+        };
+      }
+      
       // Check if it exists in the environment but not in persistent storage
       const replEnv = this.getREPLEnvironment();
       if (replEnv.hasJsValue(symbolName)) {
@@ -711,168 +789,6 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
   }
   
   /**
-   * Detect if this is a native HQL import expression and process it
-   * This handles HQL syntax like: (import [symbol1, symbol2] from "module")
-   */
-  async detectAndHandleImport(input: string): Promise<boolean> {
-    if (!this.initialized) return false;
-    
-    // Simple regex to detect import expressions
-    // More sophisticated parsing would be handled by the main evaluator
-    const importRegex = /\(\s*import\s+(\[.+?\]|\S+)\s+from\s+["']([^"']+)["']\s*\)/;
-    const match = input.match(importRegex);
-    
-    if (!match) return false;
-    
-    // Extract the symbols and module
-    let symbols: string[] = [];
-    const symbolsPart = match[1];
-    const moduleName = match[2];
-    
-    // Check if it's an array of symbols or a single module import
-    if (symbolsPart.startsWith('[')) {
-      // Parse the array of symbols
-      const symbolsString = symbolsPart.slice(1, -1).trim();
-      symbols = symbolsString.split(/\s*,\s*/).map(s => s.trim());
-    } else {
-      // It's a full module import
-      symbols = [`*${symbolsPart}`]; // Prefix with * to indicate full module
-    }
-    
-    // Log the import intent
-    this.moduleLogger.debug(`Detected import from ${moduleName}: ${symbols.join(', ')}`);
-    
-    // Process imports
-    let importedCount = 0;
-    for (const symbol of symbols) {
-      if (symbol.startsWith('*')) {
-        // Full module import
-        const success = this.importEntireModule(symbol.substring(1), moduleName);
-        if (success) importedCount++;
-      } else {
-        // Single symbol import
-        const success = this.importFromModule(symbol, moduleName);
-        if (success) importedCount++;
-      }
-    }
-    
-    // Display a helpful confirmation message for the user
-    if (importedCount > 0) {
-      console.log(`[${importedCount} ${importedCount === 1 ? 'symbol' : 'symbols'} imported from ${moduleName}]`);
-    } else {
-      console.log(`No symbols were imported from ${moduleName}`);
-    }
-    
-    return true;
-  }
-  
-  /**
-   * Import an entire module as a namespace
-   */
-  importEntireModule(namespaceAlias: string, fromModule: string): boolean {
-    if (!this.initialized) {
-      throw new Error("Module system not initialized");
-    }
-    
-    try {
-      // Check if source module exists
-      const moduleState = persistentStateManager.getModuleState(fromModule);
-      if (!moduleState) {
-        this.moduleLogger.error(`Module '${fromModule}' not found`);
-        return false;
-      }
-      
-      // Create a namespace object with all exported symbols
-      const namespaceObj: Record<string, any> = {};
-      
-      // Add exported symbols to the namespace
-      for (const exportedSymbol of moduleState.exports) {
-        // Find the symbol in the module's definitions
-        for (const type of ['variables', 'functions', 'macros'] as const) {
-          if (exportedSymbol in moduleState.definitions[type]) {
-            // Get the value from the environment
-            const value = this.getEnvironment().lookup(`${fromModule}.${exportedSymbol}`);
-            if (value !== undefined) {
-              namespaceObj[exportedSymbol] = value;
-            }
-            break;
-          }
-        }
-      }
-      
-      // Register the namespace in the current module
-      const replEnv = this.getREPLEnvironment();
-      replEnv.setJsValue(namespaceAlias, namespaceObj);
-      
-      // Add it to the definitions
-      persistentStateManager.addDefinition(namespaceAlias, namespaceObj, 'variable');
-      
-      // Add to imports list for tracking
-      persistentStateManager.addImport(`${fromModule}.*`);
-      
-      this.moduleLogger.debug(`Imported module '${fromModule}' as namespace '${namespaceAlias}'`);
-      return true;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.moduleLogger.error(`Error importing module: ${errorMessage}`);
-      return false;
-    }
-  }
-  
-  /**
-   * Detect if this is a native HQL export expression and process it
-   * This handles HQL syntax like: (export [symbol1, symbol2])
-   */
-  async detectAndHandleExport(input: string): Promise<boolean> {
-    if (!this.initialized) return false;
-    
-    // Simple regex to detect export expressions
-    const exportRegex = /\(\s*export\s+(?:default\s+(\S+)|(\[.+?\]))\s*\)/;
-    const match = input.match(exportRegex);
-    
-    if (!match) return false;
-    
-    const defaultExport = match[1];
-    const symbolsArray = match[2];
-    
-    if (defaultExport) {
-      // Handle default export
-      const success = this.exportSymbol(defaultExport);
-      if (success) {
-        console.log(`${defaultExport} exported as default`);
-      } else {
-        console.error(`Failed to export ${defaultExport}`);
-      }
-      return true;
-    }
-    
-    if (symbolsArray) {
-      // Handle array of exports
-      const symbolsString = symbolsArray.slice(1, -1).trim();
-      const symbols = symbolsString.split(/\s*,\s*/).map(s => s.trim());
-      
-      let exportedCount = 0;
-      for (const symbol of symbols) {
-        const success = this.exportSymbol(symbol);
-        if (success) {
-          console.log(`${symbol} exported`);
-          exportedCount++;
-        } else {
-          console.error(`Failed to export ${symbol}`);
-        }
-      }
-      
-      if (exportedCount > 0) {
-        this.moduleLogger.debug(`Exported ${exportedCount} symbols from module '${this.currentModule}'`);
-      }
-      
-      return true;
-    }
-    
-    return false;
-  }
-  
-  /**
    * Detect and handle any special HQL expressions before normal evaluation
    */
   async detectSpecialHqlExpressions(input: string): Promise<boolean> {
@@ -1011,6 +927,432 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       if (symbolName in moduleState.definitions[type]) {
         return true;
       }
+    }
+    
+    return false;
+  }
+
+  async detectAndHandleImport(input: string): Promise<boolean> {
+    if (!this.initialized) return false;
+    
+    // Simple regex to detect import expressions
+    // More sophisticated parsing would be handled by the main evaluator
+    const importRegex = /\(\s*import\s+(\[.+?\]|\S+)\s+from\s+["']([^"']+)["']\s*\)/;
+    const match = input.match(importRegex);
+    
+    if (!match) return false;
+    
+    // Extract the symbols and module
+    let symbols: string[] = [];
+    const symbolsPart = match[1];
+    const moduleName = match[2];
+    
+    // Check if it's an array of symbols or a single module import
+    if (symbolsPart.startsWith('[')) {
+      // Parse the array of symbols
+      const symbolsString = symbolsPart.slice(1, -1).trim();
+      symbols = symbolsString.split(/\s*,\s*/).map(s => s.trim());
+    } else {
+      // It's a full module import
+      symbols = [`*${symbolsPart}`]; // Prefix with * to indicate full module
+    }
+    
+    // Log the import intent
+    this.moduleLogger.debug(`Detected import from ${moduleName}: ${symbols.join(', ')}`);
+    
+    // Check if this is an npm, jsr, or http import that needs special handling
+    if (moduleName.startsWith('npm:') || moduleName.startsWith('jsr:') || 
+        moduleName.startsWith('http:') || moduleName.startsWith('https:')) {
+      try {
+        // Use the regular REPL evaluator's import handling
+        const evalOptions = { verbose: true, baseDir: Deno.cwd() };
+        const result = await this.processExternalImport(input, moduleName, symbols[0].replace(/^\*/, ''), evalOptions);
+        
+        if (result.success) {
+          const moduleNameOnly = symbols[0].replace(/^\*/, '');
+          console.log(`[Imported module from ${moduleName}]`);
+          console.log(`Module '${moduleNameOnly}' is now available in your environment.`);
+          console.log(`Try using it: (${moduleNameOnly}.methodName ...)`);
+          
+          // Add to the module imports list for tracking
+          persistentStateManager.addImport(`${moduleName}`);
+          return true;
+        } else {
+          console.error(`❌ Module '${moduleName}' not found`);
+          console.log(`No symbols were imported from ${moduleName}`);
+          return true;
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`❌ Import error: ${errorMessage}`);
+        console.log(`No symbols were imported from ${moduleName}`);
+        return true;
+      }
+    }
+    
+    // Process imports for local modules
+    let importedCount = 0;
+    for (const symbol of symbols) {
+      if (symbol.startsWith('*')) {
+        // Full module import
+        const success = this.importEntireModule(symbol.substring(1), moduleName);
+        if (success) importedCount++;
+      } else {
+        // Single symbol import
+        const success = this.importFromModule(symbol, moduleName);
+        if (success) importedCount++;
+      }
+    }
+    
+    // Display a helpful confirmation message for the user
+    if (importedCount > 0) {
+      console.log(`[${importedCount} ${importedCount === 1 ? 'symbol' : 'symbols'} imported from ${moduleName}]`);
+    } else {
+      console.log(`No symbols were imported from ${moduleName}`);
+    }
+    
+    return true;
+  }
+  
+  /**
+   * Process an external import (npm, jsr, http)
+   */
+  private async processExternalImport(
+    input: string, 
+    modulePath: string, 
+    namespaceAlias: string,
+    options: { verbose?: boolean, baseDir?: string } = {}
+  ): Promise<{ success: boolean, message: string }> {
+    try {
+      // Parse the input to get S-expressions
+      const parsed = await parse(input);
+      
+      if (!parsed || parsed.length === 0) {
+        return { 
+          success: false, 
+          message: 'Invalid import expression' 
+        };
+      }
+      
+      // Get the REPL environment
+      const replEnv = this.getREPLEnvironment();
+      
+      // Record original current file to restore later
+      const originalFile = replEnv.hqlEnv.getCurrentFile();
+      
+      // Set current file in the environment
+      const baseDir = (this as any).baseDir || Deno.cwd();
+      replEnv.hqlEnv.setCurrentFile(baseDir);
+      
+      // Convert sexps to transformedSexps using syntax transformer
+      const transformedSexps = await transformSyntax(parsed, { verbose: this.moduleLogger.isVerbose });
+      
+      // Manually extract import information before processing
+      let importInfo = {
+        moduleName: namespaceAlias,
+        modulePath: modulePath
+      };
+      
+      try {
+        // Check if the first expression is an import expression
+        if (transformedSexps[0].type === 'list' && 
+            transformedSexps[0].elements && 
+            transformedSexps[0].elements[0].type === 'symbol' && 
+            transformedSexps[0].elements[0].name === 'import') {
+          // It's an import expression, try to extract more precise info
+          const fromIndex = transformedSexps[0].elements.findIndex(e => e.type === 'symbol' && e.name === 'from');
+          if (fromIndex > 0 && fromIndex + 1 < transformedSexps[0].elements.length) {
+            // Extract module path from the 'from' clause
+            const modulePathElement = transformedSexps[0].elements[fromIndex + 1];
+            if (modulePathElement.type === 'literal' && typeof modulePathElement.value === 'string') {
+              importInfo.modulePath = modulePathElement.value;
+            }
+            
+            // Extract module name/symbols being imported
+            const importTarget = transformedSexps[0].elements[1];
+            if (importTarget.type === 'symbol') {
+              importInfo.moduleName = importTarget.name;
+            }
+          }
+        }
+      } catch (e) {
+        this.moduleLogger.debug(`Error extracting import info: ${e}`);
+        // Use default import info from function parameters
+      }
+      
+      if (!importInfo.moduleName || !importInfo.modulePath) {
+        return { 
+          success: false, 
+          message: `Invalid import statement format for ${modulePath}` 
+        };
+      }
+      
+      // Process the import directly using the imports.ts module
+      await processImports(transformedSexps, replEnv.hqlEnv, {
+        verbose: this.moduleLogger.isVerbose,
+        baseDir: baseDir
+      });
+      
+      // Get the imported module reference from the environment
+      const importedModule = replEnv.hqlEnv.lookup(importInfo.moduleName);
+      
+      // Critical step: Save the imported module in the REPL JS environment
+      // This ensures the module is accessible in future evaluations
+      if (importedModule !== undefined) {
+        // Register in our REPL environment
+        replEnv.setJsValue(importInfo.moduleName, importedModule);
+        
+        // Create a global reference to make it accessible in the REPL
+        const evalCode = `globalThis.${importInfo.moduleName} = replEnv.getJsValue("${importInfo.moduleName}");`;
+        // Use the parent class's evaluateJs method through type assertion
+        await (this as any).evaluateJs(evalCode);
+        
+        // For JSR modules, analyze the module structure to provide better usage guidance
+        if (modulePath.startsWith('jsr:')) {
+          const moduleInfo = this.analyzeExternalModule(importedModule, importInfo.moduleName);
+          this.moduleLogger.debug(`Module analysis for ${importInfo.moduleName}: ${JSON.stringify(moduleInfo)}`);
+          
+          // If module has a default property that appears to be the main export,
+          // also make it directly accessible
+          if (moduleInfo.hasDefaultExport) {
+            // Create a helper function to access the default export
+            const defaultAccessCode = `
+              // Create a direct accessor function for the default export
+              if (${importInfo.moduleName}.default) {
+                // Define a function property to maintain a reference to the module
+                const defaultFn = function(...args) {
+                  return ${importInfo.moduleName}.default(...args);
+                };
+                
+                // Copy all properties from default export to the wrapper function
+                Object.assign(defaultFn, ${importInfo.moduleName}.default);
+                
+                // Add the function as a property on the module object
+                ${importInfo.moduleName}.__defaultAccess = defaultFn;
+                
+                // Also add the actual default export back as a reference
+                ${importInfo.moduleName}.__default = ${importInfo.moduleName}.default;
+              }
+            `;
+            await (this as any).evaluateJs(defaultAccessCode);
+            this.moduleLogger.debug(`Added default export accessor for ${importInfo.moduleName}`);
+          }
+        }
+        
+        this.moduleLogger.debug(`Registered "${importInfo.moduleName}" in REPL environment`);
+      } else {
+        this.moduleLogger.error(`Module "${importInfo.moduleName}" was processed but not found in environment`);
+      }
+      
+      // Restore the original current file
+      replEnv.hqlEnv.setCurrentFile(originalFile);
+      
+      // Register this successful import in our tracking
+      if (!(this as any).importedModules) {
+        (this as any).importedModules = new Map();
+      }
+      (this as any).importedModules.set(importInfo.moduleName, importInfo.modulePath);
+      
+      return {
+        success: true,
+        message: `Successfully imported ${importInfo.moduleName} from "${importInfo.modulePath}"`
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.moduleLogger.error(`Error importing external module: ${errorMessage}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Analyze an external module to understand its structure
+   * This helps with providing better usage guidance
+   */
+  private analyzeExternalModule(moduleValue: any, moduleName: string): {
+    name: string;
+    type: string;
+    hasDefaultExport: boolean;
+    isClass: boolean;
+    hasNamedExports: boolean;
+    colorMethods: string[];
+    properties: string[];
+    isColorModule?: boolean;
+    defaultType?: string;
+    isDefaultClass?: boolean;
+  } {
+    const moduleInfo: {
+      name: string;
+      type: string;
+      hasDefaultExport: boolean;
+      isClass: boolean;
+      hasNamedExports: boolean;
+      colorMethods: string[];
+      properties: string[];
+      isColorModule?: boolean;
+      defaultType?: string;
+      isDefaultClass?: boolean;
+    } = {
+      name: moduleName,
+      type: typeof moduleValue,
+      hasDefaultExport: false,
+      isClass: false,
+      hasNamedExports: false,
+      colorMethods: [] as string[],
+      properties: [] as string[]
+    };
+    
+    try {
+      if (moduleValue === null || moduleValue === undefined) {
+        return moduleInfo;
+      }
+      
+      // Check if module has a default export
+      if (moduleValue.default !== undefined) {
+        moduleInfo.hasDefaultExport = true;
+        moduleInfo.defaultType = typeof moduleValue.default;
+        
+        // Check if default is a constructor function/class
+        if (typeof moduleValue.default === 'function') {
+          moduleInfo.isDefaultClass = /^class\s/.test(moduleValue.default.toString()) ||
+                                     (moduleValue.default.prototype && 
+                                      Object.getOwnPropertyNames(moduleValue.default.prototype).length > 0);
+        }
+      }
+      
+      // Check if the module itself is a class
+      if (typeof moduleValue === 'function') {
+        moduleInfo.isClass = /^class\s/.test(moduleValue.toString()) ||
+                            (moduleValue.prototype && 
+                             Object.getOwnPropertyNames(moduleValue.prototype).length > 0);
+      }
+      
+      // Collect properties
+      moduleInfo.properties = Object.getOwnPropertyNames(moduleValue)
+        .filter(name => name !== 'default' && name !== 'constructor');
+      
+      moduleInfo.hasNamedExports = moduleInfo.properties.length > 0;
+      
+      // Special handling for chalk-like modules
+      if (moduleName.toLowerCase().includes('chalk') || 
+          (moduleValue.colors && Array.isArray(moduleValue.colors))) {
+        moduleInfo.isColorModule = true;
+        
+        // Collect color methods
+        if (moduleValue.colors && Array.isArray(moduleValue.colors)) {
+          moduleInfo.colorMethods = moduleValue.colors;
+        } else if (moduleValue.default && moduleValue.default.colors) {
+          moduleInfo.colorMethods = moduleValue.default.colors;
+        }
+      }
+      
+      return moduleInfo;
+    } catch (error) {
+      this.moduleLogger.warn(`Error analyzing module: ${error}`);
+      return moduleInfo;
+    }
+  }
+  
+  /**
+   * Import an entire module as a namespace
+   */
+  importEntireModule(namespaceAlias: string, fromModule: string): boolean {
+    if (!this.initialized) {
+      throw new Error("Module system not initialized");
+    }
+    
+    try {
+      // Check if source module exists
+      const moduleState = persistentStateManager.getModuleState(fromModule);
+      if (!moduleState) {
+        this.moduleLogger.error(`Module '${fromModule}' not found`);
+        return false;
+      }
+      
+      // Create a namespace object with all exported symbols
+      const namespaceObj: Record<string, any> = {};
+      
+      // Add exported symbols to the namespace
+      for (const exportedSymbol of moduleState.exports) {
+        // Find the symbol in the module's definitions
+        for (const type of ['variables', 'functions', 'macros'] as const) {
+          if (exportedSymbol in moduleState.definitions[type]) {
+            // Get the value from the environment
+            const value = this.getEnvironment().lookup(`${fromModule}.${exportedSymbol}`);
+            if (value !== undefined) {
+              namespaceObj[exportedSymbol] = value;
+            }
+            break;
+          }
+        }
+      }
+      
+      // Register the namespace in the current module
+      const replEnv = this.getREPLEnvironment();
+      replEnv.setJsValue(namespaceAlias, namespaceObj);
+      
+      // Add it to the definitions
+      persistentStateManager.addDefinition(namespaceAlias, namespaceObj, 'variable');
+      
+      // Add to imports list for tracking
+      persistentStateManager.addImport(`${fromModule}.*`);
+      
+      this.moduleLogger.debug(`Imported module '${fromModule}' as namespace '${namespaceAlias}'`);
+      return true;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.moduleLogger.error(`Error importing module: ${errorMessage}`);
+      return false;
+    }
+  }
+  
+  /**
+   * Detect if this is a native HQL export expression and process it
+   * This handles HQL syntax like: (export [symbol1, symbol2])
+   */
+  async detectAndHandleExport(input: string): Promise<boolean> {
+    if (!this.initialized) return false;
+    
+    // Simple regex to detect export expressions
+    const exportRegex = /\(\s*export\s+(?:default\s+(\S+)|(\[.+?\]))\s*\)/;
+    const match = input.match(exportRegex);
+    
+    if (!match) return false;
+    
+    const defaultExport = match[1];
+    const symbolsArray = match[2];
+    
+    if (defaultExport) {
+      // Handle default export
+      const success = this.exportSymbol(defaultExport);
+      if (success) {
+        console.log(`${defaultExport} exported as default`);
+      } else {
+        console.error(`Failed to export ${defaultExport}`);
+      }
+      return true;
+    }
+    
+    if (symbolsArray) {
+      // Handle array of exports
+      const symbolsString = symbolsArray.slice(1, -1).trim();
+      const symbols = symbolsString.split(/\s*,\s*/).map(s => s.trim());
+      
+      let exportedCount = 0;
+      for (const symbol of symbols) {
+        const success = this.exportSymbol(symbol);
+        if (success) {
+          console.log(`${symbol} exported`);
+          exportedCount++;
+        } else {
+          console.error(`Failed to export ${symbol}`);
+        }
+      }
+      
+      if (exportedCount > 0) {
+        this.moduleLogger.debug(`Exported ${exportedCount} symbols from module '${this.currentModule}'`);
+      }
+      
+      return true;
     }
     
     return false;
