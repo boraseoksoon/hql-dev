@@ -438,123 +438,54 @@ function prettyPrintObject(obj: object, useColors: boolean, indent: number): voi
 /**
  * Helper function to print just a value (used for simplified output)
  */
-function prettyPrintValue(value: any, useColors = false, depth = 0): void {
-  // Maximum depth to prevent infinite recursion
-  const maxDepth = 3;
-  
-  // Format options for JSON.stringify
-  const jsonSpacing = 2;
+function prettyPrintValue(value: any, useColors: boolean): void {
+  const numberColor = useColors ? colors.fg.yellow : "";
+  const stringColor = useColors ? colors.fg.green : "";
+  const symbolColor = useColors ? colors.fg.sicpBlue : "";
+  const boolColor = useColors ? colors.fg.magenta : "";
+  const reset = useColors ? colors.reset : "";
   
   if (value === undefined || value === null) {
     console.log(useColors ? `${colors.fg.gray}${String(value)}${colors.reset}` : String(value));
     return;
   }
   
-  // Handle functions
-  if (typeof value === 'function') {
-    let funcStr = value.toString();
-    // Truncate if too long
-    if (funcStr.length > 80) {
-      funcStr = funcStr.substring(0, 77) + '...';
-    }
-    console.log(useColors ? `${colors.fg.cyan}${funcStr}${colors.reset}` : funcStr);
-    return;
-  }
-  
-  // Handle arrays
+  // Handle different types directly
   if (Array.isArray(value)) {
-    prettyPrintArray(value, useColors, depth);
-    return;
-  }
-  
-  // Handle objects (including Maps, Sets, etc.)
-  if (typeof value === 'object') {
     try {
-      // Handle complex objects by beautifying their JSON representation
-      if (Object.keys(value).length > 0) {
-        // Convert to a more readable format with proper indentation
-        let jsonStr: string;
-        
-        // Use custom replacer to handle circular references
-        const seen = new WeakSet();
-        const replacer = (key: string, val: any) => {
-          // Handle special cases
-          if (val === undefined) return 'undefined';
-          if (val === null) return null;
-          if (typeof val === 'function') return val.toString().substring(0, 40) + '...';
-          
-          // Handle circular references
-          if (typeof val === 'object' && val !== null) {
-            if (seen.has(val)) {
-              return '[Circular]';
-            }
-            seen.add(val);
-            
-            // Handle Date objects
-            if (val instanceof Date) {
-              return val.toISOString();
-            }
-            
-            // Handle RegExp objects
-            if (val instanceof RegExp) {
-              return val.toString();
-            }
-          }
-          return val;
-        };
-        
-        // Try to convert to JSON with proper formatting
-        try {
-          jsonStr = JSON.stringify(value, replacer, jsonSpacing);
-        } catch (error) {
-          // If JSON.stringify fails, use a simpler approach
-          jsonStr = "{\n";
-          for (const key of Object.keys(value)) {
-            try {
-              const propValue = value[key];
-              if (typeof propValue === 'function') {
-                jsonStr += `  ${key}: function ${propValue.name || ''}() {...},\n`;
-              } else if (typeof propValue === 'object' && propValue !== null) {
-                jsonStr += `  ${key}: ${Object.prototype.toString.call(propValue)},\n`;
-              } else {
-                jsonStr += `  ${key}: ${String(propValue)},\n`;
-              }
-            } catch (e) {
-              jsonStr += `  ${key}: [Error: ${e instanceof Error ? e.message : String(e)}],\n`;
-            }
-          }
-          jsonStr += "}";
-        }
-        
-        // Color the output if colors are enabled
-        if (useColors) {
-          jsonStr = jsonStr
-            .replace(/"([^"]+)":/g, `"${colors.fg.green}$1${colors.reset}":`)
-            .replace(/: "([^"]+)"/g, `: "${colors.fg.cyan}$1${colors.reset}"`)
-            .replace(/: (\d+)/g, `: ${colors.fg.yellow}$1${colors.reset}`)
-            .replace(/: (true|false)/g, `: ${colors.fg.magenta}$1${colors.reset}`);
-        }
-        
-        console.log(jsonStr);
-      } else {
-        console.log(useColors ? `${colors.fg.gray}{}${colors.reset}` : '{}');
-      }
+      prettyPrintArray(value, useColors, 0);
     } catch (error) {
-      // Fallback to basic toString() if JSON formatting fails
-      console.log(String(value));
+      console.log(value);
     }
-    return;
   }
-  
-  // Handle primitives
-  if (typeof value === 'string') {
-    console.log(useColors ? `${colors.fg.green}"${value}"${colors.reset}` : `"${value}"`);
-  } else if (typeof value === 'number') {
-    console.log(useColors ? `${colors.fg.yellow}${value}${colors.reset}` : value);
-  } else if (typeof value === 'boolean') {
-    console.log(useColors ? `${colors.fg.magenta}${value}${colors.reset}` : value);
-  } else {
-    // For other types, just convert to string
+  else if (typeof value === 'number') {
+    console.log(`${numberColor}${value}${reset}`);
+  } 
+  else if (typeof value === 'string') {
+    if (value.startsWith('"') && value.endsWith('"')) {
+      console.log(`${stringColor}${value}${reset}`);
+    } else {
+      console.log(`${symbolColor}${value}${reset}`);
+    }
+  } 
+  else if (typeof value === 'boolean') {
+    console.log(`${boolColor}${value}${reset}`);
+  }
+  else if (value instanceof Map) {
+    try {
+      prettyPrintMap(value, useColors, 0);
+    } catch (error) {
+      console.log(Object.fromEntries(value));
+    }
+  }
+  else if (typeof value === 'object') {
+    try {
+      prettyPrintObject(value, useColors, 0);
+    } catch (error) {
+      console.log(value);
+    }
+  }
+  else {
     console.log(String(value));
   }
 }

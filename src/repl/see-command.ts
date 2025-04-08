@@ -122,31 +122,6 @@ export async function commandSee(
   const userSymbolName = argsText;
   const internalSymbolName = toInternalName(userSymbolName);
   
-  // First, try to get a list of all symbols in the current module to check if it exists
-  const moduleSymbols = await evaluator.listModuleSymbols(currentModule);
-  
-  // Helper function to check for approximate matches with special casing for common mistakes
-  const findPossibleMatches = (symbolName: string, allSymbols: string[]): string[] => {
-    const normalizedName = symbolName.toLowerCase();
-    const exactMatches = allSymbols.filter(sym => 
-      sym.toLowerCase() === normalizedName);
-    
-    if (exactMatches.length > 0) return exactMatches;
-    
-    // Check for prefix matches (like express vs expression)
-    const prefixMatches = allSymbols.filter(sym => 
-      sym.toLowerCase().startsWith(normalizedName) || 
-      normalizedName.startsWith(sym.toLowerCase()));
-    
-    if (prefixMatches.length > 0) return prefixMatches;
-    
-    // Check for more approximate matches
-    return allSymbols.filter(sym => 
-      sym.toLowerCase().includes(normalizedName) ||
-      normalizedName.includes(sym.toLowerCase()) ||
-      sym.replace(/-/g, '_').toLowerCase() === normalizedName.replace(/-/g, '_').toLowerCase());
-  };
-  
   // Try to look up the symbol using both the user-provided name and the internal name
   let definition = await evaluator.getSymbolDefinition(userSymbolName, currentModule);
   
@@ -155,44 +130,14 @@ export async function commandSee(
     definition = await evaluator.getSymbolDefinition(internalSymbolName, currentModule);
   }
   
-  // If still not found, try case-insensitive matching and potential corrections
-  if (!definition) {
-    const possibleMatches = findPossibleMatches(userSymbolName, moduleSymbols);
-    
-    if (possibleMatches.length > 0) {
-      // Try each possible match
-      for (const matchSymbol of possibleMatches) {
-        definition = await evaluator.getSymbolDefinition(matchSymbol, currentModule);
-        if (definition) {
-          // We found a match, so update the symbol name for display
-          console.log(`Note: Using symbol '${matchSymbol}' instead of '${userSymbolName}'`);
-          await showSymbolDefinition(evaluator, matchSymbol, currentModule, definition, useColors, showJs);
-          return;
-        }
-      }
-    }
-  }
-  
   if (!definition) {
     console.error(`Symbol '${userSymbolName}' not found in current module '${currentModule}'.`);
+    const moduleSymbols = await evaluator.listModuleSymbols(currentModule);
     
     // Convert internal names to user-facing names for display
     const userFacingSymbols = moduleSymbols.map(toUserFacingName);
     
-    // If we have a short list of symbols, show them all
-    if (userFacingSymbols.length < 10) {
-      console.log(`Available symbols in module '${currentModule}': ${userFacingSymbols.join(', ')}`);
-    } else {
-      // With many symbols, just show count and instructions
-      console.log(`Current module '${currentModule}' has ${userFacingSymbols.length} symbols. Use 'ls' to list them all.`);
-    }
-    
-    // If we have close matches, suggest them
-    const possibleMatches = findPossibleMatches(userSymbolName, moduleSymbols);
-    if (possibleMatches.length > 0 && possibleMatches.length < 5) {
-      console.log(`\nDid you mean one of these? ${possibleMatches.join(', ')}`);
-    }
-    
+    console.log(`Available symbols in module '${currentModule}': ${userFacingSymbols.join(', ')}`);
     return;
   }
   
