@@ -1,7 +1,6 @@
 // src/repl/repl-input.ts
 // REPL input handling and line editing
 
-import { ReplState } from "./repl-state.ts";
 import { TabCompletion } from "./repl-completion.ts";
 
 /**
@@ -14,12 +13,99 @@ export interface ReadLineResult {
   indent?: string;
 }
 
+// -----------------
+// Constants
+// -----------------
+const CTRL_A = 1;
+const CTRL_E = 5;
+const CTRL_K = 11;
+const CTRL_U = 21;
+const CTRL_W = 23;
+const CTRL_C = 3;
+const CTRL_D = 4;
+const TAB = 9;
+const ENTER = 13;
+const BACKSPACE = 127; // Also covers Ctrl+H (8)
+const BACKSPACE_ALT = 8;
+
+const ESC = 27;
+const CSI = 91; // Control Sequence Introducer for arrow keys etc.
+
+// Arrow key sequences
+const ARROW_UP = 65;
+const ARROW_DOWN = 66;
+const ARROW_RIGHT = 67;
+const ARROW_LEFT = 68;
+const DELETE_SEQ = 51; // Delete key sequence part
+
+// Special keys for Home/End (some terminals send different sequences)
+const HOME_ALT = 49; // when followed by 126, indicates Home
+const END_ALT = 52;  // when followed by 126, indicates End
+
+// -----------------
+// Utility Functions
+// -----------------
+const encoder = new TextEncoder();
+
+/** Writes the given string to stdout. */
+function write(s: string): void {
+  Deno.stdout.writeSync(encoder.encode(s));
+}
+
+/** Clears the current line and writes the prompt plus current input. Then positions the cursor. */
+function redrawLine(prompt: string, input: string, cursorPos: number): void {
+  write("\r");            // Return to line start
+  write("\x1b[K");        // Clear line from cursor onward
+  write(prompt + input);  // Write prompt and current input
+  // Position the cursor if not at the end.
+  if (cursorPos < input.length) {
+    write(`\x1b[${prompt.length + cursorPos}G`);
+  }
+}
+
+/** Extract the current word at the cursor position in the input string. */
+function getCurrentWordAtCursor(input: string, cursorPos: number): string {
+  const beforeCursor = input.substring(0, cursorPos);
+  const afterCursor = input.substring(cursorPos);
+  const beforeMatch = beforeCursor.match(/[a-zA-Z0-9_$-]*$/);
+  const afterMatch = afterCursor.match(/^[a-zA-Z0-9_$-]*/);
+  return (beforeMatch ? beforeMatch[0] : "") + (afterMatch ? afterMatch[0] : "");
+}
+
 /**
- * Read a line with support for arrow key navigation, history, and basic editing
+ * Process pasted content by sanitizing it, handling newlines,
+ * and updating the input and cursor position accordingly.
+ */
+function processPastedContent(
+  content: string,
+  input: string,
+  cursorPos: number,
+  pastedLines: string[]
+): { input: string; cursorPos: number; pastedLines: string[]; justPasted: boolean } {
+  let justPasted = true;
+  // Split into lines based on newline characters.
+  const lines = content.split(/\r?\n/);
+  if (lines.length > 1) {
+    // For multiline paste, insert the first line and store remaining non-empty lines.
+    const firstLine = lines[0].replace(/[\x00-\x1F\x7F]/g, "");
+    input = input.substring(0, cursorPos) + firstLine + input.substring(cursorPos);
+    cursorPos += firstLine.length;
+    pastedLines = lines.slice(1).filter(line => line.trim() !== "");
+  } else {
+    // Single line paste.
+    const cleanContent = content.replace(/[\x00-\x1F\x7F]/g, "");
+    input = input.substring(0, cursorPos) + cleanContent + input.substring(cursorPos);
+    cursorPos += cleanContent.length;
+  }
+  return { input, cursorPos, pastedLines, justPasted };
+}
+
+/**
+ * Read a line with support for arrow key navigation, history, and basic editing.
  */
 export async function readLineWithArrowKeys(
   prompt: string,
-  history: string[], 
+  history: string[],
   historyIndex: number,
   tabCompletion?: TabCompletion
 ): Promise<string> {
@@ -29,502 +115,335 @@ export async function readLineWithArrowKeys(
   let originalInput = input;
   let completions: string[] = [];
   let completionIndex = -1;
-  
-  // Initialize paste detection variables
   let pastedLines: string[] = [];
-  let justPasted = false; // Track if we just processed a paste operation
-  
-  // Helper function to process pasted content
-  const processPastedContent = (content: string) => {
-    // Process multiline paste
-    const lines = content.split(/\r?\n/);
-    if (lines.length > 1) {
-      // Handle multiline paste - use first line for current input
-      const firstLine = lines[0].replace(/[\x00-\x1F\x7F]/g, ''); // Remove control chars
-      
-      // Update current input with processed first line
-      input = input.substring(0, cursorPos) + firstLine + input.substring(cursorPos);
-      cursorPos += firstLine.length;
-      
-      // Save remaining lines for possible future processing
-      pastedLines = lines.slice(1).filter(line => line.trim() !== '');
-      
-      // Set justPasted flag to true
-      justPasted = true;
-      return;
-    }
-    
-    // Single line paste - just insert it normally
-    const cleanContent = content.replace(/[\x00-\x1F\x7F]/g, ''); // Remove control chars
-    input = input.substring(0, cursorPos) + cleanContent + input.substring(cursorPos);
-    cursorPos += cleanContent.length;
-    
-    // Set justPasted flag to true
-    justPasted = true;
-  };
-  
+  let justPasted = false;
+
   while (true) {
-    // Use a larger buffer to accommodate paste operations
+    // Use a larger buffer size to accommodate paste operations.
     const buf = new Uint8Array(1024);
     const n = await Deno.stdin.read(buf);
-    
     if (n === null) {
-      // EOF
+      // End-of-file detected.
       return "\x04"; // Ctrl+D
     }
-    
-    // Reset justPasted flag if we're now processing a regular keypress
+
+    // If a small input (usually 1-3 bytes) comes after a paste, reset the paste state.
     if (n <= 3 && justPasted) {
       justPasted = false;
     }
-    
-    // Check for large input which may be paste operation
+
+    // Check if it is a paste operation (more than 3 bytes read).
     if (n > 3) {
       const pastedContent = new TextDecoder().decode(buf.subarray(0, n)).trim();
-      
-      // Save current input state in case we need to restore it
+      // Save current state in case we need to use it later
       const prevInput = input;
       const prevCursorPos = cursorPos;
       
-      // Process paste
-      processPastedContent(pastedContent);
+      // Process the pasted content.
+      const result = processPastedContent(pastedContent, input, cursorPos, pastedLines);
+      input = result.input;
+      cursorPos = result.cursorPos;
+      pastedLines = result.pastedLines;
+      justPasted = result.justPasted;
       
-      // Redraw the line
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-      
-      // Position cursor
-      if (cursorPos < input.length) {
-        Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
-      }
-      
+      // Redraw the line with updated input.
+      redrawLine(prompt, input, cursorPos);
       continue;
     }
-    
-    // Process small input (1-3 bytes) normally
-    // Check for control sequences
-    if (buf[0] === 1) { // Ctrl+A - move to beginning of line
+
+    // Process small input (1-3 bytes) from regular keypresses.
+    const key = buf[0];
+
+    // ----------------------
+    // Control Sequences
+    // ----------------------
+    if (key === CTRL_A) { // Move to beginning of line
       cursorPos = 0;
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt));
-      justPasted = false; // Reset paste state
+      redrawLine(prompt, input, cursorPos);
+      justPasted = false;
       continue;
     }
-    
-    if (buf[0] === 5) { // Ctrl+E - move to end of line
+    if (key === CTRL_E) { // Move to end of line
       cursorPos = input.length;
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-      justPasted = false; // Reset paste state
+      redrawLine(prompt, input, cursorPos);
+      justPasted = false;
       continue;
     }
-    
-    if (buf[0] === 11) { // Ctrl+K - delete from cursor to end of line
+    if (key === CTRL_K) { // Delete from cursor to end of line
       input = input.substring(0, cursorPos);
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-      justPasted = false; // Reset paste state
+      redrawLine(prompt, input, cursorPos);
+      justPasted = false;
       continue;
     }
-    
-    if (buf[0] === 21) { // Ctrl+U - delete from beginning of line to cursor
+    if (key === CTRL_U) { // Delete from beginning to cursor
       input = input.substring(cursorPos);
       cursorPos = 0;
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-      justPasted = false; // Reset paste state
+      redrawLine(prompt, input, cursorPos);
+      justPasted = false;
       continue;
     }
-    
-    if (buf[0] === 23) { // Ctrl+W - delete word backwards
-      justPasted = false; // Reset paste state
-      
-      const beforeCursor = input.substring(0, cursorPos);
-      
-      // First skip any whitespace immediately before cursor
-      let skipWhitespacePos = cursorPos;
-      while (skipWhitespacePos > 0 && /\s/.test(beforeCursor.charAt(skipWhitespacePos - 1))) {
-        skipWhitespacePos--;
+    if (key === CTRL_W) { // Delete word backwards
+      justPasted = false;
+      // Skip whitespace immediately before cursor.
+      let skipPos = cursorPos;
+      while (skipPos > 0 && /\s/.test(input.charAt(skipPos - 1))) {
+        skipPos--;
       }
-      
-      // Then find the beginning of the word/token
-      let wordStart = skipWhitespacePos;
-      
-      // If we're inside a word
-      if (wordStart > 0) {
-        // Move backward until we find a space character or beginning of string
-        // Note: We now only stop at whitespace, not quotes or other special characters
-        while (wordStart > 0) {
-          const prevChar = beforeCursor.charAt(wordStart - 1);
-          // Only stop at whitespace
-          if (/\s/.test(prevChar)) {
-            break;
-          }
-          wordStart--;
-        }
+      // Then delete until a whitespace boundary.
+      let wordStart = skipPos;
+      while (wordStart > 0 && !/\s/.test(input.charAt(wordStart - 1))) {
+        wordStart--;
       }
-      
-      // Delete from the word start to cursor position
       if (wordStart < cursorPos) {
         input = input.substring(0, wordStart) + input.substring(cursorPos);
         cursorPos = wordStart;
-      
-        Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-        Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-        Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+        redrawLine(prompt, input, cursorPos);
       }
       continue;
     }
-    
-    // Tab completion
-    if (buf[0] === 9) { // Tab key
-      justPasted = false; // Reset paste state
-      if (tabCompletion) {
-        try {
-          // Get completions
-          if (completions.length === 0) {
-            completions = await tabCompletion.getCompletions(input, cursorPos);
-            completionIndex = 0;
-          } else {
-            // Cycle through completions
-            completionIndex = (completionIndex + 1) % completions.length;
-          }
-          
-          if (completions.length > 0) {
-            // Apply the completion
-            if (input.trim().startsWith(':') || 
-                input.trim().startsWith('cd ') || 
-                input.trim().startsWith('ls ') || 
-                input.trim().startsWith('mkdir ')) {
-              // For commands or module operations, we need to preserve the command part
-              const cmdMatch = input.match(/^(\S+\s+)/);
-              if (cmdMatch) {
-                // Keep the command part, replace only what comes after
-                const cmdPart = cmdMatch[1];
-                const completion = completions[completionIndex];
-                input = cmdPart + completion;
-              } else {
-                // Fall back to replacing the whole input
-                input = completions[completionIndex];
-              }
-              cursorPos = input.length;
-            } else if (input.includes(':') && completions[0].includes(':')) {
-              // Special case for module:symbol syntax
-              const completion = completions[completionIndex];
-              input = completion; // Replace entire input for this case
-              cursorPos = input.length;
-            } else {
-              // Symbol completion - replace current word
-              const currentWord = getCurrentWordAtCursor(input, cursorPos);
-              const completion = completions[completionIndex];
-              
-              // Replace current word with completion
-              const beforeWord = input.substring(0, cursorPos - currentWord.length);
-              const afterWord = input.substring(cursorPos);
-              
-              // Create new input with completion
-              input = beforeWord + completion + afterWord;
-              
-              // Update cursor position
-              cursorPos = beforeWord.length + completion.length;
-            }
-            
-            // Redraw the line
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-            
-            // Position cursor
-            if (cursorPos < input.length) {
-              Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
-            }
-          }
-          // Do absolutely nothing when no completions available
-        } catch (error) {
-          // Silent error handling - don't show any errors
+
+    // ----------------------
+    // Tab Completion
+    // ----------------------
+    if (key === TAB && tabCompletion) {
+      justPasted = false;
+      try {
+        if (completions.length === 0) {
+          completions = await tabCompletion.getCompletions(input, cursorPos);
+          completionIndex = 0;
+        } else {
+          completionIndex = (completionIndex + 1) % completions.length;
         }
-        
-        continue;
+
+        if (completions.length > 0) {
+          const completion = completions[completionIndex];
+          // For certain commands, preserve the command part
+          if (input.trim().startsWith(':') ||
+              input.trim().startsWith('cd ') ||
+              input.trim().startsWith('ls ') ||
+              input.trim().startsWith('mkdir ')) {
+            const cmdMatch = input.match(/^(\S+\s+)/);
+            if (cmdMatch) {
+              input = cmdMatch[1] + completion;
+            } else {
+              input = completion;
+            }
+            cursorPos = input.length;
+          } else if (input.includes(':') && completion.includes(':')) {
+            // Special case for module:symbol syntax.
+            input = completion;
+            cursorPos = input.length;
+          } else {
+            // Symbol completion: replace the current word.
+            const currentWord = getCurrentWordAtCursor(input, cursorPos);
+            const beforeWord = input.substring(0, cursorPos - currentWord.length);
+            const afterWord = input.substring(cursorPos);
+            input = beforeWord + completion + afterWord;
+            cursorPos = beforeWord.length + completion.length;
+          }
+          redrawLine(prompt, input, cursorPos);
+        }
+      } catch (error) {
+        // Suppress any errors silently for completion.
       }
+      continue;
     } else {
-      // Reset completions when any other key is pressed
+      // Reset completions if any other key is pressed.
       completions = [];
       completionIndex = -1;
     }
-    
-    // Arrow keys and special key sequences
-    if (buf[0] === 27) {
-      justPasted = false; // Reset paste state
-      
-      if (buf[1] === 91) { // ESC [ sequence
-        if (buf[2] === 65) { // Up arrow
-          if (history.length > 0) {
-            // Save current input the first time we navigate
-            if (localHistoryIndex === -1) {
-              originalInput = input;
+
+    // ----------------------
+    // Arrow Keys & Special Sequences
+    // ----------------------
+    if (key === ESC) {
+      justPasted = false;
+      // Ensure there are enough bytes for the escape sequence.
+      if (buf[1] === CSI) {
+        const seq = buf[2];
+        switch (seq) {
+          case ARROW_UP:
+            if (history.length > 0) {
+              // Save original input on first history navigation.
+              if (localHistoryIndex === -1) {
+                originalInput = input;
+              }
+              localHistoryIndex = Math.min(localHistoryIndex + 1, history.length - 1);
+              input = history[history.length - 1 - localHistoryIndex];
+              cursorPos = input.length;
+              redrawLine(prompt, input, cursorPos);
             }
-            
-            // Navigate up through history
-            localHistoryIndex = Math.min(localHistoryIndex + 1, history.length - 1);
-            const historyItem = history[history.length - 1 - localHistoryIndex];
-            
-            // Clear current line and reset cursor to beginning of line
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            // Erase from cursor to end of line
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt));
-            
-            // Show history item
-            input = historyItem;
-            Deno.stdout.writeSync(new TextEncoder().encode(input));
+            break;
+          case ARROW_DOWN:
+            // Navigate down in history.
+            if (localHistoryIndex > 0) {
+              localHistoryIndex--;
+              input = history[history.length - 1 - localHistoryIndex];
+            } else if (localHistoryIndex === 0) {
+              localHistoryIndex = -1;
+              input = originalInput;
+            }
             cursorPos = input.length;
-          }
-        } 
-        else if (buf[2] === 66) { // Down arrow
-          // Clear current line
-          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-          Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-          Deno.stdout.writeSync(new TextEncoder().encode(prompt));
-          
-          if (localHistoryIndex > 0) {
-            // Navigate down through history
-            localHistoryIndex--;
-            const historyItem = history[history.length - 1 - localHistoryIndex];
-            input = historyItem;
-          } else if (localHistoryIndex === 0) {
-            // Return to original input
-            localHistoryIndex = -1;
-            input = originalInput;
-          }
-          
-          // Show the result
-          Deno.stdout.writeSync(new TextEncoder().encode(input));
-          cursorPos = input.length;
-        }
-        else if (buf[2] === 67) { // Right arrow
-          if (cursorPos < input.length) {
-            cursorPos++;
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[C")); // Move cursor right
-          }
-        }
-        else if (buf[2] === 68) { // Left arrow
-          if (cursorPos > 0) {
-            cursorPos--;
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[D")); // Move cursor left
-          }
-        }
-        // Support for Home/End keys
-        else if (buf[2] === 72 || (buf[2] === 49 && buf[3] === 126)) { // Home key
-          cursorPos = 0;
-          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-          Deno.stdout.writeSync(new TextEncoder().encode(prompt));
-        }
-        else if (buf[2] === 70 || (buf[2] === 52 && buf[3] === 126)) { // End key
-          cursorPos = input.length;
-          Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-          Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-        }
-        // Delete key
-        else if (buf[2] === 51 && buf[3] === 126) { // Delete key
-          if (cursorPos < input.length) {
-            input = input.substring(0, cursorPos) + input.substring(cursorPos + 1);
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-            // Position cursor
+            redrawLine(prompt, input, cursorPos);
+            break;
+          case ARROW_RIGHT:
             if (cursorPos < input.length) {
-              Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+              cursorPos++;
+              write("\x1b[C"); // Move cursor right.
             }
-          }
+            break;
+          case ARROW_LEFT:
+            if (cursorPos > 0) {
+              cursorPos--;
+              write("\x1b[D"); // Move cursor left.
+            }
+            break;
+          default:
+            // Handle Home/End and Delete keys
+            if (seq === HOME_ALT && buf[3] === 126) { // Home key
+              cursorPos = 0;
+              redrawLine(prompt, input, cursorPos);
+            } else if (seq === END_ALT && buf[3] === 126) { // End key
+              cursorPos = input.length;
+              redrawLine(prompt, input, cursorPos);
+            } else if (seq === DELETE_SEQ && buf[3] === 126) { // Delete key
+              if (cursorPos < input.length) {
+                input = input.substring(0, cursorPos) + input.substring(cursorPos + 1);
+                redrawLine(prompt, input, cursorPos);
+              }
+            }
+            break;
         }
-        continue;
       }
-      // Handle Alt key combinations (ESC followed by character)
+      // Handle Alt-key combinations (ESC followed by a printable character).
       else if (buf[1] >= 32 && buf[1] <= 126) {
-        if (buf[1] === 98 || buf[1] === 66) { // Alt+B / Alt+b (move back one word)
+        const altChar = buf[1];
+        if (altChar === 98 || altChar === 66) { // Alt+B: move back one word.
           const beforeCursor = input.substring(0, cursorPos);
           const wordMatch = beforeCursor.match(/.*\b(\w+)\s*$/);
           if (wordMatch) {
             const wordStart = beforeCursor.lastIndexOf(wordMatch[1]);
             cursorPos = wordStart;
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+            redrawLine(prompt, input, cursorPos);
           }
           continue;
-        }
-        else if (buf[1] === 102 || buf[1] === 70) { // Alt+F / Alt+f (move forward one word)
+        } else if (altChar === 102 || altChar === 70) { // Alt+F: move forward one word.
           const afterCursor = input.substring(cursorPos);
           const wordMatch = afterCursor.match(/^\s*(\w+)/);
           if (wordMatch && wordMatch[1]) {
-            const wordEnd = cursorPos + wordMatch[0].length;
-            cursorPos = wordEnd;
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+            cursorPos = cursorPos + wordMatch[0].length;
           } else {
             cursorPos = input.length;
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
           }
+          redrawLine(prompt, input, cursorPos);
           continue;
-        }
-        else if (buf[1] === 100 || buf[1] === 68) { // Alt+D / Alt+d (delete word forward)
+        } else if (altChar === 100 || altChar === 68) { // Alt+D: delete word forward.
           const afterCursor = input.substring(cursorPos);
           const wordMatch = afterCursor.match(/^\s*(\w+)/);
           if (wordMatch) {
             const wordEnd = cursorPos + wordMatch[0].length;
             input = input.substring(0, cursorPos) + input.substring(wordEnd);
-            Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-            Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-            Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-            Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+            redrawLine(prompt, input, cursorPos);
           }
           continue;
         }
       }
+      continue;
     }
-    
-    // Handle Enter
-    if (buf[0] === 13) {
-      // Clear paste state flag
+
+    // ----------------------
+    // Handle Enter (Return)
+    // ----------------------
+    if (key === ENTER) {
+      // Process any pending pasted lines if needed (currently, we return the current input).
       justPasted = false;
-      
-      // Process next line of multiline paste if available
-      if (pastedLines.length > 0) {
-        const nextLine = pastedLines.shift() || '';
-        // If there are more lines, we could store them in a global variable
-        // for the REPL to process later - for now, we'll just return the current input
-      }
-      
       return input;
     }
-    
-    // Handle Ctrl+C
-    if (buf[0] === 3) {
-      Deno.stdout.writeSync(new TextEncoder().encode("^C\n"));
-      // Clear any pending pasted lines
+
+    // ----------------------
+    // Handle Ctrl+C (Interrupt)
+    // ----------------------
+    if (key === CTRL_C) {
+      write("^C\n");
       pastedLines = [];
       justPasted = false;
-      return "\x03"; // Return ETX character to signal Ctrl+C
+      return "\x03"; // ETX (End of Text) character for Ctrl+C.
     }
-    
+
+    // ----------------------
     // Handle Ctrl+D (EOF)
-    if (buf[0] === 4) {
+    // ----------------------
+    if (key === CTRL_D) {
       if (input.length === 0) {
-        return "\x04"; // Signal EOF only if input is empty
+        return "\x04"; // EOF only if input is empty.
       }
       continue;
     }
-    
+
+    // ----------------------
     // Handle Backspace
-    if (buf[0] === 127 || buf[0] === 8) {
+    // ----------------------
+    if (key === BACKSPACE || key === BACKSPACE_ALT) {
       if (cursorPos > 0) {
-        // Remove character at cursor position
         input = input.substring(0, cursorPos - 1) + input.substring(cursorPos);
         cursorPos--;
-        
-        // Redraw the line
-        Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-        Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-        Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-        
-        // Position cursor
-        if (cursorPos < input.length) {
-          Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
-        }
+        redrawLine(prompt, input, cursorPos);
       }
       continue;
     }
-    
-    // Handle regular character input
-    if (buf[0] >= 32 && buf[0] <= 126) {
-      // Insert character at cursor position
-      const char = String.fromCharCode(buf[0]);
+
+    // ----------------------
+    // Handle Regular Character Input
+    // ----------------------
+    if (key >= 32 && key <= 126) {
+      const char = String.fromCharCode(key);
       input = input.substring(0, cursorPos) + char + input.substring(cursorPos);
       cursorPos++;
-      
-      // Redraw the line
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
-      
-      // Position cursor
-      if (cursorPos < input.length) {
-        Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
-      }
+      redrawLine(prompt, input, cursorPos);
     }
   }
 }
 
 /**
- * Extract the word at the current cursor position
+ * Handle bracket auto-closing. When a supported opening bracket is typed,
+ * automatically insert the corresponding closing bracket.
  */
-function getCurrentWordAtCursor(input: string, cursorPos: number): string {
-  const beforeCursor = input.substring(0, cursorPos);
-  const afterCursor = input.substring(cursorPos);
-  
-  const beforeMatch = beforeCursor.match(/[a-zA-Z0-9_$-]*$/);
-  const afterMatch = afterCursor.match(/^[a-zA-Z0-9_$-]*/);
-  
-  if (!beforeMatch) return "";
-  
-  return beforeMatch[0] + (afterMatch ? afterMatch[0] : "");
-}
-
-/**
- * Handle bracket auto-closing
- */
-export function handleBracketAutoClosing(input: string, key: any): {handled: boolean, newInput: string, cursorPos: number} {
-  // Implement bracket auto-closing based on previous character
+export function handleBracketAutoClosing(
+  input: string,
+  key: { sequence?: string }
+): { handled: boolean; newInput: string; cursorPos: number } {
   const bracketPairs: Record<string, string> = {
     "(": ")",
     "[": "]",
     "{": "}"
   };
-  
-  if (key.sequence && bracketPairs[key.sequence]) {
+
+  if (key.sequence && key.sequence in bracketPairs) {
     const closing = bracketPairs[key.sequence];
-    const cursorPos = input.length + 1; // +1 for the new opening bracket
-    
-    // Auto-insert closing bracket with cursor between them
+    // Insert the opening and corresponding closing bracket.
     const newInput = input + key.sequence + closing;
-    
-    return {
-      handled: true,
-      newInput,
-      cursorPos
-    };
+    const newCursorPos = input.length + 1; // Position cursor between the brackets.
+    return { handled: true, newInput, cursorPos: newCursorPos };
   }
-  
-  return {
-    handled: false,
-    newInput: input,
-    cursorPos: input.length
-  };
+  return { handled: false, newInput: input, cursorPos: input.length };
 }
 
 /**
- * Helper function for confirmation dialogs
+ * Helper function for confirmation dialogs. Prompts the user to confirm an action.
  */
 export async function confirmAndExecute(
-  message: string, 
-  action: () => void | Promise<void>, 
+  message: string,
+  action: () => void | Promise<void>,
   useColors: boolean
 ): Promise<void> {
-  console.log(useColors ? `\x1b[33m${message}\x1b[0m` : message);
+  const coloredMessage = useColors ? `\x1b[33m${message}\x1b[0m` : message;
+  console.log(coloredMessage);
   console.log("Type 'y' or 'yes' to confirm: ");
-  
-  // Use Deno's prompt for user input
+
   const buf = new Uint8Array(1024);
   const n = await Deno.stdin.read(buf);
-  
   if (n) {
     const answer = new TextDecoder().decode(buf.subarray(0, n)).trim().toLowerCase();
-    
     if (answer === "yes" || answer === "y") {
       await action();
     } else {
