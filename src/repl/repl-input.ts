@@ -30,8 +30,42 @@ export async function readLineWithArrowKeys(
   let completions: string[] = [];
   let completionIndex = -1;
   
+  // Initialize paste detection variables
+  let pastedLines: string[] = [];
+  let justPasted = false; // Track if we just processed a paste operation
+  
+  // Helper function to process pasted content
+  const processPastedContent = (content: string) => {
+    // Process multiline paste
+    const lines = content.split(/\r?\n/);
+    if (lines.length > 1) {
+      // Handle multiline paste - use first line for current input
+      const firstLine = lines[0].replace(/[\x00-\x1F\x7F]/g, ''); // Remove control chars
+      
+      // Update current input with processed first line
+      input = input.substring(0, cursorPos) + firstLine + input.substring(cursorPos);
+      cursorPos += firstLine.length;
+      
+      // Save remaining lines for possible future processing
+      pastedLines = lines.slice(1).filter(line => line.trim() !== '');
+      
+      // Set justPasted flag to true
+      justPasted = true;
+      return;
+    }
+    
+    // Single line paste - just insert it normally
+    const cleanContent = content.replace(/[\x00-\x1F\x7F]/g, ''); // Remove control chars
+    input = input.substring(0, cursorPos) + cleanContent + input.substring(cursorPos);
+    cursorPos += cleanContent.length;
+    
+    // Set justPasted flag to true
+    justPasted = true;
+  };
+  
   while (true) {
-    const buf = new Uint8Array(3);
+    // Use a larger buffer to accommodate paste operations
+    const buf = new Uint8Array(1024);
     const n = await Deno.stdin.read(buf);
     
     if (n === null) {
@@ -39,11 +73,42 @@ export async function readLineWithArrowKeys(
       return "\x04"; // Ctrl+D
     }
     
+    // Reset justPasted flag if we're now processing a regular keypress
+    if (n <= 3 && justPasted) {
+      justPasted = false;
+    }
+    
+    // Check for large input which may be paste operation
+    if (n > 3) {
+      const pastedContent = new TextDecoder().decode(buf.subarray(0, n)).trim();
+      
+      // Save current input state in case we need to restore it
+      const prevInput = input;
+      const prevCursorPos = cursorPos;
+      
+      // Process paste
+      processPastedContent(pastedContent);
+      
+      // Redraw the line
+      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      
+      // Position cursor
+      if (cursorPos < input.length) {
+        Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[${prompt.length + cursorPos}G`));
+      }
+      
+      continue;
+    }
+    
+    // Process small input (1-3 bytes) normally
     // Check for control sequences
     if (buf[0] === 1) { // Ctrl+A - move to beginning of line
       cursorPos = 0;
       Deno.stdout.writeSync(new TextEncoder().encode("\r"));
       Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+      justPasted = false; // Reset paste state
       continue;
     }
     
@@ -51,6 +116,7 @@ export async function readLineWithArrowKeys(
       cursorPos = input.length;
       Deno.stdout.writeSync(new TextEncoder().encode("\r"));
       Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      justPasted = false; // Reset paste state
       continue;
     }
     
@@ -59,6 +125,7 @@ export async function readLineWithArrowKeys(
       Deno.stdout.writeSync(new TextEncoder().encode("\r"));
       Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
       Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      justPasted = false; // Reset paste state
       continue;
     }
     
@@ -68,31 +135,53 @@ export async function readLineWithArrowKeys(
       Deno.stdout.writeSync(new TextEncoder().encode("\r"));
       Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
       Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      justPasted = false; // Reset paste state
       continue;
     }
     
     if (buf[0] === 23) { // Ctrl+W - delete word backwards
+      justPasted = false; // Reset paste state
+      
       const beforeCursor = input.substring(0, cursorPos);
-      // Find the start of the current word
-      const match = beforeCursor.match(/.*\s(\S+)$/);
-      if (match) {
-        const wordStart = beforeCursor.lastIndexOf(match[1]);
-        input = input.substring(0, wordStart) + input.substring(cursorPos);
-        cursorPos = wordStart;
-      } else {
-        // No word found, clear everything before cursor
-        input = input.substring(cursorPos);
-        cursorPos = 0;
+      
+      // First skip any whitespace immediately before cursor
+      let skipWhitespacePos = cursorPos;
+      while (skipWhitespacePos > 0 && /\s/.test(beforeCursor.charAt(skipWhitespacePos - 1))) {
+        skipWhitespacePos--;
       }
       
-      Deno.stdout.writeSync(new TextEncoder().encode("\r"));
-      Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
-      Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      // Then find the beginning of the word/token
+      let wordStart = skipWhitespacePos;
+      
+      // If we're inside a word
+      if (wordStart > 0) {
+        // Move backward until we find a space character or beginning of string
+        // Note: We now only stop at whitespace, not quotes or other special characters
+        while (wordStart > 0) {
+          const prevChar = beforeCursor.charAt(wordStart - 1);
+          // Only stop at whitespace
+          if (/\s/.test(prevChar)) {
+            break;
+          }
+          wordStart--;
+        }
+      }
+      
+      // Delete from the word start to cursor position
+      if (wordStart < cursorPos) {
+        input = input.substring(0, wordStart) + input.substring(cursorPos);
+        cursorPos = wordStart;
+      
+        Deno.stdout.writeSync(new TextEncoder().encode("\r"));
+        Deno.stdout.writeSync(new TextEncoder().encode("\x1b[K"));
+        Deno.stdout.writeSync(new TextEncoder().encode(prompt + input));
+      }
       continue;
     }
     
     // Tab completion
     if (buf[0] === 9) { // Tab key
+      justPasted = false; // Reset paste state
       if (tabCompletion) {
         try {
           // Get completions
@@ -168,6 +257,8 @@ export async function readLineWithArrowKeys(
     
     // Arrow keys and special key sequences
     if (buf[0] === 27) {
+      justPasted = false; // Reset paste state
+      
       if (buf[1] === 91) { // ESC [ sequence
         if (buf[2] === 65) { // Up arrow
           if (history.length > 0) {
@@ -299,12 +390,25 @@ export async function readLineWithArrowKeys(
     
     // Handle Enter
     if (buf[0] === 13) {
+      // Clear paste state flag
+      justPasted = false;
+      
+      // Process next line of multiline paste if available
+      if (pastedLines.length > 0) {
+        const nextLine = pastedLines.shift() || '';
+        // If there are more lines, we could store them in a global variable
+        // for the REPL to process later - for now, we'll just return the current input
+      }
+      
       return input;
     }
     
     // Handle Ctrl+C
     if (buf[0] === 3) {
       Deno.stdout.writeSync(new TextEncoder().encode("^C\n"));
+      // Clear any pending pasted lines
+      pastedLines = [];
+      justPasted = false;
       return "\x03"; // Return ETX character to signal Ctrl+C
     }
     
