@@ -45,9 +45,9 @@ export function getDetailedHelp(command: string, useColors: boolean = true): str
     
     "currentmodule": "Show the name of the current module.\nUsage: :currentmodule\nCLI equivalent: pwd",
     
-    "see": "Inspect modules and symbols.\nUsage: :see [module-name], :see [symbol-name], or :see [module]:[symbol]\nSpecial usage: :see all, :see all:modules, :see all:symbols",
+    "see": "Deprecated - use :show instead.\nCommand kept for backwards compatibility.\nRedirects to :show command with the same arguments.",
     
-    "show": "Display modules and symbols.\nUsage: :show [module-name], :show [symbol-name], or :show [module]:[symbol]\nSpecial usage: :show all, :show all:modules, :show all:symbols\nAlias for: :see",
+    "show": "Inspect modules and symbols.\nUsage: :show [module-name], :show [symbol-name], or :show [module]:[symbol]\nSpecial usage: :show all, :show all:modules, :show all:symbols",
     
     "doc": "Show documentation for a symbol or module.\nUsage: :doc <symbol> or :doc <module>/*\nCLI equivalent: man <symbol>",
     

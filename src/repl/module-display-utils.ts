@@ -153,8 +153,8 @@ export async function showModuleSymbols(
   }
   
   console.log("\nUsage:");
-  console.log(`To see a specific symbol: :see ${moduleName}:<symbol-name>`);
-  console.log(`To see only exports: :see ${moduleName}:exports`);
+  console.log(`To see a specific symbol: :show ${moduleName}:<symbol-name>`);
+  console.log(`To see only exports: :show ${moduleName}:exports`);
   if (moduleName !== evaluator.getCurrentModuleSync()) {
     console.log(`To use symbols from this module: (import [symbol1, symbol2] from "${moduleName}")`);
   }
@@ -231,9 +231,9 @@ export async function showAllModulesDetails(
   console.log("* Current module");
   
   console.log("\nUsage:");
-  console.log("To see a specific module: :see <module-name>");
-  console.log("To see only module names: :see all:modules");
-  console.log("To see all symbols across all modules: :see all:symbols");
+  console.log("To see a specific module: :show <module-name>");
+  console.log("To see only module names: :show all:modules");
+  console.log("To see all symbols across all modules: :show all:symbols");
 }
 
 /**
@@ -299,8 +299,8 @@ export async function showAllSymbols(
   
   console.log(`\nTotal: ${totalSymbols} symbols in ${modules.length} modules`);
   
-  console.log("\nUse :see <module>:<symbol> to examine a specific symbol");
-  console.log("Use :see <module> to see detailed info about a module");
+  console.log("\nUse :show <module>:<symbol> to examine a specific symbol");
+  console.log("Use :show <module> to see detailed info about a module");
 }
 
 /**
@@ -349,7 +349,7 @@ export async function showModuleExports(
   
   console.log("\nUsage:");
   console.log(`To import these symbols: (import [${exports.length > 0 ? exports[0] + ", ..." : "symbol"}] from "${moduleName}")`);
-  console.log(`To see a specific symbol definition: :see ${moduleName}:<symbol-name>`);
+  console.log(`To see a specific symbol definition: :show ${moduleName}:<symbol-name>`);
 }
 
 /**

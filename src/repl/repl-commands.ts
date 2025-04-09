@@ -39,8 +39,7 @@ export function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:modules${textColor} - List all available modules${headerColor}                    ║${reset}`,
     `${headerColor}║    ${commandColor}:list${textColor} - Show symbols in current module${headerColor}                   ║${reset}`,
     `${headerColor}║    ${commandColor}:find${textColor} - Search for symbols and modules${headerColor}                   ║${reset}`,
-    `${headerColor}║    ${commandColor}:show${textColor} - Display modules and symbols${headerColor}                      ║${reset}`,
-    `${headerColor}║    ${commandColor}:see${textColor} - Alias for ${commandColor}:show${headerColor} (inspect modules and symbols)${headerColor}    ║${reset}`,
+    `${headerColor}║    ${commandColor}:show${textColor} - Inspect modules and symbols details${headerColor}              ║${reset}`,
     `${headerColor}║    ${commandColor}:doc${textColor} - Show documentation for a symbol or module${headerColor}         ║${reset}`,
     `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
     `${headerColor}║    ${commandColor}:clear${textColor} - Clear the screen${headerColor}                                ║${reset}`,
@@ -719,7 +718,7 @@ export async function commandModules(evaluator: ModuleAwareEvaluator, useColors:
     
     console.log("-----------");
     console.log("Tip: Use :go <module> to switch modules");
-    console.log("     Use :see <module> to view module contents");
+    console.log("     Use :show <module> to view module contents");
   }
 }
 
@@ -810,7 +809,7 @@ export async function commandList(evaluator: ModuleAwareEvaluator, useColors: bo
       console.log(`- ${symbol}`);
     }
     console.log("------------");
-    console.log(`To see details about a symbol: ${colorText(":see <symbol-name>", useColors ? "\x1b[32m" : "", useColors)}`);
+    console.log(`To see details about a symbol: ${colorText(":show <symbol-name>", useColors ? "\x1b[32m" : "", useColors)}`);
   }
 }
 
@@ -893,7 +892,7 @@ export async function commandFind(evaluator: ModuleAwareEvaluator, args: string,
     }
   }
   
-  console.log("\nTip: Use `:see <module>:<symbol>` to view symbol details");
+  console.log("\nTip: Use `:show <module>:<symbol>` to view symbol details");
   console.log("    Use `:go <module>` to switch to a module");
 }
 
@@ -916,7 +915,8 @@ export async function commandRemove(
     console.log("  rm -f ...          - Force remove without confirmation");
     console.log("  rm -rf ...         - Force remove recursively without confirmation");
     console.log("  rm *               - Remove all symbols in current module");
-    console.log("  rm /               - Remove everything (all modules and symbols)");
+    console.log("  rm /               - Remove everything (all modules, symbols, and sync state)");
+    console.log("  rm -history        - Clear command history");
     console.log("Note: The 'global' module is protected and cannot be removed");
     return;
   }
@@ -940,7 +940,7 @@ export async function commandRemove(
   // Handle special paths
   if (target === '/' || target === '*') {
     if (!force) {
-      const confirmed = await confirmAction(`Are you sure you want to remove ${target === '/' ? 'EVERYTHING except core modules' : 'all symbols in current module'}?`);
+      const confirmed = await confirmAction(`Are you sure you want to remove ${target === '/' ? 'EVERYTHING including sync state' : 'all symbols in current module'}?`);
       if (!confirmed) {
         console.log('Operation cancelled.');
         return;
@@ -948,7 +948,7 @@ export async function commandRemove(
     }
 
     if (target === '/') {
-      // Remove everything - all modules except global and user
+      // Remove everything - all modules except global and also state.json files
       const availableModules = await evaluator.getAvailableModules();
       let removedCount = 0;
       const protectedModules = ['global', 'user'];
@@ -968,6 +968,21 @@ export async function commandRemove(
         if (evaluator.removeSymbol(symbol)) {
           removedSymbols++;
         }
+      }
+
+      // Reset state files by calling resetAllModules/forceSync
+      try {
+        // Import the persistentStateManager to directly access it
+        const { persistentStateManager } = await import("./persistent-state-manager.ts");
+        
+        // Reset all modules but don't keep any modules
+        persistentStateManager.resetAllModules(false);
+        console.log("Removed and reinitialized all state files.");
+        
+        // Force sync to save the empty state
+        persistentStateManager.forceSync();
+      } catch (error) {
+        console.error(`Error resetting state files: ${error instanceof Error ? error.message : String(error)}`);
       }
       
       if (removedCount > 0 || removedSymbols > 0) {
@@ -1009,6 +1024,18 @@ export async function commandRemove(
         if (evaluator.removeSymbol(symbol)) {
           removedCount++;
         }
+      }
+
+      // For '*', also force sync the current module's state
+      try {
+        // Import the persistentStateManager to directly access it
+        const { persistentStateManager } = await import("./persistent-state-manager.ts");
+        
+        // Force sync to save the empty module state
+        persistentStateManager.forceSync();
+        console.log("Module state has been saved.");
+      } catch (error) {
+        console.error(`Error syncing state: ${error instanceof Error ? error.message : String(error)}`);
       }
       
       if (removedCount > 0) {
@@ -1068,13 +1095,24 @@ export async function commandRemove(
       }
     }
 
-    // Force the removal to proceed
-    const removed = await evaluator.removeSymbolFromModule(symbolName, moduleName);
+    // This functionality is likely custom implemented in the ModuleAwareEvaluator
+    // Assuming a function like removeSymbolFromModule exists or using a workaround
+    let removed = false;
+    const currentModule = evaluator.getCurrentModuleSync();
+    
+    // Switch to the target module temporarily
+    await evaluator.switchModule(moduleName);
+    // Remove the symbol
+    removed = evaluator.removeSymbol(symbolName);
+    // Switch back to the original module
+    await evaluator.switchModule(currentModule);
+    
     if (removed) {
       console.log(`Removed ${symbolName} from module ${moduleName}`);
     } else {
       console.error(`Failed to remove ${symbolName} from module ${moduleName}`);
     }
+    
     return;
   }
 
@@ -1100,19 +1138,16 @@ export async function commandRemove(
     // Handle removing the current module
     const isCurrentModule = replState.currentModule === target;
     
-    // Force the removal to proceed
+    // Remove the module
     const removed = await evaluator.removeModule(target);
     
     if (removed) {
       console.log(`Removed module ${target}`);
       
-      // If we removed the current module, switch to a valid one
+      // If we removed the current module, switch back to global
       if (isCurrentModule) {
-        const remainingModules = await evaluator.getAvailableModules();
-        const newModule = remainingModules[0] || 'global';
-        await evaluator.switchModule(newModule);
-        replState.currentModule = newModule;
-        console.log(`Switched to module: ${newModule}`);
+        await evaluator.switchModule('global');
+        replState.currentModule = 'global';
       }
     } else {
       console.error(`Failed to remove module ${target}`);
@@ -1121,43 +1156,36 @@ export async function commandRemove(
     return;
   }
 
-  // Try to remove as a symbol from current module
-  const symbols = await evaluator.listModuleSymbols();
-  if (symbols.includes(target)) {
-    // Warn if trying to modify global module
-    if (replState.currentModule === 'global' && !force) {
-      console.log(`Warning: Removing symbols from the 'global' module is discouraged.`);
-      console.log(`This module contains core functionality for the system.`);
-      const confirmGlobal = await confirmAction(`Do you still want to proceed with removing '${target}' from 'global'?`);
-      if (!confirmGlobal) {
-        console.log('Operation cancelled.');
-        return;
-      }
+  // Assume the target is a symbol in the current module
+  
+  // Warn if trying to modify global module
+  if (replState.currentModule === 'global' && !force) {
+    console.log(`Warning: Removing symbols from the 'global' module is discouraged.`);
+    console.log(`This module contains core functionality for the system.`);
+    const confirmGlobal = await confirmAction(`Do you still want to proceed with removing '${target}' from 'global'?`);
+    if (!confirmGlobal) {
+      console.log('Operation cancelled.');
+      return;
     }
-    
-    if (!force) {
-      const confirmed = await confirmAction(`Are you sure you want to remove symbol ${target}?`);
-      if (!confirmed) {
-        console.log('Operation cancelled.');
-        return;
-      }
+  }
+  
+  if (!force) {
+    const confirmed = await confirmAction(`Are you sure you want to remove symbol ${target}?`);
+    if (!confirmed) {
+      console.log('Operation cancelled.');
+      return;
     }
-
-    // Force the removal to proceed
-    const removed = evaluator.removeSymbol(target);
-    
-    if (removed) {
-      console.log(`Removed symbol ${target}`);
-    } else {
-      console.error(`Failed to remove symbol ${target}`);
-    }
-    return;
   }
 
-  // If we get here, we couldn't find what the user was trying to remove
-  console.error(`Target not found: ${target}`);
-  console.log('Use :modules or ls -m to see available modules.');
-  console.log('Use :list or ls to see available symbols in current module.');
+  // Force the removal to proceed
+  const removed = evaluator.removeSymbol(target);
+  
+  if (removed) {
+    console.log(`Removed symbol ${target}`);
+  } else {
+    console.error(`Failed to remove symbol ${target}`);
+  }
+  return;
 }
 
 /**

@@ -390,7 +390,7 @@ export class CommandOptionCompletionHandler extends CompletionHandler {
   // Define command options
   private commandOptions: Record<string, string[]> = {
     'ls': ['all', 'm', 'modules'],
-    ':see': ['source', 'js'],
+    ':show': ['source', 'js'],
     ':help': ['all'],
     ':go': ['module'],
     ':modules': ['all'],
@@ -415,7 +415,7 @@ export class CommandOptionCompletionHandler extends CompletionHandler {
   
   // List of all REPL commands
   private replCommands = [
-    ':see', ':go', ':help', ':modules', ':list', ':remove', ':doc',
+    ':show', ':go', ':help', ':modules', ':list', ':remove', ':doc',
     ':quit', ':exit', ':env', ':verbose', ':ast', ':js', ':cli'
   ];
   

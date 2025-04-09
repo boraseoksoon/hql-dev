@@ -193,7 +193,7 @@ export async function commandDoc(evaluator: ModuleAwareEvaluator, target: string
         }
       } catch (e) {
         console.log(`${textColor}Symbol '${target}' not found or has no documentation.${reset}`);
-        console.log(`${textColor}Try using ${symbolColor}:see ${target}${textColor} for more information.${reset}`);
+        console.log(`${textColor}Try using ${symbolColor}:show ${target}${textColor} for more information.${reset}`);
       }
     } catch (error) {
       console.error(`${"\x1b[31m"}Error retrieving documentation: ${error instanceof Error ? error.message : String(error)}${reset}`);

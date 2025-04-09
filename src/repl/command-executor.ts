@@ -28,7 +28,6 @@ import {
   commandCli,
   printCliHelp
 } from "./repl-commands.ts";
-import { commandSee } from "./see-command.ts";
 import { commandShow } from "./show-command.ts";
 import { commandDoc } from "./doc-command.ts";
 
@@ -75,7 +74,7 @@ export async function executeCommand(
     
     // Special case for ls -all to show all symbols across all modules
     if (command === 'list' && args === '-all') {
-      await commandSee(evaluator, 'all:symbols', useColors, options.showJs);
+      await commandShow(evaluator, 'all:symbols', useColors, options.showJs);
       return true;
     }
     
@@ -174,7 +173,7 @@ export async function executeCommand(
         if (args.trim() === "modules") {
             await commandModules(evaluator, useColors);
         } else {
-            await commandSee(evaluator, args, useColors, options.showJs);
+            await commandShow(evaluator, args, useColors, options.showJs);
         }
         return true;
         

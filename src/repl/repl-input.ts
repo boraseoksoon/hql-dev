@@ -241,7 +241,7 @@ async function handleTabCompletion(
     
     // List of core CLI commands for reference
     const coreCliCommands = ["ls", "cd", "pwd", "find", "mkdir", "man", "rm"];
-    const coreReplCommands = [":see", ":go", ":help", ":list", ":modules", ":remove", ":doc"];
+    const coreReplCommands = [":show", ":go", ":help", ":list", ":modules", ":remove", ":doc"];
     const allCommands = [...coreCliCommands, ...coreReplCommands];
     
     // Check if we're dealing with a command with options

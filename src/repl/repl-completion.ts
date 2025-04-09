@@ -47,7 +47,7 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
         .map(mod => ({ 
           name: mod, 
           type: SymbolType.Module,
-          context: cmdPrefix.trim() === ':see' ? 'see' : 'cli-command' 
+          context: cmdPrefix.trim() === ':show' ? 'show' : 'cli-command' 
         }));
     }
     return [];
@@ -133,7 +133,7 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
       
       // 1. Module-related commands
       const moduleCommands = [
-        "cd ", ":go ", ":goto ", ":module ", ":mod ", ":see ", "mkdir "
+        "cd ", ":go ", ":goto ", ":module ", ":mod ", ":show ", "mkdir "
       ];
       
       for (const cmdPrefix of moduleCommands) {
@@ -147,7 +147,7 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
       if (line.trim().startsWith(':help ')) {
         const commands = [
           "help", "quit", "exit", "env", "macros", 
-          "go", "modules", "list", "find", "see", "remove",
+          "go", "modules", "list", "find", "show", "remove",
           "verbose", "ast", "js", "doc", "cli"
         ];
         return handleCommandCompletion(line, ':help ', commands);
@@ -157,15 +157,15 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
       if (line.trim().startsWith('man ')) {
         const commands = [
           "help", "quit", "exit", "env", "macros", 
-          "go", "modules", "list", "find", "see", "remove",
+          "go", "modules", "list", "find", "show", "remove",
           "cli", "ls", "cd", "pwd", "mkdir", "man", "rm"
         ];
         return handleCommandCompletion(line, 'man ', commands);
       }
       
-      // 4. See module:symbol completions
-      if (line.trim().startsWith(':see ') && line.includes(':')) {
-        const parts = line.trim().substring(':see '.length).split(':');
+      // 4. Show module:symbol completions
+      if (line.trim().startsWith(':show ') && line.includes(':')) {
+        const parts = line.trim().substring(':show '.length).split(':');
         if (parts.length === 2) {
           const moduleName = parts[0];
           const partialSymbol = parts[1];
@@ -190,7 +190,7 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
         const commandPart = line.trim().substring(1);
         const commands = [
           "help", "quit", "exit", "env", "macros", 
-          "go", "modules", "list", "see", "remove",
+          "go", "modules", "list", "show", "remove",
           "find", "verbose", "ast", "js", "doc", "cli"
         ];
         
@@ -245,8 +245,8 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
           return `(${cleanName}`;
         }
       case SymbolType.Module:
-        // Don't add slash for :see command or cd command
-        if (item.context === 'see' || item.context === 'cli-command') {
+        // Don't add slash for :show command or cd command
+        if (item.context === 'show' || item.context === 'cli-command') {
           return item.name;
         }
         return `${item.name}/`;
@@ -282,8 +282,8 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
           return `(${cleanName}`;
         }
       case SymbolType.Module:
-        // Don't add slash for :see command or cd command
-        if (item.context === 'see' || item.context === 'cli-command') {
+        // Don't add slash for :show command or cd command
+        if (item.context === 'show' || item.context === 'cli-command') {
           return item.name;
         }
         return `${item.name}/`;
