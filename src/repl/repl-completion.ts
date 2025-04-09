@@ -7,6 +7,7 @@ import {
   PropertyCompletionHandler, 
   SymbolCompletionHandler, 
   SpecialFormCompletionHandler,
+  CommandOptionCompletionHandler,
   CompletionItem,
   SymbolType,
   getCurrentWordInContext,
@@ -27,37 +28,44 @@ export interface TabCompletion {
 export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentModule: () => string): TabCompletion {
   // Create the handlers
   const handlers: CompletionHandler[] = [
+    new CommandOptionCompletionHandler(evaluator),
     new PropertyCompletionHandler(evaluator),
     new SymbolCompletionHandler(evaluator),
     new SpecialFormCompletionHandler(evaluator)
   ];
   
-  // Module completion helper
+  /**
+   * Module completion helper
+   */
   async function handleModuleCompletion(line: string, cmdPrefix: string): Promise<CompletionItem[]> {
     if (line.trim().startsWith(cmdPrefix)) {
       const partialModule = line.trim().substring(cmdPrefix.length);
       const modules = await evaluator.getAvailableModules();
       
       return modules
-        .filter(mod => mod.startsWith(partialModule))
+        .filter(mod => mod.toLowerCase().startsWith(partialModule.toLowerCase()))
         .map(mod => ({ 
           name: mod, 
-          type: SymbolType.Module 
+          type: SymbolType.Module,
+          context: cmdPrefix.trim() === ':see' ? 'see' : 'cli-command' 
         }));
     }
     return [];
   }
   
-  // Command completion helper  
+  /**
+   * Command completion helper
+   */  
   function handleCommandCompletion(line: string, cmdPrefix: string, commands: string[]): CompletionItem[] {
     if (line.trim().startsWith(cmdPrefix)) {
       const partialCmd = line.trim().substring(cmdPrefix.length);
       
       return commands
-        .filter(cmd => cmd.startsWith(partialCmd))
+        .filter(cmd => cmd.toLowerCase().startsWith(partialCmd.toLowerCase()))
         .map(cmd => ({
           name: `${cmdPrefix}${cmd}`,
-          type: SymbolType.Function
+          type: SymbolType.Function,
+          context: 'cli-command'
         }));
     }
     return [];
@@ -80,9 +88,48 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
     }
   };
   
+  /**
+   * Get completion items for the given input and cursor position
+   */
   async function getCompletionItems(line: string, cursorPos: number, currentModule: string): Promise<CompletionItem[]> {
     try {
-      // Check for specific context completions first
+      // Check if we have a command with or without space but no dash yet - prioritize options
+      const commandMatch = line.trim().match(/^([^\s]+)(?:\s+)?$/);
+      if (commandMatch) {
+        const [, command] = commandMatch;
+        const cliCommands = ["ls", "cd", "pwd", "find", "mkdir", "man", "rm"];
+        
+        if (cliCommands.includes(command) || command.startsWith(':')) {
+          // Try the command option handler first for possible options
+          for (const handler of handlers) {
+            if (handler.constructor.name === 'CommandOptionCompletionHandler') {
+              const options = await handler.getCompletions(line, cursorPos, currentModule);
+              if (options.length > 0) {
+                return options;
+              }
+            }
+          }
+        }
+      }
+    
+      // Check for basic CLI commands first (for early completion)
+      if (line.trim().length <= 5 && !line.trim().startsWith(':')) {
+        // Try to match any cli command starts
+        const cliCommands = ["ls", "cd", "pwd", "find", "mkdir", "man", "rm"];
+        const matchedCommands = cliCommands
+          .filter(cmd => cmd.toLowerCase().startsWith(line.trim().toLowerCase()))
+          .map(cmd => ({
+            name: cmd,
+            type: SymbolType.Function,
+            context: 'cli-command'
+          }));
+          
+        if (matchedCommands.length > 0) {
+          return matchedCommands;
+        }
+      }
+    
+      // Check for specific context completions
       
       // 1. Module-related commands
       const moduleCommands = [
@@ -126,7 +173,7 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
           try {
             const moduleSymbols = await evaluator.listModuleSymbols(moduleName);
             return moduleSymbols
-              .filter(sym => sym.startsWith(partialSymbol))
+              .filter(sym => sym.toLowerCase().startsWith(partialSymbol.toLowerCase()))
               .map(sym => ({
                 name: `${moduleName}:${sym}`,
                 type: SymbolType.Unknown
@@ -148,14 +195,15 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
         ];
         
         return commands
-          .filter(cmd => cmd.startsWith(commandPart))
+          .filter(cmd => cmd.toLowerCase().startsWith(commandPart.toLowerCase()))
           .map(cmd => ({
             name: `:${cmd}`,
-            type: SymbolType.Function
+            type: SymbolType.Function,
+            context: 'cli-command'
           }));
       }
 
-      // 6. Try all handlers
+      // 6. Try all generic handlers
       let allResults: CompletionItem[] = [];
       
       for (const handler of handlers) {
@@ -170,37 +218,74 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
     }
   }
   
+  /**
+   * Format the completion text for insertion
+   */
   function formatCompletionText(item: CompletionItem): string {
-    // Format the text differently based on the type
+    // Format the text differently based on the type - Lisp-style syntax with opening parenthesis
     switch (item.type) {
       case SymbolType.Function:
       case SymbolType.Macro:
-        if (item.fullName) {
-          // For property/method access like chalkJSR.green
-          return item.fullName;
-        } else {
-          // No parentheses in the text - they'll be added in the display version
+        // Don't add parentheses for CLI commands and REPL commands (those starting with :)
+        if (item.name.startsWith(':') || item.context === 'cli-command') {
           return item.name;
         }
+        
+        if (item.fullName) {
+          // For property access like chalkJSR.green with opening parenthesis
+          const parts = item.fullName.split('.');
+          // Strip any parentheses that might already exist in the name
+          const baseName = parts[0].replace(/^\(/, '');
+          const propName = parts[1].replace(/^\(/, '');
+          return `(${baseName}.${propName}`;
+        } else {
+          // Add opening parenthesis for functions and macros
+          // Strip any parentheses that might already exist in the name
+          const cleanName = item.name.replace(/^\(/, '');
+          return `(${cleanName}`;
+        }
+      case SymbolType.Module:
+        // Don't add slash for :see command or cd command
+        if (item.context === 'see' || item.context === 'cli-command') {
+          return item.name;
+        }
+        return `${item.name}/`;
       default:
         return item.name;
     }
   }
   
+  /**
+   * Format the display text for showing in completion UI
+   */
   function formatCompletionDisplay(item: CompletionItem): string {
     // Format the display text differently based on the type
     switch (item.type) {
       case SymbolType.Function:
       case SymbolType.Macro:
+        // Don't add parentheses for CLI commands and REPL commands (those starting with :)
+        if (item.name.startsWith(':') || item.context === 'cli-command') {
+          return item.name;
+        }
+        
         if (item.fullName) {
-          // For property/method access like chalkJSR.green()
+          // For property access like (chalkJSR.green
           const parts = item.fullName.split('.');
-          return `${parts[0]}.${parts[1]}()`;
+          // Strip any parentheses that might already exist in the name
+          const baseName = parts[0].replace(/^\(/, '');
+          const propName = parts[1].replace(/^\(/, '');
+          return `(${baseName}.${propName}`;
         } else {
-          // Add parentheses for display
-          return `${item.name}()`;
+          // Add opening parenthesis for display
+          // Strip any parentheses that might already exist in the name
+          const cleanName = item.name.replace(/^\(/, '');
+          return `(${cleanName}`;
         }
       case SymbolType.Module:
+        // Don't add slash for :see command or cd command
+        if (item.context === 'see' || item.context === 'cli-command') {
+          return item.name;
+        }
         return `${item.name}/`;
       default:
         return item.name;

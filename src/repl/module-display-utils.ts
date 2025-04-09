@@ -283,14 +283,17 @@ export async function showAllSymbols(
   for (const moduleName of modules) {
     const symbols = await evaluator.listModuleSymbols(moduleName);
     
+    // Always show the module, even if it has no symbols
+    console.log(`\n${colorText(`Module: ${moduleName}`, useColors ? "\x1b[35m" : "", useColors)}`);
+    console.log("-".repeat(moduleName.length + 8));
+    
     if (symbols.length > 0) {
-      console.log(`\n${colorText(`Module: ${moduleName}`, useColors ? "\x1b[35m" : "", useColors)}`);
-      console.log("-".repeat(moduleName.length + 8));
-      
       for (const symbolName of symbols) {
         console.log(`- ${symbolName}`);
         totalSymbols++;
       }
+    } else {
+      console.log("(No symbols defined)");
     }
   }
   

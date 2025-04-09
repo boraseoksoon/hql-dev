@@ -48,8 +48,8 @@ class HistoryManager {
                         
       this.logger.debug(`Loaded ${lines.length} history entries from ${this.historyPath}`);
       return lines;
-    } catch (error) {
-      this.logger.warn(`Error loading history: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.warn(`Error loading history: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
   }
@@ -64,8 +64,22 @@ class HistoryManager {
       const content = history.join('\n');
       Deno.writeTextFileSync(this.historyPath, content);
       this.logger.debug(`Saved ${history.length} history entries to ${this.historyPath}`);
-    } catch (error) {
-      this.logger.warn(`Error saving history: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.warn(`Error saving history: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Clear all history entries
+   */
+  clearAll(): void {
+    if (!this.initialized) return;
+    
+    try {
+      Deno.writeTextFileSync(this.historyPath, '');
+      this.logger.debug(`Cleared all history entries from ${this.historyPath}`);
+    } catch (error: unknown) {
+      this.logger.warn(`Error clearing history: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }

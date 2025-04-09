@@ -169,6 +169,7 @@ export function printBanner(useColors = false): void {
       `${headerColor}╠════════════════════════════════════════════════════════════╣${reset}`,
       `${headerColor}║  ${textColor}Type HQL expressions to evaluate them${headerColor}                      ║${reset}`,
       `${headerColor}║  ${noteColor}The prompt ${textColor}hql[module]>${noteColor} shows your current module${headerColor}               ║${reset}`,
+      `${headerColor}║  ${noteColor}Use ${commandColor}Tab${noteColor} to complete, ${commandColor}Shift+Tab${noteColor} to cycle backwards${headerColor}            ║${reset}`,
       `${headerColor}║  ${textColor}commands:${headerColor}                                                  ║${reset}`,
       `${headerColor}║    ${commandColor}:help${textColor} - Display help (use ${commandColor}:help <command>${textColor} for details)     ║${reset}`,
       `${headerColor}║    ${commandColor}:quit${textColor}, ${commandColor}:exit${textColor} - Exit the REPL${headerColor}                             ║${reset}`,

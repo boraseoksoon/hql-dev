@@ -196,23 +196,35 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           }
         }
         
-        // Check if input is a CLI command
-        if (commandUtils.isCliCommand(input)) {
-          const { command, args } = commandUtils.parseCliCommand(input);
-          const isHandled = await executeCommand(command, args, evaluator, replState, useColors, logger, replStateHandlers, commonOptions);
-          if (isHandled) continue;
-        }
-        
         // Check if input is a REPL command
         if (commandUtils.isReplCommand(input)) {
           const { command, args } = commandUtils.parseReplCommand(input);
           const isHandled = await executeCommand(command, args, evaluator, replState, useColors, logger, replStateHandlers, commonOptions);
+          
+          // Clear history array if the command was :remove -history
+          if (isHandled && command === 'remove' && args === '-history') {
+            history.length = 0;
+          }
+          
           if (isHandled) continue;
           
           // If command was not recognized, provide helpful message
           console.log(`Unknown command: :${command}`);
           console.log(`Type :help for available commands`);
           continue;
+        }
+        
+        // Check if input is a CLI command
+        if (commandUtils.isCliCommand(input)) {
+          const { command, args } = commandUtils.parseCliCommand(input);
+          const isHandled = await executeCommand(command, args, evaluator, replState, useColors, logger, replStateHandlers, commonOptions);
+          
+          // Clear history array if the command was rm -history
+          if (isHandled && command === 'rm' && args === '-history') {
+            history.length = 0;
+          }
+          
+          if (isHandled) continue;
         }
         
         // If we get here, it's not a command, so evaluate as HQL code

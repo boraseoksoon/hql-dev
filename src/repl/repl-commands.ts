@@ -39,9 +39,12 @@ export function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:modules${textColor} - List all available modules${headerColor}                    ║${reset}`,
     `${headerColor}║    ${commandColor}:list${textColor} - Show symbols in current module${headerColor}                   ║${reset}`,
     `${headerColor}║    ${commandColor}:find${textColor} - Search for symbols and modules${headerColor}                   ║${reset}`,
-    `${headerColor}║    ${commandColor}:see${textColor} - Inspect modules and symbols${headerColor}                       ║${reset}`,
+    `${headerColor}║    ${commandColor}:show${textColor} - Display modules and symbols${headerColor}                      ║${reset}`,
+    `${headerColor}║    ${commandColor}:see${textColor} - Alias for ${commandColor}:show${headerColor} (inspect modules and symbols)${headerColor}    ║${reset}`,
     `${headerColor}║    ${commandColor}:doc${textColor} - Show documentation for a symbol or module${headerColor}         ║${reset}`,
     `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
+    `${headerColor}║    ${commandColor}:clear${textColor} - Clear the screen${headerColor}                                ║${reset}`,
+    `${headerColor}║    ${commandColor}:remove -history${textColor} - Clear command history${headerColor}                 ║${reset}`,
     `${headerColor}║  ${textColor}cli:${headerColor}                                                       ║${reset}`,
     `${headerColor}║    ${cliColor}ls${textColor} - List symbols in current module${headerColor}                        ║${reset}`,
     `${headerColor}║    ${cliColor}cd <module>${textColor} - Switch to a different module${headerColor}                 ║${reset}`,
@@ -50,6 +53,10 @@ export function printBanner(useColors = false): void {
     `${headerColor}║    ${cliColor}mkdir <module>${textColor} - Create a new module${headerColor}                       ║${reset}`,
     `${headerColor}║    ${cliColor}man <command>${textColor} - Show help for a command${headerColor}                    ║${reset}`,
     `${headerColor}║    ${cliColor}rm <target>${textColor} - Remove symbols or modules${headerColor}                    ║${reset}`,
+    `${headerColor}║    ${cliColor}clear${textColor} - Clear the screen${headerColor}                                   ║${reset}`,
+    `${headerColor}║  ${textColor}tips:${headerColor}                                                      ║${reset}`,
+    `${headerColor}║    ${noteColor}Tab${textColor} - Auto-complete commands, symbols, modules${headerColor}             ║${reset}`,
+    `${headerColor}║    ${noteColor}Shift+Tab${textColor} - Cycle backward through completions${headerColor}             ║${reset}`,
     `${headerColor}╚════════════════════════════════════════════════════════════╝${reset}`
   ];
   banner.forEach(line => console.log(line));

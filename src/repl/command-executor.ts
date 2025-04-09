@@ -29,6 +29,7 @@ import {
   printCliHelp
 } from "./repl-commands.ts";
 import { commandSee } from "./see-command.ts";
+import { commandShow } from "./show-command.ts";
 import { commandDoc } from "./doc-command.ts";
 
 /**
@@ -142,6 +143,14 @@ export async function executeCommand(
       // Remove command (with force flag handling)
       case 'remove':
       case 'rm':
+        // Special case for history removal
+        if (args === '-history') {
+          const { historyManager } = await import('./history-manager.ts');
+          historyManager.clearAll();
+          console.log("Command history has been cleared");
+          return true;
+        }
+        
         // Process arguments with force flag
         const isForceRemove = args.startsWith('-f') || args.startsWith('-rf') || args.startsWith('-fr');
         let actualArgs = args;
@@ -169,10 +178,26 @@ export async function executeCommand(
         }
         return true;
         
+      // Show command (alias for see)
+      case 'show':
+        // Handle ":show modules" as a special case to match :modules functionality
+        if (args.trim() === "modules") {
+            await commandModules(evaluator, useColors);
+        } else {
+            await commandShow(evaluator, args, useColors, options.showJs);
+        }
+        return true;
+        
       // Documentation command
       case 'doc':
       case 'docs':
         await commandDoc(evaluator, args, useColors);
+        return true;
+        
+      // Clear command
+      case 'clear':
+      case 'cls':
+        console.clear();
         return true;
         
       // Verbose command
@@ -284,12 +309,6 @@ export async function executeCommand(
         } catch (error) {
           console.error(`Error creating module: ${error instanceof Error ? error.message : String(error)}`);
         }
-        return true;
-        
-      // Clear screen command
-      case 'clear':
-      case 'cls':
-        console.clear();
         return true;
         
       // Unknown command

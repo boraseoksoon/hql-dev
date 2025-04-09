@@ -945,4 +945,26 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       this.moduleLogger.error(`Failed to store import statement: ${error}`);
     }
   }
+
+  /**
+   * Get the list of exports from a module
+   */
+  async getModuleExports(moduleName: string): Promise<string[]> {
+    await this.ensureInitialized();
+    
+    // Get the module state
+    const moduleState = persistentStateManager.getModuleState(moduleName);
+    if (!moduleState) {
+      return [];
+    }
+    
+    // Check if the module has exports metadata
+    const exports = persistentStateManager.getModuleMetadata(moduleName, 'exports');
+    if (Array.isArray(exports)) {
+      return exports;
+    }
+    
+    // If no exports are defined, return an empty array
+    return [];
+  }
 }

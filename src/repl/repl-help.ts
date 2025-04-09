@@ -47,6 +47,8 @@ export function getDetailedHelp(command: string, useColors: boolean = true): str
     
     "see": "Inspect modules and symbols.\nUsage: :see [module-name], :see [symbol-name], or :see [module]:[symbol]\nSpecial usage: :see all, :see all:modules, :see all:symbols",
     
+    "show": "Display modules and symbols.\nUsage: :show [module-name], :show [symbol-name], or :show [module]:[symbol]\nSpecial usage: :show all, :show all:modules, :show all:symbols\nAlias for: :see",
+    
     "doc": "Show documentation for a symbol or module.\nUsage: :doc <symbol> or :doc <module>/*\nCLI equivalent: man <symbol>",
     
     "remove": `Remove a symbol or module.
@@ -57,6 +59,7 @@ Usage: :remove <symbol> - Remove a symbol from current module
        :remove -rf <target> - Force remove recursively without confirmation
        :remove * - Remove all symbols in current module
        :remove / - Remove everything (all modules and symbols)
+       :remove -history - Clear all command history (up/down arrow navigation)
 CLI equivalent: rm <target>`,
     
     "verbose": "Toggle verbose mode to show more detailed output.\nUsage: :verbose\nYou can also evaluate an expression with verbose output: :verbose <expression>",
@@ -72,6 +75,11 @@ CLI equivalent: rm <target>`,
     "mkdir": "Create a new module.\nUsage: :mkdir <module-name>\nCLI equivalent: mkdir <module-name>",
     
     "cli": "Show available CLI-style commands.\nUsage: :cli",
+    
+    // New help entries
+    "completion": "Tab completion lets you quickly complete symbols and commands.\nUsage: Press Tab to complete, Shift+Tab to cycle backwards through completions.\nWorks for functions, variables, modules, and command names.",
+    
+    "tab": "Tab completion lets you quickly complete symbols and commands.\nUsage: Press Tab to complete, Shift+Tab to cycle backwards through completions.\nWorks for functions, variables, modules, and command names.",
     
     // CLI command help
     "ls": "List symbols in current module.\nUsage: ls\nOptions:\n  ls -m, ls -modules: List all modules\n  ls -all: List all symbols across all modules\nREPL equivalent: :list",
@@ -90,6 +98,7 @@ Usage: rm <symbol> - Remove a symbol from current module
        rm -rf <target> - Force remove recursively without confirmation
        rm * - Remove all symbols in current module
        rm / - Remove everything (all modules and symbols)
+       rm -history - Clear all command history (up/down arrow navigation)
 REPL equivalent: :remove <target>`,
     
     // Don't duplicate these keys - the keys below were already defined above
