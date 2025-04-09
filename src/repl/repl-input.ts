@@ -219,7 +219,7 @@ function handleAltD(input: string, cursorPos: number): string {
 }
 
 /**
- * Handle tab completion (used for both Tab and Shift+Tab)
+ * Handle tab completion
  */
 async function handleTabCompletion(
   input: string,
@@ -231,77 +231,74 @@ async function handleTabCompletion(
   isReverse: boolean
 ): Promise<{ input: string; cursorPos: number; completions: string[]; completionIndex: number } | null> {
   try {
+    // Check if we have property access
+    const isPropertyCompletion = input.substring(0, cursorPos).indexOf('.') > 0;
+    let objectPart = "";
+    
+    if (isPropertyCompletion) {
+      const lastDotIndex = input.substring(0, cursorPos).lastIndexOf('.');
+      objectPart = input.substring(0, lastDotIndex + 1);
+    }
+    
+    // Get formatted completions with display text
+    const formattedCompletions = await tabCompletion.getFormattedCompletions(input, cursorPos);
+    
+    // Check if we have a syntax pattern completion
+    const syntaxCompletions = formattedCompletions.filter(c => c.displayText.includes('[syntax]'));
+    
+    // If we have syntax completions, prioritize them
+    if (syntaxCompletions.length > 0) {
+      // Start with the first syntax completion
+      const completion = syntaxCompletions[0].text;
+      
+      // Apply the completion
+      const result = applyCompletion(input, cursorPos, completion, isPropertyCompletion, objectPart);
+      input = result.input;
+      cursorPos = result.cursorPos;
+      
+      redrawLine(prompt, input, cursorPos);
+      
+      // Return with empty completions so next tab press will get the next step
+      return { input, cursorPos, completions: [], completionIndex: -1 };
+    }
+    
+    // Track whether we have options for command
+    const hasOptions = input.trim().match(/^([^\s]+)\s+-/);
+    
     let completions = existingCompletions;
     let completionIndex = existingCompletionIndex;
     
-    // Get property access context if relevant
-    const dotIndex = input.lastIndexOf('.');
-    const isPropertyCompletion = dotIndex >= 0;
-    const objectPart = isPropertyCompletion ? input.substring(0, dotIndex + 1) : "";
-    
-    // List of core CLI commands for reference
-    const coreCliCommands = ["ls", "cd", "pwd", "find", "mkdir", "man", "rm"];
-    const coreReplCommands = [":show", ":go", ":help", ":list", ":modules", ":remove", ":doc"];
-    const allCommands = [...coreCliCommands, ...coreReplCommands];
-    
-    // Check if we're dealing with a command with options
-    const hasOptions = input.trim().match(/^[^\s]+\s+-\w+/);
-    
-    // Special case: if we just completed a command (have completions but exact match with a command)
-    // we should clear completions to force a refresh with options
-    if (completions.length > 0 && completionIndex >= 0 && !hasOptions) {
-      const exactCommandMatch = allCommands.some(cmd => input.trim() === cmd);
-      if (exactCommandMatch) {
-        // Only clear if the completion already applied is a command (not an option)
-        const lastCompletion = completions[completionIndex];
-        const isCommandCompletion = !lastCompletion.includes('-') && !lastCompletion.includes(' -');
-        
-        if (isCommandCompletion) {
-          completions = [];
-          completionIndex = -1;
-        }
-      }
-    }
-    
-    // Fetch completions if we don't have any yet
-    if (completions.length === 0) {
-      const formattedCompletions = await tabCompletion.getFormattedCompletions(input, cursorPos);
+    // If no existing completions or we're getting fresh completions
+    if (completions.length === 0 || formattedCompletions.some(c => !completions.includes(c.text))) {
       completions = formattedCompletions.map(c => c.text);
       
-      // Set initial index based on direction
-      completionIndex = isReverse ? completions.length - 1 : 0;
-      
-      // If we have exactly one CLI command completion, add a space to continue
-      const isExactCoreCliCommand = allCommands.includes(input.trim());
-      const isPartialCommand = allCommands.some(cmd => input.trim().length > 0 && cmd.startsWith(input.trim()));
-      
-      // Command completion case - immediately add space and prepare for option completion
-      if (completions.length === 1) {
-        if (isExactCoreCliCommand) {
-          completions[0] = completions[0] + " ";
-        } else if (isPartialCommand && !completions[0].includes(' ') && !completions[0].startsWith('-')) {
-          // For partial commands like "l" -> "ls", add space to prepare for options
-          completions[0] = completions[0] + " ";
-        }
-      }
-      
-      // If input is just a command with or without space, prioritize command options
-      const isCommandWithSpace = allCommands.some(cmd => 
-        input.trim() === cmd || input.trim() === cmd + " " || input === cmd + " ");
-      
-      if (isCommandWithSpace && completions.length > 0) {
-        // Ensure we prefer options that add a dash
-        completions = completions.sort((a, b) => {
-          const aAddsOption = a.includes('-');
-          const bAddsOption = b.includes('-');
-          
-          if (aAddsOption && !bAddsOption) return -1;
-          if (!aAddsOption && bAddsOption) return 1;
-          return 0;
-        });
+      // Sort to ensure deterministic ordering of completions
+      completions.sort((a, b) => {
+        // Prioritize options that start with the input text
+        const inputWord = getCurrentWordAtCursor(input, cursorPos);
+        const aStartsWithInput = a.startsWith(inputWord);
+        const bStartsWithInput = b.startsWith(inputWord);
         
-        completionIndex = isReverse ? completions.length - 1 : 0;
+        if (aStartsWithInput && !bStartsWithInput) return -1;
+        if (!aStartsWithInput && bStartsWithInput) return 1;
+        
+        // Then prioritize shorter completions
+        return a.length - b.length;
+      });
+      
+      // If there are no completions, return null
+      if (completions.length === 0) {
+        return null;
       }
+      
+      // Reset completion index
+      completions.sort((a, b) => {
+        if (a.toLowerCase() < b.toLowerCase()) return -1;
+        if (a.toLowerCase() > b.toLowerCase()) return 1;
+        return 0;
+      });
+      
+      completionIndex = isReverse ? completions.length - 1 : 0;
     } else {
       // Cycle through completions
       if (isReverse) {
@@ -351,6 +348,23 @@ function applyCompletion(
   isPropertyCompletion: boolean,
   objectPart: string
 ): { input: string; cursorPos: number } {
+  // Special case: directly use the completion for [syntax] pattern completions
+  if (completion.startsWith('(') && 
+      (completion.includes('import') || 
+       completion.includes('def') ||
+       completion.includes('let') ||
+       completion.includes('if') ||
+       completion.includes('when') ||
+       completion.includes('do') ||
+       completion.includes('for') ||
+       completion.includes('map') ||
+       completion.includes('filter') ||
+       completion.includes('reduce'))) {
+    // For syntax pattern completion, use the entire completion as the new input
+    // This enables progressive syntax completion
+    return { input: completion, cursorPos: completion.length };
+  }
+  
   // Handle property access completions
   if (isPropertyCompletion && completion.includes('.')) {
     const propDotIndex = completion.indexOf('.');

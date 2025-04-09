@@ -11,7 +11,8 @@ import {
   CompletionItem,
   SymbolType,
   getCurrentWordInContext,
-  getPropertyAccessContext
+  getPropertyAccessContext,
+  SyntaxCompletionHandler
 } from "./repl-completion-handlers.ts";
 
 /**
@@ -31,7 +32,8 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
     new CommandOptionCompletionHandler(evaluator),
     new PropertyCompletionHandler(evaluator),
     new SymbolCompletionHandler(evaluator),
-    new SpecialFormCompletionHandler(evaluator)
+    new SpecialFormCompletionHandler(evaluator),
+    new SyntaxCompletionHandler(evaluator)
   ];
   
   /**
@@ -93,20 +95,62 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
    */
   async function getCompletionItems(line: string, cursorPos: number, currentModule: string): Promise<CompletionItem[]> {
     try {
-      // Check if we have a command with or without space but no dash yet - prioritize options
-      const commandMatch = line.trim().match(/^([^\s]+)(?:\s+)?$/);
-      if (commandMatch) {
-        const [, command] = commandMatch;
-        const cliCommands = ["ls", "cd", "pwd", "find", "mkdir", "man", "rm"];
+      // Check if we're in a syntax pattern that can benefit from progressive completion
+      // This is important for the new syntax completion feature
+      const syntaxKeywords = [
+        "import", "def", "defn", "fn", "fn->", "lambda", "let", "if", "when", "unless", 
+        "cond", "case", "do", "->", "->>", "map", "filter", "reduce", "for-each", 
+        "try", "module", "export", "fx", "print", "console.log"
+      ];
+      const currentWord = getCurrentWordInContext(line, cursorPos);
+      
+      // First check for exact syntax pattern matches or continuations
+      if (currentWord && syntaxKeywords.some(kw => currentWord.toLowerCase() === kw.toLowerCase()) || 
+          line.trim().startsWith('(import') || 
+          line.trim().startsWith('(def') ||
+          line.trim().startsWith('(defn') ||
+          line.trim().startsWith('(fn') || 
+          line.trim().startsWith('(lambda') ||
+          line.trim().startsWith('(let') ||
+          line.trim().startsWith('(if') ||
+          line.trim().startsWith('(when') ||
+          line.trim().startsWith('(unless') ||
+          line.trim().startsWith('(cond') ||
+          line.trim().startsWith('(case') ||
+          line.trim().startsWith('(do') ||
+          line.trim().startsWith('(->') ||
+          line.trim().startsWith('(->>') ||
+          line.trim().startsWith('(map') ||
+          line.trim().startsWith('(filter') ||
+          line.trim().startsWith('(reduce') ||
+          line.trim().startsWith('(for-each') ||
+          line.trim().startsWith('(try') ||
+          line.trim().startsWith('(module') ||
+          line.trim().startsWith('(export') ||
+          line.trim().startsWith('(fx') ||
+          line.trim().startsWith('(print') ||
+          line.trim().startsWith('(console.log')) {
         
-        if (cliCommands.includes(command) || command.startsWith(':')) {
-          // Try the command option handler first for possible options
-          for (const handler of handlers) {
-            if (handler.constructor.name === 'CommandOptionCompletionHandler') {
-              const options = await handler.getCompletions(line, cursorPos, currentModule);
-              if (options.length > 0) {
-                return options;
-              }
+        // Try the syntax completion handler first for syntax patterns
+        for (const handler of handlers) {
+          if (handler instanceof SyntaxCompletionHandler) {
+            const options = await handler.getCompletions(line, cursorPos, currentModule);
+            if (options.length > 0) {
+              return options;
+            }
+          }
+        }
+      }
+    
+      // Check if we have a property access expression (obj.prop)
+      const propAccessContext = getPropertyAccessContext(line, cursorPos);
+      if (propAccessContext) {
+        // Property access completions take priority
+        for (const handler of handlers) {
+          if (handler instanceof PropertyCompletionHandler) {
+            const propCompletions = await handler.getCompletions(line, cursorPos, currentModule);
+            if (propCompletions.length > 0) {
+              return propCompletions;
             }
           }
         }
@@ -224,6 +268,9 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
   function formatCompletionText(item: CompletionItem): string {
     // Format the text differently based on the type - Lisp-style syntax with opening parenthesis
     switch (item.type) {
+      case SymbolType.SyntaxPattern:
+        // Syntax patterns should be inserted as-is since they already have the correct format
+        return item.name;
       case SymbolType.Function:
       case SymbolType.Macro:
         // Don't add parentheses for CLI commands and REPL commands (those starting with :)
@@ -261,32 +308,20 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
   function formatCompletionDisplay(item: CompletionItem): string {
     // Format the display text differently based on the type
     switch (item.type) {
+      case SymbolType.SyntaxPattern:
+        return `${item.name} [syntax]`;
       case SymbolType.Function:
+        return `${item.name} [function]`;
       case SymbolType.Macro:
-        // Don't add parentheses for CLI commands and REPL commands (those starting with :)
-        if (item.name.startsWith(':') || item.context === 'cli-command') {
-          return item.name;
-        }
-        
-        if (item.fullName) {
-          // For property access like (chalkJSR.green
-          const parts = item.fullName.split('.');
-          // Strip any parentheses that might already exist in the name
-          const baseName = parts[0].replace(/^\(/, '');
-          const propName = parts[1].replace(/^\(/, '');
-          return `(${baseName}.${propName}`;
-        } else {
-          // Add opening parenthesis for display
-          // Strip any parentheses that might already exist in the name
-          const cleanName = item.name.replace(/^\(/, '');
-          return `(${cleanName}`;
-        }
+        return `${item.name} [macro]`;
+      case SymbolType.Variable:
+        return `${item.name} [variable]`;
       case SymbolType.Module:
-        // Don't add slash for :show command or cd command
-        if (item.context === 'show' || item.context === 'cli-command') {
-          return item.name;
-        }
-        return `${item.name}/`;
+        return `${item.name} [module]`;
+      case SymbolType.Property:
+        return `${item.name} [property]`;
+      case SymbolType.Option:
+        return `${item.name} [option]`;
       default:
         return item.name;
     }

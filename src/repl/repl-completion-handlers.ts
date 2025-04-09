@@ -13,7 +13,8 @@ export enum SymbolType {
   Macro = "macro",
   Module = "module",
   Option = "option",
-  Unknown = "unknown"
+  Unknown = "unknown",
+  SyntaxPattern = "syntax_pattern" // Added new type for syntax patterns
 }
 
 /**
@@ -277,6 +278,341 @@ export class PropertyCompletionHandler extends CompletionHandler {
     } catch (err) {
       // Continue if this method fails
     }
+  }
+}
+
+/**
+ * Handles advanced syntax completions for common HQL code patterns
+ * This provides progressive completion for syntax patterns like import statements
+ */
+export class SyntaxCompletionHandler extends CompletionHandler {
+  // Define syntax patterns and their completion steps
+  private syntaxPatterns: Record<string, string[]> = {
+    // Import statement pattern with progressive completions
+    "import": [
+      "(import ",             // First tab completes to basic import opening
+      "(import [",            // Second tab adds opening bracket
+      "(import [] from ",     // Third tab adds closing bracket and from keyword
+      "(import [] from \"\")" // Fourth tab adds quotes and closing paren
+    ],
+    // For example with express import
+    "import express": [
+      "(import express",
+      "(import express from",
+      "(import express from \"npm:express\")"
+    ],
+    // Define statement pattern
+    "def": [
+      "(def ",
+      "(def name value)"
+    ],
+    // Function definition pattern - using proper HQL syntax from examples
+    "defn": [
+      "(defn ",
+      "(defn name (args) ",
+      "(defn name (args) body)"
+    ],
+    // Named function pattern - from examples/fn.hql
+    "fn": [
+      "(fn ",
+      "(fn name (args) ",
+      "(fn name (args) body)"
+    ],
+    // Function with return type annotation
+    "fn->": [
+      "(fn ",
+      "(fn name (args) -> ",
+      "(fn name (args) -> type ",
+      "(fn name (args) -> type body)"
+    ],
+    // Anonymous function pattern
+    "lambda": [
+      "(lambda ",
+      "(lambda (args) ",
+      "(lambda (args) body)"
+    ],
+    // Let binding pattern - using proper HQL syntax
+    "let": [
+      "(let ",
+      "(let [",
+      "(let [name value] ",
+      "(let [name value] body)"
+    ],
+    // If conditional pattern
+    "if": [
+      "(if ",
+      "(if condition ",
+      "(if condition then-expr ",
+      "(if condition then-expr else-expr)"
+    ],
+    // When conditional pattern
+    "when": [
+      "(when ",
+      "(when condition ",
+      "(when condition body)"
+    ],
+    // Unless conditional pattern
+    "unless": [
+      "(unless ",
+      "(unless condition ",
+      "(unless condition body)"
+    ],
+    // Cond pattern - from examples/cond.hql
+    "cond": [
+      "(cond ",
+      "(cond (",
+      "(cond (condition) ",
+      "(cond (condition) result) ",
+      "(cond (condition) result) (else default))"
+    ],
+    // Case pattern
+    "case": [
+      "(case ",
+      "(case value ",
+      "(case value [pattern result] ",
+      "(case value [pattern result] [_ default])"
+    ],
+    // Do statement pattern
+    "do": [
+      "(do ",
+      "(do expr1 ",
+      "(do expr1 expr2)"
+    ],
+    // Threading macro pattern
+    "->": [
+      "(-> ",
+      "(-> initial-value ",
+      "(-> initial-value (operation) ",
+      "(-> initial-value (operation) (next-operation))"
+    ],
+    // Thread-last macro pattern
+    "->>": [
+      "(->> ",
+      "(->> initial-value ",
+      "(->> initial-value (operation) ",
+      "(->> initial-value (operation) (next-operation))"
+    ],
+    // Map function pattern
+    "map": [
+      "(map ",
+      "(map fn ",
+      "(map fn collection)"
+    ],
+    // Filter function pattern
+    "filter": [
+      "(filter ",
+      "(filter pred ",
+      "(filter pred collection)"
+    ],
+    // Reduce function pattern
+    "reduce": [
+      "(reduce ",
+      "(reduce fn ",
+      "(reduce fn init ",
+      "(reduce fn init collection)"
+    ],
+    // For each pattern
+    "for-each": [
+      "(for-each ",
+      "(for-each item ",
+      "(for-each item collection ",
+      "(for-each item collection body)"
+    ],
+    // Try catch pattern
+    "try": [
+      "(try ",
+      "(try expr ",
+      "(try expr (catch e ",
+      "(try expr (catch e error-handling) ",
+      "(try expr (catch e error-handling) (finally cleanup))"
+    ],
+    // Module declaration
+    "module": [
+      "(module ",
+      "(module name ",
+      "(module name body)"
+    ],
+    // Export declaration
+    "export": [
+      "(export ",
+      "(export [",
+      "(export [symbols])"
+    ],
+    // FX function pattern - from examples/fx.hql
+    "fx": [
+      "(fx ",
+      "(fx name (args) ",
+      "(fx name (args) body)"
+    ],
+    // Print pattern
+    "print": [
+      "(print ",
+      "(print \"\")"
+    ],
+    // Console.log pattern
+    "console.log": [
+      "(console.log ",
+      "(console.log \"\")"
+    ]
+  };
+
+  async getCompletions(input: string, cursorPos: number, currentModule: string): Promise<CompletionItem[]> {
+    try {
+      // Get the current word being typed
+      const currentWord = CompletionUtils.getCurrentWordInContext(input, cursorPos);
+      
+      // First check for partial forms that are already being completed
+      // For example, if the user has "(import " and press tab again
+      const partialMatches = this.findPartialMatches(input);
+      if (partialMatches.length > 0) {
+        // Return the next step in the progression
+        return partialMatches.map(match => ({
+          name: match.nextStep,
+          type: SymbolType.SyntaxPattern,
+          context: 'syntax'
+        }));
+      }
+      
+      // If no partial match found and we have a current word, check for exact keyword matches
+      if (currentWord) {
+        const exactMatch = Object.keys(this.syntaxPatterns).find(pattern => 
+          pattern.toLowerCase() === currentWord.toLowerCase()
+        );
+        
+        if (exactMatch) {
+          // Return the first step in the syntax completion sequence
+          return [{
+            name: this.syntaxPatterns[exactMatch][0],
+            type: SymbolType.SyntaxPattern,
+            context: 'syntax'
+          }];
+        }
+        
+        // Check for keywords that could start with the current word
+        const patternMatches = Object.keys(this.syntaxPatterns)
+          .filter(pattern => pattern.toLowerCase().startsWith(currentWord.toLowerCase()));
+        
+        if (patternMatches.length > 0) {
+          // When there are multiple matches, suggest the keywords themselves
+          return patternMatches.map(pattern => ({
+            name: pattern,
+            type: SymbolType.SyntaxPattern,
+            context: 'syntax'
+          }));
+        }
+      }
+      
+      return [];
+    } catch (error) {
+      return [];
+    }
+  }
+  
+  /**
+   * Find partial matches for syntax patterns that are already being typed
+   * and determine the next step in the completion sequence
+   */
+  private findPartialMatches(input: string): { pattern: string, currentStep: string, nextStep: string }[] {
+    const results: { pattern: string, currentStep: string, nextStep: string }[] = [];
+    
+    // Normalize input by removing extra whitespace
+    const normalizedInput = input.trim();
+    
+    // First check for exact matches of current syntax patterns
+    for (const [pattern, steps] of Object.entries(this.syntaxPatterns)) {
+      // Try to find which step we're currently at
+      let matchedStepIndex = -1;
+      
+      for (let i = 0; i < steps.length - 1; i++) {
+        const currentStep = steps[i].trim();
+        
+        // Check for exact match with current step
+        if (normalizedInput === currentStep) {
+          matchedStepIndex = i;
+          break;
+        }
+      }
+      
+      // If we found a match, return the next step in the sequence
+      if (matchedStepIndex >= 0) {
+        const currentStep = steps[matchedStepIndex];
+        const nextStep = steps[matchedStepIndex + 1];
+        
+        results.push({
+          pattern,
+          currentStep,
+          nextStep
+        });
+        
+        // Found an exact match, no need to check other patterns
+        return results;
+      }
+    }
+    
+    // If no exact match, check for partial matches where the input might be a prefix of a step
+    for (const [pattern, steps] of Object.entries(this.syntaxPatterns)) {
+      for (let i = 0; i < steps.length; i++) {
+        const currentStep = steps[i].trim();
+        
+        // Check if normalized input is a prefix of this step
+        if (currentStep.startsWith(normalizedInput) && normalizedInput.length > 1) {
+          // We're in the middle of typing this step, complete to the full step
+          results.push({
+            pattern,
+            currentStep: normalizedInput,
+            nextStep: currentStep
+          });
+          
+          return results;
+        }
+      }
+    }
+    
+    // If we're inside a parenthesized expression
+    if (normalizedInput.startsWith('(')) {
+      const patternKeywords = [
+        'import', 'def', 'defn', 'fn', 'fn->', 'lambda', 'let', 'if', 'when', 'unless',
+        'cond', 'case', 'do', '->', '->>', 'map', 'filter', 'reduce', 'for-each',
+        'try', 'module', 'export', 'fx', 'print', 'console.log'
+      ];
+      
+      // Check if we're in the middle of a form, extract the command
+      const matches = normalizedInput.match(/^\(\s*([a-zA-Z0-9_-]+)/);
+      if (matches && matches[1]) {
+        const command = matches[1].toLowerCase();
+        
+        // If this is a recognized command, try to find the appropriate pattern
+        if (patternKeywords.includes(command)) {
+          // Find the pattern that contains this command
+          for (const [pattern, steps] of Object.entries(this.syntaxPatterns)) {
+            // If pattern contains this command
+            if (pattern.toLowerCase().startsWith(command)) {
+              // Find which step we're at by comparing length
+              for (let i = 0; i < steps.length - 1; i++) {
+                const currentStep = steps[i].trim();
+                
+                // If we found a step that is compatible with our current input
+                if (currentStep.startsWith(normalizedInput) || 
+                    normalizedInput.startsWith(currentStep)) {
+                  
+                  const nextStep = steps[i + 1];
+                  
+                  results.push({
+                    pattern,
+                    currentStep,
+                    nextStep
+                  });
+                  
+                  return results;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    return results;
   }
 }
 

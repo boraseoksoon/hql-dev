@@ -43,7 +43,6 @@ export function printBanner(useColors = false): void {
     `${headerColor}║    ${commandColor}:doc${textColor} - Show documentation for a symbol or module${headerColor}         ║${reset}`,
     `${headerColor}║    ${commandColor}:remove${textColor} - Remove a symbol or module${headerColor}                      ║${reset}`,
     `${headerColor}║    ${commandColor}:clear${textColor} - Clear the screen${headerColor}                                ║${reset}`,
-    `${headerColor}║    ${commandColor}:remove -history${textColor} - Clear command history${headerColor}                 ║${reset}`,
     `${headerColor}║  ${textColor}cli:${headerColor}                                                       ║${reset}`,
     `${headerColor}║    ${cliColor}ls${textColor} - List symbols in current module${headerColor}                        ║${reset}`,
     `${headerColor}║    ${cliColor}cd <module>${textColor} - Switch to a different module${headerColor}                 ║${reset}`,
