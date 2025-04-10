@@ -69,16 +69,27 @@ function write(s: string): void {
   Deno.stdout.writeSync(encoder.encode(s));
 }
 
+function visibleLength(str: string): number {
+  // Remove ANSI escape sequences like "\x1b[...m"
+  return str.replace(/\x1b\[[0-9;]*m/g, '').length;
+}
+
 /** Clears the current line and writes the prompt plus current input. Then positions the cursor. */
 function redrawLine(prompt: string, input: string, cursorPos: number): void {
-  write("\r");            // Return to line start
-  write("\x1b[K");        // Clear line from cursor onward
-  write(prompt + input);  // Write prompt and current input
-  // Position the cursor if not at the end.
+  write("\r");          // Return to line start
+  write("\x1b[K");      // Clear line from cursor onward
+  write(prompt + input);// Write prompt and current input
+
+  // Calculate the actual printed length of the prompt:
+  const promptVisibleLength = visibleLength(prompt);
+
+  // Reposition cursor if needed:
   if (cursorPos < input.length) {
-    write(`\x1b[${prompt.length + cursorPos}G`);
+    const absolutePos = promptVisibleLength + cursorPos + 1;
+    write(`\x1b[${absolutePos}G`); // Move cursor to the correct column
   }
 }
+
 
 /** Extract the current word at the cursor position in the input string. */
 function getCurrentWordAtCursor(input: string, cursorPos: number): string {
@@ -749,10 +760,24 @@ export async function readLineWithArrowKeys(
     // Handle Backspace
     // ----------------------
     if (key === Keys.BACKSPACE || key === Keys.BACKSPACE_ALT) {
+      justPasted = false;
       if (cursorPos > 0) {
+        // Remember where in the line we are
+        const positionFromEnd = input.length - cursorPos;
+        // Remove the character before the cursor
         input = input.substring(0, cursorPos - 1) + input.substring(cursorPos);
+        // Move cursor back one position
         cursorPos--;
-        redrawLine(prompt, input, cursorPos);
+        
+        // For backspace, always do a full redraw to ensure line is correct
+        write("\r");                 // Return to line start
+        write("\x1b[K");             // Clear line from cursor onward
+        write(prompt + input);       // Write prompt and current input
+        
+        // Position cursor at the same relative position
+        if (positionFromEnd > 0) {
+          write(`\x1b[${positionFromEnd}D`); // Move cursor left by the number of characters from the end
+        }
       }
       continue;
     }
