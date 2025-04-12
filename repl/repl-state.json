@@ -1,0 +1,29 @@
+{
+  "version": "1.0.0",
+  "lastModule": "global",
+  "modules": {
+    "global": {
+      "definitions": {
+        "variables": {},
+        "functions": {},
+        "macros": {}
+      },
+      "imports": [],
+      "exports": [],
+      "metadata": {
+        "lastInitialized": "2025-04-13T01:36:29.400Z"
+      }
+    },
+    "hql": {
+      "definitions": {
+        "variables": {},
+        "functions": {},
+        "macros": {}
+      },
+      "imports": [],
+      "exports": [],
+      "metadata": {}
+    }
+  },
+  "history": []
+}

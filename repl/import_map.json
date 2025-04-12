@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "@core/": "../core/src/",
+    "@s-exp/": "../core/src/s-exp/",
+    "@transpiler/": "../core/src/transpiler/",
+    "@logger/": "../core/src/",
+    "@platform/": "../core/src/platform/"
+  }
+} 
