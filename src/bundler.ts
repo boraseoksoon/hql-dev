@@ -11,6 +11,7 @@ import {
   writeTextFile,
 } from "./platform/platform.ts";
 import { Logger } from "./logger.ts";
+import { getLogger } from "./logger-init.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
 import {
   createErrorReport,
@@ -39,7 +40,7 @@ export function transpileCLI(
   options: BundleOptions = {},
 ): Promise<string> {
   return performAsync(async () => {
-    const logger = new Logger(options.verbose);
+    const logger = getLogger({ verbose: options.verbose });
     const startTime = performance.now();
     
     // Skip logging if skipErrorReporting is set
@@ -82,7 +83,7 @@ export function transpileCLI(
 export function checkForHqlImports(source: string, logger: Logger): boolean {
   const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
   const hasHqlImports = hqlImportRegex.test(source);
-  if (hasHqlImports) logger.log(`File contains HQL imports - processing these imports`);
+  if (hasHqlImports) logger.debug(`File contains HQL imports - processing these imports`);
   return hasHqlImports;
 }
 
@@ -321,7 +322,7 @@ async function writeOutput(
     }
     await writeTextFile(outputPath, code);
     logger.debug(`Successfully wrote ${code.length} bytes to: ${outputPath}`);
-    logger.log(`Output written to: ${outputPath}`);
+    logger.info(`Output written to: ${outputPath}`);
     registerTempFile(outputPath);
   } catch (error) {
     throw new TranspilerError(
@@ -338,7 +339,7 @@ function processEntryFile(
   options: BundleOptions = {},
 ): Promise<string> {
   return performAsync(async () => {
-    const logger = new Logger(options.verbose);
+    const logger = getLogger({ verbose: options.verbose });
     const resolvedInputPath = resolve(inputPath);
     logger.debug(`Processing entry file: ${resolvedInputPath}`);
     logger.debug(`Output path: ${outputPath}`);
@@ -373,7 +374,7 @@ async function processHqlEntryFile(
   options: BundleOptions,
   logger: Logger,
 ): Promise<string> {
-  logger.log(`Transpiling HQL entry file: ${resolvedInputPath}`);
+  logger.debug(`Transpiling HQL entry file: ${resolvedInputPath}`);
   const [tempDirResult, source] = await Promise.all([
     createTempDirIfNeeded(options, logger),
     readSourceFile(resolvedInputPath),
@@ -404,7 +405,7 @@ async function processHqlEntryFile(
     // Generate an intermediate TypeScript file that will be used by esbuild
     const tsOutputPath = outputPath.replace(/\.js$/, ".ts");
     await writeOutput(tsCode, tsOutputPath, logger);
-    logger.log(`Entry processed and TypeScript output written to ${tsOutputPath}`);
+    logger.info(`Entry processed and TypeScript output written to ${tsOutputPath}`);
     return tsOutputPath;
   } finally {
     if (tempDirCreated) {
@@ -462,7 +463,7 @@ async function processJsOrTsEntryFile(
 ): Promise<string> {
   try {
     const isTs = isTypeScriptFile(resolvedInputPath);
-    logger.log(`Using ${isTs ? 'TypeScript' : 'JavaScript'} entry file: ${resolvedInputPath}`);
+    logger.debug(`Using ${isTs ? 'TypeScript' : 'JavaScript'} entry file: ${resolvedInputPath}`);
     const source = await Deno.readTextFile(resolvedInputPath);
     logger.debug(`Read ${source.length} bytes from ${resolvedInputPath}`);
     let processedSource = source;
@@ -510,7 +511,7 @@ function bundleWithEsbuild(
   options: BundleOptions = {},
 ): Promise<string> {
   return performAsync(async () => {
-    const logger = new Logger(options.verbose);
+    const logger = getLogger({ verbose: options.verbose });
     logger.debug(`Bundling ${entryPath} to ${outputPath}`);
     logger.debug(`Bundling options: ${JSON.stringify(options, null, 2)}`);
     const tempDirResult = await createTempDirIfNeeded(options, logger);
@@ -529,16 +530,16 @@ function bundleWithEsbuild(
         options,
         [hqlPlugin, externalPlugin],
       );
-      logger.log(`Starting bundling with esbuild for ${entryPath}`);
+      logger.info(`Starting bundling with esbuild for ${entryPath}`);
       const result = await runBuildWithRetry(
         buildOptions,
         MAX_RETRIES,
         logger,
       );
       if (options.minify) {
-        logger.log(`Successfully bundled and minified output to ${outputPath}`);
+        logger.info(`Successfully bundled and minified output to ${outputPath}`);
       } else {
-        logger.log(`Successfully bundled output to ${outputPath}`);
+        logger.info(`Successfully bundled output to ${outputPath}`);
       }
       return outputPath;
     } catch (error) {
@@ -644,7 +645,7 @@ function createHqlPlugin(options: {
   tempDir?: string;
   sourceDir?: string;
 }): any {
-  const logger = new Logger(options.verbose);
+  const logger = getLogger({ verbose: options.verbose });
   const processedHqlFiles = new Set<string>();
   const hqlToJsMap = new Map<string, string>();
   return {

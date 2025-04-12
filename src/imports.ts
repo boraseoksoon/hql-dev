@@ -16,6 +16,7 @@ import { Environment, Value } from "./environment.ts";
 import { defineUserMacro, evaluateForMacro } from "./s-exp/macro.ts";
 import { parse } from "./transpiler/pipeline/parser.ts";
 import { Logger } from "./logger.ts";
+import logger from "./logger.ts";
 import {
   ImportError,
   MacroError,
@@ -30,6 +31,7 @@ import {
   isRemoteUrl,
   registerModulePath,
 } from "./utils/import-utils.ts";
+import { CommonErrorUtils } from "./transpiler/error/common-error-utils.ts";
 
 export interface ImportProcessorOptions {
   verbose?: boolean;
@@ -47,11 +49,11 @@ interface SLiteral {
 }
 
 function createLogger(options: ImportProcessorOptions): Logger {
-  return new Logger(options.verbose || false);
+  return logger;
 }
 
 function formatErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return CommonErrorUtils.formatErrorMessage(error);
 }
 
 function wrapError(
@@ -60,11 +62,12 @@ function wrapError(
   modulePath: string,
   currentFile?: string,
 ): never {
-  throw new ImportError(
-    `${context}: ${formatErrorMessage(error)}`,
+  return CommonErrorUtils.wrapError(
+    context,
+    error,
     modulePath,
     currentFile,
-    error instanceof Error ? error : undefined,
+    ImportError
   );
 }
 
@@ -687,7 +690,7 @@ async function processJsImport(
         jsSource,
         resolvedPath,
         {
-          verbose: logger.enabled,
+          verbose: logger.isVerbose,
         },
         logger,
       );

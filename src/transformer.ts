@@ -1,6 +1,7 @@
 // src/transformer.ts - Prevents duplicate import errors
 
 import { transformToIR } from "./transpiler/pipeline/hql-ast-to-hql-ir.ts";
+import { getLogger } from "./logger-init.ts";
 import { generateTypeScript } from "./transpiler/pipeline/ts-ast-to-ts-code.ts";
 import { expandMacros } from "./s-exp/macro.ts";
 import { Logger } from "./logger.ts";
@@ -38,7 +39,7 @@ export async function transformAST(
   currentDir: string,
   options: TransformOptions = {},
 ): Promise<string> {
-  const logger = new Logger(options.verbose);
+  const logger = getLogger({ verbose: options.verbose });
   const startTime = performance.now();
   let currentPhase = "initialization";
 

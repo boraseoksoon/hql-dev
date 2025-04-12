@@ -1,11 +1,14 @@
 /**
- * Disable console.log output when --quiet is present or in production environment.
- * Production is assumed when ENV === "production".
+ * Common CLI utilities for HQL
+ */
+
+/**
+ * Disable console.log output when --quiet is present.
+ * To be removed in favor of logger-based approach.
  */
 export function setupConsoleLogging(args: string[]): void {
   const quiet = args.includes("--quiet");
-  const isProduction = Deno.env.get("ENV") === "production";
-  if (quiet || isProduction) {
+  if (quiet) {
     console.log = () => {};
   }
 }

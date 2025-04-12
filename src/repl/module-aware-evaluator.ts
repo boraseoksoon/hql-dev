@@ -2,6 +2,7 @@
 // Enhanced REPL evaluator with module awareness and persistence
 
 import { REPLEvaluator, REPLEvalOptions, REPLEvalResult } from "./repl-evaluator.ts";
+import { getLogger } from "./logger-init.ts";
 import { Environment, Value } from "../environment.ts";
 import { Logger } from "../logger.ts";
 import { persistentStateManager } from "./persistent-state-manager.ts";

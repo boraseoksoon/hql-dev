@@ -1,28 +1,32 @@
 import { Logger } from "../logger.ts";
+import { getLogger, isDebugMode } from "../logger-init.ts";
 
-const tempFilesRegistry = new Set<string>();
-const exceptionFilesRegistry = new Set<string>();
+// Create a single logger instance for all functions in this file
+const logger = getLogger({ verbose: isDebugMode() });
+
+// All temp files to track
+const tempFiles: Set<string> = new Set();
+
+// Temp files to not clean up (exceptions, specified by user)
+const exceptionTempFiles: Set<string> = new Set();
 
 export function registerTempFile(path: string): void {
-  const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
-  tempFilesRegistry.add(path);
+  tempFiles.add(path);
   logger.debug(`Registered temporary file >>: ${path}`);
 }
 
 export function registerExceptionTempFile(path: string): void {
-  const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
-  exceptionFilesRegistry.add(path);
+  exceptionTempFiles.add(path);
   logger.debug(`Registered exception temporary file >>: ${path}`);
 }
 
 export async function cleanupAllTempFiles(): Promise<void> {
-  const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
   // Determine only the paths that should be removed
-  const targets = Array.from(tempFilesRegistry).filter(
-    (file) => !exceptionFilesRegistry.has(file),
+  const targets = Array.from(tempFiles).filter(
+    (file) => !exceptionTempFiles.has(file),
   );
 
-  logger.debug("yo removal targets:", targets);
+  logger.debug(`Removal targets: ${targets.join(", ")}`);
   logger.debug(`Cleaning up ${targets.length} registered temporary files`);
 
   const removalPromises = targets.map(async (file) => {
@@ -41,6 +45,6 @@ export async function cleanupAllTempFiles(): Promise<void> {
   await Promise.all(removalPromises);
 
   // Clear the registry after processing
-  tempFilesRegistry.clear();
+  tempFiles.clear();
   logger.debug("Temporary file registry cleared");
 }

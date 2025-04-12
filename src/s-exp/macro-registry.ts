@@ -1,4 +1,5 @@
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import { getLogger, isDebugMode } from "../logger-init.ts";
 import { Logger } from "../logger.ts";
 import { MacroFn } from "../environment.ts";
 import { MacroError } from "../transpiler/error/errors.ts";
@@ -13,8 +14,8 @@ export class MacroRegistry {
   private logger: Logger;
   private persistentExports = new Map<string, Set<string>>();
 
-  constructor(verbose: boolean = false) {
-    this.logger = new Logger(verbose);
+  constructor(verbose = false) {
+    this.logger = getLogger({ verbose });
     this.logger.debug("MacroRegistry initialized");
   }
 

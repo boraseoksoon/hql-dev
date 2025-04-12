@@ -2,6 +2,7 @@
 // Manages REPL command history persistence
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import { getLogger } from "./logger-init.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { Logger } from "../logger.ts";
 
@@ -26,7 +27,7 @@ class HistoryManager {
    * Set verbose logging
    */
   setVerbose(verbose: boolean): void {
-    this.logger = new Logger(verbose);
+    this.logger = getLogger({ verbose: verbose });
   }
 
   /**

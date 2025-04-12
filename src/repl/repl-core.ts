@@ -2,6 +2,7 @@
 // Core REPL functionality and evaluation loop
 
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
+import { getLogger } from "./logger-init.ts";
 import { ReplState, resetReplState, updateParenBalance } from "./repl-state.ts";
 import { Environment } from "../environment.ts";
 import { loadSystemMacros } from "../transpiler/hql-transpiler.ts";
@@ -34,7 +35,7 @@ export interface ReplOptions {
 export async function startRepl(options: ReplOptions = {}): Promise<void> {
   console.log("Starting HQL REPL...");
   
-  const logger = new Logger(options.verbose ?? false);
+  const logger = getLogger({ verbose: options.verbose ?? false });
   const baseDir = options.baseDir ?? Deno.cwd();
   const useColors = options.useColors ?? true;
   const historySize = options.historySize ?? 100;

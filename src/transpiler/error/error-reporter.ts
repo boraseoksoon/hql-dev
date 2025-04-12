@@ -1,6 +1,10 @@
 // src/error-reporter.ts - Unified error reporting for HQL
 import { formatError, getSuggestion } from "./error-handling.ts";
+import { getLogger, isDebugMode } from "../../logger-init.ts";
 import { Logger } from "../../logger.ts";
+
+// Use getLogger instead of creating a new Logger instance
+const logger = getLogger({ verbose: isDebugMode() });
 
 // Print syntax-highlighted box with text
 export function printErrorBox(text: string, title: string = "Error") {
@@ -48,7 +52,7 @@ export function formatErrorForReporting(
     includeStack?: boolean;
   } = {}
 ): void {
-  const logger = new Logger();
+  const logger = getLogger({ verbose:  });
   
   try {
     // Use boxes in verbose mode

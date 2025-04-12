@@ -15,6 +15,7 @@ import { RUNTIME_FUNCTIONS } from "../transpiler/runtime/runtime.ts";
 import { registerSourceFile, withErrorHandling } from "../transpiler/error/error-handling.ts";
 import { report } from "../transpiler/error/errors.ts";
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import logger from "./logger-init.ts";
 
 // Options for REPL evaluation
 export interface REPLEvalOptions {
@@ -72,7 +73,8 @@ export class REPLEvaluator {
   
   constructor(env: Environment, options: REPLEvalOptions = {}) {
     this.replEnv = new REPLEnvironment(env, { verbose: options.verbose });
-    this.logger = new Logger(options.verbose || false);
+    this.logger = logger;
+    this.logger.configure({ verbose: options.verbose || false });
     this.baseDir = options.baseDir || Deno.cwd();
     
     // Initialize runtime functions immediately

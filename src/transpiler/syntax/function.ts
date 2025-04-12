@@ -1,6 +1,7 @@
 // src/transpiler/syntax/function.ts
 
 import * as ts from "npm:typescript";
+import { getLogger, isDebugMode } from "../../logger-init.ts";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, HQLNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
@@ -404,33 +405,52 @@ export function convertFxFunctionDeclaration(
             ts.factory.createBinaryExpression(
               ts.factory.createBinaryExpression(
                 ts.factory.createBinaryExpression(
-                  ts.factory.createPropertyAccessExpression(
-                    ts.factory.createIdentifier("args"),
-                    ts.factory.createIdentifier("length")
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createPropertyAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createIdentifier("length")
+                    ),
+                    ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                    ts.factory.createNumericLiteral("1")
                   ),
-                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                  ts.factory.createNumericLiteral("1")
+                  ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createTypeOfExpression(
+                      ts.factory.createElementAccessExpression(
+                        ts.factory.createIdentifier("args"),
+                        ts.factory.createNumericLiteral("0")
+                      )
+                    ),
+                    ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                    ts.factory.createStringLiteral("object")
+                  )
                 ),
                 ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
                 ts.factory.createBinaryExpression(
-                  ts.factory.createTypeOfExpression(
+                  ts.factory.createElementAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createNumericLiteral("0")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                  ts.factory.createNull()
+                )
+              ),
+              ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+              ts.factory.createPrefixUnaryExpression(
+                ts.SyntaxKind.ExclamationToken,
+                ts.factory.createCallExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("Array"),
+                    ts.factory.createIdentifier("isArray")
+                  ),
+                  undefined,
+                  [
                     ts.factory.createElementAccessExpression(
                       ts.factory.createIdentifier("args"),
                       ts.factory.createNumericLiteral("0")
                     )
-                  ),
-                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                  ts.factory.createStringLiteral("object")
+                  ]
                 )
-              ),
-              ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-              ts.factory.createBinaryExpression(
-                ts.factory.createElementAccessExpression(
-                  ts.factory.createIdentifier("args"),
-                  ts.factory.createNumericLiteral("0")
-                ),
-                ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
-                ts.factory.createNull()
               )
             ),
             ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),

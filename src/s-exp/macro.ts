@@ -15,6 +15,7 @@ import {
   SSymbol,
 } from "./types.ts";
 import { Environment } from "../environment.ts";
+import { getLogger, isDebugMode } from "../logger-init.ts";
 import { Logger } from "../logger.ts";
 import { MacroFn } from "../environment.ts";
 import { MacroError, TransformError } from "../transpiler/error/errors.ts";
@@ -185,7 +186,7 @@ export function expandMacros(
   env: Environment,
   options: MacroExpanderOptions = {},
 ): SExp[] {
-  const logger = new Logger(options.verbose || false);
+  const logger = getLogger({ verbose: options.verbose || false });
   const currentFile = options.currentFile;
   const useCache = options.useCache !== false;
   logger.debug(
@@ -263,7 +264,7 @@ export function isUserLevelMacro(
   symbolName: string,
   currentDir: string,
 ): boolean {
-  const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+  const logger = getLogger({ verbose: Deno.env.get("HQL_DEBUG") === "1" });
 
   return perform(
     () => {
@@ -619,7 +620,7 @@ function expandMacroExpression(
   options: MacroExpanderOptions,
   depth: number,
 ): SExp {
-  const logger = new Logger(options.verbose || false);
+  const logger = getLogger({ verbose: options.verbose || false });
   const maxDepth = options.maxExpandDepth || 100;
   
   if (depth > maxDepth) {

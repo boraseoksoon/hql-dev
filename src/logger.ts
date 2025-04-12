@@ -6,24 +6,47 @@ export interface LogOptions {
   namespace?: string;
 }
 
+/**
+ * Singleton logger implementation with streamlined configuration
+ * Supports two modes:
+ * 1. --verbose: Show all logs regardless of namespace
+ * 2. --log <namespace>: Show logs only for specific namespaces
+ */
 export class Logger {
   /** Static property to hold allowed namespaces from the CLI --log option */
   static allowedNamespaces: string[] = [];
 
   /** Instance property to control logging when no namespace filtering is applied */
-  public enabled: boolean;
+  private _verbose: boolean = false;
+  
+  /** Private constructor to enforce singleton pattern */
+  private constructor() {}
+  
+  /** Singleton instance */
+  private static instance: Logger | null = null;
+  
+  /** Get the singleton instance */
+  public static getInstance(): Logger {
+    if (!Logger.instance) {
+      Logger.instance = new Logger();
+    }
+    return Logger.instance;
+  }
+  
+  /** Configure logger with options */
+  public configure(options: { verbose?: boolean, namespaces?: string[] }): void {
+    if (options.verbose !== undefined) {
+      this._verbose = options.verbose;
+    }
+    
+    if (options.namespaces) {
+      Logger.allowedNamespaces = options.namespaces;
+    }
+  }
   
   /** Property to check if verbose mode is enabled */
   public get isVerbose(): boolean {
-    return this.enabled;
-  }
-
-  /**
-   * Create a new logger
-   * @param enabled Whether logging is enabled (used when --verbose is set)
-   */
-  constructor(enabled = false) {
-    this.enabled = enabled;
+    return this._verbose;
   }
 
   /**
@@ -32,7 +55,7 @@ export class Logger {
    */
   log({ text, namespace }: LogOptions): void {
     // If --verbose is enabled, log everything regardless of namespace
-    if (this.enabled) {
+    if (this._verbose) {
       console.log(namespace ? `[${namespace}] ${text}` : text);
       return;
     }
@@ -70,7 +93,7 @@ export class Logger {
    * Log a debug message if logging is enabled or if namespace is enabled
    */
   debug(message: string, namespace?: string): void {
-    if (this.enabled || this.isNamespaceEnabled(namespace)) {
+    if (this._verbose || this.isNamespaceEnabled(namespace)) {
       const prefix = namespace ? `[${namespace}] ` : '';
       console.log(`${prefix}${message}`);
     }
@@ -80,7 +103,7 @@ export class Logger {
    * Log an info message if logging is enabled or if namespace is enabled
    */
   info(message: string, namespace?: string): void {
-    if (this.enabled || this.isNamespaceEnabled(namespace)) {
+    if (this._verbose || this.isNamespaceEnabled(namespace)) {
       const prefix = namespace ? `[${namespace}] ` : '';
       console.log(`${prefix}${message}`);
     }
@@ -104,15 +127,8 @@ export class Logger {
     const prefix = namespace ? `[${namespace}] ` : '';
     console.error(`❌ ${prefix}${message}${errorDetails}`);
   }
-
-  /**
-   * Enable or disable logging
-   */
-  setEnabled(enabled: boolean): void {
-    this.enabled = enabled;
-  }
 }
 
 // Singleton instance for shared logging across modules
-const globalLogger = new Logger();
-export default globalLogger;
+const logger = Logger.getInstance();
+export default logger;

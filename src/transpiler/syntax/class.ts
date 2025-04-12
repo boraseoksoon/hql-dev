@@ -2,6 +2,7 @@
 // Module for handling class declarations and related operations
 
 import * as ts from "npm:typescript";
+import { getLogger, isDebugMode } from "../../logger-init.ts";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
@@ -11,7 +12,8 @@ import { perform } from "../error/error-utils.ts";
 import { execute,  } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { convertIRNode, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
 
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+// Use getLogger instead of creating a new Logger instance
+const logger = getLogger({ verbose: isDebugMode() });
 
 export function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
   return execute(node, "call expression", () => {

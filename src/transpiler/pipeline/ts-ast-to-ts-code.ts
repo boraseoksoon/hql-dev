@@ -1,5 +1,6 @@
 // src/transpiler/ts-ast-to-ts-code.ts - Refactored with perform and performAsync utilities
 import * as ts from "npm:typescript";
+import { getLogger } from "../../logger-init.ts";
 import * as IR from "../type/hql_ir.ts";
 import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { CodeGenError, createErrorReport } from "../error/errors.ts";

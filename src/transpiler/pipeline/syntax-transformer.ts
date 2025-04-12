@@ -12,6 +12,7 @@ import {
   SSymbol,
 } from "../../s-exp/types.ts";
 import { Logger } from "../../logger.ts";
+import { getLogger } from "../../logger-init.ts";
 import { TransformError } from "../../transpiler/error/errors.ts";
 import { perform } from "../../transpiler/error/error-utils.ts";
 
@@ -29,7 +30,7 @@ export function transformSyntax(
   ast: SExp[],
   options: TransformOptions = {},
 ): SExp[] {
-  const logger = new Logger(options.verbose || false);
+  const logger = getLogger({ verbose: options.verbose || false });
   logger.debug(`Starting syntax transformation on ${ast.length} expressions`);
 
   // First pass: collect all enum definitions

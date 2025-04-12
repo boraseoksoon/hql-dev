@@ -1,4 +1,5 @@
 import { SExp } from "./s-exp/types.ts";
+import { getLogger } from "./logger-init.ts";
 import { Logger } from "./logger.ts";
 import { MacroRegistry } from "./s-exp/macro-registry.ts";
 import {
@@ -48,7 +49,7 @@ export class Environment {
     options: { verbose?: boolean } = {},
   ): Promise<Environment> {
     return new Promise((resolve) => {
-      const logger = new Logger(options.verbose);
+      const logger = getLogger({ verbose: options.verbose });
       logger.debug("Starting global environment initialization");
       if (Environment.globalEnv) {
         logger.debug("Reusing existing global environment");
@@ -78,10 +79,10 @@ export class Environment {
 
   constructor(parent: Environment | null = null, logger?: Logger) {
     this.parent = parent;
-    this.logger = logger || new Logger(false);
+    this.logger = logger || getLogger();
     this.macroRegistry = parent
       ? parent.macroRegistry
-      : new MacroRegistry(this.logger.enabled);
+      : new MacroRegistry(this.logger.isVerbose);
   }
 
   initializeBuiltins(): void {
@@ -257,7 +258,7 @@ export class Environment {
   }
 
   private getPropertyFromPath(obj: unknown, path: string): Value {
-    if (!path) return obj;
+    if (!path) return obj as Value;
     if (obj === null || obj === undefined) {
       throw new ValidationError(
         `Cannot access property '${path}' of ${obj === null ? "null" : "undefined"}`,

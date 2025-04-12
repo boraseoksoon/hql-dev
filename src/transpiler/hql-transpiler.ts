@@ -1,5 +1,6 @@
 // src/transpiler/hql-transpiler.ts - Refactored
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import { getLogger } from "../logger-init.ts";
 import { sexpToString } from "../s-exp/types.ts";
 import { parse } from "./pipeline/parser.ts";
 import { Environment } from "../environment.ts";
@@ -43,7 +44,7 @@ export async function processHql(
   source: string,
   options: ProcessOptions = {},
 ): Promise<string> {
-  const logger = new Logger(options.verbose || false);
+  const logger = getLogger({ verbose: options.verbose || false });
   logger.debug("Processing HQL source with S-expression layer");
 
   const timings = new Map<string, number>();
@@ -230,7 +231,7 @@ function handleProcessError(
 }
 
 export async function loadSystemMacros(env: Environment, options: ProcessOptions): Promise<void> {
-  const logger = new Logger(options.verbose || false);
+  const logger = getLogger({ verbose: options.verbose || false });
   if (systemMacrosLoaded) {
     logger.debug("System macros already loaded, skipping");
     return;
@@ -270,7 +271,7 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
 }
 
 async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
-  const logger = new Logger(options.verbose);
+  const logger = getLogger({ verbose: options.verbose });
   if (globalEnv) {
     logger.debug("Reusing existing global environment");
     return globalEnv;

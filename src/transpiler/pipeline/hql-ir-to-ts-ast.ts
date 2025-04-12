@@ -1,4 +1,5 @@
 import * as ts from "npm:typescript";
+import { getLogger } from "../../logger-init.ts";
 import * as IR from "../type/hql_ir.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { CodeGenError } from "../error/errors.ts";

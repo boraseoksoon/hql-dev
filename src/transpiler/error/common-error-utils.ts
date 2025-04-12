@@ -1,26 +1,27 @@
-import { 
-  TranspilerError, 
-  ParseError, 
-  ValidationError, 
-  MacroError, 
-  ImportError, 
-  CodeGenError, 
-  TransformError,
-  summarizeNode,
-  createErrorReport,
-  report, 
-  parseError
-} from "./errors.ts";
-import { Logger } from "../../logger.ts";
-import { getLogger, isDebugMode } from "../../logger-init.ts";
+/**
+ * Common error utilities module - the single source of truth for error handling across the codebase
+ * Consolidates functionality from:
+ * - error-handling.ts
+ * - error-utils.ts
+ * - imports.ts wrapError functions
+ */
 
-// Initialize logger with debug mode
-const logger = getLogger({ verbose: isDebugMode() });
+import {
+  TranspilerError,
+  ParseError,
+  ValidationError,
+  MacroError,
+  ImportError,
+  CodeGenError,
+  TransformError,
+  report,
+  parseError,
+} from "./errors.ts";
+import logger from "../../logger.ts";
 
 // Store source files for error context
 const sourceRegistry = new Map<string, string>();
-
-// Add a new property to track processed errors with debug info
+// Track processed errors to avoid duplicates
 const processedErrors = new WeakMap<Error, string>();
 
 /**
@@ -38,6 +39,108 @@ export function getSourceFile(filePath: string): string | undefined {
 }
 
 /**
+ * Format an error message consistently
+ */
+export function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Wrap an error with context - for synchronous operations
+ */
+export function wrapError<T extends Error = Error>(
+  context: string,
+  error: unknown,
+  filePath?: string,
+  currentFile?: string,
+  ErrorConstructor?: new (message: string, ...args: any[]) => T,
+  ...errorArgs: any[]
+): never {
+  const errorMsg = `${context}: ${formatErrorMessage(error)}`;
+  
+  if (ErrorConstructor) {
+    throw new ErrorConstructor(errorMsg, ...errorArgs);
+  } else if (error instanceof TranspilerError) {
+    throw error; // Don't wrap an already wrapped error
+  } else if (filePath) {
+    // Use ImportError as default if we have a file path
+    throw new ImportError(
+      errorMsg,
+      filePath,
+      currentFile,
+      error instanceof Error ? error : undefined
+    );
+  } else {
+    // Use generic TranspilerError if no specialized error provided
+    throw new TranspilerError(errorMsg);
+  }
+}
+
+/**
+ * Helper function to handle synchronous operations with consistent error handling
+ */
+export function perform<T>(
+  fn: () => T,
+  context?: string,
+  errorType?: new (message: string, ...args: any[]) => TranspilerError,
+  errorArgs?: any[],
+): T {
+  try {
+    return fn();
+  } catch (error) {
+    // If error is already of the expected type, re-throw it
+    if (errorType && error instanceof errorType) {
+      throw error;
+    }
+
+    // Prepare the message with context
+    const msg = context
+      ? `${context}: ${formatErrorMessage(error)}`
+      : formatErrorMessage(error);
+
+    // If an error type is specified, create a new error of that type
+    if (errorType) {
+      throw new errorType(msg, ...(errorArgs || []));
+    }
+
+    // Otherwise, use a generic TranspilerError
+    throw new TranspilerError(msg);
+  }
+}
+
+/**
+ * Helper function to handle asynchronous operations with consistent error handling
+ */
+export async function performAsync<T>(
+  fn: () => Promise<T>,
+  context?: string,
+  errorType?: new (message: string, ...args: any[]) => TranspilerError,
+  errorArgs?: any[],
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    // If error is already of the expected type, re-throw it
+    if (errorType && error instanceof errorType) {
+      throw error;
+    }
+
+    // Prepare the message with context
+    const msg = context
+      ? `${context}: ${formatErrorMessage(error)}`
+      : formatErrorMessage(error);
+
+    // If an error type is specified, create a new error of that type
+    if (errorType) {
+      throw new errorType(msg, ...(errorArgs || []));
+    }
+
+    // Otherwise, use a generic TranspilerError
+    throw new TranspilerError(msg);
+  }
+}
+
+/**
  * Format an error with enhanced context and suggestions
  */
 export function formatError(
@@ -49,11 +152,6 @@ export function formatError(
     makePathsClickable?: boolean;
   } = {}
 ): string {
-  // First translate TypeScript errors if applicable
-  if (error.message.includes("TS")) {
-    error = translateTypeScriptError(error);
-  }
-  
   // Get source from registry if filePath is provided
   const source = options.filePath ? sourceRegistry.get(options.filePath) : undefined;
   
@@ -136,18 +234,6 @@ export function formatError(
       // Add line after for context
       if (lineNum < lines.length) {
         result += `${c.gray(`${lineNum+1} │ ${lines[lineNum]}`)}\n`;
-      }
-    } else {
-      // If no line number is available, show the first few lines
-      const lines = source.split('\n');
-      const maxLines = Math.min(5, lines.length);
-      
-      result += '\n\n';
-      for (let i = 0; i < maxLines; i++) {
-        result += c.gray(`${i + 1} │ ${lines[i]}`) + '\n';
-      }
-      if (lines.length > maxLines) {
-        result += c.gray(`... (${lines.length - maxLines} more lines)`) + '\n';
       }
     }
   }
@@ -255,7 +341,6 @@ export function withErrorHandling<T, Args extends any[]>(
         // Mark this error as processed with context
         const errorId = `${error.message} in ${options.context || 'unknown context'}`;
         processedErrors.set(error, errorId);
-        console.debug(`[Debug] Processing error first time: ${errorId}`);
         
         // Enhance the error with context information
         const enhancedErr = report(error, {
@@ -293,201 +378,167 @@ export function withErrorHandling<T, Args extends any[]>(
 }
 
 /**
- * Setup error handling for the entire pipeline
- * This function should be called once during initialization
+ * Print syntax-highlighted box with text
  */
-export function setupErrorHandling(): void {
-  // Register global error handlers using Deno API
-  // instead of Node.js process.on("uncaughtException")
-  globalThis.addEventListener("error", (event) => {
-    const error = event.error;
-    logger.error(formatError(error, { useColors: true, includeStack: true }));
-    
-    // Add suggestion
-    logger.info(`Suggestion: ${getSuggestion(error)}`);
-    
-    // Note: Deno will exit automatically after an uncaught exception
-    // so we don't need to call Deno.exit() here
-  });
+export function printErrorBox(text: string, title: string = "Error") {
+  const lines = text.split("\n");
+  const width = Math.max(...lines.map(line => line.length), title.length + 4);
   
-  // Handle unhandled promise rejections
-  globalThis.addEventListener("unhandledrejection", (event) => {
-    const error = event.reason instanceof Error 
-      ? event.reason 
-      : new Error(String(event.reason));
-    
-    logger.error(formatError(error, { useColors: true, includeStack: true }));
-    logger.info(`Suggestion: ${getSuggestion(error)}`);
-  });
+  // Create box
+  console.log(`\x1b[31m┌${"─".repeat(width + 2)}┐\x1b[0m`);
+  console.log(`\x1b[31m│\x1b[0m \x1b[1m\x1b[31m${title.padEnd(width)}\x1b[0m \x1b[31m│\x1b[0m`);
+  console.log(`\x1b[31m├${"─".repeat(width + 2)}┤\x1b[0m`);
   
-  logger.debug("Global error handling has been set up");
-}
-
-/**
- * Create an error handler for a specific transpiler stage
- */
-export function createStageErrorHandler(stageName: string): Function {
-  return (error: Error, context: Record<string, unknown> = {}): void => {
-    const errorReport = createErrorReport(error, stageName, context);
-    logger.error(errorReport);
-    
-    // Add suggestion
-    logger.info(`Suggestion: ${getSuggestion(error)}`);
-    
-    throw error;
-  };
-}
-
-// TypeScript error codes and their user-friendly descriptions
-const TS_ERROR_MESSAGES: Record<string, string> = {
-  "2304": "Cannot find name '{0}'. Did you forget to define this variable or import it?",
-  "2339": "Property '{0}' does not exist on type '{1}'. Check your spelling or make sure the object has this property.",
-  "2345": "Argument of type '{0}' is not assignable to parameter of type '{1}'. The types are incompatible.",
-  "2322": "Type '{0}' is not assignable to type '{1}'. Check that your values match the expected types.",
-  "2695": "Cannot extend interface '{0}'. Did you mean 'implements'?",
-  "2554": "Expected {0} arguments, but got {1}. Check your function call.",
-  "2531": "Object is possibly 'null'. Add a null check before using this value.",
-  "2532": "Object is possibly 'undefined'. Add an undefined check before using this value.",
-  "2349": "This expression is not callable. Type '{0}' has no call signatures.",
-  "2551": "Property '{0}' does not exist on type '{1}'. Did you mean '{2}'?",
-  "2365": "Operator '{0}' cannot be applied to types '{1}' and '{2}'.",
-  "2366": "Function lacks ending return statement and return type does not include 'undefined'.",
-  "2571": "Object is of type 'unknown'. Did you forget to cast it to a specific type?",
-  "2448": "Block-scoped variable '{0}' used before its declaration.",
-  "2451": "Cannot redeclare block-scoped variable '{0}'.",
-  "2454": "Variable '{0}' is used before being assigned.",
-  "7009": "'{0}' is declared but its value is never read.",
-  "7005": "Variable '{0}' implicitly has an '{1}' type.",
-  "7015": "Element implicitly has an 'any' type because index expression is not of type 'number'.",
-  "7053": "Element implicitly has an 'any' type because expression of type '{0}' can't be used to index type '{1}'."
-};
-
-// Pattern to match TypeScript diagnostic formats
-const TS_ERROR_REGEX = /TS(\d+):\s*(.*?)(?:\s*\|\s*'(.*?)'\s*)?$/;
-
-/**
- * Extract parameters from TypeScript error messages
- */
-function extractTsErrorParams(message: string): string[] {
-  const params: string[] = [];
-  const paramRegex = /'([^']+)'/g;
-  let match: RegExpExecArray | null;
-  
-  while ((match = paramRegex.exec(message)) !== null) {
-    params.push(match[1]);
+  for (const line of lines) {
+    console.log(`\x1b[31m│\x1b[0m ${line.padEnd(width)} \x1b[31m│\x1b[0m`);
   }
   
-  return params;
+  console.log(`\x1b[31m└${"─".repeat(width + 2)}┘\x1b[0m`);
 }
 
 /**
- * Format a message template with parameters
+ * Print syntax-highlighted box with suggestion
  */
-function formatMessage(template: string, params: string[]): string {
-  return template.replace(/\{(\d+)\}/g, (_, index) => {
-    const paramIndex = parseInt(index, 10);
-    return paramIndex < params.length ? params[paramIndex] : `{${index}}`;
-  });
+export function printSuggestionBox(text: string) {
+  const lines = text.split("\n");
+  const width = Math.max(...lines.map(line => line.length), "Suggestion".length + 4);
+  
+  // Create box
+  console.log(`\x1b[36m┌${"─".repeat(width + 2)}┐\x1b[0m`);
+  console.log(`\x1b[36m│\x1b[0m \x1b[1m\x1b[36mSuggestion\x1b[0m${" ".repeat(width - 10)} \x1b[36m│\x1b[0m`);
+  console.log(`\x1b[36m├${"─".repeat(width + 2)}┤\x1b[0m`);
+  
+  for (const line of lines) {
+    console.log(`\x1b[36m│\x1b[0m ${line.padEnd(width)} \x1b[36m│\x1b[0m`);
+  }
+  
+  console.log(`\x1b[36m└${"─".repeat(width + 2)}┘\x1b[0m`);
 }
 
 /**
- * Translate TypeScript errors to more user-friendly messages
+ * Format an error for reporting with enhanced info
  */
-export function translateTypeScriptError(error: Error): Error {
+export function formatErrorForReporting(
+  error: Error,
+  options: {
+    filePath?: string;
+    verbose?: boolean;
+    useClickablePaths?: boolean;
+    includeStack?: boolean;
+  } = {}
+): void {
   try {
-    const match = error.message.match(TS_ERROR_REGEX);
-    if (!match) return error;
+    // Use boxes in verbose mode
+    const useBoxes = options.verbose === true;
     
-    const [, errorCode, errorMessage] = match;
+    // Check if this is a JS error from our transpiled code
+    const isTranspiledFileError = options.filePath?.includes('/T/hql_run_') || 
+                               options.filePath?.includes('\\T\\hql_run_') ||
+                               options.filePath?.endsWith('.js');
     
-    // If we have a translation for this error code
-    if (errorCode && TS_ERROR_MESSAGES[errorCode]) {
-      const params = extractTsErrorParams(errorMessage);
-      const translatedMessage = formatMessage(TS_ERROR_MESSAGES[errorCode], params);
-      
-      // Create a new error with the translated message
-      const translatedError = new Error(`${translatedMessage} (TS${errorCode})`);
-      translatedError.stack = error.stack;
-      
-      return translatedError;
+    // If it's a transpiled file error, try to get the original source
+    let originalFilePath = options.filePath;
+    if (isTranspiledFileError && error.message.includes('is not defined')) {
+      // Extract the original file path from the temporary path
+      const parts = options.filePath?.split('/');
+      const filename = parts?.[parts.length - 1]?.replace('.run.js', '.hql');
+      if (filename) {
+        // Try to locate the original file
+        try {
+          const cwd = Deno.cwd();
+          const possiblePaths = [
+            `${cwd}/examples/${filename}`,
+            `${cwd}/src/${filename}`,
+            `${cwd}/${filename}`
+          ];
+          
+          for (const path of possiblePaths) {
+            try {
+              Deno.statSync(path);
+              originalFilePath = path;
+              break;
+            } catch {
+              // File not found at this path, try next one
+            }
+          }
+        } catch {
+          // Keep using the original path if we can't find a better one
+        }
+      }
     }
     
-    return error;
-  } catch (e: unknown) {
-    // If anything goes wrong, return the original error
-    if (e instanceof Error) {
-      logger.debug(`Error translating TypeScript error: ${e.message}`);
+    // Enhanced error formatting
+    const formattedError = formatError(error, {
+      filePath: originalFilePath,
+      useColors: true,
+      includeStack: options.includeStack || false,
+      makePathsClickable: options.useClickablePaths
+    });
+    
+    // Generate suggestion
+    const suggestion = getSuggestion(error);
+    
+    // Format output based on verbose mode
+    if (useBoxes) {
+      printErrorBox(formattedError, "HQL Error");
+      if (suggestion) {
+        printSuggestionBox(suggestion);
+      }
     } else {
-      logger.debug(`Error translating TypeScript error: ${String(e)}`);
+      // Simple output without boxes
+      console.error(`\x1b[31m${formattedError}\x1b[0m`);
+      if (suggestion) {
+        console.error(`\x1b[36mSuggestion: ${suggestion}\x1b[0m`);
+      }
     }
-    return error;
+  } catch (e) {
+    // If formatting fails, just output the original error
+    logger.error(`Error formatting error: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`Original error: ${error.message}`);
   }
 }
 
 /**
- * Apply TypeScript error translation to a function
+ * Handle errors with standard formatting
  */
-export function withTypeScriptErrorTranslation<T, Args extends any[]>(
-  fn: (...args: Args) => Promise<T> | T
-): (...args: Args) => Promise<T> {
-  return async (...args: Args): Promise<T> => {
-    try {
-      return await fn(...args);
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("TS")) {
-        throw translateTypeScriptError(error);
-      }
-      throw error;
-    }
-  };
-}
-
-/**
- * Enhance TypeScript generate function with better error messages
- */
-export function enhanceTypeScriptGeneration(
-  generateFunction: Function, 
-  sourceFilePath?: string, 
-  sourceContent?: string
-): Function {
-  return async (...args: any[]) => {
-    try {
-      return await generateFunction(...args);
-    } catch (err: unknown) {
-      // First translate the error
-      const error = err instanceof Error ? err : new Error(String(err));
-      const translatedError = translateTypeScriptError(error);
-      
-      // Then enhance it with source context if available
-      if (sourceFilePath && sourceContent) {
-        return report(translatedError, {
-          filePath: sourceFilePath,
-          source: sourceContent
-        });
-      }
-      
-      return translatedError;
-    }
-  };
+export function reportError(
+  error: unknown,
+  options: {
+    filePath?: string;
+    verbose?: boolean;
+    useClickablePaths?: boolean;
+    includeStack?: boolean;
+  } = {}
+): void {
+  if (error instanceof Error) {
+    formatErrorForReporting(error, options);
+  } else {
+    console.error(`\x1b[31mUnknown error: ${String(error)}\x1b[0m`);
+  }
 }
 
 /**
  * Collection of error utilities for easier importing
  */
-export const ErrorUtils = {
+export const CommonErrorUtils = {
   report,
   parseError,
-  translateTypeScriptError,
-  withTypeScriptErrorTranslation,
+  formatErrorMessage,
+  wrapError,
+  perform,
+  performAsync,
   withErrorHandling,
   formatError,
   getSuggestion,
   registerSourceFile,
   getSourceFile,
-  createStageErrorHandler
+  printErrorBox,
+  printSuggestionBox,
+  formatErrorForReporting,
+  reportError
 };
 
-// Export everything from errors.ts for convenience
+// Re-export everything from errors.ts for convenience
 export {
   TranspilerError,
   ParseError,

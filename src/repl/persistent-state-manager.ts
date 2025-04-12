@@ -2,6 +2,7 @@
 // Manages persistent state for the REPL across sessions
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import { getLogger } from "./logger-init.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { ensureDir } from "https://deno.land/std@0.224.0/fs/ensure_dir.ts";
 import { Logger } from "../logger.ts";
@@ -51,7 +52,7 @@ export class PersistentStateManager {
   private changed = false;
   
   constructor(options: { verbose?: boolean } = {}) {
-    this.logger = new Logger(options.verbose ?? false);
+    this.logger = getLogger({ verbose: options.verbose ?? false });
     
     // Initialize state directory
     try {
