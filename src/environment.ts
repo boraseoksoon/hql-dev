@@ -6,7 +6,8 @@ import {
   MacroError,
   TranspilerError,
   ValidationError,
-} from "./transpiler/error/errors.ts";
+  CommonErrorUtils
+} from "./transpiler/error/common-error-utils.ts";
 import { LRUCache } from "./utils/lru-cache.ts";
 
 export type Value =
@@ -49,13 +50,7 @@ export class Environment {
     options: { verbose?: boolean } = {},
   ): Promise<Environment> {
     return new Promise((resolve) => {
-      const logger = getLogger({ verbose: options.verbose });
-      logger.debug("Starting global environment initialization");
-      if (Environment.globalEnv) {
-        logger.debug("Reusing existing global environment");
-        resolve(Environment.globalEnv);
-        return;
-      }
+      const logger = getLogger(options);
       try {
         const env = new Environment(null, logger);
         env.initializeBuiltins();
@@ -63,10 +58,9 @@ export class Environment {
         Environment.globalEnv = env;
         resolve(env);
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.error(`Failed to initialize global environment: ${msg}`);
+        logger.error(`Failed to initialize global environment: ${CommonErrorUtils.formatErrorMessage(error)}`);
         if (!(error instanceof TranspilerError)) {
-          throw new TranspilerError(`Global environment initialization failed: ${msg}`);
+          throw new TranspilerError(`Global environment initialization failed: ${CommonErrorUtils.formatErrorMessage(error)}`);
         }
         throw error;
       }
@@ -156,9 +150,8 @@ export class Environment {
       });
       this.logger.debug("Built-in functions initialized successfully");
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to initialize built-in functions: ${msg}`);
-      throw new ValidationError(`Failed to initialize built-in functions: ${msg}`, "environment");
+      this.logger.error(`Failed to initialize built-in functions: ${CommonErrorUtils.formatErrorMessage(error)}`);
+      throw new ValidationError(`Failed to initialize built-in functions: ${CommonErrorUtils.formatErrorMessage(error)}`, "environment");
     }
   }
 
@@ -171,8 +164,7 @@ export class Environment {
         Object.defineProperty(value, "isDefFunction", { value: true });
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new ValidationError(`Failed to define symbol ${key}: ${msg}`, "environment");
+      throw new ValidationError(`Failed to define symbol ${key}: ${CommonErrorUtils.formatErrorMessage(error)}`, "environment");
     }
   }
 
@@ -214,9 +206,8 @@ export class Environment {
         "undefined symbol",
       );
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
       if (error instanceof ValidationError) throw error;
-      throw new ValidationError(`Error looking up symbol ${key}: ${msg}`, "variable lookup");
+      throw new ValidationError(`Error looking up symbol ${key}: ${CommonErrorUtils.formatErrorMessage(error)}`, "variable lookup");
     }
   }
 
@@ -252,75 +243,62 @@ export class Environment {
         }
         throw error;
       }
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new ValidationError(`Error accessing ${key}: ${msg}`, "dot notation lookup");
+      throw new ValidationError(`Error accessing ${key}: ${CommonErrorUtils.formatErrorMessage(error)}`, "dot notation lookup");
     }
   }
 
   private getPropertyFromPath(obj: unknown, path: string): Value {
-    if (!path) return obj as Value;
-    if (obj === null || obj === undefined) {
-      throw new ValidationError(
-        `Cannot access property '${path}' of ${obj === null ? "null" : "undefined"}`,
-        "property access",
-        "object",
-        obj === null ? "null" : "undefined",
-      );
-    }
-    const parts = path.split(".");
-    let current: unknown = obj;
-    for (const part of parts) {
-      if (current === null || current === undefined || typeof current !== "object") {
+    try {
+      if (obj === null || obj === undefined) {
         throw new ValidationError(
-          `Cannot access property '${part}' of ${typeof current}`,
-          "property path access",
+          `Cannot access property '${path}' on ${obj === null ? "null" : "undefined"}`,
+          "property access",
           "object",
-          typeof current,
+          obj === null ? "null" : "undefined",
         );
       }
-      const c = current as Record<string, unknown>;
-      if (part in c) {
-        current = c[part];
-        continue;
+      const parts = path.split(".");
+      let current: unknown = obj;
+      for (const part of parts) {
+        if (current === null || current === undefined) {
+          throw new ValidationError(
+            `Cannot access property '${part}' on ${current === null ? "null" : "undefined"}`,
+            "property access",
+            "object",
+            current === null ? "null" : "undefined",
+          );
+        }
+        if (typeof current !== "object" && typeof current !== "function") {
+          throw new ValidationError(
+            `Cannot access property '${part}' on non-object type: ${typeof current}`,
+            "property access",
+            "object",
+            typeof current,
+          );
+        }
+        current = (current as Record<string, unknown>)[part];
       }
-      const sanitizedPart = part.replace(/-/g, "_");
-      if (sanitizedPart !== part && sanitizedPart in c) {
-        current = c[sanitizedPart];
-        continue;
-      }
-      throw new ValidationError(
-        `Property '${part}' not found in path: ${path}`,
-        "property path access",
-        "defined property",
-        "undefined property",
-      );
+      return current as Value;
+    } catch (error) {
+      if (error instanceof ValidationError) throw error;
+      throw new ValidationError(`Error accessing property '${path}': ${CommonErrorUtils.formatErrorMessage(error)}`, "property access");
     }
-    return current as Value;
   }
 
   importModule(moduleName: string, exports: Record<string, Value>): void {
     try {
-      this.logger.debug(`Importing module: ${moduleName}`);
-      const moduleObj: Record<string, Value> = { ...exports };
-      this.define(moduleName, moduleObj);
+      this.logger.debug(`Importing module: ${moduleName} with ${Object.keys(exports).length} exports`);
       this.moduleExports.set(moduleName, exports);
-      for (const [exportName, exportValue] of Object.entries(exports)) {
-        if (typeof exportValue === "function") {
-          if ("isMacro" in exportValue) {
-            this.macros.set(`${moduleName}.${exportName}`, exportValue as MacroFn);
-            if (moduleName === "core" || moduleName === "lib/core") {
-              this.defineMacro(exportName, exportValue as MacroFn);
-            }
-          } else if ("isDefFunction" in exportValue) {
-            this.define(`${moduleName}.${exportName}`, exportValue);
-          }
+      // Add individual exports to the current scope for easier access
+      for (const [key, value] of Object.entries(exports)) {
+        const fullName = `${moduleName}.${key}`;
+        // Don't override existing variables
+        if (!this.variables.has(fullName)) {
+          this.define(fullName, value);
         }
       }
-      this.logger.debug(`Module ${moduleName} imported with exports`);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (error instanceof ValidationError || error instanceof MacroError) throw error;
-      throw new ValidationError(`Failed to import module ${moduleName}: ${msg}`, "module import");
+      throw new ValidationError(`Failed to import module '${moduleName}': ${CommonErrorUtils.formatErrorMessage(error)}`, "module import");
     }
   }
 
@@ -335,7 +313,7 @@ export class Environment {
     } catch (error) {
       this.logger.warn(
         `Could not tag macro function ${name}: ${
-          error instanceof Error ? error.message : String(error)
+          CommonErrorUtils.formatErrorMessage(error)
         }`,
       );
     }
@@ -352,7 +330,7 @@ export class Environment {
         this.macros.set(sanitizedKey, macro);
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = CommonErrorUtils.formatErrorMessage(error);
       throw new MacroError(`Failed to define macro ${key}: ${msg}`, key, this.currentFilePath || undefined);
     }
   }
@@ -367,7 +345,7 @@ export class Environment {
       }
       this.moduleMacros.get(filePath)!.set(macroName, macroFn);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = CommonErrorUtils.formatErrorMessage(error);
       throw new MacroError(`Failed to define module macro ${macroName}: ${msg}`, macroName, filePath);
     }
   }
@@ -380,7 +358,7 @@ export class Environment {
       }
       this.exportedMacros.get(filePath)!.add(macroName);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = CommonErrorUtils.formatErrorMessage(error);
       throw new MacroError(`Failed to export macro ${macroName}: ${msg}`, macroName, filePath);
     }
   }
@@ -403,7 +381,7 @@ export class Environment {
       }
       return success;
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = CommonErrorUtils.formatErrorMessage(error);
       throw new MacroError(`Failed to import macro ${macroName}: ${msg}`, macroName, sourceFile);
     }
   }
@@ -449,7 +427,7 @@ export class Environment {
     } catch (error) {
       this.logger.warn(
         `Error setting current file: ${
-          error instanceof Error ? error.message : String(error)
+          CommonErrorUtils.formatErrorMessage(error)
         }`,
       );
     }

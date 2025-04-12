@@ -14,7 +14,7 @@ import {
 import { Logger } from "../../logger.ts";
 import { getLogger } from "../../logger-init.ts";
 import { TransformError } from "../../transpiler/error/errors.ts";
-import { perform } from "../../transpiler/error/error-utils.ts";
+import { perform } from "../../transpiler/error/common-error-utils.ts";
 
 /**
  * Options for syntax transformation

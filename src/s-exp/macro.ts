@@ -21,7 +21,7 @@ import { MacroFn } from "../environment.ts";
 import { MacroError, TransformError } from "../transpiler/error/errors.ts";
 import { gensym } from "../gensym.ts";
 import { LRUCache } from "../utils/lru-cache.ts";
-import { perform } from "../transpiler/error/error-utils.ts";
+import { perform } from "../transpiler/error/common-error-utils.ts";
 
 // Constants and caches
 const MAX_EXPANSION_ITERATIONS = 100;
@@ -152,7 +152,7 @@ function registerMacroDefinition(
       : "unknown";
     throw new MacroError(
       `Failed to define ${macroType === "global" ? "macro" : "user macro"}: ${
-        error instanceof Error ? error.message : String(error)
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
       macroName,
       filePath,
@@ -393,7 +393,7 @@ function evaluateList(expr: SList, env: Environment, logger: Logger): SExp {
     } catch (error) {
       throw new MacroError(
         `Error evaluating function call '${op}': ${
-          error instanceof Error ? error.message : String(error)
+          CommonErrorUtils.formatErrorMessage(error)
         }`,
         op,
       );
@@ -844,7 +844,7 @@ function applyHygiene(expr: SExp, macroName: string, logger: Logger): SExp {
   try {
     return processExpr(expr);
   } catch (error) {
-    logger.warn(`Error applying hygiene to expression: ${error instanceof Error ? error.message : String(error)}`);
+    logger.warn(`Error applying hygiene to expression: ${CommonErrorUtils.formatErrorMessage(error)}`);
     return expr;
   }
 }

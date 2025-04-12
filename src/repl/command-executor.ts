@@ -215,7 +215,7 @@ export async function executeCommand(
             // Use result
             console.log("Verbose evaluation result:", result);
           } catch (error) {
-            console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`Error: ${CommonErrorUtils.formatErrorMessage(error)}`);
           }
         } else {
           // Toggle verbose mode
@@ -244,7 +244,7 @@ export async function executeCommand(
               console.log(result);
             }
           } catch (error) {
-            console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`Error: ${CommonErrorUtils.formatErrorMessage(error)}`);
           }
         } else {
           // Toggle AST mode
@@ -276,7 +276,7 @@ export async function executeCommand(
               console.log("No JavaScript transpilation available.");
             }
           } catch (error) {
-            console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`Error: ${CommonErrorUtils.formatErrorMessage(error)}`);
           }
         } else {
           // Toggle JS mode
@@ -306,7 +306,7 @@ export async function executeCommand(
             console.log(`Use 'cd ${args}' to switch to this module.`);
           }
         } catch (error) {
-          console.error(`Error creating module: ${error instanceof Error ? error.message : String(error)}`);
+          console.error(`Error creating module: ${CommonErrorUtils.formatErrorMessage(error)}`);
         }
         return true;
         
@@ -315,7 +315,7 @@ export async function executeCommand(
         return false;
     }
   } catch (error) {
-    printError(`Command error: ${error instanceof Error ? error.message : String(error)}`, useColors);
+    printError(`Command error: ${CommonErrorUtils.formatErrorMessage(error)}`, useColors);
     
     // Reset multiline state on error
     if (replState.multilineMode) {

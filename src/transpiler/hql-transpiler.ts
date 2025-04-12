@@ -22,8 +22,8 @@ import {
 import { 
   registerSourceFile, 
   formatError, 
-  getSuggestion, 
-} from "./error/error-handling.ts";
+  getSuggestion 
+} from "./error/common-error-utils.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;

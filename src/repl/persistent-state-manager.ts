@@ -100,7 +100,7 @@ export class PersistentStateManager {
         currentDir = parentDir;
       }
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.logger.debug(`Error detecting project directory: ${errorMessage}`);
     }
     
@@ -219,7 +219,7 @@ export class PersistentStateManager {
       // Make sure we clean up any stray "user" modules
       this.cleanupLegacyModules();
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.logger.warn(`Error initializing state: ${errorMessage}`);
       // Fall back to empty state in case of error
       this.currentState = this.createEmptyState();
@@ -284,7 +284,7 @@ export class PersistentStateManager {
       this.currentState = loadedState;
       this.logger.debug(`Loaded state with ${Object.keys(loadedState.modules).length} modules`);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.logger.warn(`Error loading state from ${filePath}: ${errorMessage}`);
       this.currentState = this.createEmptyState();
     }
@@ -338,7 +338,7 @@ export class PersistentStateManager {
       this.logger.debug(`Saved state to ${savePath}`);
       this.changed = false;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.logger.error(`Error saving state: ${errorMessage}`);
     }
   }

@@ -1,9 +1,13 @@
 /**
- * Common error utilities module - the single source of truth for error handling across the codebase
- * Consolidates functionality from:
- * - error-handling.ts
- * - error-utils.ts
- * - imports.ts wrapError functions
+ * Common error utilities module - THE SINGLE SOURCE OF TRUTH for error handling across the codebase
+ * 
+ * This module consolidates all error handling functionality and should be the only import
+ * source for error utilities. It replaces and supersedes:
+ * - error-utils.ts (deprecated)
+ * - error-handling.ts (partially consolidated)
+ * - Local error handling implementations
+ * 
+ * IMPORTANT: Always import error utilities from this module, not from individual files.
  */
 
 import {

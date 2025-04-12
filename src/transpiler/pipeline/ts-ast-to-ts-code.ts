@@ -5,7 +5,7 @@ import * as IR from "../type/hql_ir.ts";
 import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { CodeGenError, createErrorReport } from "../error/errors.ts";
 import { Logger } from "../../logger.ts";
-import { perform } from "../error/error-utils.ts";
+import { perform } from "../error/common-error-utils.ts";
 
 // Initialize logger
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
@@ -97,7 +97,7 @@ export function generateTypeScript(ir: IR.IRProgram): string {
     // Log the error report for detailed diagnostics
     logger.error(
       `Failed to generate TypeScript code: ${
-        error instanceof Error ? error.message : String(error)
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
     );
     if (Deno.env.get("HQL_DEBUG") === "1") {
@@ -110,7 +110,7 @@ export function generateTypeScript(ir: IR.IRProgram): string {
     } else {
       throw new CodeGenError(
         `Failed to generate TypeScript code: ${
-          error instanceof Error ? error.message : String(error)
+          CommonErrorUtils.formatErrorMessage(error)
         }`,
         "TypeScript code generation",
         ir,
@@ -201,9 +201,7 @@ export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
           }
         } catch (error) {
           // Collect errors but continue processing other nodes
-          const errorMessage = error instanceof Error
-            ? error.message
-            : String(error);
+          const errorMessage = CommonErrorUtils.formatErrorMessage(error);
           conversionErrors.push(
             `Error converting node ${i} (${
               IR.IRNodeType[node.type] || "unknown type"

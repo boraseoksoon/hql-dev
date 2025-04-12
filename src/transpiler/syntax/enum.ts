@@ -8,7 +8,7 @@ import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { Logger } from "../../logger.ts";
-import { perform } from "../error/error-utils.ts";
+import { perform } from "../error/common-error-utils.ts";
 import { execute } from "../pipeline/hql-ir-to-ts-ast.ts";
 
 // Use getLogger instead of creating a new Logger instance

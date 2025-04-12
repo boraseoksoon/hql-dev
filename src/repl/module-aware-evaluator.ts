@@ -57,7 +57,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       // Restore all module definitions from persistent storage
       await this.restoreAllModuleStates();
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Failed to initialize module system: ${errorMessage}`);
       throw error; // Re-throw to notify caller of failure
     }
@@ -87,7 +87,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       this.moduleLogger.debug(`Restored state for ${moduleNames.length} modules`);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error restoring module states: ${errorMessage}`);
     }
   }
@@ -183,7 +183,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       return removed;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error removing module: ${errorMessage}`);
       return false;
     }
@@ -324,7 +324,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
         this.moduleLogger.debug(`Tracked ${type} definition: ${symbol}`);
       }
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.moduleLogger.warn(`Error tracking definitions: ${errorMessage}`);
     }
   }
@@ -480,7 +480,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       this.moduleLogger.debug(`Stored ${detectedType} '${symbolName}' definition in module '${this.currentModule}'`);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.moduleLogger.warn(`Error storing definition: ${errorMessage}`);
     }
   }
@@ -614,7 +614,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       this.moduleLogger.debug(`Restored module state for '${moduleName}'`);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error restoring module state: ${errorMessage}`);
     }
   }
@@ -815,7 +815,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       return null;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error getting symbol definition: ${errorMessage}`);
       return null;
     }
@@ -878,7 +878,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       this.moduleLogger.debug(`Imported '${symbolName}' from module '${fromModule}'`);
       return true;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error importing symbol: ${errorMessage}`);
       return false;
     }
@@ -920,7 +920,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       this.moduleLogger.debug(`Exported '${symbolName}' from module '${this.currentModule}'`);
       return true;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error exporting symbol: ${errorMessage}`);
       return false;
     }

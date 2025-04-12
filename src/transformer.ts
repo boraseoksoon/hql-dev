@@ -231,14 +231,14 @@ export async function transformAST(
         return finalCode;
       } catch (error) {
         throw new CodeGenError(
-          `Failed to generate TypeScript: ${error instanceof Error ? error.message : String(error)}`,
+          `Failed to generate TypeScript: ${CommonErrorUtils.formatErrorMessage(error)}`,
           "TypeScript generation",
           ir,
         );
       }
     } catch (error) {
       throw new TransformError(
-        `Failed to transform AST to IR: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to transform AST to IR: ${CommonErrorUtils.formatErrorMessage(error)}`,
         `${convertedAst.length} AST nodes`,
         "AST to IR transformation",
         convertedAst,
@@ -266,7 +266,7 @@ export async function transformAST(
     if (!(error instanceof TranspilerError)) {
       logger.error(
         `Unexpected error during ${currentPhase}: ${
-          error instanceof Error ? error.message : String(error)
+          CommonErrorUtils.formatErrorMessage(error)
         }`,
       );
     }
@@ -343,9 +343,8 @@ function convertAST(rawAst: any[]): HQLNode[] {
       return node;
     });
   } catch (error) {
-    throw new TranspilerError(
-      `Error in AST conversion process: ${
-        error instanceof Error ? error.message : String(error)
+    throw new TranspilerError(`Error in AST conversion process: ${
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
     );
   }

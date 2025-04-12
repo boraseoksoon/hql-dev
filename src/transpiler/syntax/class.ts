@@ -8,7 +8,7 @@ import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { Logger } from "../../logger.ts";
-import { perform } from "../error/error-utils.ts";
+import { perform } from "../error/common-error-utils.ts";
 import { execute,  } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { convertIRNode, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
 
@@ -237,7 +237,7 @@ export function transformClass(
   } catch (error) {
     throw new TransformError(
       `Failed to transform class declaration: ${
-        error instanceof Error ? error.message : String(error)
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
       "class declaration",
       "transformation",
@@ -590,7 +590,7 @@ function processClassMethodFn(
       body: bodyBlock,
     };
   } catch (error) {
-    logger.error(`Error processing class method (fn): ${error instanceof Error ? error.message : String(error)}`);
+    logger.error(`Error processing class method (fn): ${CommonErrorUtils.formatErrorMessage(error)}`);
     return null;
   }
 }
@@ -712,7 +712,7 @@ function processClassMethodFx(
       body: bodyBlock,
     };
   } catch (error) {
-    logger.error(`Error processing class method (fx): ${error instanceof Error ? error.message : String(error)}`);
+    logger.error(`Error processing class method (fx): ${CommonErrorUtils.formatErrorMessage(error)}`);
     return null;
   }
 }
@@ -763,7 +763,7 @@ function processClassField(
       initialValue,
     };
   } catch (error) {
-    logger.error(`Error processing class field: ${error instanceof Error ? error.message : String(error)}`);
+    logger.error(`Error processing class field: ${CommonErrorUtils.formatErrorMessage(error)}`);
     return null;
   }
 }
@@ -855,7 +855,7 @@ function processClassConstructor(
       body: bodyBlock,
     };
   } catch (error) {
-    logger.error(`Error processing class constructor: ${error instanceof Error ? error.message : String(error)}`);
+    logger.error(`Error processing class constructor: ${CommonErrorUtils.formatErrorMessage(error)}`);
     return null;
   }
 }

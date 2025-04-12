@@ -10,7 +10,7 @@ import { Logger } from "../../logger.ts";
 import { registerPureFunction, verifyFunctionPurity } from "../fx/purity.ts";
 import { isValidType } from "../fx/purity.ts";
 import { execute, convertIdentifier, convertBlockStatement, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
-import { perform } from "../error/error-utils.ts";
+import { perform } from "../error/common-error-utils.ts";
 import { transformNode } from "../pipeline/hql-ast-to-hql-ir.ts";
 
 const fnFunctionRegistry = new Map<string, IR.IRFnFunctionDeclaration>();
@@ -78,7 +78,7 @@ export function transformNamedArgumentCall(
   } catch (error) {
     throw new TransformError(
       `Failed to transform named argument call: ${
-        error instanceof Error ? error.message : String(error)
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
       "named argument function call",
       "transformation",
@@ -735,7 +735,7 @@ export function transformFn(
   } catch (error) {
     throw new TransformError(
       `Failed to transform fn function: ${
-        error instanceof Error ? error.message : String(error)
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
       "fn function",
       "transformation",
@@ -892,7 +892,7 @@ export function transformFx(
   } catch (error) {
     throw new TransformError(
       `Failed to transform fx function: ${
-        error instanceof Error ? error.message : String(error)
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
       "fx function",
       "transformation",
@@ -1014,7 +1014,7 @@ export function processFnFunctionCall(
   } catch (error) {
     throw new TransformError(
       `Failed to process fn function call: ${
-        error instanceof Error ? error.message : String(error)
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
       "fn function call",
       "transformation",
@@ -1144,7 +1144,7 @@ function processNamedArguments(
   } catch (error) {
     throw new TransformError(
       `Failed to process named arguments: ${
-        error instanceof Error ? error.message : String(error)
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
       "named arguments",
       "transformation",

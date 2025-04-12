@@ -98,7 +98,7 @@ export class REPLEvaluator {
       this.runtimeFunctionsInitialized = true;
       this.logger.debug("Runtime functions initialized");
     } catch (error) {
-      this.logger.error(`Failed to initialize runtime functions: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(`Failed to initialize runtime functions: ${CommonErrorUtils.formatErrorMessage(error)}`);
       throw error;
     }
   }
@@ -125,7 +125,7 @@ export class REPLEvaluator {
           this.parseCache.set(input, result);
           return result;
         } catch (error) {
-          this.logger.error(`Parse error: ${error instanceof Error ? error.message : String(error)}`);
+          this.logger.error(`Parse error: ${CommonErrorUtils.formatErrorMessage(error)}`);
           throw error;
         }
       },
@@ -285,7 +285,7 @@ export class REPLEvaluator {
       };
     } catch (error: unknown) {
       this.replEnv.hqlEnv.setCurrentFile(null);
-      log(`Evaluation error: ${error instanceof Error ? error.message : String(error)}`);
+      log(`Evaluation error: ${CommonErrorUtils.formatErrorMessage(error)}`);
       
       if (error instanceof Error) {
         // Use the common error reporting mechanism
@@ -348,7 +348,7 @@ export class REPLEvaluator {
         this.logger.debug(`Tracked imported module: ${moduleName} from ${modulePath}`);
       }
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.logger.debug(`Error tracking imported module: ${errorMessage}`);
     }
   }
@@ -615,7 +615,7 @@ export class REPLEvaluator {
       return await fn(this.replEnv);
     } catch (error: unknown) {
       // Format the error message
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
       this.logger.error(`JavaScript evaluation error: ${errorMessage}`);
       
       // Check if this is a redeclaration error

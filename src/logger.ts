@@ -122,7 +122,7 @@ export class Logger {
    */
   error(message: string, error?: unknown, namespace?: string): void {
     const errorDetails = error
-      ? `: ${error instanceof Error ? error.message : String(error)}`
+      ? `: ${CommonErrorUtils.formatErrorMessage(error)}`
       : "";
     const prefix = namespace ? `[${namespace}] ` : '';
     console.error(`❌ ${prefix}${message}${errorDetails}`);

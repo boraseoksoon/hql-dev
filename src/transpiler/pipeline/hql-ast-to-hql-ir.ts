@@ -11,7 +11,7 @@ import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../type/hql_ast.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { ValidationError } from "../error/errors.ts";
 import { Logger } from "../../logger.ts";
-import { perform } from "../error/error-utils.ts";
+import { perform } from "../error/common-error-utils.ts";
 import { macroCache } from "../../s-exp/macro.ts";
 import { transformStandardFunctionCall, processFunctionBody, transformNamedArgumentCall, handleFxFunctionCall } from "../syntax/function.ts";
 import {
@@ -78,9 +78,7 @@ export function transformToIR(
           );
           if (ir) body.push(ir);
         } catch (error) {
-          const errorMsg = error instanceof Error
-            ? error.message
-            : String(error);
+          const errorMsg = CommonErrorUtils.formatErrorMessage(error);
           logger.error(`Error transforming node #${i + 1}: ${errorMsg}`);
           errors.push({
             node: nodes[i],

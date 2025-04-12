@@ -105,7 +105,7 @@ export async function commandDoc(evaluator: ModuleAwareEvaluator, target: string
         console.log(`${textColor}No exported symbols.${reset}`);
       }
     } catch (error) {
-      console.error(`${"\x1b[31m"}Error accessing module: ${error instanceof Error ? error.message : String(error)}${reset}`);
+      console.error(`${"\x1b[31m"}Error accessing module: ${CommonErrorUtils.formatErrorMessage(error)}${reset}`);
     }
   } else {
     // Handle symbol documentation
@@ -196,7 +196,7 @@ export async function commandDoc(evaluator: ModuleAwareEvaluator, target: string
         console.log(`${textColor}Try using ${symbolColor}:show ${target}${textColor} for more information.${reset}`);
       }
     } catch (error) {
-      console.error(`${"\x1b[31m"}Error retrieving documentation: ${error instanceof Error ? error.message : String(error)}${reset}`);
+      console.error(`${"\x1b[31m"}Error retrieving documentation: ${CommonErrorUtils.formatErrorMessage(error)}${reset}`);
     }
   }
 }

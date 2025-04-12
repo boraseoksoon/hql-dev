@@ -5,7 +5,7 @@ import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
-import { perform } from "../error/error-utils.ts";
+import { perform } from "../error/common-error-utils.ts";
 import { convertIRExpr, execute, convertStringLiteral } from "../pipeline/hql-ir-to-ts-ast.ts";
 
 export function convertInteropIIFE(node: IR.IRInteropIIFE): ts.Expression {

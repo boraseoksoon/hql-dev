@@ -130,7 +130,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
         });
         logger.log({ text: `File ${file} loaded successfully`, namespace: "repl" });
       } catch (error) {
-        console.error(`Error loading file ${file}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`Error loading file ${file}: ${CommonErrorUtils.formatErrorMessage(error)}`);
       }
     }
 
@@ -259,7 +259,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
             prettyPrintResult(result, useColors, showVerbose);
           }
         } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
+          const errorMsg = CommonErrorUtils.formatErrorMessage(error);
           
           // Handle JavaScript evaluation errors in a consistent way
           if (error instanceof Error && error.stack?.includes("JavaScript evaluation")) {
@@ -275,11 +275,11 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           }
         }
       } catch (error) {
-        console.error(`Error in REPL loop: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`Error in REPL loop: ${CommonErrorUtils.formatErrorMessage(error)}`);
       }
     }
   } catch (error) {
-    console.error(`Error starting REPL: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`Error starting REPL: ${CommonErrorUtils.formatErrorMessage(error)}`);
   } finally {
     // Reset terminal state
     try {

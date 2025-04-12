@@ -706,7 +706,7 @@ async function processJsImport(
     logger.debug(`Imported JS module: ${moduleName} from ${finalModuleUrl}`);
   } catch (error) {
     throw new ImportError(
-      `Importing JS module ${moduleName}: ${error instanceof Error ? error.message : String(error)}`,
+      `Importing JS module ${moduleName}: ${CommonErrorUtils.formatErrorMessage(error)}`,
       modulePath,
       env.getCurrentFile(),
       error instanceof Error ? error : undefined

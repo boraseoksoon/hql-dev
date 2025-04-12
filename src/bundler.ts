@@ -14,11 +14,12 @@ import { Logger } from "./logger.ts";
 import { getLogger } from "./logger-init.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
 import {
-  createErrorReport,
   TranspilerError,
   ValidationError,
-} from "./transpiler/error/errors.ts";
-import { performAsync } from "./transpiler/error/error-utils.ts";
+  CommonErrorUtils,
+  performAsync
+} from "./transpiler/error/common-error-utils.ts";
+import { createErrorReport } from "./transpiler/error/errors.ts";
 import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash } from "./utils/utils.ts";
 import { registerTempFile } from "./utils/temp-file-tracker.ts";
 
@@ -172,10 +173,7 @@ export async function processHqlImportsInTs(
     }
     return modifiedSource;
   } catch (error) {
-    throw new TranspilerError(
-      `Processing HQL imports in TypeScript file: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+    throw new TranspilerError(`Processing HQL imports in TypeScript file: ${CommonErrorUtils.formatErrorMessage(error)}`,
     );
   }
 }
@@ -301,10 +299,7 @@ export async function processHqlImportsInJs(
     }
     return modifiedSource;
   } catch (error) {
-    throw new TranspilerError(
-      `Processing HQL imports in JS file: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+    throw new TranspilerError(`Processing HQL imports in JS file: ${CommonErrorUtils.formatErrorMessage(error)}`,
     );
   }
 }
@@ -326,9 +321,7 @@ async function writeOutput(
     registerTempFile(outputPath);
   } catch (error) {
     throw new TranspilerError(
-      `Failed to write output to '${outputPath}': ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `Failed to write output to '${outputPath}': ${CommonErrorUtils.formatErrorMessage(error)}`,
     );
   }
 }
@@ -414,7 +407,7 @@ async function processHqlEntryFile(
         .catch((error) =>
           logger.warn(
             `Failed to clean up temporary directory: ${
-              error instanceof Error ? error.message : String(error)
+              CommonErrorUtils.formatErrorMessage(error)
             }`,
           )
         );
@@ -434,9 +427,8 @@ async function createTempDirIfNeeded(
     }
     return { tempDir: options.tempDir, created: false };
   } catch (error) {
-    throw new TranspilerError(
-      `Creating temporary directory: ${
-        error instanceof Error ? error.message : String(error)
+    throw new TranspilerError(`Creating temporary directory: ${
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
     );
   }
@@ -447,9 +439,8 @@ async function readSourceFile(filePath: string): Promise<string> {
     const content = await Deno.readTextFile(filePath);
     return content;
   } catch (error) {
-    throw new TranspilerError(
-      `Reading entry file ${filePath}: ${
-        error instanceof Error ? error.message : String(error)
+    throw new TranspilerError(`Reading entry file ${filePath}: ${
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
     );
   }
@@ -499,7 +490,7 @@ async function processJsOrTsEntryFile(
   } catch (error) {
     throw new TranspilerError(
       `Processing ${isTypeScriptFile(resolvedInputPath) ? 'TypeScript' : 'JavaScript'} entry file: ${
-        error instanceof Error ? error.message : String(error)
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
     );
   }
@@ -603,7 +594,7 @@ function handleBundlingError(
   verbose: boolean | undefined,
 ): void {
   if (error instanceof TranspilerError) return;
-  const errorMsg = error instanceof Error ? error.message : String(error);
+  const errorMsg = CommonErrorUtils.formatErrorMessage(error);
   if (verbose) {
     const errorReport = createErrorReport(
       error instanceof Error ? error : new Error(errorMsg),
@@ -633,7 +624,7 @@ async function cleanupAfterBundling(
       .catch((error) =>
         logger.warn(
           `Failed to clean up temporary directory: ${
-            error instanceof Error ? error.message : String(error)
+            CommonErrorUtils.formatErrorMessage(error)
           }`,
         )
       );
@@ -803,9 +794,8 @@ async function loadHqlFile(
       resolveDir: dirname(tsTempPath),
     };
   } catch (error) {
-    throw new TranspilerError(
-      `Error loading HQL file ${args.path}: ${
-        error instanceof Error ? error.message : String(error)
+    throw new TranspilerError(`Error loading HQL file ${args.path}: ${
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
     );
   }
@@ -826,9 +816,8 @@ async function loadTranspiledFile(
       resolveDir: dirname(filePath),
     };
   } catch (error) {
-    throw new TranspilerError(
-      `Reading transpiled file: ${filePath}: ${
-        error instanceof Error ? error.message : String(error)
+    throw new TranspilerError(`Reading transpiled file: ${filePath}: ${
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
     );
   }
@@ -848,8 +837,7 @@ async function findActualFilePath(
     return alternativePath;
   }
   logger.error(`File not found: ${filePath}, also tried ${alternativePath}`);
-  throw new TranspilerError(
-    `File not found: ${filePath}, also tried ${alternativePath}`,
+  throw new TranspilerError(`File not found: ${filePath}, also tried ${alternativePath}`,
   );
 }
 
@@ -883,9 +871,8 @@ async function transpileHqlFile(
       sourceDir,
     });
   } catch (error) {
-    throw new TranspilerError(
-      `Transpiling HQL file ${filePath}: ${
-        error instanceof Error ? error.message : String(error)
+    throw new TranspilerError(`Transpiling HQL file ${filePath}: ${
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
     );
   }
@@ -921,9 +908,8 @@ function createBuildOptions(
     });
     return buildOptions;
   } catch (error) {
-    throw new TranspilerError(
-      `Failed to create build options: ${
-        error instanceof Error ? error.message : String(error)
+    throw new TranspilerError(`Failed to create build options: ${
+        CommonErrorUtils.formatErrorMessage(error)
       }`,
     );
   }
