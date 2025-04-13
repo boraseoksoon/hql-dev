@@ -1,0 +1,29 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# TypeScript & JavaScript files
+*.ts text
+*.tsx text
+*.js text
+*.jsx text
+*.json text
+
+# Markdown & Documentation
+*.md text
+*.txt text
+
+# HTML, CSS & SVG
+*.html text
+*.css text
+*.svg text
+
+# Exclude binary files from diffing
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary 
