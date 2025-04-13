@@ -13,8 +13,8 @@ import {
 } from "../../s-exp/types.ts";
 import { Logger } from "../../logger.ts";
 import { getLogger } from "../../logger-init.ts";
-import { TransformError } from "../../transpiler/error/errors.ts";
-import { perform } from "../../transpiler/error/common-error-utils.ts";
+import { TransformError } from "../error/errors.ts";
+import { perform } from "../error/common-error-utils.ts";
 
 /**
  * Options for syntax transformation

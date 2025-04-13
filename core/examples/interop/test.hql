@@ -7,7 +7,7 @@
 
 
 
-(import spec from "../../../shared/doc/hql_spec.hql")
+(import spec from "../../doc/hql_spec.hql")
 (console.log "do spec square : " (spec.square 10))
 
 (import module2 from "./test2.js")
