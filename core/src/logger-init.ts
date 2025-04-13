@@ -1,24 +1,39 @@
 /**
- * Central initialization module for the logger
- * Provides a single function to set up logging across the codebase
+ * Re-export the shared logger-init module
  */
-
-import logger from "./logger.ts";
+export * from "../../shared/logger-init.ts";
+import logger from "../../shared/logger-init.ts";
+export default logger;
 
 /**
- * Initialize the logger with the specified options
- * @param options Configuration options for the logger
+ * Extended initialization for core-specific features
+ */
+import { initializeLogger as sharedInitialize } from "../../shared/logger-init.ts";
+
+/**
+ * Core-specific logger initialization that extends the shared functionality
  */
 export function initializeLogger(options: {
   verbose?: boolean;
   namespaces?: string[];
 }): void {
-  // Configure the logger singleton
-  logger.configure({
-    verbose: options.verbose || false,
-    namespaces: options.namespaces || []
-  });
+  // Set up HQL_DEBUG environment variable if in verbose mode
+  if (options.verbose) {
+    Deno.env.set("HQL_DEBUG", "1");
+  }
 
+  // Use the shared initialization with an array of string options
+  const args: string[] = [];
+  if (options.verbose) {
+    args.push("--verbose");
+  }
+  
+  if (options.namespaces && options.namespaces.length > 0) {
+    args.push("--log", options.namespaces.join(","));
+  }
+  
+  sharedInitialize(args);
+  
   // Display startup information
   if (options.verbose) {
     console.log("Verbose logging enabled");
@@ -47,11 +62,6 @@ export function getLogger(options?: { verbose?: boolean; namespaces?: string[] }
   }
   return logger;
 }
-
-/**
- * Export the logger for convenience
- */
-export default logger;
 
 /**
  * Check if debug mode is enabled via the HQL_DEBUG environment variable
