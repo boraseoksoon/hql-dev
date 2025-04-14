@@ -250,6 +250,7 @@ export async function executeReplCommand(
       throw abortError;
     }
     
+    // Re-throw the error
     throw error;
   }
 }

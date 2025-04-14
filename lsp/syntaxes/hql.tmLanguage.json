@@ -4,13 +4,19 @@
   "fileTypes": ["hql"],
   "patterns": [
     { "include": "#comment" },
+    { "include": "#special-form" },
+    { "include": "#import-statement" },
+    { "include": "#enum-statement" },
+    { "include": "#case-statement" },
+    { "include": "#from-keyword" },
+    { "include": "#fn-statement" },
     { "include": "#string" },
     { "include": "#number" },
     { "include": "#boolean" },
     { "include": "#nil" },
     { "include": "#keyword" },
-    { "include": "#special-form" },
     { "include": "#function-definition" },
+    { "include": "#type-definition" },
     { "include": "#function-call" },
     { "include": "#type-annotation" },
     { "include": "#type-expression" },
@@ -24,6 +30,7 @@
     { "include": "#import-declaration" },
     { "include": "#export-declaration" },
     { "include": "#dot-notation" },
+    { "include": "#types" },
     { "include": "#regular-symbol" },
     { "include": "#parens" }
   ],
@@ -42,6 +49,48 @@
         {
           "match": "//.*$",
           "name": "comment.line.double-slash.hql"
+        }
+      ]
+    },
+    "import-statement": {
+      "match": "\\(\\s*(import)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.hql" }
+      }
+    },
+    "enum-statement": {
+      "match": "\\(\\s*(enum)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.hql" }
+      }
+    },
+    "case-statement": {
+      "match": "\\(\\s*(case)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.hql" }
+      }
+    },
+    "from-keyword": {
+      "match": "\\b(from)\\b",
+      "name": "keyword.control.hql"
+    },
+    "fn-statement": {
+      "match": "\\(\\s*(fn)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.hql" }
+      }
+    },
+    "special-form": {
+      "patterns": [
+        {
+          "match": "\\b(import|export|from|as|module|namespace|enum|case|def|var|let|fx|fn|defmacro|macro|if|loop|recur|cond|when|unless|for|while|class|method|constructor|do|repeat|set!|return|->|&|\\.|from:|to:|by:|if-let|when-let|and|or|not|str|inc|dec|contains\\?|eq\\?|as|try|catch|finally|throw|new|interface|protocol|static|private|public|protected|override|extend|implements|super|this|typeof|instanceof|in|of|async|await|yield|delete|get|set|with|is|abstract|virtual|final|require|provide|namespace|use|true|false|nil|null|undefined)\\b",
+          "name": "keyword.control.hql"
+        },
+        {
+          "match": "\\(\\s*(import|export|from|as|module|namespace|enum|case|def|var|let|fx|fn|defmacro|macro|if|loop|recur|cond|when|unless|for|while|class|method|constructor|do|repeat|set!|return|->|&|\\.|from:|to:|by:|if-let|when-let|and|or|not|str|inc|dec|contains\\?|eq\\?|as|try|catch|finally|throw|new|interface|protocol|static|private|public|protected|override|extend|implements|super|this|typeof|instanceof|in|of|async|await|yield|delete|get|set|with|is|abstract|virtual|final|require|provide|namespace|use)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.hql" }
+          }
         }
       ]
     },
@@ -83,16 +132,12 @@
       "name": "constant.language.boolean.hql"
     },
     "nil": {
-      "match": "\\b(nil|null)\\b",
+      "match": "\\b(nil|null|undefined|NaN|Infinity)\\b",
       "name": "constant.language.nil.hql"
     },
     "keyword": {
       "match": "(:|[a-zA-Z][a-zA-Z0-9\\-_]*:)",
       "name": "constant.other.keyword.hql"
-    },
-    "special-form": {
-      "match": "(?<=\\()(def|var|let|fx|fn|defmacro|macro|if|loop|recur|cond|when|unless|for|while|class|method|constructor|do|repeat|set!|return|->|&|\\.|from:|to:|by:)\\b",
-      "name": "keyword.control.hql"
     },
     "function-definition": {
       "patterns": [
@@ -120,6 +165,16 @@
         }
       ]
     },
+    "type-definition": {
+      "begin": "\\b(Any|Int|Double|String|Bool|Array)\\b",
+      "beginCaptures": {
+        "1": { "name": "support.type.hql" }
+      },
+      "end": "(?=[\\s\\(\\)\\{\\}\\[\\]\\,\\;])",
+      "patterns": [
+        { "include": "$self" }
+      ]
+    },
     "function-call": {
       "begin": "\\(([a-zA-Z\\-_][a-zA-Z0-9\\-_\\?!]*)",
       "beginCaptures": {
@@ -131,7 +186,7 @@
       ]
     },
     "type-annotation": {
-      "match": "\\b([a-zA-Z][a-zA-Z0-9\\-_]*)\\s*:\\s*([A-Z][a-zA-Z0-9]*(?:\\[\\])?)",
+      "match": "\\b([a-zA-Z][a-zA-Z0-9\\-_]*)\\s*:\\s*([A-Z][a-zA-Z0-9<>\\[\\]\\|&\\?]*)",
       "captures": {
         "1": { "name": "variable.parameter.hql" },
         "2": { "name": "support.type.hql" }
@@ -158,7 +213,13 @@
     },
     "vector-literal": {
       "begin": "\\[",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.array.begin.hql" }
+      },
       "end": "\\]",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.array.end.hql" }
+      },
       "name": "meta.vector.hql",
       "patterns": [
         { "include": "$self" }
@@ -166,7 +227,13 @@
     },
     "object-literal": {
       "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.object.begin.hql" }
+      },
       "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.object.end.hql" }
+      },
       "name": "meta.object.hql",
       "patterns": [
         { "include": "$self" }
@@ -209,10 +276,10 @@
       ]
     },
     "class-declaration": {
-      "begin": "\\(class\\s+([A-Z][a-zA-Z0-9_]*)",
+      "begin": "\\((class)\\s+([A-Z][a-zA-Z0-9_]*)",
       "beginCaptures": {
-        "0": { "name": "keyword.control.hql" },
-        "1": { "name": "entity.name.type.class.hql" }
+        "1": { "name": "keyword.control.hql" },
+        "2": { "name": "entity.name.type.class.hql" }
       },
       "end": "\\)",
       "patterns": [
@@ -228,9 +295,9 @@
           ]
         },
         {
-          "begin": "\\(constructor\\s*\\(",
+          "begin": "\\((constructor)\\s*\\(",
           "beginCaptures": {
-            "0": { "name": "keyword.control.hql" }
+            "1": { "name": "keyword.control.hql" }
           },
           "end": "\\)",
           "patterns": [
@@ -259,7 +326,7 @@
       "end": "\\)",
       "patterns": [
         {
-          "match": "\\bfrom\\b",
+          "match": "\\b(from)\\b",
           "name": "keyword.control.hql"
         },
         {
@@ -318,6 +385,10 @@
       "captures": {
         "1": { "name": "variable.other.member.hql" }
       }
+    },
+    "types": {
+      "match": "\\b(Any|Int|Double|String|Bool|Array|Object|Map|Set|Function|Number|Boolean|Symbol|RegExp|Date|Error|Promise|Void|Never|Unknown|Tuple|Record|Union|Intersection|Optional|Required|Readonly|Partial|Pick|Omit|Extract|Exclude|Parameters|ReturnType|InstanceType|ThisType|OmitThisParameter|ThisParameterType|ConstructorParameters|SnakeToCamel|CamelToSnake|[A-Z][a-zA-Z0-9_]*)\\b",
+      "name": "support.type.hql"
     },
     "regular-symbol": {
       "match": "\\b([a-zA-Z\\-_][a-zA-Z0-9\\-_\\?!]*)\\b",

@@ -18,7 +18,9 @@ import {
     DidChangeConfigurationNotification,
     TextDocumentChangeEvent,
     TextDocumentPositionParams,
-    TextEdit
+    TextEdit,
+    SemanticTokensRequest,
+    SemanticTokensParams
   } from 'vscode-languageserver/node';
   
 import {
@@ -32,6 +34,7 @@ import {
   import { HoverProvider } from './hoverManager';
   import { DefinitionProvider } from './definitionManager';
   import { HqlFormatter } from './formatter/hqlFormatter';
+  import { SemanticTokenProvider, legend } from './semanticTokenProvider';
   
   // Create a connection for the server
   const connection = createConnection(ProposedFeatures.all);
@@ -46,6 +49,7 @@ import {
   const hoverProvider = new HoverProvider(symbolManager);
   const definitionProvider = new DefinitionProvider(symbolManager);
   const formatter = new HqlFormatter();
+  const semanticTokenProvider = new SemanticTokenProvider();
   
   // Server capabilities initialization
   connection.onInitialize((params: InitializeParams) => {
@@ -65,8 +69,11 @@ import {
         documentSymbolProvider: true,
         // Add document formatting
         documentFormattingProvider: true,
-        // No semantic tokens for now
-        semanticTokensProvider: undefined
+        // Add semantic tokens provider
+        semanticTokensProvider: {
+          full: true,
+          legend
+        }
       }
     };
   
@@ -97,6 +104,9 @@ import {
     
     // Validate the document and send diagnostics
     await diagnosticsProvider.validateTextDocument(document, connection);
+    
+    // Send a custom notification to refresh semantic tokens
+    connection.sendNotification('hql/refreshSemanticTokens');
   });
   
   /**
@@ -113,6 +123,9 @@ import {
     
     // Validate the document and send diagnostics
     await diagnosticsProvider.validateTextDocument(document, connection);
+    
+    // Send a custom notification to refresh semantic tokens
+    connection.sendNotification('hql/refreshSemanticTokens');
   });
   
   /**
@@ -196,6 +209,20 @@ import {
     
     return edits;
   });
+  
+  // Register semantic tokens provider
+  connection.onRequest(
+    SemanticTokensRequest.type,
+    async (params: SemanticTokensParams) => {
+      const document = documents.get(params.textDocument.uri);
+      if (!document) {
+        return { data: [] };
+      }
+      
+      console.log(`Providing semantic tokens for ${params.textDocument.uri}`);
+      return semanticTokenProvider.provideSemanticTokens(document);
+    }
+  );
   
   // Handle document closing
   documents.onDidClose(e => {

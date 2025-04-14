@@ -29,9 +29,16 @@
     "onCommand:hql.formatDocument",
     "onCommand:hql.startREPLServer",
     "onCommand:hql.stopREPLServer",
-    "onCommand:hql.restartREPLServer"
+    "onCommand:hql.restartREPLServer",
+    "onCommand:hql.showReplHistory",
+    "onCommand:hql.clearReplHistory",
+    "onCommand:hql.evaluateCode",
+    "onCommand:hql.selectReplProtocol",
+    "onCommand:hql.configureRepl",
+    "onCommand:hql.testReplConnection",
+    "onView:hql.replHistory"
   ],
-  "main": "./out/extension.js",
+  "main": "./out/lsp/src/extension.js",
   "contributes": {
     "languages": [
       {
@@ -43,6 +50,18 @@
           "light": "./icons/hql-light.png",
           "dark": "./icons/hql-dark.png"
         }
+      }
+    ],
+    "themes": [
+      {
+        "label": "HQL Syntax Theme",
+        "uiTheme": "vs-dark",
+        "path": "./themes/hql-theme.json"
+      },
+      {
+        "label": "HQL Syntax Light Theme",
+        "uiTheme": "vs",
+        "path": "./themes/hql-light-theme.json"
       }
     ],
     "commands": [
@@ -57,8 +76,33 @@
         "category": "HQL"
       },
       {
+        "command": "hql.evaluateCode",
+        "title": "HQL: Evaluate Custom Code",
+        "category": "HQL"
+      },
+      {
+        "command": "hql.startREPLServer",
+        "title": "HQL: Start REPL Server",
+        "category": "HQL"
+      },
+      {
+        "command": "hql.stopREPLServer",
+        "title": "HQL: Stop REPL Server",
+        "category": "HQL"
+      },
+      {
+        "command": "hql.restartREPLServer",
+        "title": "HQL: Restart REPL Server",
+        "category": "HQL"
+      },
+      {
+        "command": "hql.diagnosisREPLServer",
+        "title": "HQL: Diagnose REPL Connection Issues",
+        "category": "HQL"
+      },
+      {
         "command": "hql.cancelEvaluations",
-        "title": "HQL: Cancel All Evaluations",
+        "title": "HQL: Cancel Evaluations",
         "category": "HQL"
       },
       {
@@ -74,21 +118,6 @@
       {
         "command": "hql.formatDocument",
         "title": "HQL: Format Document",
-        "category": "HQL"
-      },
-      {
-        "command": "hql.startREPLServer",
-        "title": "HQL: Start REPL Server",
-        "category": "HQL"
-      },
-      {
-        "command": "hql.stopREPLServer",
-        "title": "HQL: Stop REPL Server",
-        "category": "HQL" 
-      },
-      {
-        "command": "hql.restartREPLServer",
-        "title": "HQL: Restart REPL Server",
         "category": "HQL"
       },
       {
@@ -155,6 +184,31 @@
         "command": "hql.paredit.killPreviousForm",
         "title": "HQL Paredit: Kill Previous Form",
         "category": "HQL Paredit"
+      },
+      {
+        "command": "hql.showReplHistory",
+        "title": "HQL: Show REPL History",
+        "category": "HQL"
+      },
+      {
+        "command": "hql.clearReplHistory",
+        "title": "HQL: Clear REPL History",
+        "category": "HQL"
+      },
+      {
+        "command": "hql.selectReplProtocol",
+        "title": "HQL: Select nREPL Protocol",
+        "category": "HQL"
+      },
+      {
+        "command": "hql.configureRepl",
+        "title": "HQL: Configure nREPL Connection",
+        "category": "HQL"
+      },
+      {
+        "command": "hql.testReplConnection",
+        "title": "HQL: Test nREPL Connection",
+        "category": "HQL"
       }
     ],
     "keybindings": [
@@ -285,7 +339,43 @@
         "hql.server.url": {
           "type": "string",
           "default": "http://localhost:5100",
-          "description": "URL of the HQL nREPL server"
+          "description": "URL of the HQL nREPL server (legacy setting, use repl.* settings instead)"
+        },
+        "hql.repl.protocol": {
+          "type": "string",
+          "default": "http",
+          "enum": ["http", "https", "socket", "pipe"],
+          "description": "Protocol to use for nREPL connection"
+        },
+        "hql.repl.host": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Host of the nREPL server"
+        },
+        "hql.repl.port": {
+          "type": "number",
+          "default": 5100,
+          "description": "Port of the nREPL server"
+        },
+        "hql.repl.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path suffix for nREPL server URL (if needed)"
+        },
+        "hql.repl.server.url": {
+          "type": "string",
+          "default": "http://localhost:5100",
+          "description": "Full URL of the nREPL server (overrides individual settings)"
+        },
+        "hql.repl.useExternalServer": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use an external nREPL server instead of starting one"
+        },
+        "hql.repl.maxHistorySize": {
+          "type": "number",
+          "default": 100,
+          "description": "Maximum number of entries to keep in REPL history"
         },
         "hql.server.path": {
           "type": "string",
@@ -294,7 +384,7 @@
         },
         "hql.server.autoStart": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Automatically start the HQL nREPL server on extension activation"
         },
         "hql.server.startTimeout": {
@@ -415,6 +505,20 @@
           "command": "hql.paredit.raise",
           "group": "3_splice"
         }
+      ],
+      "view/title": [
+        {
+          "command": "hql.clearReplHistory",
+          "when": "view == hql.replHistory",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "hql.evaluateCode",
+          "when": "view == hql.replHistory",
+          "group": "inline"
+        }
       ]
     },
     "submenus": [
@@ -440,7 +544,72 @@
         "fileLocation": ["relative", "${workspaceFolder}"],
         "pattern": "$hql"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hql-explorer",
+          "title": "HQL Explorer",
+          "icon": "icons/hql-dark.png"
+        }
+      ]
+    },
+    "views": {
+      "hql-explorer": [
+        {
+          "id": "hql.replHistory",
+          "name": "REPL History",
+          "icon": "icons/history.svg",
+          "contextualTitle": "HQL REPL History"
+        }
+      ]
+    },
+    "semanticTokenTypes": [
+      "keyword",
+      "function", 
+      "variable",
+      "parameter",
+      "property",
+      "type",
+      "enum",
+      "comment",
+      "string",
+      "number"
+    ],
+    "semanticTokenModifiers": [
+      "declaration",
+      "definition",
+      "readonly"
+    ],
+    "semanticTokenScopes": {
+      "keyword": ["keyword.control"],
+      "function": ["entity.name.function"],
+      "variable": ["variable.other"],
+      "parameter": ["variable.parameter"],
+      "property": ["variable.other.property"],
+      "type": ["entity.name.type"],
+      "enum": ["entity.name.type.enum"],
+      "comment": ["comment"],
+      "string": ["string"],
+      "number": ["constant.numeric"]
+    },
+    "semanticTokenColors": {
+      "keyword": "#0000FF",
+      "function": "#000000",
+      "variable": "#000000",
+      "parameter": "#000000",
+      "property": "#000000",
+      "type": "#000000",
+      "enum": "#000000",
+      "comment": "#008000",
+      "string": "#A31515",
+      "number": "#098658"
+    },
+    "configurationDefaults": {
+      "[hql]": {
+        "editor.semanticHighlighting.enabled": true
+      }
+    }
   },
   "scripts": {
     "clean": "rm -rf out",
@@ -450,7 +619,12 @@
     "lint": "eslint src --ext ts",
     "test": "npm run compile && vscode-test-cli",
     "test:unit": "mocha -r ts-node/register 'src/test/unit/**/*.test.ts'",
-    "debug": "npm run clean && npm run compile && code --extensionDevelopmentPath=${PWD}"
+    "debug": "npm run clean && npm run compile && code --extensionDevelopmentPath=${PWD}",
+    "test-repl": "npm run compile && node scripts/test-repl-server.js",
+    "test-connection": "node scripts/test-connection.js",
+    "test-connection-with-server": "node scripts/test-connection.js --start-server",
+    "start-repl-server": "npm run compile && node scripts/start-repl-server.js",
+    "start-internal-server": "node scripts/start-internal-server.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.97.0",
@@ -480,6 +654,6 @@
   "bugs": {
     "url": "https://github.com/hql-team/hql-vscode-extension/issues"
   },
-  "author": "HQL Team",
+  "author": "Jang seoksun",
   "license": "MIT"
 }

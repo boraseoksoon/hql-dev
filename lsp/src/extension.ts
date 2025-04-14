@@ -131,6 +131,9 @@ export function activate(context: vscode.ExtensionContext) {
         if (config.isPareEditEnabled()) {
           ui.applyRainbowParentheses(editor);
         }
+        
+        // Force a refresh of semantic tokens when switching to an HQL file
+        client.sendNotification('hql/refreshSemanticTokens');
       }
     })
   );
@@ -324,7 +327,7 @@ export function activate(context: vscode.ExtensionContext) {
 // This method starts the language server
 function startLanguageServer(context: vscode.ExtensionContext): LanguageClient {
   // The server is implemented in Node
-  const serverModule = context.asAbsolutePath(path.join('out', 'server', 'lspServer.js'));
+  const serverModule = context.asAbsolutePath(path.join('out', 'lsp', 'src', 'server', 'lspServer.js'));
   
   // If the extension is launched in debug mode then the debug server options are used
   // Otherwise the run options are used
@@ -358,7 +361,23 @@ function startLanguageServer(context: vscode.ExtensionContext): LanguageClient {
   );
   
   // Start the client
-  client.start();
+  client.start().then(() => {
+    logger.info('HQL Language Client is ready');
+    
+    // Handle semantic token refresh notifications
+    client.onNotification('hql/refreshSemanticTokens', () => {
+      logger.info('Refreshing semantic tokens');
+      
+      // Force VS Code to request semantic tokens again
+      // Use a document change event to trigger VS Code to refresh tokens
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor && activeEditor.document.languageId === 'hql') {
+        // This is a hacky way to trigger a refresh, but it forces VS Code to re-request tokens
+        vscode.commands.executeCommand('editor.action.triggerSuggest')
+          .then(() => vscode.commands.executeCommand('hideSuggestWidget'));
+      }
+    });
+  });
   
   return client;
 }
@@ -401,7 +420,7 @@ function runDiagnostics(context: vscode.ExtensionContext): void {
     }
     
     // Check for the server file
-    const serverPath = context.asAbsolutePath(path.join("out", "server", "lspServer.js"));
+    const serverPath = context.asAbsolutePath(path.join("out", "lsp", "src", "server", "lspServer.js"));
     const fs = require('fs');
     if (fs.existsSync(serverPath)) {
       diagnosticOutput.appendLine(`✅ Server module found at: ${serverPath}`);
