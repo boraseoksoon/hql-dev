@@ -5,7 +5,7 @@ import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
-import { perform } from "../error/error-utils.ts";
+import { perform } from "../error/index.ts";
 import { convertIRExpr, execute, convertReturnStatement, convertBlockStatement } from "../pipeline/hql-ir-to-ts-ast.ts";
 
 export function convertIfStatement(node: IR.IRIfStatement): ts.IfStatement {

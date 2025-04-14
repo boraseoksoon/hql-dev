@@ -6,7 +6,7 @@ import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { Logger } from "../../logger.ts";
-import { perform } from "../error/error-utils.ts";
+import { perform } from "../error/index.ts";
 import { execute } from "../pipeline/hql-ir-to-ts-ast.ts";
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 

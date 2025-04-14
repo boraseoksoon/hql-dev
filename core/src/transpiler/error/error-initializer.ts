@@ -2,14 +2,13 @@
 // Central module for initializing and setting up error handling throughout the system
 
 import { 
-  setupErrorHandling,
   ErrorUtils, 
   withErrorHandling, 
   registerSourceFile, 
   formatError, 
-  getSuggestion,
-  createStageErrorHandler
-} from "./error-handling.ts";
+  getSuggestion
+} from "./index.ts";
+import { setupErrorHandling, createStageErrorHandler } from "./error-handling.ts";
 import { Logger } from "../../logger.ts";
 import { parse } from "../pipeline/parser.ts";
 import { transformSyntax } from "../pipeline/syntax-transformer.ts";

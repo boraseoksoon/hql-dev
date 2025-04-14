@@ -22,7 +22,7 @@ import {
   registerSourceFile, 
   formatError, 
   getSuggestion, 
-} from "./error/error-handling.ts";
+} from "./error/index.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;

@@ -9,7 +9,7 @@ import { Logger } from "../../logger.ts";
 import { registerPureFunction, verifyFunctionPurity } from "../fx/purity.ts";
 import { isValidType } from "../fx/purity.ts";
 import { execute, convertIdentifier, convertBlockStatement, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
-import { perform } from "../error/error-utils.ts";
+import { perform } from "../error/index.ts";
 import { transformNode } from "../pipeline/hql-ast-to-hql-ir.ts";
 
 const fnFunctionRegistry = new Map<string, IR.IRFnFunctionDeclaration>();

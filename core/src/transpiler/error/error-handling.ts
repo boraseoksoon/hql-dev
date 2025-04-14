@@ -1,17 +1,18 @@
-import { 
-  TranspilerError, 
-  ParseError, 
-  ValidationError, 
-  MacroError, 
-  ImportError, 
-  CodeGenError, 
-  TransformError,
-  summarizeNode,
-  createErrorReport,
-  report, 
-  parseError
-} from "./errors.ts";
+// DEPRECATED: Use ./transpiler-error-handler.ts instead. This file will be removed in a future release.
+export * from './index.ts';
 import { Logger } from "../../logger.ts";
+import {
+  report,
+  parseError,
+  TranspilerError,
+  ParseError,
+  ValidationError,
+  MacroError,
+  ImportError,
+  CodeGenError,
+  TransformError,
+  createErrorReport
+} from './errors.ts';
 
 // Initialize logger
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");

@@ -11,7 +11,7 @@ import { REPLEnvironment } from "./repl-environment.ts";
 import { Environment, Value } from "@core/environment.ts";
 import { SExp } from "@s-exp/types.ts";
 import { RUNTIME_FUNCTIONS } from "@transpiler/runtime/runtime.ts";
-import { registerSourceFile, withErrorHandling } from "@transpiler/error/error-handling.ts";
+import { registerSourceFile, withErrorHandling } from "../../core/src/transpiler/error/index.ts";
 import { report } from "@transpiler/error/errors.ts";
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { CommonUtils } from "./common-utils.ts";

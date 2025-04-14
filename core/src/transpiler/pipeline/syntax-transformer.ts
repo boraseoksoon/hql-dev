@@ -13,7 +13,7 @@ import {
 } from "../../s-exp/types.ts";
 import { Logger } from "../../logger.ts";
 import { TransformError } from "../../transpiler/error/errors.ts";
-import { perform } from "../../transpiler/error/error-utils.ts";
+import { perform } from "../error/index.ts";
 
 /**
  * Options for syntax transformation

@@ -1,5 +1,7 @@
 // src/transpiler/error-utils.ts
-import { TranspilerError } from "./errors.ts";
+// DEPRECATED: Use ./transpiler-error-handler.ts instead. This file will be removed in a future release.
+export * from './index.ts';
+import { TranspilerError } from './errors.ts';
 
 /**
  * Helper function to handle synchronous operations with consistent error handling

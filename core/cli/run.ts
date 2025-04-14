@@ -5,7 +5,7 @@ import logger, { Logger } from "../src/logger.ts";
 import { cleanupAllTempFiles } from "../src/utils/temp-file-tracker.ts";
 import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
 // New imports for enhanced error handling
-import CommonError from "../src/CommonError.ts";
+import { initializeErrorHandling, registerSourceFile, ErrorUtils } from "../src/transpiler/error/index.ts";
 
 function printHelp() {
   // Unchanged
@@ -87,12 +87,7 @@ async function run() {
     registerSourceFile(inputPath, source);
   } catch (readError) {
     // Use the enhanced error reporter
-    reportError(readError, {
-      filePath: inputPath,
-      verbose: verbose,
-      useClickablePaths: clickablePaths,
-      includeStack: verbose
-    });
+    console.error(ErrorUtils.report(readError));
     Deno.exit(1);
   }
   
@@ -128,12 +123,7 @@ async function run() {
       }
     )().catch(error => {
       // Use enhanced error reporting
-      reportError(error, {
-        filePath: inputPath,
-        verbose: verbose || debug,
-        useClickablePaths: clickablePaths,
-        includeStack: verbose || debug
-      });
+      console.error(ErrorUtils.report(error));
       Deno.exit(1);
     });
     
@@ -156,23 +146,13 @@ async function run() {
         }
       )().catch(error => {
         // Use enhanced error reporting for runtime errors
-        reportError(error, {
-          filePath: bundledPath,
-          verbose: verbose || debug,
-          useClickablePaths: clickablePaths,
-          includeStack: verbose || debug
-        });
+        console.error(ErrorUtils.report(error));
         Deno.exit(1);
       });
     }
   } catch (error) {
     // Use enhanced error reporting
-    reportError(error, {
-      filePath: inputPath,
-      verbose: verbose || debug,
-      useClickablePaths: clickablePaths,
-      includeStack: verbose || debug
-    });
+    console.error(ErrorUtils.report(error));
     Deno.exit(1);
   } finally {
     try {

@@ -8,7 +8,7 @@ import {
 import { Logger } from "../src/logger.ts";
 import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
 // New imports for enhanced error handling
-import CommonError from "../src/CommonError.ts";
+import { initializeErrorHandling, registerSourceFile, ErrorUtils } from "../src/transpiler/error/index.ts";
 
 function printHelp() {
   // Unchanged
@@ -94,12 +94,7 @@ async function transpile(): Promise<void> {
       registerSourceFile(inputPath, source);
     } catch (readError) {
       // Use the enhanced error reporter
-      reportError(readError, {
-        filePath: inputPath,
-        verbose: verbose,
-        useClickablePaths: clickablePaths,
-        includeStack: verbose
-      });
+      console.error(ErrorUtils.report(readError));
       Deno.exit(1);
     }
 
@@ -116,12 +111,7 @@ async function transpile(): Promise<void> {
       }
     )().catch(error => {
       // Use enhanced error reporting
-      reportError(error, {
-        filePath: inputPath,
-        verbose: verbose || debug,
-        useClickablePaths: clickablePaths,
-        includeStack: verbose || debug
-      });
+      console.error(ErrorUtils.report(error));
       Deno.exit(1);
     });
 
@@ -131,12 +121,7 @@ async function transpile(): Promise<void> {
         console.log(finalOutput);
       } catch (error) {
         // Use enhanced error reporting
-        reportError(error, {
-          filePath: bundledPath,
-          verbose: verbose || debug,
-          useClickablePaths: clickablePaths,
-          includeStack: verbose || debug
-        });
+        console.error(ErrorUtils.report(error));
         Deno.exit(1);
       }
     } else if (runAfter) {
@@ -145,12 +130,7 @@ async function transpile(): Promise<void> {
         await import("file://" + resolve(bundledPath));
       } catch (error) {
         // Use enhanced error reporting
-        reportError(error, {
-          filePath: bundledPath,
-          verbose: verbose || debug,
-          useClickablePaths: clickablePaths,
-          includeStack: verbose || debug
-        });
+        console.error(ErrorUtils.report(error));
         Deno.exit(1);
       }
     }
