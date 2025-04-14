@@ -15,13 +15,12 @@ import {
   SSymbol,
 } from "./types.ts";
 import { Environment } from "../environment.ts";
-import { getLogger, isDebugMode } from "../logger-init.ts";
 import { Logger } from "../logger.ts";
 import { MacroFn } from "../environment.ts";
 import { MacroError, TransformError } from "../transpiler/error/errors.ts";
 import { gensym } from "../gensym.ts";
 import { LRUCache } from "../utils/lru-cache.ts";
-import { perform } from "../transpiler/error/common-error-utils.ts";
+import { perform } from "../transpiler/error/error-utils.ts";
 
 // Constants and caches
 const MAX_EXPANSION_ITERATIONS = 100;
@@ -152,7 +151,7 @@ function registerMacroDefinition(
       : "unknown";
     throw new MacroError(
       `Failed to define ${macroType === "global" ? "macro" : "user macro"}: ${
-        CommonErrorUtils.formatErrorMessage(error)
+        error instanceof Error ? error.message : String(error)
       }`,
       macroName,
       filePath,
@@ -186,7 +185,7 @@ export function expandMacros(
   env: Environment,
   options: MacroExpanderOptions = {},
 ): SExp[] {
-  const logger = getLogger({ verbose: options.verbose || false });
+  const logger = new Logger(options.verbose || false);
   const currentFile = options.currentFile;
   const useCache = options.useCache !== false;
   logger.debug(
@@ -264,7 +263,7 @@ export function isUserLevelMacro(
   symbolName: string,
   currentDir: string,
 ): boolean {
-  const logger = getLogger({ verbose: Deno.env.get("HQL_DEBUG") === "1" });
+  const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
   return perform(
     () => {
@@ -393,7 +392,7 @@ function evaluateList(expr: SList, env: Environment, logger: Logger): SExp {
     } catch (error) {
       throw new MacroError(
         `Error evaluating function call '${op}': ${
-          CommonErrorUtils.formatErrorMessage(error)
+          error instanceof Error ? error.message : String(error)
         }`,
         op,
       );
@@ -620,7 +619,7 @@ function expandMacroExpression(
   options: MacroExpanderOptions,
   depth: number,
 ): SExp {
-  const logger = getLogger({ verbose: options.verbose || false });
+  const logger = new Logger(options.verbose || false);
   const maxDepth = options.maxExpandDepth || 100;
   
   if (depth > maxDepth) {
@@ -844,7 +843,7 @@ function applyHygiene(expr: SExp, macroName: string, logger: Logger): SExp {
   try {
     return processExpr(expr);
   } catch (error) {
-    logger.warn(`Error applying hygiene to expression: ${CommonErrorUtils.formatErrorMessage(error)}`);
+    logger.warn(`Error applying hygiene to expression: ${error instanceof Error ? error.message : String(error)}`);
     return expr;
   }
 }

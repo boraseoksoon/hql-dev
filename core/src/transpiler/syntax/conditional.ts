@@ -5,7 +5,7 @@ import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
-import { perform } from "../error/common-error-utils.ts";
+import { perform } from "../error/error-utils.ts";
 import { convertIRExpr, execute, convertReturnStatement, convertBlockStatement } from "../pipeline/hql-ir-to-ts-ast.ts";
 
 export function convertIfStatement(node: IR.IRIfStatement): ts.IfStatement {
@@ -114,7 +114,7 @@ export function transformIf(
     } as IR.IRConditionalExpression;
   } catch (error) {
     throw new TransformError(
-      `Failed to transform if: ${CommonErrorUtils.formatErrorMessage(error)}`,
+      `Failed to transform if: ${error instanceof Error ? error.message : String(error)}`,
       "if transformation",
       "valid if expression",
       list

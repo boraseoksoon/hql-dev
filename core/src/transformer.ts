@@ -1,7 +1,6 @@
 // src/transformer.ts - Prevents duplicate import errors
 
 import { transformToIR } from "./transpiler/pipeline/hql-ast-to-hql-ir.ts";
-import { getLogger } from "./logger-init.ts";
 import { generateTypeScript } from "./transpiler/pipeline/ts-ast-to-ts-code.ts";
 import { expandMacros } from "./s-exp/macro.ts";
 import { Logger } from "./logger.ts";
@@ -39,7 +38,7 @@ export async function transformAST(
   currentDir: string,
   options: TransformOptions = {},
 ): Promise<string> {
-  const logger = getLogger({ verbose: options.verbose });
+  const logger = new Logger(options.verbose);
   const startTime = performance.now();
   let currentPhase = "initialization";
 
@@ -231,14 +230,14 @@ export async function transformAST(
         return finalCode;
       } catch (error) {
         throw new CodeGenError(
-          `Failed to generate TypeScript: ${CommonErrorUtils.formatErrorMessage(error)}`,
+          `Failed to generate TypeScript: ${error instanceof Error ? error.message : String(error)}`,
           "TypeScript generation",
           ir,
         );
       }
     } catch (error) {
       throw new TransformError(
-        `Failed to transform AST to IR: ${CommonErrorUtils.formatErrorMessage(error)}`,
+        `Failed to transform AST to IR: ${error instanceof Error ? error.message : String(error)}`,
         `${convertedAst.length} AST nodes`,
         "AST to IR transformation",
         convertedAst,
@@ -266,7 +265,7 @@ export async function transformAST(
     if (!(error instanceof TranspilerError)) {
       logger.error(
         `Unexpected error during ${currentPhase}: ${
-          CommonErrorUtils.formatErrorMessage(error)
+          error instanceof Error ? error.message : String(error)
         }`,
       );
     }
@@ -343,8 +342,9 @@ function convertAST(rawAst: any[]): HQLNode[] {
       return node;
     });
   } catch (error) {
-    throw new TranspilerError(`Error in AST conversion process: ${
-        CommonErrorUtils.formatErrorMessage(error)
+    throw new TranspilerError(
+      `Error in AST conversion process: ${
+        error instanceof Error ? error.message : String(error)
       }`,
     );
   }

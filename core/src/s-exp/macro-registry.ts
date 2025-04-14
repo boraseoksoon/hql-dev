@@ -1,5 +1,4 @@
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { getLogger, isDebugMode } from "../logger-init.ts";
 import { Logger } from "../logger.ts";
 import { MacroFn } from "../environment.ts";
 import { MacroError } from "../transpiler/error/errors.ts";
@@ -14,8 +13,8 @@ export class MacroRegistry {
   private logger: Logger;
   private persistentExports = new Map<string, Set<string>>();
 
-  constructor(verbose = false) {
-    this.logger = getLogger({ verbose });
+  constructor(verbose: boolean = false) {
+    this.logger = new Logger(verbose);
     this.logger.debug("MacroRegistry initialized");
   }
 
@@ -38,7 +37,7 @@ export class MacroRegistry {
       return fn();
     } catch (error) {
       if (error instanceof MacroError) throw error;
-      throw new MacroError(`${errorPrefix}: ${CommonErrorUtils.formatErrorMessage(error)}`, macroName, filePath);
+      throw new MacroError(`${errorPrefix}: ${error instanceof Error ? error.message : String(error)}`, macroName, filePath);
     }
   }
 
@@ -51,7 +50,7 @@ export class MacroRegistry {
         this.logger.warn(error.message);
         return false;
       }
-      this.logger.warn(`${errorPrefix}: ${CommonErrorUtils.formatErrorMessage(error)}`);
+      this.logger.warn(`${errorPrefix}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -60,7 +59,7 @@ export class MacroRegistry {
     try {
       return fn();
     } catch (error) {
-      this.logger.warn(`${context}: ${CommonErrorUtils.formatErrorMessage(error)}`);
+      this.logger.warn(`${context}: ${error instanceof Error ? error.message : String(error)}`);
       return fallback;
     }
   }
@@ -193,7 +192,7 @@ export class MacroRegistry {
       this.processedFiles.add(filePath);
       this.logger.debug(`Marked file as processed: ${filePath}`);
     } catch (error) {
-      this.logger.warn(`Error marking file ${filePath} as processed: ${CommonErrorUtils.formatErrorMessage(error)}`);
+      this.logger.warn(`Error marking file ${filePath} as processed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

@@ -1,5 +1,4 @@
 import * as ts from "npm:typescript";
-import { getLogger } from "../../logger-init.ts";
 import * as IR from "../type/hql_ir.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { CodeGenError } from "../error/errors.ts";
@@ -440,7 +439,7 @@ export function execute<T>(node: IR.IRNode | any, context: string, fn: () => T):
   } catch (error) {
     if (error instanceof CodeGenError) throw error;
     throw new CodeGenError(
-      `Failed to convert ${context}: ${CommonErrorUtils.formatErrorMessage(error)}`,
+      `Failed to convert ${context}: ${error instanceof Error ? error.message : String(error)}`,
       context,
       node,
     );

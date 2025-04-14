@@ -12,10 +12,9 @@ import {
   parseError
 } from "./errors.ts";
 import { Logger } from "../../logger.ts";
-import { getLogger, isDebugMode } from "../../logger-init.ts";
 
-// Initialize logger with debug mode
-const logger = getLogger({ verbose: isDebugMode() });
+// Initialize logger
+const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 // Store source files for error context
 const sourceRegistry = new Map<string, string>();
@@ -353,6 +352,7 @@ const TS_ERROR_MESSAGES: Record<string, string> = {
   "2365": "Operator '{0}' cannot be applied to types '{1}' and '{2}'.",
   "2366": "Function lacks ending return statement and return type does not include 'undefined'.",
   "2571": "Object is of type 'unknown'. Did you forget to cast it to a specific type?",
+  "2339": "Property '{0}' does not exist on type '{1}'. Did you mean '{2}'?",
   "2448": "Block-scoped variable '{0}' used before its declaration.",
   "2451": "Cannot redeclare block-scoped variable '{0}'.",
   "2454": "Variable '{0}' is used before being assigned.",
@@ -413,13 +413,9 @@ export function translateTypeScriptError(error: Error): Error {
     }
     
     return error;
-  } catch (e: unknown) {
+  } catch (e) {
     // If anything goes wrong, return the original error
-    if (e instanceof Error) {
-      logger.debug(`Error translating TypeScript error: ${e.message}`);
-    } else {
-      logger.debug(`Error translating TypeScript error: ${String(e)}`);
-    }
+    logger.debug(`Error translating TypeScript error: ${e.message}`);
     return error;
   }
 }
@@ -453,9 +449,8 @@ export function enhanceTypeScriptGeneration(
   return async (...args: any[]) => {
     try {
       return await generateFunction(...args);
-    } catch (err: unknown) {
+    } catch (error) {
       // First translate the error
-      const error = err instanceof Error ? err : new Error(String(err));
       const translatedError = translateTypeScriptError(error);
       
       // Then enhance it with source context if available

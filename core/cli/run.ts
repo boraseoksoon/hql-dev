@@ -1,33 +1,41 @@
-// cli/run.ts - streamlined CLI interface
+// cli/run.ts - with enhanced error handling
 import { transpileCLI } from "../src/bundler.ts";
 import { resolve } from "../src/platform/platform.ts";
-import { initializeLogger } from "../src/logger-init.ts";
-import logger from "../src/logger-init.ts";
+import logger, { Logger } from "../src/logger.ts";
 import { cleanupAllTempFiles } from "../src/utils/temp-file-tracker.ts";
-import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
-// Error handling imports
+import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
+// New imports for enhanced error handling
 import { 
-  registerSourceFile,
-  CommonErrorUtils
-} from "../src/transpiler/error/common-error-utils.ts";
+  registerSourceFile, 
+  formatError, 
+  getSuggestion,
+  ErrorUtils
+} from "../src/transpiler/error/error-handling.ts";
 import { initializeErrorHandling } from "../src/transpiler/error/error-initializer.ts";
+import { reportError } from "../src/transpiler/error/error-reporter.ts";
 
 function printHelp() {
+  // Unchanged
   console.error(
     "Usage: deno run -A cli/run.ts <target.hql|target.js> [options]",
   );
   console.error("\nOptions:");
-  console.error("  --verbose         Enable verbose logging");
+  console.error("  --verbose         Enable verbose logging and enhanced error formatting");
+  console.error("  --quiet           Disable console.log output");
   console.error(
     "  --log <namespaces>  Filter logging to specified namespaces (e.g., --log parser,cli)",
   );
+  console.error("  --performance     Apply performance optimizations");
+  console.error("  --print           Print final JS output directly in CLI");
+  console.error("  --debug           Enable enhanced debugging and error reporting");
+  console.error("  --no-clickable-paths  Disable clickable file paths in error messages");
   console.error("  --help, -h        Display this help message");
 }
 
 async function run() {
   const args = Deno.args;
 
-  // Set up console logging based on --quiet
+  // Set up common console logging based on --quiet or production.
   setupConsoleLogging(args);
 
   if (args.includes("--help") || args.includes("-h")) {
@@ -43,17 +51,25 @@ async function run() {
     Deno.exit(1);
   }
 
-  // Setup logging options (verbose & log namespaces)
+  // Setup logging options (verbose & log namespaces).
   const { verbose, logNamespaces } = setupLoggingOptions(args);
-  
-  // Initialize the logger with the configured options
-  initializeLogger({ 
-    verbose, 
-    namespaces: logNamespaces 
-  });
-  
+  logger.setEnabled(verbose);
+  if (logNamespaces.length > 0) {
+    Logger.allowedNamespaces = logNamespaces;
+    console.log(
+      `Logging restricted to namespaces: ${logNamespaces.join(", ")}`,
+    );
+  }
+
   if (verbose) {
     Deno.env.set("HQL_DEBUG", "1");
+    console.log("Verbose logging enabled");
+  }
+  
+  // Setup debug options for enhanced error reporting
+  const { debug, clickablePaths } = setupDebugOptions(args);
+  if (debug) {
+    console.log("Debug mode enabled with enhanced error reporting");
   }
   
   // Initialize enhanced error handling system
@@ -78,29 +94,39 @@ async function run() {
     registerSourceFile(inputPath, source);
   } catch (readError) {
     // Use the enhanced error reporter
-    CommonErrorUtils.reportError(readError, {
+    reportError(readError, {
       filePath: inputPath,
       verbose: verbose,
-      useClickablePaths: true,
+      useClickablePaths: clickablePaths,
       includeStack: verbose
     });
     Deno.exit(1);
   }
   
   try {
+    const PERFORMANCE_MODE = {
+      minify: true,
+      drop: ["console", "debugger"],
+    };
+    const optimizationOptions = args.includes("--performance")
+      ? PERFORMANCE_MODE
+      : { minify: false };
     const bundleOptions = { 
       verbose, 
       tempDir, 
+      ...optimizationOptions, 
       skipErrorReporting: true,
       skipErrorHandling: true
     };
     
+    const useColors = !args.includes("--no-colors");
+
     // Run the module directly, with a single error handler
     const fileName = inputPath.split("/").pop() || "output";
     const tempOutputPath = `${tempDir}/${fileName.replace(/\.hql$/, ".run.js")}`;
     
     // Transpile the code with error handling
-    const bundledPath = await CommonErrorUtils.withErrorHandling(
+    const bundledPath = await ErrorUtils.withErrorHandling(
       () => transpileCLI(inputPath, tempOutputPath, bundleOptions),
       { 
         filePath: inputPath, 
@@ -109,11 +135,11 @@ async function run() {
       }
     )().catch(error => {
       // Use enhanced error reporting
-      CommonErrorUtils.reportError(error, {
+      reportError(error, {
         filePath: inputPath,
-        verbose: verbose,
-        useClickablePaths: true,
-        includeStack: verbose
+        verbose: verbose || debug,
+        useClickablePaths: clickablePaths,
+        includeStack: verbose || debug
       });
       Deno.exit(1);
     });
@@ -128,7 +154,7 @@ async function run() {
       });
       
       // Run the code with error handling
-      await CommonErrorUtils.withErrorHandling(
+      await ErrorUtils.withErrorHandling(
         async () => await import("file://" + resolve(bundledPath)),
         { 
           filePath: bundledPath, 
@@ -137,22 +163,22 @@ async function run() {
         }
       )().catch(error => {
         // Use enhanced error reporting for runtime errors
-        CommonErrorUtils.reportError(error, {
+        reportError(error, {
           filePath: bundledPath,
-          verbose: verbose,
-          useClickablePaths: true,
-          includeStack: verbose
+          verbose: verbose || debug,
+          useClickablePaths: clickablePaths,
+          includeStack: verbose || debug
         });
         Deno.exit(1);
       });
     }
   } catch (error) {
     // Use enhanced error reporting
-    CommonErrorUtils.reportError(error, {
+    reportError(error, {
       filePath: inputPath,
-      verbose: verbose,
-      useClickablePaths: true,
-      includeStack: verbose
+      verbose: verbose || debug,
+      useClickablePaths: clickablePaths,
+      includeStack: verbose || debug
     });
     Deno.exit(1);
   } finally {

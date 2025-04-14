@@ -212,7 +212,7 @@ export function transformLoop(
     }
   } catch (error) {
     throw new TransformError(
-      `Failed to transform loop: ${CommonErrorUtils.formatErrorMessage(error)}`,
+      `Failed to transform loop: ${error instanceof Error ? error.message : String(error)}`,
       "loop transformation",
       "valid loop expression",
       list
@@ -311,7 +311,7 @@ export function transformIfForLoop(
     };
   } catch (error) {
     throw new TransformError(
-      `Failed to transform if for loop: ${CommonErrorUtils.formatErrorMessage(error)}`,
+      `Failed to transform if for loop: ${error instanceof Error ? error.message : String(error)}`,
       "if in loop transformation",
       "valid if expression",
       ifExpr
@@ -393,7 +393,7 @@ export function transformRecur(
     };
   } catch (error) {
     throw new TransformError(
-      `Failed to transform recur: ${CommonErrorUtils.formatErrorMessage(error)}`,
+      `Failed to transform recur: ${error instanceof Error ? error.message : String(error)}`,
       "recur transformation",
       "valid recur expression",
       list

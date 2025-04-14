@@ -16,7 +16,6 @@ import { Environment, Value } from "./environment.ts";
 import { defineUserMacro, evaluateForMacro } from "./s-exp/macro.ts";
 import { parse } from "./transpiler/pipeline/parser.ts";
 import { Logger } from "./logger.ts";
-import logger from "./logger.ts";
 import {
   ImportError,
   MacroError,
@@ -31,7 +30,6 @@ import {
   isRemoteUrl,
   registerModulePath,
 } from "./utils/import-utils.ts";
-import { CommonErrorUtils } from "./transpiler/error/common-error-utils.ts";
 
 export interface ImportProcessorOptions {
   verbose?: boolean;
@@ -49,11 +47,11 @@ interface SLiteral {
 }
 
 function createLogger(options: ImportProcessorOptions): Logger {
-  return logger;
+  return new Logger(options.verbose || false);
 }
 
 function formatErrorMessage(error: unknown): string {
-  return CommonErrorUtils.formatErrorMessage(error);
+  return error instanceof Error ? error.message : String(error);
 }
 
 function wrapError(
@@ -62,12 +60,11 @@ function wrapError(
   modulePath: string,
   currentFile?: string,
 ): never {
-  return CommonErrorUtils.wrapError(
-    context,
-    error,
+  throw new ImportError(
+    `${context}: ${formatErrorMessage(error)}`,
     modulePath,
     currentFile,
-    ImportError
+    error instanceof Error ? error : undefined,
   );
 }
 
@@ -690,7 +687,7 @@ async function processJsImport(
         jsSource,
         resolvedPath,
         {
-          verbose: logger.isVerbose,
+          verbose: logger.enabled,
         },
         logger,
       );
@@ -706,7 +703,7 @@ async function processJsImport(
     logger.debug(`Imported JS module: ${moduleName} from ${finalModuleUrl}`);
   } catch (error) {
     throw new ImportError(
-      `Importing JS module ${moduleName}: ${CommonErrorUtils.formatErrorMessage(error)}`,
+      `Importing JS module ${moduleName}: ${error instanceof Error ? error.message : String(error)}`,
       modulePath,
       env.getCurrentFile(),
       error instanceof Error ? error : undefined

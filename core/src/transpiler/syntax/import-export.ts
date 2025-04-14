@@ -2,20 +2,19 @@
 // Module for handling import and export operations
 
 import * as ts from "npm:typescript";
+import * as path from "../../platform/platform.ts";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { Logger } from "../../logger.ts";
-import { perform } from "../error/common-error-utils.ts";
+import { perform } from "../error/error-utils.ts";
 import { Environment } from "../../environment.ts";
 import { isUserLevelMacro } from "../../s-exp/macro.ts";
 import { processVectorElements } from "./data-structure.ts";
 import { execute, convertVariableDeclaration } from "../pipeline/hql-ir-to-ts-ast.ts";
-import * as path from "../../platform/platform.ts";
-import { getLogger, isDebugMode } from "../../logger-init.ts";
 
-const logger = getLogger({ verbose: isDebugMode() });
+const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 export function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclaration {
   return execute(node, "import declaration", () => {

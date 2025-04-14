@@ -1,13 +1,10 @@
 // src/transpiler/purity.ts
 
 import { HQLNode, ListNode, SymbolNode } from "../type/hql_ast.ts";
-import { getLogger, isDebugMode } from "../../logger-init.ts";
 import { ValidationError } from "../error/errors.ts";
 import { Logger } from "../../logger.ts";
-import { SyntaxKind } from "npm:typescript";
 
-// Use getLogger instead of creating a new Logger instance
-const logger = getLogger({ verbose: isDebugMode() });
+const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 // Registry to track pure functions
 const pureFunctions = new Set<string>();

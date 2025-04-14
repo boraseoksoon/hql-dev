@@ -2,18 +2,16 @@
 // Module for handling class declarations and related operations
 
 import * as ts from "npm:typescript";
-import { getLogger, isDebugMode } from "../../logger-init.ts";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { Logger } from "../../logger.ts";
-import { perform } from "../error/common-error-utils.ts";
+import { perform } from "../error/error-utils.ts";
 import { execute,  } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { convertIRNode, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
 
-// Use getLogger instead of creating a new Logger instance
-const logger = getLogger({ verbose: isDebugMode() });
+const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 export function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {
   return execute(node, "call expression", () => {
@@ -237,7 +235,7 @@ export function transformClass(
   } catch (error) {
     throw new TransformError(
       `Failed to transform class declaration: ${
-        CommonErrorUtils.formatErrorMessage(error)
+        error instanceof Error ? error.message : String(error)
       }`,
       "class declaration",
       "transformation",
@@ -590,7 +588,7 @@ function processClassMethodFn(
       body: bodyBlock,
     };
   } catch (error) {
-    logger.error(`Error processing class method (fn): ${CommonErrorUtils.formatErrorMessage(error)}`);
+    logger.error(`Error processing class method (fn): ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -712,7 +710,7 @@ function processClassMethodFx(
       body: bodyBlock,
     };
   } catch (error) {
-    logger.error(`Error processing class method (fx): ${CommonErrorUtils.formatErrorMessage(error)}`);
+    logger.error(`Error processing class method (fx): ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -763,7 +761,7 @@ function processClassField(
       initialValue,
     };
   } catch (error) {
-    logger.error(`Error processing class field: ${CommonErrorUtils.formatErrorMessage(error)}`);
+    logger.error(`Error processing class field: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -855,7 +853,7 @@ function processClassConstructor(
       body: bodyBlock,
     };
   } catch (error) {
-    logger.error(`Error processing class constructor: ${CommonErrorUtils.formatErrorMessage(error)}`);
+    logger.error(`Error processing class constructor: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }

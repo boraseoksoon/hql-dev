@@ -8,11 +8,9 @@ import {
   registerSourceFile, 
   formatError, 
   getSuggestion,
-  createStageErrorHandler,
-  withTypeScriptErrorTranslation
+  createStageErrorHandler
 } from "./error-handling.ts";
-import { CommonErrorUtils } from "./common-error-utils.ts";
-import { getLogger, isDebugMode } from "../../logger-init.ts";
+import { Logger } from "../../logger.ts";
 import { parse } from "../pipeline/parser.ts";
 import { transformSyntax } from "../pipeline/syntax-transformer.ts";
 import { transformToIR } from "../pipeline/hql-ast-to-hql-ir.ts";
@@ -21,8 +19,8 @@ import { transformAST } from "../../transformer.ts";
 import { processHql } from "../hql-transpiler.ts";
 
 
-// Use getLogger instead of creating a new Logger instance
-const logger = getLogger({ verbose: isDebugMode() });
+// Initialize logger
+const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 /**
  * Initialize error handling throughout the system

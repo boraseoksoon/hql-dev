@@ -1,11 +1,10 @@
 // src/transpiler/ts-ast-to-ts-code.ts - Refactored with perform and performAsync utilities
 import * as ts from "npm:typescript";
-import { getLogger } from "../../logger-init.ts";
 import * as IR from "../type/hql_ir.ts";
 import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { CodeGenError, createErrorReport } from "../error/errors.ts";
 import { Logger } from "../../logger.ts";
-import { perform } from "../error/common-error-utils.ts";
+import { perform } from "../error/error-utils.ts";
 
 // Initialize logger
 const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
@@ -97,7 +96,7 @@ export function generateTypeScript(ir: IR.IRProgram): string {
     // Log the error report for detailed diagnostics
     logger.error(
       `Failed to generate TypeScript code: ${
-        CommonErrorUtils.formatErrorMessage(error)
+        error instanceof Error ? error.message : String(error)
       }`,
     );
     if (Deno.env.get("HQL_DEBUG") === "1") {
@@ -110,7 +109,7 @@ export function generateTypeScript(ir: IR.IRProgram): string {
     } else {
       throw new CodeGenError(
         `Failed to generate TypeScript code: ${
-          CommonErrorUtils.formatErrorMessage(error)
+          error instanceof Error ? error.message : String(error)
         }`,
         "TypeScript code generation",
         ir,
@@ -201,7 +200,9 @@ export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
           }
         } catch (error) {
           // Collect errors but continue processing other nodes
-          const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+          const errorMessage = error instanceof Error
+            ? error.message
+            : String(error);
           conversionErrors.push(
             `Error converting node ${i} (${
               IR.IRNodeType[node.type] || "unknown type"

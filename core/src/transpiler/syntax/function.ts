@@ -1,7 +1,6 @@
 // src/transpiler/syntax/function.ts
 
 import * as ts from "npm:typescript";
-import { getLogger, isDebugMode } from "../../logger-init.ts";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, HQLNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
@@ -10,7 +9,7 @@ import { Logger } from "../../logger.ts";
 import { registerPureFunction, verifyFunctionPurity } from "../fx/purity.ts";
 import { isValidType } from "../fx/purity.ts";
 import { execute, convertIdentifier, convertBlockStatement, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
-import { perform } from "../error/common-error-utils.ts";
+import { perform } from "../error/error-utils.ts";
 import { transformNode } from "../pipeline/hql-ast-to-hql-ir.ts";
 
 const fnFunctionRegistry = new Map<string, IR.IRFnFunctionDeclaration>();
@@ -78,7 +77,7 @@ export function transformNamedArgumentCall(
   } catch (error) {
     throw new TransformError(
       `Failed to transform named argument call: ${
-        CommonErrorUtils.formatErrorMessage(error)
+        error instanceof Error ? error.message : String(error)
       }`,
       "named argument function call",
       "transformation",
@@ -405,52 +404,33 @@ export function convertFxFunctionDeclaration(
             ts.factory.createBinaryExpression(
               ts.factory.createBinaryExpression(
                 ts.factory.createBinaryExpression(
-                  ts.factory.createBinaryExpression(
-                    ts.factory.createPropertyAccessExpression(
-                      ts.factory.createIdentifier("args"),
-                      ts.factory.createIdentifier("length")
-                    ),
-                    ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                    ts.factory.createNumericLiteral("1")
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("args"),
+                    ts.factory.createIdentifier("length")
                   ),
-                  ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-                  ts.factory.createBinaryExpression(
-                    ts.factory.createTypeOfExpression(
-                      ts.factory.createElementAccessExpression(
-                        ts.factory.createIdentifier("args"),
-                        ts.factory.createNumericLiteral("0")
-                      )
-                    ),
-                    ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                    ts.factory.createStringLiteral("object")
-                  )
+                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                  ts.factory.createNumericLiteral("1")
                 ),
                 ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
                 ts.factory.createBinaryExpression(
-                  ts.factory.createElementAccessExpression(
-                    ts.factory.createIdentifier("args"),
-                    ts.factory.createNumericLiteral("0")
-                  ),
-                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
-                  ts.factory.createNull()
-                )
-              ),
-              ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
-              ts.factory.createPrefixUnaryExpression(
-                ts.SyntaxKind.ExclamationToken,
-                ts.factory.createCallExpression(
-                  ts.factory.createPropertyAccessExpression(
-                    ts.factory.createIdentifier("Array"),
-                    ts.factory.createIdentifier("isArray")
-                  ),
-                  undefined,
-                  [
+                  ts.factory.createTypeOfExpression(
                     ts.factory.createElementAccessExpression(
                       ts.factory.createIdentifier("args"),
                       ts.factory.createNumericLiteral("0")
                     )
-                  ]
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                  ts.factory.createStringLiteral("object")
                 )
+              ),
+              ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+              ts.factory.createBinaryExpression(
+                ts.factory.createElementAccessExpression(
+                  ts.factory.createIdentifier("args"),
+                  ts.factory.createNumericLiteral("0")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                ts.factory.createNull()
               )
             ),
             ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
@@ -735,7 +715,7 @@ export function transformFn(
   } catch (error) {
     throw new TransformError(
       `Failed to transform fn function: ${
-        CommonErrorUtils.formatErrorMessage(error)
+        error instanceof Error ? error.message : String(error)
       }`,
       "fn function",
       "transformation",
@@ -892,7 +872,7 @@ export function transformFx(
   } catch (error) {
     throw new TransformError(
       `Failed to transform fx function: ${
-        CommonErrorUtils.formatErrorMessage(error)
+        error instanceof Error ? error.message : String(error)
       }`,
       "fx function",
       "transformation",
@@ -1014,7 +994,7 @@ export function processFnFunctionCall(
   } catch (error) {
     throw new TransformError(
       `Failed to process fn function call: ${
-        CommonErrorUtils.formatErrorMessage(error)
+        error instanceof Error ? error.message : String(error)
       }`,
       "fn function call",
       "transformation",
@@ -1144,7 +1124,7 @@ function processNamedArguments(
   } catch (error) {
     throw new TransformError(
       `Failed to process named arguments: ${
-        CommonErrorUtils.formatErrorMessage(error)
+        error instanceof Error ? error.message : String(error)
       }`,
       "named arguments",
       "transformation",

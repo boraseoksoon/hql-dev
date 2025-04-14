@@ -2,14 +2,13 @@
 // Module for handling data structure operations (vector, hash-map, etc.)
 
 import * as IR from "../type/hql_ir.ts";
-import { getLogger, isDebugMode } from "../../logger-init.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { Logger } from "../../logger.ts";
-import { perform } from "../error/common-error-utils.ts";
+import { perform } from "../error/error-utils.ts";
 
-// Use getLogger instead of creating a new Logger instance
-const logger = getLogger({ verbose: isDebugMode() });
+// Initialize logger
+const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 /**
  * Process elements in a vector, handling vector keyword and commas
