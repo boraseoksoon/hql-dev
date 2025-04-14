@@ -7,7 +7,6 @@ import { expandMacros } from "@s-exp/macro.ts";
 import { processImports } from "@core/imports.ts";
 import { convertToHqlAst } from "@s-exp/macro-reader.ts";
 import { transformAST } from "@core/transformer.ts";
-import { Logger } from "@logger/logger.ts";
 import { REPLEnvironment } from "./repl-environment.ts";
 import { Environment, Value } from "@core/environment.ts";
 import { SExp } from "@s-exp/types.ts";
@@ -15,8 +14,8 @@ import { RUNTIME_FUNCTIONS } from "@transpiler/runtime/runtime.ts";
 import { registerSourceFile, withErrorHandling } from "@transpiler/error/error-handling.ts";
 import { report } from "@transpiler/error/errors.ts";
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import logger from "@logger/logger-init.ts";
-import * as CommonErrorUtils from "@transpiler/error/common-error-utils.ts";
+import { CommonUtils } from "./common-utils.ts";
+import { Logger, globalLogger as logger } from "@logger/logger.ts";
 
 // Options for REPL evaluation
 export interface REPLEvalOptions {
@@ -75,7 +74,7 @@ export class REPLEvaluator {
   constructor(env: Environment, options: REPLEvalOptions = {}) {
     this.replEnv = new REPLEnvironment(env, { verbose: options.verbose });
     this.logger = logger;
-    this.logger.configure({ verbose: options.verbose || false });
+    this.logger.setEnabled(!!options.verbose);
     this.baseDir = options.baseDir || Deno.cwd();
     
     // Initialize runtime functions immediately
@@ -99,7 +98,7 @@ export class REPLEvaluator {
       this.runtimeFunctionsInitialized = true;
       this.logger.debug("Runtime functions initialized");
     } catch (error) {
-      this.logger.error(`Failed to initialize runtime functions: ${CommonErrorUtils.formatErrorMessage(error)}`);
+      this.logger.error(`Failed to initialize runtime functions: ${CommonUtils.formatErrorMessage(error)}`);
       throw error;
     }
   }
@@ -126,7 +125,7 @@ export class REPLEvaluator {
           this.parseCache.set(input, result);
           return result;
         } catch (error) {
-          this.logger.error(`Parse error: ${CommonErrorUtils.formatErrorMessage(error)}`);
+          this.logger.error(`Parse error: ${CommonUtils.formatErrorMessage(error)}`);
           throw error;
         }
       },
@@ -286,7 +285,7 @@ export class REPLEvaluator {
       };
     } catch (error: unknown) {
       this.replEnv.hqlEnv.setCurrentFile(null);
-      log(`Evaluation error: ${CommonErrorUtils.formatErrorMessage(error)}`);
+      log(`Evaluation error: ${CommonUtils.formatErrorMessage(error)}`);
       
       if (error instanceof Error) {
         // Use the common error reporting mechanism
@@ -349,7 +348,7 @@ export class REPLEvaluator {
         this.logger.debug(`Tracked imported module: ${moduleName} from ${modulePath}`);
       }
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.logger.debug(`Error tracking imported module: ${errorMessage}`);
     }
   }
@@ -616,7 +615,7 @@ export class REPLEvaluator {
       return await fn(this.replEnv);
     } catch (error: unknown) {
       // Format the error message
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.logger.error(`JavaScript evaluation error: ${errorMessage}`);
       
       // Check if this is a redeclaration error

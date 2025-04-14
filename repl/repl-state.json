@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastModule": "global",
+  "lastModule": "hql",
   "modules": {
     "global": {
       "definitions": {
@@ -11,7 +11,7 @@
       "imports": [],
       "exports": [],
       "metadata": {
-        "lastInitialized": "2025-04-13T04:12:49.639Z"
+        "lastInitialized": "2025-04-14T21:19:01.902Z"
       }
     },
     "hql": {
@@ -22,7 +22,9 @@
       },
       "imports": [],
       "exports": [],
-      "metadata": {}
+      "metadata": {
+        "lastInitialized": "2025-04-14T21:31:55.014Z"
+      }
     }
   },
   "history": []

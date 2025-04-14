@@ -8,16 +8,17 @@ import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
  * Add new macro files here to make them available to the system
  */
 export const SYSTEM_MACRO_PATHS = [
-  "lib/macro/core.hql",
-  "lib/macro/loop.hql"
+  "core/lib/macro/core.hql",
+  "core/lib/macro/loop.hql"
 ];
 
 /**
  * Get the absolute paths for all system macro files
  */
 export function getSystemMacroPaths(): string[] {
-  const cwd = Deno.cwd();
-  return SYSTEM_MACRO_PATHS.map(macroPath => path.join(cwd, macroPath));
+  // Assume cwd is /Users/seoksoonjang/Desktop/hql/repl, so project root is parent
+  const projectRoot = path.dirname(Deno.cwd());
+  return SYSTEM_MACRO_PATHS.map(macroPath => path.join(projectRoot, macroPath));
 }
 
 /**

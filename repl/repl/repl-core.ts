@@ -2,18 +2,19 @@
 // Core REPL functionality and evaluation loop
 
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
-import { getLogger } from "@logger/logger-init.ts";
 import { ReplState, resetReplState, updateParenBalance } from "./repl-state.ts";
 import { Environment } from "@core/environment.ts";
 import { loadSystemMacros } from "@transpiler/hql-transpiler.ts";
-import { Logger } from "@logger/logger.ts";
+import { Logger, globalLogger as logger } from "@logger/logger.ts";
 import { historyManager } from "./history-manager.ts";
 import { printBanner, getPrompt, prettyPrintResult } from "./repl-commands.ts";
 import { readLineWithArrowKeys } from "./repl-input.ts";
 import { createTabCompletion } from "./repl-completion.ts";
-import { colorText, printError, handleJsEvaluationError, ReplStateHandlers, CommonReplOptions, commandUtils } from "./repl-common.ts";
+import { printError, handleJsEvaluationError, ReplStateHandlers, CommonReplOptions, commandUtils } from "./repl-common.ts";
 import { executeCommand } from "./command-executor.ts";
-import * as CommonErrorUtils from "@transpiler/error/common-error-utils.ts";
+
+import { CommonUtils } from "./common-utils.ts";
+
 
 /**
  * Options for the REPL
@@ -36,7 +37,6 @@ export interface ReplOptions {
 export async function startRepl(options: ReplOptions = {}): Promise<void> {
   console.log("Starting HQL REPL...");
   
-  const logger = getLogger({ verbose: options.verbose ?? false });
   const baseDir = options.baseDir ?? Deno.cwd();
   const useColors = options.useColors ?? true;
   const historySize = options.historySize ?? 100;
@@ -66,7 +66,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
   const setRunning = (val: boolean) => { running = val; };
   const setVerbose = (val: boolean) => {
     showVerbose = val;
-    logger.configure({ verbose: val });
+    logger.setEnabled(val);
   };
   const setShowAst = (val: boolean) => { showAst = val; };
   const setShowExpanded = (val: boolean) => { showExpanded = val; };
@@ -121,7 +121,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
       const file = options.initialFile;
       try {
         logger.log({ text: `Loading file: ${file}`, namespace: "repl" });
-        const content = await Deno.readTextFile(file);
+        const content = await Deno.readTextFile(file) as string;
         await evaluator.evaluate(content, {
           verbose: options.verbose,
           baseDir,
@@ -131,7 +131,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
         });
         logger.log({ text: `File ${file} loaded successfully`, namespace: "repl" });
       } catch (error) {
-        console.error(`Error loading file ${file}: ${CommonErrorUtils.formatErrorMessage(error)}`);
+        console.error(`Error loading file ${file}: ${CommonUtils.formatErrorMessage(error)}`);
       }
     }
 
@@ -260,7 +260,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
             prettyPrintResult(result, useColors, showVerbose);
           }
         } catch (error) {
-          const errorMsg = CommonErrorUtils.formatErrorMessage(error);
+          const errorMsg = CommonUtils.formatErrorMessage(error);
           
           // Handle JavaScript evaluation errors in a consistent way
           if (error instanceof Error && error.stack?.includes("JavaScript evaluation")) {
@@ -276,11 +276,11 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           }
         }
       } catch (error) {
-        console.error(`Error in REPL loop: ${CommonErrorUtils.formatErrorMessage(error)}`);
+        console.error(`Error in REPL loop: ${CommonUtils.formatErrorMessage(error)}`);
       }
     }
   } catch (error) {
-    console.error(`Error starting REPL: ${CommonErrorUtils.formatErrorMessage(error)}`);
+    console.error(`Error starting REPL: ${CommonUtils.formatErrorMessage(error)}`);
   } finally {
     // Reset terminal state
     try {

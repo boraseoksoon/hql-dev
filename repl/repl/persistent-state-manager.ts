@@ -2,11 +2,10 @@
 // Manages persistent state for the REPL across sessions
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { getLogger } from "@logger/logger-init.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { ensureDir } from "https://deno.land/std@0.224.0/fs/ensure_dir.ts";
-import * as CommonErrorUtils from "@transpiler/error/common-error-utils.ts";
-import { Logger } from "@logger/logger.ts";
+import { CommonUtils } from "./common-utils.ts";
+import { Logger, globalLogger as logger } from "@logger/logger.ts";
 
 // State file name (will be stored directly in the repl directory)
 const STATE_FILE = "repl-state.json";
@@ -52,9 +51,7 @@ export class PersistentStateManager {
   private changed = false;
   
   constructor(options: { verbose?: boolean } = {}) {
-    // Always enable verbose logging to help debug persistence issues
-    const verbose = true; // Force verbose mode for debugging
-    this.logger = getLogger({ verbose });
+    this.logger = logger;
     
     // Initialize state directory
     try {
@@ -133,7 +130,7 @@ export class PersistentStateManager {
       
       return null;
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.logger.debug(`Error finding repl directory: ${errorMessage}`);
       return null;
     }
@@ -228,7 +225,7 @@ export class PersistentStateManager {
         await Deno.remove(testFilePath);
         this.logger.debug(`Write permission test passed for ${this.stateDir}`);
       } catch (e) {
-        this.logger.error(`No write permission to directory ${this.stateDir}: ${CommonErrorUtils.formatErrorMessage(e)}`);
+        this.logger.error(`No write permission to directory ${this.stateDir}: ${CommonUtils.CommonUtils.formatErrorMessage(e)}`);
         
         // Try to fall back to current directory
         this.stateDir = ".";
@@ -281,7 +278,7 @@ export class PersistentStateManager {
       this.saveState(true);
       
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.logger.warn(`Error initializing state: ${errorMessage}`);
       // Fall back to empty state in case of error
       this.currentState = this.createEmptyState();
@@ -346,7 +343,7 @@ export class PersistentStateManager {
       this.currentState = loadedState;
       this.logger.debug(`Loaded state with ${Object.keys(loadedState.modules).length} modules`);
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.logger.warn(`Error loading state from ${filePath}: ${errorMessage}`);
       this.currentState = this.createEmptyState();
     }
@@ -404,12 +401,12 @@ export class PersistentStateManager {
         const stat = await Deno.stat(savePath);
         this.logger.debug(`Saved REPL state to ${savePath} (${stat.size} bytes)`);
       } catch (e) {
-        this.logger.error(`Failed to verify state file was written: ${CommonErrorUtils.formatErrorMessage(e)}`);
+        this.logger.error(`Failed to verify state file was written: ${CommonUtils.CommonUtils.formatErrorMessage(e)}`);
       }
       
       this.changed = false;
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.logger.error(`Error saving state: ${errorMessage}`);
     }
   }

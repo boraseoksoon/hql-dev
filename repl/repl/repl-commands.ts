@@ -637,7 +637,7 @@ export function commandEnv(evaluator: ModuleAwareEvaluator, useColors: boolean, 
         // Don't display lookup errors - these are usually for properties
         if (logger.isVerbose) {
           printError(
-            `Error looking up ${symbol}: ${CommonErrorUtils.formatErrorMessage(error)}`,
+            `Error looking up ${symbol}: ${CommonUtils.formatErrorMessage(error)}`,
             useColors
           );
         }
@@ -785,7 +785,7 @@ export async function commandGo(evaluator: ModuleAwareEvaluator, state: ReplStat
                      useColors ? "\x1b[36m" : "", useColors));
     }
   } catch (error: unknown) {
-    const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+    const errorMessage = CommonUtils.formatErrorMessage(error);
     console.error(`Error switching to module: ${errorMessage}`);
   }
 }
@@ -981,7 +981,7 @@ export async function commandRemove(
         // Force sync to save the empty state
         persistentStateManager.forceSync();
       } catch (error) {
-        console.error(`Error resetting state files: ${CommonErrorUtils.formatErrorMessage(error)}`);
+        console.error(`Error resetting state files: ${CommonUtils.formatErrorMessage(error)}`);
       }
       
       if (removedCount > 0 || removedSymbols > 0) {
@@ -1034,7 +1034,7 @@ export async function commandRemove(
         persistentStateManager.forceSync();
         console.log("Module state has been saved.");
       } catch (error) {
-        console.error(`Error syncing state: ${CommonErrorUtils.formatErrorMessage(error)}`);
+        console.error(`Error syncing state: ${CommonUtils.formatErrorMessage(error)}`);
       }
       
       if (removedCount > 0) {

@@ -4,14 +4,13 @@
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { ensureDir } from "https://deno.land/std@0.224.0/fs/ensure_dir.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
-import { getLogger } from "@logger/logger-init.ts";
-import { Logger } from "@logger/logger.ts";
-import * as CommonErrorUtils from "@transpiler/error/common-error-utils.ts";
+import { globalLogger as logger } from "@logger/logger.ts";
+import { CommonUtils } from "./common-utils.ts";
 
 const HISTORY_FILE = ".hql_history";
 
 class HistoryManager {
-  private logger = getLogger({ verbose: false });
+  private logger = logger;
   private historyPath: string;
   private initialized = false;
 
@@ -25,12 +24,6 @@ class HistoryManager {
     }
   }
 
-  /**
-   * Set verbose logging
-   */
-  setVerbose(verbose: boolean): void {
-    this.logger = getLogger({ verbose: verbose });
-  }
 
   /**
    * Load history from file
@@ -52,7 +45,7 @@ class HistoryManager {
       this.logger.debug(`Loaded ${lines.length} history entries from ${this.historyPath}`);
       return lines;
     } catch (error: unknown) {
-      this.logger.warn(`Error loading history: ${CommonErrorUtils.formatErrorMessage(error)}`);
+      this.logger.warn(`Error loading history: ${CommonUtils.formatErrorMessage(error)}`);
       return [];
     }
   }
@@ -68,7 +61,7 @@ class HistoryManager {
       Deno.writeTextFileSync(this.historyPath, content);
       this.logger.debug(`Saved ${history.length} history entries to ${this.historyPath}`);
     } catch (error: unknown) {
-      this.logger.warn(`Error saving history: ${CommonErrorUtils.formatErrorMessage(error)}`);
+      this.logger.warn(`Error saving history: ${CommonUtils.formatErrorMessage(error)}`);
     }
   }
 
@@ -82,7 +75,7 @@ class HistoryManager {
       Deno.writeTextFileSync(this.historyPath, '');
       this.logger.debug(`Cleared all history entries from ${this.historyPath}`);
     } catch (error: unknown) {
-      this.logger.warn(`Error clearing history: ${CommonErrorUtils.formatErrorMessage(error)}`);
+      this.logger.warn(`Error clearing history: ${CommonUtils.formatErrorMessage(error)}`);
     }
   }
 }

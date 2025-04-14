@@ -5,14 +5,7 @@ import logger, { Logger } from "../src/logger.ts";
 import { cleanupAllTempFiles } from "../src/utils/temp-file-tracker.ts";
 import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
 // New imports for enhanced error handling
-import { 
-  registerSourceFile, 
-  formatError, 
-  getSuggestion,
-  ErrorUtils
-} from "../src/transpiler/error/error-handling.ts";
-import { initializeErrorHandling } from "../src/transpiler/error/error-initializer.ts";
-import { reportError } from "../src/transpiler/error/error-reporter.ts";
+import CommonError from "../src/CommonError.ts";
 
 function printHelp() {
   // Unchanged

@@ -1,8 +1,7 @@
 // src/repl/repl-environment.ts - Enhanced environment for REPL
 
 import { Environment, Value } from "@core/environment.ts";
-import { getLogger } from "@logger/logger-init.ts";
-import { Logger } from "@logger/logger.ts";
+import { Logger, globalLogger as logger } from "@logger/logger.ts";
 import { SExp } from "@s-exp/types.ts";
 
 export interface REPLEnvironmentOptions {
@@ -57,7 +56,7 @@ export class REPLEnvironment {
 
   constructor(hqlEnv: Environment, options: REPLEnvironmentOptions = {}) {
     this.hqlEnv = hqlEnv;
-    this.logger = getLogger({ verbose: options.verbose ?? false });
+    this.logger = logger;
     
     // Set maximum cache size if provided
     if (options.historySize && options.historySize > 0) {

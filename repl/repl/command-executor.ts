@@ -1,4 +1,5 @@
 // src/repl/command-executor.ts
+import { CommonUtils } from "./common-utils.ts";
 // Central command execution logic for REPL
 
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
@@ -215,7 +216,7 @@ export async function executeCommand(
             // Use result
             console.log("Verbose evaluation result:", result);
           } catch (error) {
-            console.error(`Error: ${CommonErrorUtils.formatErrorMessage(error)}`);
+            console.error(`Error: ${CommonUtils.formatErrorMessage(error)}`);
           }
         } else {
           // Toggle verbose mode
@@ -244,7 +245,7 @@ export async function executeCommand(
               console.log(result);
             }
           } catch (error) {
-            console.error(`Error: ${CommonErrorUtils.formatErrorMessage(error)}`);
+            console.error(`Error: ${CommonUtils.formatErrorMessage(error)}`);
           }
         } else {
           // Toggle AST mode
@@ -276,7 +277,7 @@ export async function executeCommand(
               console.log("No JavaScript transpilation available.");
             }
           } catch (error) {
-            console.error(`Error: ${CommonErrorUtils.formatErrorMessage(error)}`);
+            console.error(`Error: ${CommonUtils.formatErrorMessage(error)}`);
           }
         } else {
           // Toggle JS mode
@@ -306,7 +307,7 @@ export async function executeCommand(
             console.log(`Use 'cd ${args}' to switch to this module.`);
           }
         } catch (error) {
-          console.error(`Error creating module: ${CommonErrorUtils.formatErrorMessage(error)}`);
+          console.error(`Error creating module: ${CommonUtils.formatErrorMessage(error)}`);
         }
         return true;
         
@@ -315,7 +316,7 @@ export async function executeCommand(
         return false;
     }
   } catch (error) {
-    printError(`Command error: ${CommonErrorUtils.formatErrorMessage(error)}`, useColors);
+    printError(`Command error: ${CommonUtils.formatErrorMessage(error)}`, useColors);
     
     // Reset multiline state on error
     if (replState.multilineMode) {

@@ -3,16 +3,15 @@
 
 import { REPLEvaluator, REPLEvalOptions, REPLEvalResult } from "./repl-evaluator.ts";
 import { Environment, Value } from "@core/environment.ts";
-import { Logger } from "@logger/logger.ts";
-import { getLogger } from "@logger/logger-init.ts";
+import { globalLogger as logger } from "@logger/logger.ts";
 import { persistentStateManager } from "./persistent-state-manager.ts";
 import { REPLEnvironment } from "./repl-environment.ts";
 import { parse } from "@transpiler/pipeline/parser.ts";
 import { processImports, ImportProcessorOptions } from "@core/imports.ts";
 import { SExp, SList, isImport, isSymbol, isLiteral, SSymbol, isSExpNamespaceImport, isSExpVectorImport } from "@s-exp/types.ts";
 import { ImportError } from "@transpiler/error/errors.ts";
-import * as CommonErrorUtils from "@transpiler/error/common-error-utils.ts";
-
+import { CommonUtils } from "./common-utils.ts";
+import { Logger } from "@logger/logger.ts";
 /**
  * Options for the module-aware evaluator
  */
@@ -31,7 +30,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
   
   constructor(env: Environment, options: ModuleAwareEvalOptions = {}) {
     super(env, options);
-    this.moduleLogger = getLogger({ verbose: options.verbose ?? false });
+    this.moduleLogger = logger;
     
     // Initialize with default "global" module
     this.currentModule = "global";
@@ -57,7 +56,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       // Restore all module definitions from persistent storage
       await this.restoreAllModuleStates();
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Failed to initialize module system: ${errorMessage}`);
       throw error; // Re-throw to notify caller of failure
     }
@@ -87,7 +86,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       this.moduleLogger.debug(`Restored state for ${moduleNames.length} modules`);
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error restoring module states: ${errorMessage}`);
     }
   }
@@ -183,7 +182,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       return removed;
     } catch (error) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error removing module: ${errorMessage}`);
       return false;
     }
@@ -324,7 +323,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
         this.moduleLogger.debug(`Tracked ${type} definition: ${symbol}`);
       }
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.moduleLogger.warn(`Error tracking definitions: ${errorMessage}`);
     }
   }
@@ -480,7 +479,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       this.moduleLogger.debug(`Stored ${detectedType} '${symbolName}' definition in module '${this.currentModule}'`);
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.moduleLogger.warn(`Error storing definition: ${errorMessage}`);
     }
   }
@@ -614,7 +613,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       this.moduleLogger.debug(`Restored module state for '${moduleName}'`);
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error restoring module state: ${errorMessage}`);
     }
   }
@@ -815,7 +814,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       
       return null;
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error getting symbol definition: ${errorMessage}`);
       return null;
     }
@@ -878,7 +877,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       this.moduleLogger.debug(`Imported '${symbolName}' from module '${fromModule}'`);
       return true;
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error importing symbol: ${errorMessage}`);
       return false;
     }
@@ -920,7 +919,7 @@ export class ModuleAwareEvaluator extends REPLEvaluator {
       this.moduleLogger.debug(`Exported '${symbolName}' from module '${this.currentModule}'`);
       return true;
     } catch (error: unknown) {
-      const errorMessage = CommonErrorUtils.formatErrorMessage(error);
+      const errorMessage = CommonUtils.formatErrorMessage(error);
       this.moduleLogger.error(`Error exporting symbol: ${errorMessage}`);
       return false;
     }

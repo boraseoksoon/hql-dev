@@ -116,3 +116,4 @@ export class Logger {
 // Singleton instance for shared logging across modules
 const globalLogger = new Logger();
 export default globalLogger;
+export { globalLogger };

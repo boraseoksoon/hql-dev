@@ -3,7 +3,7 @@
 
 import { startRepl } from "./repl/repl.ts";
 import { setupConsoleLogging, setupLoggingOptions } from "../core/cli/utils/utils.ts";
-import logger from "@logger/logger.ts";
+import logger, { Logger } from "@logger/logger.ts";
 import { resolve } from "@platform/platform.ts";
 import { initializeErrorHandling } from "@transpiler/error/error-initializer.ts";
 
@@ -44,7 +44,8 @@ async function run() {
   const { verbose, logNamespaces } = setupLoggingOptions(args);
 
   // Set verbose mode using the new logger API
-  logger.configure({ verbose, namespaces: logNamespaces });
+  logger.setEnabled(verbose);
+  Logger.allowedNamespaces = logNamespaces; // Set static property for namespaces
   if (verbose) {
     Deno.env.set("HQL_DEBUG", "1");
   }
