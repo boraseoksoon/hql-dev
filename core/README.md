@@ -27,15 +27,15 @@ underlying parser.
 
 Transpiler Pipeline
 
-HQL's compiler is structured as a series of well‑defined, modular stages. This
+HQL’s compiler is structured as a series of well‑defined, modular stages. This
 separation of concerns makes it easy to add new language features without
 changing the core parser.
 
 1. Parsing What It Does: The parser reads the HQL source code and tokenizes it
-   into S‑expressions. At this stage, HQL only "knows" the basic constructs:
+   into S‑expressions. At this stage, HQL only “knows” the basic constructs:
    Symbols: e.g. x, +, fx Literals: numbers, strings, booleans, nil Lists: e.g.
    (+ 1 2 3) Example Input: (let x 10) (fx add (x y) (+ x y)) Outcome: The
-   parser produces a raw AST composed entirely of S‑expressions. No "advanced"
+   parser produces a raw AST composed entirely of S‑expressions. No “advanced”
    syntax (like object literals or extended function definitions) is built into
    this phase.
 2. Macro Expansion What It Does: In this phase, the macro expander recursively
@@ -68,7 +68,7 @@ the behavior specified in the original HQL source. Extending HQL Syntax with
 Macros
 
 The macro system is the heart of HQL. It provides a uniform way to extend the
-language—whether you're building a new function syntax or introducing literal
+language—whether you’re building a new function syntax or introducing literal
 data structures—without altering the parser.
 
 Extended Function Definitions with fx The fx macro provides an elegant way to
@@ -94,7 +94,7 @@ resemble: function greetUser(params) { const { name, title } = params; return
 has a default value of 0. It rewrites the function definition to handle the
 default, for example: (fn add (x y) (if (nil? y) (set! y 0)) (return (+ x y)))
 This ensures that the function behaves correctly even if the second parameter
-isn't provided. Literal Data Structures HQL supports literal data structures
+isn’t provided. Literal Data Structures HQL supports literal data structures
 using familiar JSON‑like notation without complicating the parser.
 
 Object Literals (JSON‑Style)
@@ -122,7 +122,7 @@ Standard if: (if (> x 10) (print "Large") (print "Small")) when for a single
 branch: (when condition (do (print "Condition met") (do-other-stuff))) unless:
 (unless condition (print "Condition not met")) Loop Constructs
 
-HQL's for macro supports both list comprehension and imperative-style loops.
+HQL’s for macro supports both list comprehension and imperative-style loops.
 
 List Comprehension Style: (for [(i 0) (< i 10) (+ i 1)] (print i)) This form may
 be rewritten to something like:
@@ -134,7 +134,7 @@ make nested function calls more readable.
 
 Left-Threading (->)
 
-(-> user (get "name") (str "User: ")) How It Works: Each expression "threads"
+(-> user (get "name") (str "User: ")) How It Works: Each expression “threads”
 the result of the previous expression as the first argument of the next.
 Right-Threading (->>)
 
@@ -162,76 +162,9 @@ string?, number?, boolean?, function? String Functions: str, substring,
 ends-with?, starts-with?, to-string, split, join Object Functions: get-prop,
 set-prop!, has-prop?, keys Math Functions: abs, max, min, round Utility
 Functions: identity, constantly, comp, partial, not, always-true, always-false
-These helpers are typically thin wrappers around JavaScript's native functions
+These helpers are typically thin wrappers around JavaScript’s native functions
 (e.g., using js/Array.prototype.map.call), making it easy to interoperate with
 JavaScript.
-
-## Installing and Using HQL
-
-HQL can be easily installed as a command-line tool, providing a streamlined interface similar to other mainstream languages.
-
-### Installation
-
-HQL offers simple installation scripts that make it accessible from anywhere in your system:
-
-1. **On Unix/macOS**:
-   ```sh
-   # Navigate to the HQL core directory
-   cd core
-   
-   # Make the install script executable
-   chmod +x cli/install.sh
-   
-   # Run the installation script
-   ./cli/install.sh
-   ```
-
-2. **On Windows**:
-   ```cmd
-   # Navigate to the HQL core directory
-   cd core
-   
-   # Run the installation script
-   cli\install.bat
-   ```
-
-The installation script will guide you through adding HQL to your PATH, making it accessible from anywhere.
-
-### Using HQL
-
-Once installed, you can use HQL with a simple, intuitive command-line interface:
-
-```sh
-# Run an HQL file
-hql run hello.hql
-
-# Transpile an HQL file to JavaScript
-hql transpile hello.hql output.js
-
-# Get help
-hql --help
-```
-
-### Command Options
-
-1. **`run` command**:
-   ```
-   hql run <file.hql> [options]
-   ```
-   Options:
-   - `--verbose`: Enable verbose logging
-   - `--log <namespaces>`: Filter logging to specified namespaces
-   - `--help, -h`: Display help
-
-2. **`transpile` command**:
-   ```
-   hql transpile <file.hql> [output.js] [options]
-   ```
-   Options:
-   - `--verbose, -v`: Enable verbose logging
-   - `--log <namespaces>`: Filter logging to specified namespaces
-   - `--print`: Print final JS output directly in CLI
-   - `--help, -h`: Display help
 
 Conclusion
 
@@ -244,7 +177,7 @@ built‑in and user‑defined macros (such as fx, literal data structures,
 conditionals, loops, and threading) to enrich the syntax. Intermediate
 Representation: Normalizing the enriched AST into a semantic IR. Code
 Generation: Producing executable JavaScript/TypeScript code from the IR. This
-architecture not only keeps HQL's core lean and maintainable but also offers a
+architecture not only keeps HQL’s core lean and maintainable but also offers a
 powerful, uniform way for both the language designers and users to extend its
 syntax. By leveraging macros for nearly every new language feature, HQL achieves
 elegant extensibility and scalability without resorting to hacky parser changes.

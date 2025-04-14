@@ -11,7 +11,6 @@ import { Logger } from "../../logger.ts";
 import { perform } from "../error/common-error-utils.ts";
 import { execute,  } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { convertIRNode, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
-import * as CommonErrorUtils from "../error/common-error-utils.ts";
 
 // Use getLogger instead of creating a new Logger instance
 const logger = getLogger({ verbose: isDebugMode() });
@@ -450,7 +449,7 @@ function convertIRNodeToStatement(node: IR.IRNode): ts.Statement | ts.Statement[
   if (ts.isExpression(result)) {
     return ts.factory.createExpressionStatement(result);
   }
-  logger.warn(`Unexpected result type from convertIRNode: ${result ? Object.prototype.toString.call(result) : 'undefined'}`);
+  logger.warn(`Unexpected result type from convertIRNode: ${result.kind}`);
   return null;
 }
 
@@ -458,52 +457,43 @@ function replaceSelfWithThis(node: IR.IRNode): IR.IRNode {
   switch (node.type) {
     case IR.IRNodeType.Identifier: {
       return (node as IR.IRIdentifier).name === "self"
-        ? { type: IR.IRNodeType.Identifier, name: "this" } as IR.IRIdentifier
+        ? { ...node, name: "this" }
         : node;
     }
     case IR.IRNodeType.MemberExpression: {
       const memberExpr = node as IR.IRMemberExpression;
       return {
-        type: IR.IRNodeType.MemberExpression,
+        ...memberExpr,
         object:
           memberExpr.object.type === IR.IRNodeType.Identifier &&
           (memberExpr.object as IR.IRIdentifier).name === "self"
-            ? { type: IR.IRNodeType.Identifier, name: "this" } as IR.IRIdentifier
+            ? { type: IR.IRNodeType.Identifier, name: "this" }
             : replaceSelfWithThis(memberExpr.object),
         property: replaceSelfWithThis(memberExpr.property),
-        computed: memberExpr.computed
-      } as IR.IRMemberExpression;
+      };
     }
     case IR.IRNodeType.ReturnStatement: {
-      const returnStmt = node as IR.IRReturnStatement;
       return {
-        type: IR.IRNodeType.ReturnStatement,
-        argument: returnStmt.argument ? replaceSelfWithThis(returnStmt.argument) : null,
-      } as IR.IRReturnStatement;
+        ...node,
+        argument: node.argument ? replaceSelfWithThis(node.argument) : null,
+      };
     }
     case IR.IRNodeType.AssignmentExpression: {
-      const assignExpr = node as IR.IRAssignmentExpression;
       return {
-        type: IR.IRNodeType.AssignmentExpression,
-        operator: assignExpr.operator,
-        left: replaceSelfWithThis(assignExpr.left),
-        right: replaceSelfWithThis(assignExpr.right),
-      } as IR.IRAssignmentExpression;
+        ...node,
+        left: replaceSelfWithThis(node.left),
+        right: replaceSelfWithThis(node.right),
+      };
     }
     case IR.IRNodeType.CallExpression: {
-      const callExpr = node as IR.IRCallExpression;
       return {
-        type: IR.IRNodeType.CallExpression,
-        callee: replaceSelfWithThis(callExpr.callee),
-        arguments: callExpr.arguments.map(arg => replaceSelfWithThis(arg)),
-      } as IR.IRCallExpression;
+        ...node,
+        callee: replaceSelfWithThis(node.callee),
+        arguments: node.arguments.map(arg => replaceSelfWithThis(arg)),
+      };
     }
     case IR.IRNodeType.BlockStatement: {
-      const blockStmt = node as IR.IRBlockStatement;
-      return {
-        type: IR.IRNodeType.BlockStatement,
-        body: blockStmt.body.map(stmt => replaceSelfWithThis(stmt)),
-      } as IR.IRBlockStatement;
+      return { ...node, body: node.body.map(stmt => replaceSelfWithThis(stmt)) };
     }
     default: {
       return node;

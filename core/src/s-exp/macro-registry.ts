@@ -3,7 +3,6 @@ import { getLogger, isDebugMode } from "../logger-init.ts";
 import { Logger } from "../logger.ts";
 import { MacroFn } from "../environment.ts";
 import { MacroError } from "../transpiler/error/errors.ts";
-import * as CommonErrorUtils from "../transpiler/error/common-error-utils.ts";
 
 export class MacroRegistry {
   private systemMacros = new Map<string, MacroFn>();

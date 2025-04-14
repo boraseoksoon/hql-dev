@@ -498,14 +498,4 @@ export class Environment {
     const exports = this.moduleExports.get(modulePath);
     return exports ? Object.keys(exports) : [];
   }
-
-  /**
-   * Get exported properties for a module
-   */
-  getExportedModuleProps(modulePath: string): Set<string> {
-    if (this.exportedMacros.has(modulePath)) {
-      return this.exportedMacros.get(modulePath)!;
-    }
-    return new Set<string>();
-  }
 }

@@ -4,6 +4,7 @@
 
 import * as AST from "../type/hql_ast.ts";
 import * as IR from "../type/hql_ir.ts";
+import { convertTsNode } from "../pipeline/ts-ast-to-ts-code.ts";
 import { TranspilerError, TransformError } from "../error/errors.ts";
 import { getLogger } from "../../logger-init.ts";
 import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../type/hql_ast.ts";
@@ -11,7 +12,6 @@ import { sanitizeIdentifier } from "../../utils/utils.ts";
 import { ValidationError } from "../error/errors.ts";
 import { Logger } from "../../logger.ts";
 import { perform } from "../error/common-error-utils.ts";
-import * as CommonErrorUtils from "../error/common-error-utils.ts";
 import { macroCache } from "../../s-exp/macro.ts";
 import { transformStandardFunctionCall, processFunctionBody, transformNamedArgumentCall, handleFxFunctionCall } from "../syntax/function.ts";
 import {
@@ -34,13 +34,15 @@ import * as primitiveModule from "../syntax/primitive.ts";
 import * as quoteModule from "../syntax/quote.ts";
 
 // Initialize logger for this module
-const logger = Logger.create(Deno.env.get("HQL_DEBUG") === "1");
+const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
-// Transform factory type definition
-type TransformHandler = (list: ListNode, currentDir: string) => IR.IRNode | null;
-
-// Initialize the transform factory
-const transformFactory = new Map<string, TransformHandler>();
+/**
+ * Transform factory to map operators to handler functions
+ */
+const transformFactory = new Map<
+  string,
+  (list: ListNode, currentDir: string) => IR.IRNode | null
+>();
 
 /**
  * Transform an array of HQL AST nodes into an IR program.
@@ -173,8 +175,8 @@ function initializeTransformFactory(): void {
     transformFactory.set("empty-array", dataStructureModule.transformEmptyArray);
     transformFactory.set("empty-map", dataStructureModule.transformEmptyMap);
     transformFactory.set("empty-set", dataStructureModule.transformEmptySet);
-    transformFactory.set("export", (() => null) as TransformHandler);
-    transformFactory.set("import", (() => null) as TransformHandler);
+    transformFactory.set("export", null);
+    transformFactory.set("import", null);
 
     logger.debug(`Registered ${transformFactory.size} handler functions`);
   }, "initializeTransformFactory", TransformError);
@@ -297,7 +299,7 @@ function transformDotMethodCall(list: ListNode, currentDir: string): IR.IRNode {
     property: {
       type: IR.IRNodeType.Identifier,
       name: methodName
-    } as IR.IRIdentifier,
+    },
     computed: false
   };
 

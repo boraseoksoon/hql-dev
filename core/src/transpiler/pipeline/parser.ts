@@ -123,33 +123,27 @@ interface ParserState {
   input: string;
 }
 
-/**
- * Parse an expression from a sequence of tokens
- */
 function parseExpression(state: ParserState): SExp {
-  try {
-    if (state.currentPos >= state.tokens.length) {
-      const lastPos = state.tokens.length > 0
-        ? state.tokens[state.tokens.length - 1].position
-        : { line: 1, column: 1, offset: 0 };
-      throw new ParseError("Unexpected end of input", lastPos, state.input);
-    }
-    const token = state.tokens[state.currentPos++];
-    return parseExpressionByTokenType(token, state);
-  } catch (error) {
-    if (error instanceof ParseError) {
-      throw error;
-    }
-    // For any other error, wrap it with context
-    const errorPos = state.currentPos < state.tokens.length
-      ? state.tokens[state.currentPos].position
-      : { line: 1, column: 1, offset: 0 };
-    throw new ParseError(
-      `Error parsing expression: ${error instanceof Error ? error.message : String(error)}`,
-      errorPos,
-      state.input
-    );
-  }
+  return perform(
+    () => {
+      if (state.currentPos >= state.tokens.length) {
+        const lastPos = state.tokens.length > 0
+          ? state.tokens[state.tokens.length - 1].position
+          : { line: 1, column: 1, offset: 0 };
+        throw new ParseError("Unexpected end of input", lastPos, state.input);
+      }
+      const token = state.tokens[state.currentPos++];
+      return parseExpressionByTokenType(token, state);
+    },
+    "Error parsing expression",
+    ParseError,
+    [
+      state.currentPos < state.tokens.length
+        ? state.tokens[state.currentPos].position
+        : { line: 1, column: 1, offset: 0 },
+      state.input,
+    ],
+  );
 }
 
 function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
@@ -213,22 +207,56 @@ function parseList(state: ParserState): SList {
   const listStartPos = state.tokens[state.currentPos - 1].position;
   const elements: SExp[] = [];
   
-  // Track special arrow function syntax 
-  let arrowFound = false;
+  // Check if this might be an enum declaration
+  let isEnum = false;
+  if (state.currentPos < state.tokens.length && 
+      state.tokens[state.currentPos].type === TokenType.Symbol &&
+      state.tokens[state.currentPos].value === "enum") {
+    isEnum = true;
+  }
+
   let fnKeywordFound = false;
+  
+  if (state.currentPos < state.tokens.length && 
+      state.tokens[state.currentPos].type === TokenType.Symbol &&
+      (state.tokens[state.currentPos].value === "fn" || 
+       state.tokens[state.currentPos].value === "fx")) {
+    fnKeywordFound = true;
+  }
   
   while (
     state.currentPos < state.tokens.length &&
     state.tokens[state.currentPos].type !== TokenType.RightParen
   ) {
-    // Track if we found an 'fn' keyword as the first element
-    if (elements.length === 0 && 
-        state.tokens[state.currentPos].type === TokenType.Symbol &&
-        state.tokens[state.currentPos].value === "fn") {
-      fnKeywordFound = true;
-    }
-    
-    // Special handling for arrow functions with type annotations
+    // Special handling for enum syntax with separate colon
+    if (isEnum && elements.length === 2 && 
+        state.tokens[state.currentPos].type === TokenType.Colon) {
+      
+      // Skip the colon token
+      state.currentPos++;
+      
+      // Ensure we have a type after the colon
+      if (state.currentPos < state.tokens.length && 
+          state.tokens[state.currentPos].type === TokenType.Symbol) {
+        
+        // Get the enum name (already parsed) and the type
+        const enumNameSym = elements[1] as SSymbol;
+        const typeName = state.tokens[state.currentPos].value;
+        
+        // Replace the enum name with combined enum name and type
+        elements[1] = createSymbol(`${enumNameSym.name}:${typeName}`);
+        
+        // Skip the type token since we've incorporated it
+        state.currentPos++;
+      } else {
+        throw new ParseError(
+          "Expected type name after colon in enum declaration", 
+          state.tokens[state.currentPos - 1].position, 
+          state.input
+        );
+      }
+    } 
+    // Special handling for function type expressions like (-> [String])
     else if (fnKeywordFound && 
              state.tokens[state.currentPos].type === TokenType.Symbol &&
              state.tokens[state.currentPos].value === "->") {
@@ -277,34 +305,6 @@ function parseList(state: ParserState): SList {
       } else {
         // Regular type, just parse it normally
         elements.push(parseExpression(state));
-      }
-    }
-    // Special handling for enum syntax with separate colon
-    else if (elements.length === 2 && 
-             state.tokens[state.currentPos].type === TokenType.Colon) {
-      
-      // Skip the colon token
-      state.currentPos++;
-      
-      // Ensure we have a type after the colon
-      if (state.currentPos < state.tokens.length && 
-          state.tokens[state.currentPos].type === TokenType.Symbol) {
-        
-        // Get the enum name (already parsed) and the type
-        const enumNameSym = elements[1] as SSymbol;
-        const typeName = state.tokens[state.currentPos].value;
-        
-        // Replace the enum name with combined enum name and type
-        elements[1] = createSymbol(`${enumNameSym.name}:${typeName}`);
-        
-        // Skip the type token since we've incorporated it
-        state.currentPos++;
-      } else {
-        throw new ParseError(
-          "Expected type name after colon in enum declaration", 
-          state.tokens[state.currentPos - 1].position, 
-          state.input
-        );
       }
     }
     // Normal element parsing

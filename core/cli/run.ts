@@ -191,6 +191,3 @@ async function run() {
 if (import.meta.main) {
   run();
 }
-
-// Export the run function for external use
-export { run };
