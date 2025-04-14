@@ -2,7 +2,7 @@ import * as ts from "npm:typescript";
 import { getLogger } from "../../logger-init.ts";
 import * as IR from "../type/hql_ir.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
-import { CodeGenError } from "../error/errors.ts";
+import { CodeGenError, TranspilerError } from "../error/errors.ts";
 import { Logger } from "../../logger.ts";
 import { convertEnumDeclarationToJsObject } from "../syntax/enum.ts";
 import { convertClassDeclaration, convertNewExpression } from "../syntax/class.ts";
@@ -14,8 +14,10 @@ import { convertFunctionDeclaration, convertFxFunctionDeclaration, convertFnFunc
 import { convertImportDeclaration, convertExportNamedDeclaration, convertExportVariableDeclaration, convertJsImportReference } from "../syntax/import-export.ts";
 import { convertInteropIIFE } from "../syntax/js-interop.ts";
 import { isExpressionNode } from "../syntax/expression.ts";
+import * as CommonErrorUtils from "../error/common-error-utils.ts";
 
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+// Initialize logger for this module
+const logger = Logger.create(Deno.env.get("HQL_DEBUG") === "1");
 
 export function convertIRExpr(node: IR.IRNode): ts.Expression {
   return execute(node, "IR expression", () => {
@@ -65,7 +67,7 @@ export function convertIRExpr(node: IR.IRNode): ts.Expression {
               [],
               undefined,
               ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-              node.argument ? convertIRExpr(node.argument) : ts.factory.createIdentifier("undefined")
+              (node as IR.IRReturnStatement).argument ? convertIRExpr((node as IR.IRReturnStatement).argument) : ts.factory.createIdentifier("undefined")
             )
           ),
           undefined,
@@ -284,7 +286,9 @@ export function convertVariableDeclaration(node: IR.IRVariableDeclaration): ts.V
 
 export function convertReturnStatement(node: IR.IRReturnStatement): ts.ReturnStatement {
   return execute(node, "return statement", () =>
-    ts.factory.createReturnStatement(node.argument ? convertIRExpr(node.argument) : undefined)
+    ts.factory.createReturnStatement(
+      (node as any).argument ? convertIRExpr((node as any).argument) : ts.factory.createIdentifier("undefined")
+    )
   );
 }
 

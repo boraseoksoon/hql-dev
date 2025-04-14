@@ -23,6 +23,9 @@ import {
   TranspilerError,
 } from "./transpiler/error/errors.ts";
 
+import * as s from "./s-exp/types.ts";
+import * as CommonErrorUtils from "./transpiler/error/common-error-utils.ts";
+
 /**
  * Options for code transformation.
  */
@@ -75,7 +78,7 @@ export async function transformAST(
 
     // Find modules with proper context
     const moduleReferences = findExternalModuleReferences(
-      macroExpandedAst,
+      macroExpandedAst as any as HQLNode[],
       env,
     );
     logger.debug(`Found ${moduleReferences.size} external module references`);
@@ -86,7 +89,7 @@ export async function transformAST(
 
     // Process the AST to extract all existing imports
     // This will also help us avoid duplicating imports that are already in the AST
-    const existingImports = findExistingImports(macroExpandedAst);
+    const existingImports = findExistingImports(macroExpandedAst as any as HQLNode[]);
     for (const [moduleName, importPath] of existingImports) {
       logger.debug(
         `Found existing import in AST: ${moduleName} from ${importPath}`,
@@ -125,8 +128,8 @@ export async function transformAST(
     // Now filter macroExpandedAst to remove duplicate imports
     const filteredAst = macroExpandedAst.filter((node) => {
       // Check if it's an import node we need to potentially skip
-      if (isImportNode(node)) {
-        const [moduleName, importPath] = extractImportInfo(node);
+      if (isImportNode(node as any as HQLNode)) {
+        const [moduleName, importPath] = extractImportInfo(node as any as HQLNode);
 
         // If this is a duplicate import but not the first one we've seen, skip it
         if (
@@ -349,3 +352,4 @@ function convertAST(rawAst: any[]): HQLNode[] {
     );
   }
 }
+

@@ -15,6 +15,8 @@ import { Logger } from "../../logger.ts";
 import { getLogger } from "../../logger-init.ts";
 import { TransformError } from "../error/errors.ts";
 import { perform } from "../error/common-error-utils.ts";
+import { HQLNode } from "../../transpiler/type/hql_ast.ts";
+import { ListNode, SymbolNode } from "../../transpiler/type/hql_ast.ts";
 
 /**
  * Options for syntax transformation
@@ -60,13 +62,20 @@ export function transformSyntax(
 }
 
 /**
- * Transform a single node, dispatching to specific handlers based on type
+ * Transform a node, recursively processing any nested lists or special forms
  */
 export function transformNode(
   node: SExp,
   enumDefinitions: Map<string, SList>,
   logger: Logger
 ): SExp {
+  // Check for null first
+  if (!node) {
+    logger.warn("Received null or undefined node for transformation");
+    // Return an empty list as a safe fallback
+    return createList();
+  }
+
   return perform(
     () => {
       // Handle dot notation for enums (.caseName) in symbol form
@@ -197,7 +206,9 @@ function transformDotNotationSymbol(
   return symbol;
 }
 
-
+/**
+ * Transform equality expressions, looking for dot-prefixed symbols that could represent enum cases
+ */
 function transformEqualityExpression(
   list: SList,
   enumDefinitions: Map<string, SList>,
@@ -242,15 +253,33 @@ function transformEqualityExpression(
         
         // Create the transformed list with the full enum reference
         if (dotExpr === leftExpr) {
+          // Split this into two parts to avoid TypeScript null checks
+          let transformedExpr: SExp;
+          try {
+            transformedExpr = transformNode(otherExpr as SExp, enumDefinitions, logger);
+          } catch (e) {
+            logger.warn(`Error transforming other expression: ${e}`);
+            transformedExpr = otherExpr as SExp;
+          }
+          
           return createList(
             list.elements[0], // Keep the operator (=)
             fullEnumRef,     // Replace with full enum reference
-            transformNode(otherExpr, enumDefinitions, logger) // Transform the other expression
+            transformedExpr  // Use the transformed expression
           );
         } else {
+          // Split this into two parts to avoid TypeScript null checks
+          let transformedExpr: SExp;
+          try {
+            transformedExpr = transformNode(otherExpr as SExp, enumDefinitions, logger);
+          } catch (e) {
+            logger.warn(`Error transforming other expression: ${e}`);
+            transformedExpr = otherExpr as SExp;
+          }
+          
           return createList(
             list.elements[0], // Keep the operator (=)
-            transformNode(otherExpr, enumDefinitions, logger), // Transform the other expression
+            transformedExpr, // Use the transformed expression
             fullEnumRef      // Replace with full enum reference
           );
         }
@@ -684,16 +713,16 @@ function transformFnSyntax(list: SList, enumDefinitions: Map<string, SList>, log
 /**
  * Check if an enum has a case with the given name
  */
-function hasCaseNamed(enumDef: ListNode, caseName: string): boolean {
+function hasCaseNamed(enumDef: SList, caseName: string): boolean {
   for (let i = 2; i < enumDef.elements.length; i++) {
     const element = enumDef.elements[i];
     if (element.type === "list") {
-      const caseList = element as ListNode;
+      const caseList = element as SList;
       if (caseList.elements.length >= 2 && 
           caseList.elements[0].type === "symbol" && 
-          (caseList.elements[0] as SymbolNode).name === "case" &&
+          (caseList.elements[0] as SSymbol).name === "case" &&
           caseList.elements[1].type === "symbol" && 
-          (caseList.elements[1] as SymbolNode).name === caseName) {
+          (caseList.elements[1] as SSymbol).name === caseName) {
         return true;
       }
     }

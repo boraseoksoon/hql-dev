@@ -64,8 +64,11 @@ export async function processHql(
   try {
     // Process all stages with proper error handling
     const t0 = start();
+    console.log(`Parsing ${sourceFilePath}`);
     const sexps = parseWithHandling(source, logger);
     end("Parsing", t0);
+
+    console.log(`after parseWithHandling : ${sexps}`);
     
     const t1 = start();
     const canonicalSexps = transformWithHandling(sexps, options.verbose, logger);

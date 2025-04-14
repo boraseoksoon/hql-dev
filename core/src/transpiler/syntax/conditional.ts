@@ -7,6 +7,11 @@ import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { perform } from "../error/common-error-utils.ts";
 import { convertIRExpr, execute, convertReturnStatement, convertBlockStatement } from "../pipeline/hql-ir-to-ts-ast.ts";
+import { formatErrorMessage } from "../error/common-error-utils.ts";
+import { 
+  IRNode, IRNodeType, IRConditionalExpression, IRIfStatement, 
+  IRNullLiteral, IRReturnStatement 
+} from "../type/hql_ir.ts";
 
 export function convertIfStatement(node: IR.IRIfStatement): ts.IfStatement {
   return execute(node, "if statement", () => {
@@ -114,7 +119,7 @@ export function transformIf(
     } as IR.IRConditionalExpression;
   } catch (error) {
     throw new TransformError(
-      `Failed to transform if: ${CommonErrorUtils.formatErrorMessage(error)}`,
+      `Failed to transform if: ${formatErrorMessage(error)}`,
       "if transformation",
       "valid if expression",
       list
@@ -323,37 +328,81 @@ export function transformReturn(
 ): IR.IRNode {
   return perform(
     () => {
-      // Verify we have at least one argument
-      if (list.elements.length < 2) {
+      // Simple validation
+      if (list.elements.length < 1) {
         throw new ValidationError(
-          "return requires an expression to return",
-          "return statement",
-          "expression to return",
-          "no expression provided",
+          "return requires at least the 'return' symbol",
+          "return expression",
+          "return symbol",
+          `${list.elements.length} elements`
         );
       }
 
-      // Get the value to return
-      const valueNode = transformNode(list.elements[1], currentDir);
-
-      if (!valueNode) {
-        throw new ValidationError(
-          "Return value transformed to null",
-          "return value",
-          "valid expression",
-          "null",
-        );
+      // If no value to return, return undefined
+      if (list.elements.length === 1) {
+        const nullLiteral: IRNullLiteral = {
+          type: IRNodeType.NullLiteral
+        };
+        
+        const returnStmt: IRReturnStatement = {
+          type: IRNodeType.ReturnStatement,
+          argument: nullLiteral
+        };
+        return returnStmt;
       }
 
-      // Create a return statement
-      return {
-        type: IR.IRNodeType.ReturnStatement,
-        argument: valueNode,
-      } as IR.IRReturnStatement;
+      // Transform the return value
+      const valueNode = list.elements[1];
+      const value = transformNode(valueNode, currentDir);
+
+      // Create the return statement
+      if (!value) {
+        const nullLiteral: IRNullLiteral = {
+          type: IRNodeType.NullLiteral
+        };
+        
+        const returnStmt: IRReturnStatement = {
+          type: IRNodeType.ReturnStatement,
+          argument: nullLiteral
+        };
+        return returnStmt;
+      }
+
+      // Handle multiple expressions in return by wrapping everything after the first
+      // in a block statement and returning the last value
+      if (list.elements.length > 2) {
+        const lastExpr = list.elements[list.elements.length - 1];
+        const transformedLastExpr = transformNode(lastExpr, currentDir);
+        
+        // If the last expression couldn't be transformed, return null
+        if (!transformedLastExpr) {
+          const nullLiteral: IRNullLiteral = {
+            type: IRNodeType.NullLiteral
+          };
+          
+          const returnStmt: IRReturnStatement = {
+            type: IRNodeType.ReturnStatement,
+            argument: nullLiteral
+          };
+          return returnStmt;
+        }
+        
+        const returnStmt: IRReturnStatement = {
+          type: IRNodeType.ReturnStatement,
+          argument: transformedLastExpr
+        };
+        return returnStmt;
+      }
+
+      const returnStmt: IRReturnStatement = {
+        type: IRNodeType.ReturnStatement,
+        argument: value
+      };
+      return returnStmt;
     },
     "transformReturn",
     TransformError,
-    [list],
+    [list]
   );
 }
 
@@ -397,10 +446,11 @@ export function transformDo(
 
       if (lastExpr) {
         // Create a return statement for the last expression
-        bodyStatements.push({
+        const returnStmt: IR.IRReturnStatement = {
           type: IR.IRNodeType.ReturnStatement,
           argument: lastExpr
-        });
+        };
+        bodyStatements.push(returnStmt);
       }
 
       // Return an IIFE (Immediately Invoked Function Expression)

@@ -1,22 +1,25 @@
 // src/transpiler/syntax/function.ts
 
 import * as ts from "npm:typescript";
-import { getLogger, isDebugMode } from "../../logger-init.ts";
 import * as IR from "../type/hql_ir.ts";
-import { ListNode, SymbolNode, HQLNode } from "../type/hql_ast.ts";
-import { ValidationError, TransformError } from "../error/errors.ts";
-import { sanitizeIdentifier } from "../../utils/utils.ts";
+import { SymbolNode, ListNode, HQLNode } from "../type/hql_ast.ts";
+import { ValidationError } from "../error/errors.ts";
+import { TransformError } from "../error/errors.ts";
+import { getLogger } from "../../logger-init.ts";
 import { Logger } from "../../logger.ts";
-import { registerPureFunction, verifyFunctionPurity } from "../fx/purity.ts";
-import { isValidType } from "../fx/purity.ts";
 import { execute, convertIdentifier, convertBlockStatement, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { perform } from "../error/common-error-utils.ts";
+import * as CommonErrorUtils from "../error/common-error-utils.ts";
+import { sanitizeIdentifier } from "../../utils/utils.ts";
+import { registerPureFunction, verifyFunctionPurity } from "../fx/purity.ts";
+import { isValidType } from "../fx/purity.ts";
 import { transformNode } from "../pipeline/hql-ast-to-hql-ir.ts";
 
 const fnFunctionRegistry = new Map<string, IR.IRFnFunctionDeclaration>();
 const fxFunctionRegistry = new Map<string, IR.IRFxFunctionDeclaration>();
 
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+// Initialize logger
+const logger = getLogger({ verbose: Deno.env.get("HQL_DEBUG") === "1" });
 
 /**
  * Check if a function call has named arguments
@@ -46,43 +49,16 @@ export function transformNamedArgumentCall(
   currentDir: string,
 ): IR.IRNode {
   try {
-    const functionName = (list.elements[0] as SymbolNode).name;
-
-    // Check if this is an fx or fn function
-    const fxDef = getFxFunction(functionName);
-    const fnDef = getFnFunction(functionName);
-
-    // If it's a registered function, use the specialized processor
-    if (fxDef) {
-      // Process named arguments for fx functions
-      return processNamedArgumentsForFx(
-        functionName,
-        fxDef,
-        list.elements.slice(1),
-        currentDir,
-        transformNode,
-      );
-    } else if (fnDef) {
-      // Process named arguments for fn functions
-      return processNamedArgumentsForFn(
-        functionName,
-        fnDef,
-        list.elements.slice(1),
-        currentDir,
-        transformNode,
-      );
-    }
-
-    // Default handling for functions without registry entries
-    return transformGenericNamedArguments(list, functionName, currentDir);
+    const functionName = list.elements[0] as SymbolNode;
+    return transformGenericNamedArguments(list, functionName.name, currentDir);
   } catch (error) {
-    throw new TransformError(
+    throw new ValidationError(
       `Failed to transform named argument call: ${
         CommonErrorUtils.formatErrorMessage(error)
       }`,
       "named argument function call",
       "transformation",
-      list,
+      "unknown"
     );
   }
 }
@@ -134,153 +110,79 @@ export function handleFxFunctionCall(list: ListNode, op: string, fxDef: IR.IRFxF
  * Process function body expressions, creating return statements
  */
 export function processFunctionBody(
-  bodyExprs: HQLNode[],
+  bodyExprs: IR.IRNode[],
   currentDir: string,
 ): IR.IRNode[] {
-  return perform(
-    () => {
-      const bodyNodes: IR.IRNode[] = [];
-
-      // Check if there are any expressions
-      if (bodyExprs.length === 0) {
-        return bodyNodes;
-      }
-
-      // Process all expressions except the last one
-      for (let i = 0; i < bodyExprs.length - 1; i++) {
-        const expr = transformNode(bodyExprs[i], currentDir);
-        if (expr) bodyNodes.push(expr);
-      }
-
-      // Process the last expression specially - wrap it in a return statement
-      const lastExpr = transformNode(
-        bodyExprs[bodyExprs.length - 1],
-        currentDir,
-      );
-      
-      if (lastExpr) {
-        // If it's already a return statement, use it as is
-        if (lastExpr.type === IR.IRNodeType.ReturnStatement) {
-          bodyNodes.push(lastExpr);
-        } else {
-          // Wrap in a return statement to ensure the value is returned
-          bodyNodes.push({
-            type: IR.IRNodeType.ReturnStatement,
-            argument: lastExpr,
-          } as IR.IRReturnStatement);
-        }
-      }
-
-      return bodyNodes;
-    },
-    "processFunctionBody",
-    TransformError,
-    [bodyExprs],
-  );
+  const processedBody: IR.IRNode[] = [];
+  
+  for (let i = 0; i < bodyExprs.length - 1; i++) {
+    const expr = transformNode(bodyExprs[i] as unknown as HQLNode, currentDir);
+    if (expr) {
+      processedBody.push(expr);
+    }
+  }
+  
+  if (bodyExprs.length > 0) {
+    const lastExpr = transformNode(bodyExprs[bodyExprs.length - 1] as unknown as HQLNode, currentDir);
+    if (lastExpr) {
+      processedBody.push(lastExpr);
+    }
+  }
+  
+  return processedBody;
 }
 
 export function transformStandardFunctionCall(
   list: ListNode,
   currentDir: string,
 ): IR.IRNode {
-  return perform(
-    () => {
-      const first = list.elements[0];
+  try {
+    // Get the function name and validate
+    const funcNameNode = list.elements[0];
+    if (funcNameNode.type !== "symbol") {
+      throw new ValidationError(
+        "Function name must be a symbol",
+        "function call",
+        "symbol",
+        funcNameNode.type,
+      );
+    }
 
-      if (first.type === "symbol") {
-        const op = (first as SymbolNode).name;
+    const funcName = (funcNameNode as SymbolNode).name;
 
-        // Check if we're calling an fx function
-        const fxDef = getFxFunction(op);
-
-        // Check if we have any named arguments
-        const hasNamed = hasNamedArguments(list);
-
-        if (fxDef && hasNamed) {
-          // We found an fx function with named arguments
-          logger.debug(
-            `Processing call to fx function ${op} with named arguments`,
-          );
-          return transformNamedArgumentCall(list, currentDir);
-        } else if (fxDef) {
-          // Process as a regular call to an fx function with positional args
-          logger.debug(
-            `Processing call to fx function ${op} with positional arguments`,
-          );
-          return processFxFunctionCall(
-            op,
-            fxDef,
-            list.elements.slice(1),
-            currentDir,
-            transformNode,
-          );
-        } else if (hasNamed) {
-          // Handle named arguments for regular functions
-          logger.debug(
-            `Processing call to function ${op} with named arguments`,
-          );
-          return transformNamedArgumentCall(list, currentDir);
-        }
-
-        // Handle regular positional args call
-        logger.debug(`Processing standard function call to ${op}`);
-        const args = list.elements.slice(1).map((arg) => {
-          const transformed = transformNode(arg, currentDir);
-          if (!transformed) {
-            throw new ValidationError(
-              `Function argument transformed to null: ${JSON.stringify(arg)}`,
-              "function argument",
-              "valid expression",
-              "null",
-            );
-          }
-          return transformed;
-        });
-
-        return {
-          type: IR.IRNodeType.CallExpression,
-          callee: {
-            type: IR.IRNodeType.Identifier,
-            name: sanitizeIdentifier(op),
-          } as IR.IRIdentifier,
-          arguments: args,
-        } as IR.IRCallExpression;
-      }
-
-      // Handle function expression calls
-      const callee = transformNode(list.elements[0], currentDir);
-      if (!callee) {
+    // Transform arguments
+    const args = list.elements.slice(1).map((arg) => {
+      const transformed = transformNode(arg, currentDir);
+      if (!transformed) {
         throw new ValidationError(
-          "Function callee transformed to null",
+          `Argument transformed to null in call to ${funcName}`,
           "function call",
-          "valid function expression",
+          "valid argument",
           "null",
         );
       }
+      return transformed;
+    });
 
-      const args = list.elements.slice(1).map((arg) => {
-        const transformed = transformNode(arg, currentDir);
-        if (!transformed) {
-          throw new ValidationError(
-            `Function argument transformed to null: ${JSON.stringify(arg)}`,
-            "function argument",
-            "valid expression",
-            "null",
-          );
-        }
-        return transformed;
-      });
-
-      return {
-        type: IR.IRNodeType.CallExpression,
-        callee,
-        arguments: args,
-      } as IR.IRCallExpression;
-    },
-    "transformStandardFunctionCall",
-    TransformError,
-    [list],
-  );
+    // Create the function call
+    return {
+      type: IR.IRNodeType.CallExpression,
+      callee: {
+        type: IR.IRNodeType.Identifier,
+        name: sanitizeIdentifier(funcName),
+      },
+      arguments: args,
+    } as IR.IRCallExpression;
+  } catch (error) {
+    throw new ValidationError(
+      `Failed to transform function call: ${
+        CommonErrorUtils.formatErrorMessage(error)
+      }`,
+      "function call",
+      "transformation",
+      String(list),
+    );
+  }
 }
 
 /**
@@ -406,23 +308,34 @@ export function convertFxFunctionDeclaration(
               ts.factory.createBinaryExpression(
                 ts.factory.createBinaryExpression(
                   ts.factory.createBinaryExpression(
-                    ts.factory.createPropertyAccessExpression(
-                      ts.factory.createIdentifier("args"),
-                      ts.factory.createIdentifier("length")
+                    ts.factory.createBinaryExpression(
+                      ts.factory.createPropertyAccessExpression(
+                        ts.factory.createIdentifier("args"),
+                        ts.factory.createIdentifier("length")
+                      ),
+                      ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                      ts.factory.createNumericLiteral("1")
                     ),
-                    ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                    ts.factory.createNumericLiteral("1")
+                    ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
+                    ts.factory.createBinaryExpression(
+                      ts.factory.createTypeOfExpression(
+                        ts.factory.createElementAccessExpression(
+                          ts.factory.createIdentifier("args"),
+                          ts.factory.createNumericLiteral("0")
+                        )
+                      ),
+                      ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                      ts.factory.createStringLiteral("object")
+                    )
                   ),
                   ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
                   ts.factory.createBinaryExpression(
-                    ts.factory.createTypeOfExpression(
-                      ts.factory.createElementAccessExpression(
-                        ts.factory.createIdentifier("args"),
-                        ts.factory.createNumericLiteral("0")
-                      )
+                    ts.factory.createElementAccessExpression(
+                      ts.factory.createIdentifier("args"),
+                      ts.factory.createNumericLiteral("0")
                     ),
-                    ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-                    ts.factory.createStringLiteral("object")
+                    ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                    ts.factory.createNull()
                   )
                 ),
                 ts.factory.createToken(ts.SyntaxKind.AmpersandAmpersandToken),
@@ -645,103 +558,99 @@ export function transformFn(
   transformNode: (node: any, dir: string) => IR.IRNode | null,
   processFunctionBody: (body: any[], dir: string) => IR.IRNode[]
 ): IR.IRNode {
-  try {
-    logger.debug("Transforming fn function");
+  return perform(
+    () => {
+      logger.debug("Transforming fn function");
 
-    // Validate fn syntax
-    if (list.elements.length < 3) {
-      throw new ValidationError(
-        "fn requires a name, parameter list, and at least one body expression",
-        "fn definition",
-        "name, params, body",
-        `${list.elements.length - 1} arguments`,
-      );
-    }
+      // Validate fn syntax
+      if (list.elements.length < 3) {
+        throw new ValidationError(
+          "fn requires a name, parameter list, and at least one body expression",
+          "fn definition",
+          "name, params, body",
+          `${list.elements.length - 1} arguments`,
+        );
+      }
 
-    // Extract function name
-    const nameNode = list.elements[1];
-    if (nameNode.type !== "symbol") {
-      throw new ValidationError(
-        "Function name must be a symbol",
-        "fn name",
-        "symbol",
-        nameNode.type,
-      );
-    }
-    const funcName = (nameNode as SymbolNode).name;
+      // Extract function name
+      const nameNode = list.elements[1];
+      if (nameNode.type !== "symbol") {
+        throw new ValidationError(
+          "Function name must be a symbol",
+          "fn name",
+          "symbol",
+          nameNode.type,
+        );
+      }
+      const funcName = (nameNode as SymbolNode).name;
 
-    // Extract parameter list
-    const paramListNode = list.elements[2];
-    if (paramListNode.type !== "list") {
-      throw new ValidationError(
-        "fn parameter list must be a list",
-        "fn parameters",
-        "list",
-        paramListNode.type,
-      );
-    }
-    const paramList = paramListNode as ListNode;
+      // Extract parameter list
+      const paramListNode = list.elements[2];
+      if (paramListNode.type !== "list") {
+        throw new ValidationError(
+          "fn parameter list must be a list",
+          "fn parameters",
+          "list",
+          paramListNode.type,
+        );
+      }
+      const paramList = paramListNode as ListNode;
 
-    // Check if this is a typed fn with a return type
-    let bodyStartIndex = 3;
-    let hasReturnType = false;
+      // Check if this is a typed fn with a return type
+      let bodyStartIndex = 3;
+      let hasReturnType = false;
 
-    // Check if the next element is a return type list starting with ->
-    if (list.elements.length > 3 && 
-        list.elements[3].type === "list" && 
-        (list.elements[3] as ListNode).elements.length > 0 &&
-        (list.elements[3] as ListNode).elements[0].type === "symbol" &&
-        ((list.elements[3] as ListNode).elements[0] as SymbolNode).name === "->") {
-      hasReturnType = true;
-      bodyStartIndex = 4;
-    }
+      // Check if the next element is a return type list starting with ->
+      if (list.elements.length > 3 && 
+          list.elements[3].type === "list" && 
+          (list.elements[3] as ListNode).elements.length > 0 &&
+          (list.elements[3] as ListNode).elements[0].type === "symbol" &&
+          ((list.elements[3] as ListNode).elements[0] as SymbolNode).name === "->") {
+        hasReturnType = true;
+        bodyStartIndex = 4;
+      }
 
-    // Body expressions start after either the parameter list or return type
-    const bodyExpressions = list.elements.slice(bodyStartIndex);
+      // Body expressions start after either the parameter list or return type
+      const bodyExpressions = list.elements.slice(bodyStartIndex);
 
-    // Parse parameters with types and defaults
-    const paramsInfo = hasReturnType 
-      ? parseParametersWithTypes(paramList, currentDir, transformNode)  // For typed fn
-      : parseParametersWithDefaults(paramList, currentDir, transformNode);  // For untyped fn
+      // Parse parameters with types and defaults
+      const paramsInfo = hasReturnType 
+        ? parseParametersWithTypes(paramList, currentDir, transformNode)  // For typed fn
+        : parseParametersWithDefaults(paramList, currentDir, transformNode);  // For untyped fn
 
-    // Extract params and defaults
-    const params = paramsInfo.params;
-    const defaultValues = paramsInfo.defaults;
+      // Extract params and defaults
+      const params = paramsInfo.params;
+      const defaultValues = paramsInfo.defaults;
 
-    // Process the body expressions
-    const bodyNodes = processFunctionBody(bodyExpressions, currentDir);
+      // Process the body expressions
+      const bodyNodes = processFunctionBody(bodyExpressions, currentDir);
 
-    // Create the FnFunctionDeclaration node
-    const fnFuncDecl = {
-      type: IR.IRNodeType.FnFunctionDeclaration,
-      id: {
-        type: IR.IRNodeType.Identifier,
-        name: sanitizeIdentifier(funcName),
-      },
-      params,
-      defaults: Array.from(defaultValues.entries()).map(([name, value]) => ({
-        name,
-        value,
-      })),
-      body: {
-        type: IR.IRNodeType.BlockStatement,
-        body: bodyNodes,
-      },
-    } as IR.IRFnFunctionDeclaration;
+      // Create the FnFunctionDeclaration node
+      const fnFuncDecl = {
+        type: IR.IRNodeType.FnFunctionDeclaration,
+        id: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(funcName),
+        },
+        params,
+        defaults: Array.from(defaultValues.entries()).map(([name, value]) => ({
+          name,
+          value,
+        })),
+        body: {
+          type: IR.IRNodeType.BlockStatement,
+          body: bodyNodes,
+        },
+      } as IR.IRFnFunctionDeclaration;
 
-    // Register this function in our registry for call site handling
-    registerFnFunction(funcName, fnFuncDecl);
-    return fnFuncDecl;
-  } catch (error) {
-    throw new TransformError(
-      `Failed to transform fn function: ${
-        CommonErrorUtils.formatErrorMessage(error)
-      }`,
-      "fn function",
-      "transformation",
-      list,
-    );
-  }
+      // Register this function in our registry for call site handling
+      registerFnFunction(funcName, fnFuncDecl);
+      return fnFuncDecl;
+    },
+    "transformFn",
+    TransformError,
+    ["Function definition error"]
+  );
 }
 
 /**
@@ -890,13 +799,13 @@ export function transformFx(
     registerFxFunction(funcName, fxFuncDecl);
     return fxFuncDecl;
   } catch (error) {
-    throw new TransformError(
+    throw new ValidationError(
       `Failed to transform fx function: ${
         CommonErrorUtils.formatErrorMessage(error)
       }`,
       "fx function",
       "transformation",
-      list,
+      "fx function definition",
     );
   }
 }
@@ -912,115 +821,111 @@ export function processFnFunctionCall(
   currentDir: string,
   transformNode: (node: any, dir: string) => IR.IRNode | null,
 ): IR.IRNode {
-  try {
-    // Extract parameter info from the function definition
-    const paramNames = funcDef.params.map((p) => p.name);
-    const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
-
-    // Check if we have a rest parameter (name starts with "...")
-    const hasRestParam = paramNames.length > 0 &&
-      paramNames[paramNames.length - 1].startsWith("...");
-
-    // Get the regular parameters (all except the last one if it's a rest parameter)
-    const regularParamNames = hasRestParam ? paramNames.slice(0, -1) : paramNames;
-
-    // Check if we have any named arguments or placeholders
-    const hasNamedArgs = args.some(arg => 
-      arg.type === "symbol" && (arg as SymbolNode).name.endsWith(":")
-    );
-
-    // If we have named arguments, process them differently
-    if (hasNamedArgs) {
-      return processNamedArguments(funcName, funcDef, args, currentDir, transformNode);
-    }
-    
-    // Process normal positional arguments
-    const finalArgs: IR.IRNode[] = [];
-
-    // Process each parameter in the function definition
-    for (let i = 0; i < regularParamNames.length; i++) {
-      const paramName = regularParamNames[i];
-
-      if (i < args.length) {
-        const arg = args[i];
-
-        // If this argument is a placeholder, use default
-        if (isPlaceholder(arg)) {
-          if (defaultValues.has(paramName)) {
-            finalArgs.push(defaultValues.get(paramName)!);
+  return perform(
+    () => {
+      // Extract parameter info from the function definition
+      const paramNames = funcDef.params.map((p) => p.name);
+      const defaultValues = new Map(funcDef.defaults.map((d) => [d.name, d.value]));
+  
+      // Check if we have a rest parameter (name starts with "...")
+      const hasRestParam = paramNames.length > 0 &&
+        paramNames[paramNames.length - 1].startsWith("...");
+  
+      // Get the regular parameters (all except the last one if it's a rest parameter)
+      const regularParamNames = hasRestParam ? paramNames.slice(0, -1) : paramNames;
+  
+      // Check if we have any named arguments or placeholders
+      const hasNamedArgs = args.some(arg => 
+        arg.type === "symbol" && (arg as SymbolNode).name.endsWith(":")
+      );
+  
+      // If we have named arguments, process them differently
+      if (hasNamedArgs) {
+        return processNamedArguments(funcName, funcDef, args, currentDir, transformNode);
+      }
+      
+      // Process normal positional arguments
+      const finalArgs: IR.IRNode[] = [];
+  
+      // Process each parameter in the function definition
+      for (let i = 0; i < regularParamNames.length; i++) {
+        const paramName = regularParamNames[i];
+  
+        if (i < args.length) {
+          const arg = args[i];
+  
+          // If this argument is a placeholder, use default
+          if (isPlaceholder(arg)) {
+            if (defaultValues.has(paramName)) {
+              finalArgs.push(defaultValues.get(paramName)!);
+            } else {
+              throw new ValidationError(
+                `Placeholder used for parameter '${paramName}' but no default value is defined`,
+                "function call with placeholder",
+                "parameter with default value",
+                "parameter without default",
+              );
+            }
           } else {
-            throw new ValidationError(
-              `Placeholder used for parameter '${paramName}' but no default value is defined`,
-              "function call with placeholder",
-              "parameter with default value",
-              "parameter without default",
-            );
+            // Normal argument, transform it
+            const transformedArg = transformNode(arg, currentDir);
+            if (!transformedArg) {
+              throw new ValidationError(
+                `Argument for parameter '${paramName}' transformed to null`,
+                "function call",
+                "valid expression",
+                "null",
+              );
+            }
+            finalArgs.push(transformedArg);
           }
+        } else if (defaultValues.has(paramName)) {
+          // Use default value for missing arguments
+          finalArgs.push(defaultValues.get(paramName)!);
         } else {
-          // Normal argument, transform it
-          const transformedArg = transformNode(arg, currentDir);
-          if (!transformedArg) {
-            throw new ValidationError(
-              `Argument for parameter '${paramName}' transformed to null`,
-              "function call",
-              "valid expression",
-              "null",
-            );
-          }
-          finalArgs.push(transformedArg);
+          throw new ValidationError(
+            `Missing required argument for parameter '${paramName}' in call to function '${funcName}'`,
+            "function call",
+            "argument value",
+            "missing argument",
+          );
         }
-      } else if (defaultValues.has(paramName)) {
-        // Use default value for missing arguments
-        finalArgs.push(defaultValues.get(paramName)!);
-      } else {
+      }
+  
+      // If we have a rest parameter, add all remaining arguments
+      if (hasRestParam) {
+        const restArgStartIndex = regularParamNames.length;
+        for (let i = restArgStartIndex; i < args.length; i++) {
+          const arg = args[i];
+          const transformedArg = transformNode(arg, currentDir);
+          if (transformedArg) {
+            finalArgs.push(transformedArg);
+          }
+        }
+      } else if (args.length > paramNames.length) {
+        // Too many arguments without a rest parameter
         throw new ValidationError(
-          `Missing required argument for parameter '${paramName}' in call to function '${funcName}'`,
+          `Too many positional arguments in call to function '${funcName}'`,
           "function call",
-          "argument value",
-          "missing argument",
+          `${paramNames.length} arguments`,
+          `${args.length} arguments`,
         );
       }
-    }
-
-    // If we have a rest parameter, add all remaining arguments
-    if (hasRestParam) {
-      const restArgStartIndex = regularParamNames.length;
-      for (let i = restArgStartIndex; i < args.length; i++) {
-        const arg = args[i];
-        const transformedArg = transformNode(arg, currentDir);
-        if (transformedArg) {
-          finalArgs.push(transformedArg);
-        }
-      }
-    } else if (args.length > paramNames.length) {
-      // Too many arguments without a rest parameter
-      throw new ValidationError(
-        `Too many positional arguments in call to function '${funcName}'`,
-        "function call",
-        `${paramNames.length} arguments`,
-        `${args.length} arguments`,
-      );
-    }
-
-    // Create the final call expression
-    return {
-      type: IR.IRNodeType.CallExpression,
-      callee: {
-        type: IR.IRNodeType.Identifier,
-        name: sanitizeIdentifier(funcName),
-      },
-      arguments: finalArgs,
-    } as IR.IRCallExpression;
-  } catch (error) {
-    throw new TransformError(
-      `Failed to process fn function call: ${
-        CommonErrorUtils.formatErrorMessage(error)
-      }`,
-      "fn function call",
-      "transformation",
-      args,
-    );
-  }
+  
+      // Create the final call expression
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(funcName),
+        },
+        arguments: finalArgs,
+      } as IR.IRCallExpression;
+    },
+    "processFnFunctionCall",
+    TransformError,
+    []
+  );
 }
 
 /**
@@ -1142,13 +1047,13 @@ function processNamedArguments(
       arguments: finalArgs,
     } as IR.IRCallExpression;
   } catch (error) {
-    throw new TransformError(
+    throw new ValidationError(
       `Failed to process named arguments: ${
         CommonErrorUtils.formatErrorMessage(error)
       }`,
       "named arguments",
       "transformation",
-      args,
+      "error parsing named arguments",
     );
   }
 }
@@ -1466,102 +1371,107 @@ function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
     const paramName = param.name;
 
     // Create an assignment expression for deep copying the parameter
-    statements.push({
-      type: IR.IRNodeType.ExpressionStatement,
-      expression: {
-        type: IR.IRNodeType.AssignmentExpression,
-        operator: "=",
-        left: {
+    const assignmentExpr: IR.IRAssignmentExpression = {
+      type: IR.IRNodeType.AssignmentExpression,
+      operator: "=",
+      left: {
+        type: IR.IRNodeType.Identifier,
+        name: paramName,
+      } as IR.IRIdentifier,
+      right: {
+        // Use a conditional expression to only deep copy objects
+        type: IR.IRNodeType.ConditionalExpression,
+        test: {
+          // typeof param === 'object' && param !== null
+          type: IR.IRNodeType.BinaryExpression,
+          operator: "&&",
+          left: {
+            type: IR.IRNodeType.BinaryExpression,
+            operator: "===",
+            left: {
+              type: IR.IRNodeType.CallExpression,
+              callee: {
+                type: IR.IRNodeType.Identifier,
+                name: "typeof",
+              } as IR.IRIdentifier,
+              arguments: [
+                {
+                  type: IR.IRNodeType.Identifier,
+                  name: paramName,
+                } as IR.IRIdentifier,
+              ],
+            } as IR.IRCallExpression,
+            right: {
+              type: IR.IRNodeType.StringLiteral,
+              value: "object",
+            } as IR.IRStringLiteral,
+          } as IR.IRBinaryExpression,
+          right: {
+            type: IR.IRNodeType.BinaryExpression,
+            operator: "!==",
+            left: {
+              type: IR.IRNodeType.Identifier,
+              name: paramName,
+            } as IR.IRIdentifier,
+            right: {
+              type: IR.IRNodeType.NullLiteral,
+            } as IR.IRNullLiteral,
+          } as IR.IRBinaryExpression,
+        } as IR.IRBinaryExpression,
+        // If it's an object, use JSON.parse(JSON.stringify()) for deep copying
+        consequent: {
+          type: IR.IRNodeType.CallExpression,
+          callee: {
+            type: IR.IRNodeType.MemberExpression,
+            object: {
+              type: IR.IRNodeType.Identifier,
+              name: "JSON",
+            } as IR.IRIdentifier,
+            property: {
+              type: IR.IRNodeType.Identifier,
+              name: "parse",
+            } as IR.IRIdentifier,
+            computed: false,
+          } as IR.IRMemberExpression,
+          arguments: [
+            {
+              type: IR.IRNodeType.CallExpression,
+              callee: {
+                type: IR.IRNodeType.MemberExpression,
+                object: {
+                  type: IR.IRNodeType.Identifier,
+                  name: "JSON",
+                } as IR.IRIdentifier,
+                property: {
+                  type: IR.IRNodeType.Identifier,
+                  name: "stringify",
+                } as IR.IRIdentifier,
+                computed: false,
+              } as IR.IRMemberExpression,
+              arguments: [
+                {
+                  type: IR.IRNodeType.Identifier,
+                  name: paramName,
+                } as IR.IRIdentifier,
+              ],
+            } as IR.IRCallExpression,
+          ],
+        } as IR.IRCallExpression,
+        // If not an object, return original value
+        alternate: {
           type: IR.IRNodeType.Identifier,
           name: paramName,
-        },
-        right: {
-          // Use a conditional expression to only deep copy objects
-          type: IR.IRNodeType.ConditionalExpression,
-          test: {
-            // typeof param === 'object' && param !== null
-            type: IR.IRNodeType.BinaryExpression,
-            operator: "&&",
-            left: {
-              type: IR.IRNodeType.BinaryExpression,
-              operator: "===",
-              left: {
-                type: IR.IRNodeType.CallExpression,
-                callee: {
-                  type: IR.IRNodeType.Identifier,
-                  name: "typeof",
-                },
-                arguments: [
-                  {
-                    type: IR.IRNodeType.Identifier,
-                    name: paramName,
-                  },
-                ],
-              },
-              right: {
-                type: IR.IRNodeType.StringLiteral,
-                value: "object",
-              },
-            },
-            right: {
-              type: IR.IRNodeType.BinaryExpression,
-              operator: "!==",
-              left: {
-                type: IR.IRNodeType.Identifier,
-                name: paramName,
-              },
-              right: {
-                type: IR.IRNodeType.NullLiteral,
-              },
-            },
-          },
-          // If it's an object, use JSON.parse(JSON.stringify()) for deep copying
-          consequent: {
-            type: IR.IRNodeType.CallExpression,
-            callee: {
-              type: IR.IRNodeType.MemberExpression,
-              object: {
-                type: IR.IRNodeType.Identifier,
-                name: "JSON",
-              },
-              property: {
-                type: IR.IRNodeType.Identifier,
-                name: "parse",
-              },
-              computed: false,
-            },
-            arguments: [
-              {
-                type: IR.IRNodeType.CallExpression,
-                callee: {
-                  type: IR.IRNodeType.MemberExpression,
-                  object: {
-                    type: IR.IRNodeType.Identifier,
-                    name: "JSON",
-                  },
-                  property: {
-                    type: IR.IRNodeType.Identifier,
-                    name: "stringify",
-                  },
-                  computed: false,
-                },
-                arguments: [
-                  {
-                    type: IR.IRNodeType.Identifier,
-                    name: paramName,
-                  },
-                ],
-              },
-            ],
-          },
-          // If not an object, return original value
-          alternate: {
-            type: IR.IRNodeType.Identifier,
-            name: paramName,
-          },
-        },
-      },
-    });
+        } as IR.IRIdentifier,
+      } as IR.IRConditionalExpression,
+    } as IR.IRAssignmentExpression;
+
+    // Create an expression statement to hold the assignment
+    const expressionStmt: IR.IRExpressionStatement = {
+      type: IR.IRNodeType.ExpressionStatement,
+      expression: assignmentExpr,
+    } as IR.IRExpressionStatement;
+
+    statements.push(expressionStmt);
   }
 
   return statements;
@@ -1756,9 +1666,6 @@ function parseParametersWithDefaults(
           type: IR.IRNodeType.Identifier,
           name: `...${sanitizeIdentifier(symbolName)}`,
         });
-        
-        // Store the original name to be able to reference it in the function body
-        params[params.length - 1].originalName = symbolName;
       } else {
         params.push({
           type: IR.IRNodeType.Identifier,
@@ -1895,4 +1802,169 @@ function parseParametersWithTypes(
   }
 
   return { params, types, defaults };
+}
+
+export function transformLambda(
+  list: ListNode, 
+  currentDir: string,
+  processFunctionBody: (body: any[], dir: string) => IR.IRNode[]
+): IR.IRNode {
+  try {
+    if (list.elements.length < 3) {
+      throw new ValidationError(
+        "lambda requires parameters and body",
+        "lambda expression",
+        "parameters and body",
+        `${list.elements.length - 1} arguments`,
+      );
+    }
+
+    const paramsNode = list.elements[1];
+    if (paramsNode.type !== "list") {
+      throw new ValidationError(
+        "lambda parameters must be a list",
+        "lambda parameters",
+        "list",
+        paramsNode.type,
+      );
+    }
+
+    // Extract parameter names directly from the parameter list
+    const paramList = paramsNode as ListNode;
+    const params: IR.IRIdentifier[] = [];
+    let restParam: IR.IRIdentifier | null = null;
+    let restMode = false;
+
+    for (const param of paramList.elements) {
+      if (param.type === "symbol") {
+        const paramName = (param as SymbolNode).name;
+
+        if (paramName === "&") {
+          restMode = true;
+          continue;
+        }
+
+        if (restMode) {
+          if (restParam !== null) {
+            throw new ValidationError(
+              `Multiple rest parameters not allowed: found '${
+                restParam.name.slice(3)
+              }' and '${paramName}'`,
+              "rest parameter",
+              "single rest parameter",
+              "multiple rest parameters",
+            );
+          }
+          restParam = {
+            type: IR.IRNodeType.Identifier,
+            name: `...${paramName}`,
+          } as IR.IRIdentifier;
+        } else {
+          params.push({
+            type: IR.IRNodeType.Identifier,
+            name: paramName,
+          } as IR.IRIdentifier);
+        }
+      }
+    }
+
+    // Skip return type annotation if present
+    let bodyStartIndex = 2;
+    if (list.elements.length > 2 && list.elements[2].type === "list") {
+      const possibleReturnType = list.elements[2] as ListNode;
+      if (
+        possibleReturnType.elements.length > 0 &&
+        possibleReturnType.elements[0].type === "symbol" &&
+        (possibleReturnType.elements[0] as SymbolNode).name === "->"
+      ) {
+        // This is a return type annotation, skip it
+        bodyStartIndex = 3;
+      }
+    }
+
+    // Process the body
+    const bodyNodes = processFunctionBody(list.elements.slice(bodyStartIndex), currentDir);
+
+    return {
+      type: IR.IRNodeType.FunctionExpression,
+      id: null,
+      params: [...params, ...(restParam ? [restParam] : [])],
+      body: { type: IR.IRNodeType.BlockStatement, body: bodyNodes },
+    } as IR.IRFunctionExpression;
+  } catch (error) {
+    throw new ValidationError(
+      `Failed to transform lambda: ${CommonErrorUtils.formatErrorMessage(error)}`,
+      "lambda expression",
+      "valid lambda expression",
+      String(list),
+    );
+  }
+}
+
+/**
+ * Transform a "do" expression (execute multiple expressions and return the value of the last one)
+ */
+export function transformDo(
+  list: ListNode, 
+  currentDir: string,
+  transformNode: (node: any, dir: string) => IR.IRNode | null
+): IR.IRNode {
+  return perform(
+    () => {
+      // Get body expressions (skip the 'do' symbol)
+      const bodyExprs = list.elements.slice(1);
+
+      // If no body, return null
+      if (bodyExprs.length === 0) {
+        return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+      }
+
+      // If only one expression, just transform it directly
+      if (bodyExprs.length === 1) {
+        const expr = transformNode(bodyExprs[0] as any, currentDir);
+        return expr || { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+      }
+
+      // Multiple expressions - create statements for IIFE body
+      const bodyStatements: IR.IRNode[] = [];
+
+      // Transform all except the last expression
+      for (let i = 0; i < bodyExprs.length - 1; i++) {
+        const transformedExpr = transformNode(bodyExprs[i] as any, currentDir);
+        if (transformedExpr) {
+          bodyStatements.push(transformedExpr);
+        }
+      }
+
+      // Transform the last expression - it's the return value
+      const lastExpr = transformNode(bodyExprs[bodyExprs.length - 1] as any, currentDir);
+
+      if (lastExpr) {
+        // Create a return statement for the last expression
+        const returnStmt: IR.IRReturnStatement = {
+          type: IR.IRNodeType.ReturnStatement,
+          argument: lastExpr
+        };
+        bodyStatements.push(returnStmt);
+      }
+
+      // Return an IIFE (Immediately Invoked Function Expression)
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.FunctionExpression,
+          id: null,
+          params: [],
+          body: {
+            type: IR.IRNodeType.BlockStatement,
+            body: bodyStatements
+          }
+        },
+        arguments: []
+      } as IR.IRCallExpression;
+    },
+    "transformDo",
+    TransformError,
+    []
+  );
 }

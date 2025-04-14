@@ -31,7 +31,7 @@ function printHelp() {
   console.error("  deno run -A cli/transpile.ts input.hql output.js");
 }
 
-async function transpile(): Promise<void> {
+export async function transpile(): Promise<void> {
   const args = Deno.args;
 
   // Set up console logging

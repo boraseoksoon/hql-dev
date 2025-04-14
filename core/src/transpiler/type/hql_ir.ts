@@ -74,6 +74,11 @@ export interface IRNode {
   type: IRNodeType;
 }
 
+// Extended version of IRNode with name property for compatibility with HQLNode
+export interface IRNodeExtended extends IRNode {
+  name?: string;
+}
+
 export interface IRProgram extends IRNode {
   type: IRNodeType.Program;
   body: IRNode[];
@@ -104,6 +109,7 @@ export interface IRIdentifier extends IRNode {
   type: IRNodeType.Identifier;
   name: string;
   isJS?: boolean;
+  originalName?: string;
 }
 
 // Expressions

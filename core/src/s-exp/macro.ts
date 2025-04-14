@@ -22,6 +22,7 @@ import { MacroError, TransformError } from "../transpiler/error/errors.ts";
 import { gensym } from "../gensym.ts";
 import { LRUCache } from "../utils/lru-cache.ts";
 import { perform } from "../transpiler/error/common-error-utils.ts";
+import * as CommonErrorUtils from "../transpiler/error/common-error-utils.ts";
 
 // Constants and caches
 const MAX_EXPANSION_ITERATIONS = 100;
@@ -332,7 +333,9 @@ function evaluateSymbol(expr: SSymbol, env: Environment, logger: Logger): SExp {
           }
         }
         if (moduleFilePath) {
-          const exportedProps = env.getExportedModuleProps?.(moduleFilePath);
+          const exportedProps = env.getExportedModuleProps ? 
+            env.getExportedModuleProps(moduleFilePath) : 
+            new Set<string>();
           if (exportedProps && !exportedProps.has(propertyPath)) {
             logger.warn(
               `Warning: Macro '${macroContext}' accessing non-exported property '${propertyPath}' from module '${moduleName}' (${moduleFilePath})`,

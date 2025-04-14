@@ -14,10 +14,13 @@ import { execute } from "../pipeline/hql-ir-to-ts-ast.ts";
 // Use getLogger instead of creating a new Logger instance
 const logger = getLogger({ verbose: isDebugMode() });
 
+/**
+ * Parse a single enum case definition
+ */
 export function parseEnumCase(
   caseList: ListNode,
   currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode
+  transformNode: (node: any, dir: string) => IR.IRNode | null
 ): IR.IREnumCase {
   return perform(
     () => {
@@ -78,8 +81,13 @@ export function parseEnumCase(
         } else {
           // Treat the extra element as a raw value
           const rawValueNode = caseList.elements[2];
-          enumCase.rawValue = transformNode(rawValueNode, currentDir);
-          logger.debug(`Enum case ${caseName} has raw value`);
+          const transformedValue = transformNode(rawValueNode, currentDir);
+          if (transformedValue !== null) {
+            enumCase.rawValue = transformedValue;
+            logger.debug(`Enum case ${caseName} has raw value`);
+          } else {
+            logger.warn(`Failed to transform raw value for enum case ${caseName}`);
+          }
         }
       }
 

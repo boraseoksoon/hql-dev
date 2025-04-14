@@ -78,10 +78,10 @@ export function transformQuote(
       }
 
       throw new ValidationError(
-        `Unsupported quoted expression: ${quoted.type}`,
+        `Unsupported quoted expression: ${(quoted as any).type}`,
         "quote",
         "literal, symbol, or list",
-        quoted.type,
+        (quoted as any).type,
       );
     },
     "transformQuote",

@@ -6,9 +6,10 @@ import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { CodeGenError, createErrorReport } from "../error/errors.ts";
 import { Logger } from "../../logger.ts";
 import { perform } from "../error/common-error-utils.ts";
+import * as CommonErrorUtils from "../error/common-error-utils.ts";
 
-// Initialize logger
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+// Initialize logger for this module
+const logger = Logger.create(Deno.env.get("HQL_DEBUG") === "1");
 
 /**
  * Generate TypeScript code from HQL IR using the TypeScript Compiler API.
@@ -167,7 +168,7 @@ export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
             `Converting node ${i} (${
               IR.IRNodeType[node.type] || "unknown type"
             })`,
-            null, // We'll handle errors manually for node conversion
+            undefined, // We'll handle errors manually for node conversion
           );
 
           if (Array.isArray(statement)) {
@@ -254,5 +255,26 @@ export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
     "IR to TS conversion",
     CodeGenError,
     [program],
+  );
+}
+
+function printNode(node: ts.Node): string {
+  return perform(
+    () => {
+      const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
+      
+      const sourceFile = ts.createSourceFile(
+        "temp.ts",
+        "",
+        ts.ScriptTarget.Latest,
+        /*setParentNodes*/ false,
+        ts.ScriptKind.TS
+      );
+      
+      return printer.printNode(ts.EmitHint.Unspecified, node, sourceFile);
+    },
+    "Printing TypeScript node",
+    undefined, // Pass undefined instead of null
+    []
   );
 }

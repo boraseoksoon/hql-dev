@@ -5,6 +5,7 @@ import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../utils/utils.ts";
+import { formatErrorMessage } from "../error/common-error-utils.ts";
 
 // Stack to track the current loop context for recur targeting
 const loopContextStack: string[] = [];
@@ -82,7 +83,7 @@ export function transformLoop(
         "loop bindings require an even number of forms",
         "loop bindings",
         "even number",
-        bindings.elements.length
+        String(bindings.elements.length)
       );
     }
 
@@ -182,12 +183,12 @@ export function transformLoop(
         callee: {
           type: IR.IRNodeType.Identifier,
           name: loopId
-        },
+        } as IR.IRIdentifier,
         arguments: initialValues
       };
 
       // Create IIFE to contain both the function declaration and initial call
-      return {
+      const iife: IR.IRCallExpression = {
         type: IR.IRNodeType.CallExpression,
         callee: {
           type: IR.IRNodeType.FunctionExpression,
@@ -200,19 +201,21 @@ export function transformLoop(
               {
                 type: IR.IRNodeType.ReturnStatement,
                 argument: initialCall
-              }
+              } as IR.IRReturnStatement
             ]
           }
-        },
+        } as IR.IRFunctionExpression,
         arguments: []
       };
+
+      return iife;
     } finally {
       // Always pop the loop context, even on error
       popLoopContext();
     }
   } catch (error) {
     throw new TransformError(
-      `Failed to transform loop: ${CommonErrorUtils.formatErrorMessage(error)}`,
+      `Failed to transform loop: ${formatErrorMessage(error)}`,
       "loop transformation",
       "valid loop expression",
       list
@@ -251,68 +254,62 @@ export function transformIfForLoop(
       );
     }
 
-    // Transform 'then' expression - wrap in return if not already a return or recur
-    const thenExpr = ifExpr.elements[2];
-    let consequent: IR.IRNode;
-    
-    if (isRecurExpression(thenExpr)) {
-      // If it's recur, transform directly - recur generates its own return
-      consequent = transformNode(thenExpr, currentDir);
-    } else {
-      // Otherwise ensure it's returned
-      const transformed = transformNode(thenExpr, currentDir);
-      if (!transformed) {
-        throw new ValidationError(
-          "Then clause transformed to null",
-          "if consequent",
-          "valid expression",
-          "null"
-        );
-      }
-      
-      // Wrap in return if not already a return statement
-      consequent = transformed.type === IR.IRNodeType.ReturnStatement
-        ? transformed
-        : {
+    // Transform consequent expression
+    let consequent = transformNode(ifExpr.elements[2], currentDir);
+    if (!consequent) {
+      consequent = {
+        type: IR.IRNodeType.ReturnStatement,
+        argument: {
+          type: IR.IRNodeType.NullLiteral
+        }
+      } as IR.IRReturnStatement;
+    }
+
+    // Handle 'else' expression if present, otherwise default to `return null`
+    let alternate: IR.IRNode;
+    if (ifExpr.elements.length > 3) {
+      const transformed = transformNode(ifExpr.elements[3], currentDir);
+      if (transformed) {
+        // Wrap in return statement if not already
+        if (transformed.type !== IR.IRNodeType.ReturnStatement) {
+          alternate = {
             type: IR.IRNodeType.ReturnStatement,
             argument: transformed
-          };
-    }
-
-    // Transform 'else' expression if it exists
-    let alternate: IR.IRNode | null = null;
-    if (ifExpr.elements.length > 3) {
-      const elseExpr = ifExpr.elements[3];
-      
-      if (isRecurExpression(elseExpr)) {
-        // If it's recur, transform directly - recur generates its own return
-        alternate = transformNode(elseExpr, currentDir);
-      } else {
-        // Otherwise ensure it's returned
-        const transformed = transformNode(elseExpr, currentDir);
-        if (transformed) {
-          // Wrap in return if not already a return statement
-          alternate = transformed.type === IR.IRNodeType.ReturnStatement
-            ? transformed
-            : {
-                type: IR.IRNodeType.ReturnStatement,
-                argument: transformed
-              };
+          } as IR.IRReturnStatement;
+        } else {
+          alternate = transformed;
         }
+      } else {
+        alternate = {
+          type: IR.IRNodeType.ReturnStatement,
+          argument: {
+            type: IR.IRNodeType.NullLiteral
+          }
+        } as IR.IRReturnStatement;
       }
+    } else {
+      // No else branch, default to returning null
+      alternate = {
+        type: IR.IRNodeType.ReturnStatement,
+        argument: {
+          type: IR.IRNodeType.NullLiteral
+        }
+      } as IR.IRReturnStatement;
     }
 
-    // Create the if statement with proper return statements
-    return {
+    // Create the IfStatement node
+    const ifStatement: IR.IRIfStatement = {
       type: IR.IRNodeType.IfStatement,
       test,
       consequent,
       alternate
     };
+
+    return ifStatement;
   } catch (error) {
     throw new TransformError(
-      `Failed to transform if for loop: ${CommonErrorUtils.formatErrorMessage(error)}`,
-      "if in loop transformation",
+      `Failed to transform if for loop: ${formatErrorMessage(error)}`,
+      "if transformation for loop",
       "valid if expression",
       ifExpr
     );
@@ -320,13 +317,15 @@ export function transformIfForLoop(
 }
 
 /**
- * Check if a given expression is a recur expression
+ * Check if an expression is a recur form
  */
 export function isRecurExpression(expr: any): boolean {
-  return expr.type === "list" &&
-    expr.elements.length > 0 &&
-    expr.elements[0].type === "symbol" &&
-    (expr.elements[0] as SymbolNode).name === "recur";
+  return (
+    expr?.type === "list" &&
+    expr.elements?.length > 0 &&
+    expr.elements[0]?.type === "symbol" &&
+    expr.elements[0].name === "recur"
+  );
 }
 
 /**
@@ -338,62 +337,52 @@ export function transformRecur(
   transformNode: (node: any, dir: string) => IR.IRNode | null
 ): IR.IRNode {
   try {
-    // Verify that we have at least the recur keyword
-    if (list.elements.length < 1) {
+    // Verify we're inside a loop context
+    const loopId = getCurrentLoopContext();
+    if (!loopId) {
       throw new ValidationError(
-        "Invalid recur form",
+        "recur used outside of loop context",
         "recur statement",
-        "recur with arguments",
-        "incomplete recur form"
+        "to be within a loop",
+        "outside loop"
       );
     }
 
-    // Get the current loop context (last item on the stack)
-    if (!hasLoopContext()) {
-      throw new ValidationError(
-        "recur must be used inside a loop",
-        "recur statement",
-        "inside loop context",
-        "outside loop context"
-      );
-    }
-
-    const loopId = getCurrentLoopContext()!;
-
-    // Transform all the argument expressions
+    // Transform the arguments
     const args: IR.IRNode[] = [];
     for (let i = 1; i < list.elements.length; i++) {
-      const transformedArg = transformNode(list.elements[i], currentDir);
-      if (!transformedArg) {
+      const arg = transformNode(list.elements[i], currentDir);
+      if (!arg) {
         throw new ValidationError(
-          `Argument ${i} in recur transformed to null`,
+          `Argument ${i} transformed to null`,
           "recur argument",
           "valid expression",
           "null"
         );
       }
-      args.push(transformedArg);
+      args.push(arg);
     }
 
-    // Create a direct function call to the loop function
+    // Create a call to the loop function
     const loopCall: IR.IRCallExpression = {
       type: IR.IRNodeType.CallExpression,
       callee: {
         type: IR.IRNodeType.Identifier,
         name: loopId
-      },
+      } as IR.IRIdentifier,
       arguments: args
     };
 
-    // Return a return statement with the loop call
-    // This is essential for proper tail call optimization
-    return {
+    // Wrap in a return statement to ensure proper tail recursion
+    const returnStmt: IR.IRReturnStatement = {
       type: IR.IRNodeType.ReturnStatement,
       argument: loopCall
     };
+
+    return returnStmt;
   } catch (error) {
     throw new TransformError(
-      `Failed to transform recur: ${CommonErrorUtils.formatErrorMessage(error)}`,
+      `Failed to transform recur: ${formatErrorMessage(error)}`,
       "recur transformation",
       "valid recur expression",
       list
@@ -402,79 +391,49 @@ export function transformRecur(
 }
 
 /**
- * Helper function to transform a list of body expressions for a loop
+ * Transform the body of a loop expression
  */
 export function transformLoopBody(
   bodyExprs: any[], 
   currentDir: string,
   transformNode: (node: any, dir: string) => IR.IRNode | null
 ): IR.IRBlockStatement {
-  // If only one expression and it's not already a return, wrap it in return
-  if (bodyExprs.length === 1 && !isRecurExpression(bodyExprs[0])) {
-    const transformedExpr = transformNode(bodyExprs[0], currentDir);
-    if (transformedExpr) {
-      // If it's already a return or if statement, use it directly
-      if (transformedExpr.type === IR.IRNodeType.ReturnStatement || 
-          transformedExpr.type === IR.IRNodeType.IfStatement) {
-        return {
-          type: IR.IRNodeType.BlockStatement,
-          body: [transformedExpr]
-        };
-      }
-      
-      // Otherwise wrap in return
-      return {
-        type: IR.IRNodeType.BlockStatement,
-        body: [{
-          type: IR.IRNodeType.ReturnStatement,
-          argument: transformedExpr
-        }]
-      };
-    }
-  }
-
-  // For multiple expressions, handle each one
-  const bodyNodes: IR.IRNode[] = [];
-
-  // Process all except the last one normally
+  // Create a block to hold body statements
+  const body: IR.IRNode[] = [];
+  
+  // Process all but the last expression as regular statements
   for (let i = 0; i < bodyExprs.length - 1; i++) {
-    const transformedExpr = transformNode(bodyExprs[i], currentDir);
-    if (transformedExpr) {
-      bodyNodes.push(transformedExpr);
+    const expr = transformNode(bodyExprs[i], currentDir);
+    if (expr) {
+      body.push(expr);
     }
   }
-
-  // Handle the last expression specially - wrap in return if needed
+  
+  // Special handling for last expression - must be returned
   if (bodyExprs.length > 0) {
     const lastExpr = bodyExprs[bodyExprs.length - 1];
     
+    // If the last expression is a recur, it already returns
     if (isRecurExpression(lastExpr)) {
-      // Recur already returns appropriately
       const transformedExpr = transformNode(lastExpr, currentDir);
       if (transformedExpr) {
-        bodyNodes.push(transformedExpr);
+        body.push(transformedExpr);
       }
     } else {
-      // Transform the last expression
+      // Otherwise, wrap in a return statement
       const transformedExpr = transformNode(lastExpr, currentDir);
       if (transformedExpr) {
-        // If it's already a return or if statement, use it directly
-        if (transformedExpr.type === IR.IRNodeType.ReturnStatement || 
-            transformedExpr.type === IR.IRNodeType.IfStatement) {
-          bodyNodes.push(transformedExpr);
-        } else {
-          // Otherwise wrap in return
-          bodyNodes.push({
-            type: IR.IRNodeType.ReturnStatement,
-            argument: transformedExpr
-          });
-        }
+        const returnStmt: IR.IRReturnStatement = {
+          type: IR.IRNodeType.ReturnStatement,
+          argument: transformedExpr
+        };
+        body.push(returnStmt);
       }
     }
   }
-
+  
   return {
     type: IR.IRNodeType.BlockStatement,
-    body: bodyNodes
+    body
   };
 }
