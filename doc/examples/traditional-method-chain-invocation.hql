@@ -11,8 +11,14 @@
 
 ;; Example 1: Basic two-method chain on an array
 (print "\n1. Double all even numbers:")
+
 (print (.map (.filter numbers (lambda (n) (= (% n 2) 0)))
              (lambda (n) (* n 2))))
+
+;; Add debugging to check the result of .filter
+(var evenNumbers (.filter numbers (lambda (n) (= (% n 2) 0))))
+(print "Even numbers (for debug): " evenNumbers)
+(print (.map evenNumbers (lambda (n) (* n 2))))
 
 ;; Example 2: Triple chain - filter, map, then sort
 (print "\n2. Triple chain - filter > 5, multiply by 2, then sort descending:")

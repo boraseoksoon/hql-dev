@@ -4,6 +4,7 @@
 import { publish } from "./publish/publish.ts";
 import { parseArgs } from "jsr:@std/cli@1.0.13/parse-args";
 import { exit } from "../src/platform/platform.ts";
+import { report } from "../src/common/common-errors.ts";
 
 function showHelp() {
   console.log(`
@@ -37,8 +38,7 @@ async function main() {
   const parsedArgs = parseArgs(args, {
     boolean: ["help", "verbose"],
     string: ["what", "name", "version", "where"],
-    alias: { h: "help", w: "what", n: "name", v: "version" },
-    prefix: "-",
+    alias: { h: "help", w: "what", n: "name", v: "version" }
   });
   if (parsedArgs.help) {
     showHelp();
@@ -51,14 +51,24 @@ async function main() {
   try {
     await publish(args);
   } catch (error) {
-    console.error("\n❌ Publishing failed:", error.message);
+    // Enhanced error reporting
+    const enhancedError = report(error, { 
+      filePath: "publish.ts", 
+      useColors: true 
+    });
+    console.error("\n❌ Publishing failed:", enhancedError.message);
     exit(1);
   }
 }
 
 if (import.meta.main) {
   main().catch((error) => {
-    console.error("\n❌ Unhandled error:", error.message);
+    // Enhanced error reporting for unhandled errors
+    const enhancedError = report(error, { 
+      filePath: "hql_publish.ts", 
+      useColors: true
+    });
+    console.error("\n❌ Unhandled error:", enhancedError.message);
     exit(1);
   });
 }

@@ -294,28 +294,20 @@ function transformDotMethodCall(list: ListNode, currentDir: string): IR.IRNode {
     return transformed;
   });
 
-  // Create a member expression for method access
-  const memberExpr: IR.IRMemberExpression = {
-    type: IR.IRNodeType.MemberExpression,
-    object: object,
-    property: {
-      type: IR.IRNodeType.Identifier,
-      name: methodName
-    } as IR.IRIdentifier,
-    computed: false
-  };
-
-  // Create the call expression
-  const callExpr: IR.IRCallExpression = {
+  // Create the call expression with member expression as callee
+  return {
     type: IR.IRNodeType.CallExpression,
     callee: {
-      type: IR.IRNodeType.Identifier,
-      name: methodName
-    } as IR.IRIdentifier,
+      type: IR.IRNodeType.MemberExpression,
+      object: object,
+      property: {
+        type: IR.IRNodeType.Identifier,
+        name: methodName
+      } as IR.IRIdentifier,
+      computed: false
+    } as IR.IRMemberExpression,
     arguments: args
-  };
-  
-  return callExpr;
+  } as IR.IRCallExpression;
 }
 
 /**
@@ -617,6 +609,65 @@ function transformNestedMethodCall(
     callee: {
       type: IR.IRNodeType.MemberExpression,
       object: innerExpr,
+      property: {
+        type: IR.IRNodeType.Identifier,
+        name: methodName,
+      } as IR.IRIdentifier,
+      computed: false,
+    } as IR.IRMemberExpression,
+    arguments: args,
+  } as IR.IRCallExpression;
+}
+
+/**
+ * Transform traditional S-expression style method calls like 
+ * (.filter numbers (lambda (n) ...))
+ */
+function transformTraditionalMethodCall(
+  list: ListNode, 
+  currentDir: string
+): IR.IRNode {
+  const methodName = (list.elements[0] as SymbolNode).name.substring(1);
+  
+  if (list.elements.length < 2) {
+    throw new ValidationError(
+      `Method call requires an object, got ${list.elements.length - 1} arguments`,
+      "method call",
+      "at least 1 argument",
+      `${list.elements.length - 1} arguments`,
+    );
+  }
+  
+  // Object is the first argument after method
+  const objectExpr = transformNode(list.elements[1], currentDir);
+  if (!objectExpr) {
+    throw new ValidationError(
+      "Object transformed to null",
+      "method call",
+      "valid object expression",
+      "null",
+    );
+  }
+  
+  // Remaining arguments
+  const args = list.elements.slice(2).map((arg) => {
+    const transformed = transformNode(arg, currentDir);
+    if (!transformed) {
+      throw new ValidationError(
+        `Argument transformed to null: ${JSON.stringify(arg)}`,
+        "method argument",
+        "valid argument expression",
+        "null",
+      );
+    }
+    return transformed;
+  });
+  
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.MemberExpression,
+      object: objectExpr,
       property: {
         type: IR.IRNodeType.Identifier,
         name: methodName,

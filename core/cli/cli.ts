@@ -6,6 +6,7 @@
  */
 import { runHqlFile } from "./run.ts";
 import { transpile } from "./transpile.ts";
+import { report, registerSourceFile } from "../src/common/common-errors.ts";
 
 const VERSION = "1.0.0"; // Update as needed
 
@@ -29,7 +30,8 @@ async function main() {
     try {
       await runHqlFile(args[1]);
     } catch (e) {
-      console.error("Error: " + (e.message || e));
+      // Enhanced error reporting
+      console.error(report(e, { filePath: args[1] }));
       Deno.exit(1);
     }
     return;
@@ -39,7 +41,8 @@ async function main() {
     try {
       await transpile();
     } catch (e) {
-      console.error("Error: " + (e.message || e));
+      // Enhanced error reporting
+      console.error(report(e, { filePath: "cli.ts" }));
       Deno.exit(1);
     }
     return;
@@ -48,6 +51,9 @@ async function main() {
   // Direct expression evaluation: hql "(+ 1 1)"
   if (args.length === 1 && args[0].startsWith("(")) {
     try {
+      // Register expression for error context
+      registerSourceFile("REPL-CLI", args[0]);
+      
       const { evaluateExpression } = await import("./run.ts");
       const result = await evaluateExpression(args[0]);
       // Print only the result
@@ -55,7 +61,8 @@ async function main() {
         console.log(result);
       }
     } catch (e) {
-      console.error("Error: " + (e.message || e));
+      // Enhanced error reporting
+      console.error(report(e, { source: args[0], filePath: "REPL-CLI" }));
       Deno.exit(1);
     }
     return;

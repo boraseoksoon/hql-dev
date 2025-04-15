@@ -4,6 +4,7 @@ import { cwd, exit } from "../../src/platform/platform.ts";
 import { publishNpm } from "./publish_npm.ts";
 import { publishJSR } from "./publish_jsr.ts";
 import { checkEnvironment } from "./publish_common.ts";
+import { report } from "../../src/common/common-errors.ts";
 
 export interface PublishOptions {
   platform: "jsr" | "npm";
@@ -140,19 +141,29 @@ export async function publish(args: string[]): Promise<void> {
     }
     console.log("\n✅ Publishing completed successfully!");
   } catch (error) {
+    // Enhanced error handling
+    const enhancedError = report(error, {
+      filePath: options.what,
+      useColors: true
+    });
     console.error(
       "\n❌ Publishing failed:",
-      error instanceof Error ? error.message : String(error),
+      enhancedError.message
     );
-    exit(1);
+    throw enhancedError; // Rethrow for upstream handling
   }
 }
 
 if (import.meta.main) {
   publish(Deno.args).catch((err) => {
+    // Enhanced error reporting
+    const enhancedError = report(err, {
+      filePath: "publish.ts",
+      useColors: true
+    });
     console.error(
       "\n❌ Publish failed:",
-      err instanceof Error ? err.message : String(err),
+      enhancedError.message
     );
     exit(1);
   });

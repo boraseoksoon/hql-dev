@@ -143,7 +143,7 @@ export async function executeCommand(
         
       // Remove command (with force flag handling)
       case 'remove':
-      case 'rm':
+      case 'rm': {
         // Special case for history removal
         if (args === '-history') {
           const { historyManager } = await import('./history-manager.ts');
@@ -168,7 +168,7 @@ export async function executeCommand(
         
         await commandRemove(evaluator, actualArgs, useColors, replState, isForceRemove);
         return true;
-        
+      }        
       // Inspect command
       case 'see':
         // Handle ":see modules" as a special case to match :modules functionality

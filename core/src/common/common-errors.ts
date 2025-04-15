@@ -1063,6 +1063,23 @@ export function report(
       );
     }
     
+    // Improve handling of array method errors
+    if (msg.includes("filter is not a function") || 
+        msg.includes("reduce is not a function") ||
+        msg.includes("join is not a function") ||
+        msg.includes("flat is not a function") ||
+        msg.includes("sort is not a function") ||
+        msg.includes("forEach is not a function")) {
+      
+      const methodMatch = msg.match(/([\w.]+) is not a function/i);
+      const methodName = methodMatch ? methodMatch[1] : "method";
+      
+      return new TranspilerError(
+        `Runtime Error: The "${methodName}" method was called on something that is not an array or doesn't support this operation. Check that your variable has the correct type before calling "${methodName}()".`,
+        options
+      );
+    }
+    
     // Type errors
     if (msg.includes("is not assignable to") || msg.includes("is not of type")) {
       const expectedTypeMatch = msg.match(/expected [^\s,.:;]+/i) || msg.match(/type [^\s,.:;]+/i);

@@ -207,15 +207,18 @@ if (import.meta.main) {
  */
 export async function evaluateExpression(expr: string): Promise<any> {
   try {
+    // Register the source for error tracking
+    registerSourceFile("REPL-CLI", expr);
+    
     const env = new Environment();
     const evaluator = new REPLEvaluator(env, { verbose: false });
     const result = await evaluator.evaluate(expr);
     // Print only the value (not the JS code)
     return result.value;
   } catch (e) {
-    throw new Error(
-      typeof e === "object" && e && "message" in e ? (e as any).message : String(e)
-    );
+    // Use enhanced error handling
+    const enhancedError = report(e, { source: expr, filePath: "REPL-CLI" });
+    throw enhancedError;
   }
 }
 
