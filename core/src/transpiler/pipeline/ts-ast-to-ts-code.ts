@@ -163,7 +163,8 @@ export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
             `Converting node ${i} (${
               IR.IRNodeType[node.type] || "unknown type"
             })`,
-            null, // We'll handle errors manually for node conversion
+            CodeGenError,
+            [node],
           );
 
           if (Array.isArray(statement)) {

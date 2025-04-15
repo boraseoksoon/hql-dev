@@ -16,6 +16,7 @@ import {
   SymbolNode,
 } from "../transpiler/type/hql_ast.ts";
 import { globalLogger as logger } from "../logger.ts";
+import { Logger } from "../logger.ts";
 
 /**
  * Options for converting S-expressions to HQL AST

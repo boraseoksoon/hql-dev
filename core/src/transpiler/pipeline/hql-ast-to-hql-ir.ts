@@ -170,8 +170,15 @@ function initializeTransformFactory(): void {
     transformFactory.set("empty-array", dataStructureModule.transformEmptyArray);
     transformFactory.set("empty-map", dataStructureModule.transformEmptyMap);
     transformFactory.set("empty-set", dataStructureModule.transformEmptySet);
-    transformFactory.set("export", null);
-    transformFactory.set("import", null);
+    transformFactory.set("export", (_list, _currentDir) => {
+      logger.debug(`Skipping export transformation for now`);
+      return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+    });
+
+    transformFactory.set("import", (_list, _currentDir) => {
+      logger.debug(`Skipping import transformation for now`);
+      return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+    });
 
     logger.debug(`Registered ${transformFactory.size} handler functions`);
   }, "initializeTransformFactory", TransformError);
@@ -294,16 +301,21 @@ function transformDotMethodCall(list: ListNode, currentDir: string): IR.IRNode {
     property: {
       type: IR.IRNodeType.Identifier,
       name: methodName
-    },
+    } as IR.IRIdentifier,
     computed: false
   };
 
   // Create the call expression
-  return {
+  const callExpr: IR.IRCallExpression = {
     type: IR.IRNodeType.CallExpression,
-    callee: memberExpr,
+    callee: {
+      type: IR.IRNodeType.Identifier,
+      name: methodName
+    } as IR.IRIdentifier,
     arguments: args
-  } as IR.IRCallExpression;
+  };
+  
+  return callExpr;
 }
 
 /**

@@ -445,51 +445,66 @@ function convertIRNodeToStatement(node: IR.IRNode): ts.Statement | ts.Statement[
   if (ts.isExpression(result)) {
     return ts.factory.createExpressionStatement(result);
   }
-  logger.warn(`Unexpected result type from convertIRNode: ${result.kind}`);
+  logger.warn(`Unexpected result type from convertIRNode: ${result}`);
   return null;
 }
 
 function replaceSelfWithThis(node: IR.IRNode): IR.IRNode {
   switch (node.type) {
     case IR.IRNodeType.Identifier: {
-      return (node as IR.IRIdentifier).name === "self"
-        ? { ...node, name: "this" }
+      const identNode = node as IR.IRIdentifier;
+      return identNode.name === "self"
+        ? { ...node, type: IR.IRNodeType.Identifier, name: "this" } as IR.IRIdentifier
         : node;
     }
     case IR.IRNodeType.MemberExpression: {
       const memberExpr = node as IR.IRMemberExpression;
       return {
         ...memberExpr,
+        type: IR.IRNodeType.MemberExpression,
         object:
           memberExpr.object.type === IR.IRNodeType.Identifier &&
           (memberExpr.object as IR.IRIdentifier).name === "self"
-            ? { type: IR.IRNodeType.Identifier, name: "this" }
+            ? { type: IR.IRNodeType.Identifier, name: "this" } as IR.IRIdentifier
             : replaceSelfWithThis(memberExpr.object),
         property: replaceSelfWithThis(memberExpr.property),
-      };
+        computed: memberExpr.computed
+      } as IR.IRMemberExpression;
     }
     case IR.IRNodeType.ReturnStatement: {
+      const returnStmt = node as IR.IRReturnStatement;
       return {
-        ...node,
-        argument: node.argument ? replaceSelfWithThis(node.argument) : null,
-      };
+        ...returnStmt,
+        type: IR.IRNodeType.ReturnStatement,
+        argument: returnStmt.argument ? replaceSelfWithThis(returnStmt.argument) : null,
+      } as IR.IRReturnStatement;
     }
     case IR.IRNodeType.AssignmentExpression: {
+      const assignExpr = node as IR.IRAssignmentExpression;
       return {
-        ...node,
-        left: replaceSelfWithThis(node.left),
-        right: replaceSelfWithThis(node.right),
-      };
+        ...assignExpr,
+        type: IR.IRNodeType.AssignmentExpression,
+        left: replaceSelfWithThis(assignExpr.left),
+        right: replaceSelfWithThis(assignExpr.right),
+        operator: assignExpr.operator
+      } as IR.IRAssignmentExpression;
     }
     case IR.IRNodeType.CallExpression: {
+      const callExpr = node as IR.IRCallExpression;
       return {
-        ...node,
-        callee: replaceSelfWithThis(node.callee),
-        arguments: node.arguments.map(arg => replaceSelfWithThis(arg)),
-      };
+        ...callExpr,
+        type: IR.IRNodeType.CallExpression,
+        callee: replaceSelfWithThis(callExpr.callee),
+        arguments: callExpr.arguments.map((arg: IR.IRNode) => replaceSelfWithThis(arg)),
+      } as IR.IRCallExpression;
     }
     case IR.IRNodeType.BlockStatement: {
-      return { ...node, body: node.body.map(stmt => replaceSelfWithThis(stmt)) };
+      const blockStmt = node as IR.IRBlockStatement;
+      return {
+        ...blockStmt,
+        type: IR.IRNodeType.BlockStatement,
+        body: blockStmt.body.map((stmt: IR.IRNode) => replaceSelfWithThis(stmt)),
+      } as IR.IRBlockStatement;
     }
     default: {
       return node;

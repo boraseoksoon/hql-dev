@@ -78,10 +78,10 @@ export function transformQuote(
       }
 
       throw new ValidationError(
-        `Unsupported quoted expression: ${quoted.type}`,
+        `Unsupported quoted expression: ${IR.IRNodeType[(quoted as IR.IRNode).type]}`,
         "quote",
         "literal, symbol, or list",
-        quoted.type,
+        IR.IRNodeType[(quoted as IR.IRNode).type],
       );
     },
     "transformQuote",

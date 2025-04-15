@@ -257,7 +257,7 @@ export class Environment {
   }
 
   private getPropertyFromPath(obj: unknown, path: string): Value {
-    if (!path) return obj;
+    if (!path) return obj as Value;
     if (obj === null || obj === undefined) {
       throw new ValidationError(
         `Cannot access property '${path}' of ${obj === null ? "null" : "undefined"}`,

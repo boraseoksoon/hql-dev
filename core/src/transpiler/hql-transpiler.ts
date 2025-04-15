@@ -114,7 +114,7 @@ function parseWithHandling(source: string, logger: Logger) {
   } catch (error: unknown) {
     if (error instanceof ParseError) {
       // Enhance the parse error with source context
-      throw parseError(error, true);
+      throw parseError(error, { source, useColors: true });
     }
     
     if (error instanceof Error) {

@@ -670,7 +670,7 @@ async function processJsImport(
   try {
     let finalModuleUrl = `file://${resolvedPath}`;
     const jsSource = await Deno.readTextFile(resolvedPath);
-    if (checkForHqlImports(jsSource, logger)) {
+    if (checkForHqlImports(jsSource)) {
       logger.debug(`JS file ${resolvedPath} contains nested HQL imports. Pre-processing them.`);
       const processedSource = await processHqlImportsInJs(
         jsSource,

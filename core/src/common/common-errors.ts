@@ -163,50 +163,121 @@ export class TranspilerError extends BaseError {
     this.line = options.line;
     this.column = options.column;
     
-    // Extract context lines if we have location information
+    this.attemptLoadSourceAndContext();
+    
+    Object.setPrototypeOf(this, TranspilerError.prototype);
+  }
+
+  private attemptLoadSourceAndContext(): void {
+    // Try to load source if we have a file path but no source
+    if (this.filePath && !this.source) {
+      try {
+        this.source = getSourceFile(this.filePath);
+      } catch (e) {
+        // Failed to load source file, try synchronous read as fallback
+        try {
+          // This is a Deno-specific API but we'll try it as a fallback
+          if (typeof Deno !== 'undefined') {
+            this.source = Deno.readTextFileSync(this.filePath);
+            registerSourceFile(this.filePath, this.source);
+          }
+        } catch {
+          // We can't read the file, continue without source
+        }
+      }
+    }
+
+    // Try to extract line numbers from the error message if not provided directly
+    if (!this.line && this.message) {
+      // Look for common patterns like "at line X" or "line X:Y"
+      const lineMatches = [
+        ...this.message.matchAll(/(?:at|on|in)?\s*line\s+(\d+)(?:[,:]\s*(?:column|col)?\s*(\d+))?/ig),
+        ...this.message.matchAll(/(\d+):(\d+)(?:\s*-\s*\d+:\d+)?/g)
+      ];
+
+      if (lineMatches.length > 0) {
+        const bestMatch = lineMatches[0];
+        this.line = parseInt(bestMatch[1], 10);
+        if (bestMatch[2] && !this.column) {
+          this.column = parseInt(bestMatch[2], 10);
+        }
+      }
+    }
+    
+    // Extract context lines if we have enough information
     if (this.source && this.line !== undefined) {
       this.extractContextLines();
     } else if (this.source && !this.line) {
-      const lineMatch = message.match(/line (\d+)/i);
-      const columnMatch = message.match(/column (\d+)/i);
+      const lineMatch = this.message.match(/line (\d+)/i);
+      const columnMatch = this.message.match(/column (\d+)/i);
       
       if (lineMatch) {
         this.line = parseInt(lineMatch[1], 10);
         this.column = columnMatch ? parseInt(columnMatch[1], 10) : undefined;
         this.extractContextLines();
       }
-    } else if (options.filePath && !this.source) {
-      this.source = getSourceFile(options.filePath);
-      if (this.source && this.line !== undefined) {
-        this.extractContextLines();
-      }
     }
-    
-    Object.setPrototypeOf(this, TranspilerError.prototype);
   }
   
   private extractContextLines(): void {
     if (!this.source || this.line === undefined) return;
     
     const lines = this.source.split('\n');
+    if (this.line <= 0 || this.line > lines.length) {
+      // Line number is out of range, show first few lines instead
+      this.contextLines = lines.slice(0, Math.min(5, lines.length))
+        .map((line, i) => `${i + 1} │ ${line}`);
+      if (this.line > 0) {
+        this.contextLines.push(`Note: Reported line ${this.line} exceeds file length ${lines.length}`);
+      }
+      return;
+    }
+    
     const lineIndex = this.line - 1;
+    const contextSize = 2; // Show 2 lines before and after the error line
     
-    if (lineIndex < 0 || lineIndex >= lines.length) return;
+    // Calculate range ensuring we don't go out of bounds
+    const startLine = Math.max(0, lineIndex - contextSize);
+    const endLine = Math.min(lines.length - 1, lineIndex + contextSize);
     
-    this.contextLines = [];
-    
-    // Add context lines - before, error line, pointer, after
-    for (let i = Math.max(0, lineIndex - 2); i < lineIndex; i++) {
+    // Add lines before error
+    for (let i = startLine; i < lineIndex; i++) {
       this.contextLines.push(`${i + 1} │ ${lines[i]}`);
     }
     
-    this.contextLines.push(`${lineIndex + 1} │ ${lines[lineIndex]}`);
+    // Add error line
+    const errorLine = lines[lineIndex];
+    this.contextLines.push(`${this.line} │ ${errorLine}`);
     
-    if (this.column !== undefined) {
-      this.contextLines.push(`  │ ${' '.repeat(Math.max(0, this.column - 1))}^`);
+    // Add pointer line if we have column information
+    if (this.column !== undefined && this.column > 0) {
+      const column = Math.min(this.column, errorLine.length + 1);
+      const pointerSpaces = " ".repeat(column);
+      this.contextLines.push(`  │ ${pointerSpaces}^`);
+    } else {
+      // If we can't determine exact position, try to infer it from the error message
+      if (this.message) {
+        // Look for quoted text, function names, or variables mentioned in the error
+        const quotedText = this.message.match(/['"]([^'"]+)['"]/);
+        const errorTerm = quotedText ? quotedText[1] : null; 
+        
+        if (errorTerm && errorLine.includes(errorTerm)) {
+          const termIndex = errorLine.indexOf(errorTerm);
+          const pointerSpaces = " ".repeat(termIndex + 1);
+          const pointerMarks = "^".repeat(errorTerm.length);
+          this.contextLines.push(`  │ ${pointerSpaces}${pointerMarks}`);
+        } else {
+          // Just underline the whole line
+          this.contextLines.push(`  │ ${"~".repeat(errorLine.length)}`);
+        }
+      } else {
+        // Default case - underline the whole line
+        this.contextLines.push(`  │ ${"~".repeat(errorLine.length)}`);
+      }
     }
     
-    for (let i = lineIndex + 1; i < Math.min(lines.length, lineIndex + 3); i++) {
+    // Add lines after error
+    for (let i = lineIndex + 1; i <= endLine; i++) {
       this.contextLines.push(`${i + 1} │ ${lines[i]}`);
     }
   }
@@ -231,6 +302,31 @@ export class TranspilerError extends BaseError {
       result += `\n${useColors ? c.cyan("Location:") : "Location:"} ${locationPath}`;
     }
     
+    // Include error type for more clarity
+    result += `\n${useColors ? c.cyan("Type:") : "Type:"} ${this.name}`;
+    
+    // Try to analyze error and provide more context
+    const errorAnalysis = this.analyzeError();
+    if (errorAnalysis) {
+      result += `\n${useColors ? c.cyan("Analysis:") : "Analysis:"} ${errorAnalysis}`;
+    }
+    
+    // Include stack information for better debugging
+    if (this.stack) {
+      const relevantStackLines = this.stack
+        .split('\n')
+        .slice(1, 4) // Take a few relevant stack frames
+        .filter(line => !line.includes('/deno/') && !line.includes('node_modules/'));
+      
+      if (relevantStackLines.length > 0) {
+        result += `\n${useColors ? c.cyan("Call stack:") : "Call stack:"}`;
+        for (const line of relevantStackLines) {
+          const cleanLine = line.trim().replace(/^at /, '');
+          result += `\n  ${cleanLine}`;
+        }
+      }
+    }
+    
     if (this.contextLines.length > 0) {
       result += '\n\n';
       // Find index of the error line (the one before the pointer)
@@ -253,6 +349,41 @@ export class TranspilerError extends BaseError {
     return result;
   }
   
+  private analyzeError(): string | null {
+    const msg = this.message.toLowerCase();
+    
+    // Check for common patterns and provide targeted advice
+    if (msg.includes("map is not defined")) {
+      return "You might be trying to use Array methods on a non-array, or the array hasn't been properly defined or imported.";
+    }
+    
+    if (msg.includes("cannot read property") || msg.includes("null") || msg.includes("undefined")) {
+      return "You're trying to access a property on a value that doesn't exist. Check that variables are properly initialized before use.";
+    }
+    
+    if (msg.includes("is not a function") || msg.includes("not callable")) {
+      return "You're attempting to call something that isn't a function. Check that the function exists and is spelled correctly.";
+    }
+    
+    if (msg.includes("unexpected token") || msg.includes("unexpected identifier")) {
+      return "There's a syntax error in your code. Check for missing or extra brackets, parentheses, commas, or semicolons.";
+    }
+    
+    if (msg.includes("is not defined") || msg.includes("reference error")) {
+      return "You're trying to use a variable or function that hasn't been defined or imported in this scope.";
+    }
+    
+    if (msg.includes("maximum call stack") || msg.includes("stack overflow")) {
+      return "You have an infinite recursion or a loop that's too deep. Check functions that call themselves or cyclical references.";
+    }
+    
+    if (msg.includes("type error") || msg.includes("cannot") || msg.includes("invalid")) {
+      return "You're using a value in a way that's incompatible with its type. Check type conversions and method usage.";
+    }
+    
+    return null;
+  }
+
   static fromError(
     error: Error,
     options: {
@@ -707,18 +838,49 @@ export function getSuggestion(error: Error): string {
   if (msg.includes("unexpected ')'") || msg.includes("unexpected ']'") || msg.includes("unexpected '}'")) {
     return "Check for mismatched parentheses or brackets. You might have an extra closing delimiter or missing an opening one.";
   }
+  
   if (msg.includes("unexpected end of input")) {
     return "Your expression is incomplete. Check for unclosed parentheses, brackets, or strings.";
   }
+  
   if (msg.includes("undefined") || msg.includes("not defined")) {
-    return "The referenced variable or function doesn't exist. Check for typos or add a definition.";
+    const varMatch = msg.match(/['"]([^'"]+)['"]/);
+    const varName = varMatch ? varMatch[1] : "variable";
+    return `The ${varName} is not defined in this scope. Check for typos, make sure it's properly declared or imported.`;
   }
+  
   if (msg.includes("null") || msg.includes("undefined is not an object")) {
-    return "You're trying to access a property on null or undefined. Add a check before accessing properties.";
+    return "You're trying to access a property on null or undefined. Add a check before accessing properties (e.g., use optional chaining with '?.' or add a nullish check).";
+  }
+  
+  if (msg.includes("map") && msg.includes("not defined")) {
+    return "If you're trying to use Array.map(), make sure your variable is an array. If it's coming from a function, verify the return value type.";
+  }
+  
+  if (msg.includes("is not a function")) {
+    const fnMatch = msg.match(/([\w.]+) is not a function/);
+    const fnName = fnMatch ? fnMatch[1] : "The item";
+    return `${fnName} is not callable. Check that it's properly defined as a function and is spelled correctly.`;
+  }
+  
+  if (msg.includes("maximum call stack size exceeded")) {
+    return "You have an infinite recursion. If you have a recursive function, check your base case or stopping condition.";
+  }
+  
+  if (msg.includes("type error") || msg.includes("type mismatch")) {
+    return "The data types you're working with don't match what the operation expects. Try checking the types with console.log(typeof variable).";
+  }
+  
+  if (msg.includes("import") || msg.includes("require")) {
+    return "There's an issue with an import statement. Check that the file path is correct and the module is available.";
+  }
+  
+  if (msg.includes("syntax error") || msg.includes("unexpected token")) {
+    return "There's a syntax error in your code. Common issues include missing semicolons, unmatched brackets, or invalid property names.";
   }
   
   // Generic suggestion
-  return "Try simplifying your code to isolate the problem. Break complex expressions into smaller parts.";
+  return "Try simplifying your code to isolate the problem. Break complex expressions into smaller parts and use console.log to debug values.";
 }
 
 /**
@@ -785,7 +947,7 @@ export function formatError(
  * Enhance errors by adding source context and choosing the right error type
  */
 export function report(
-  error: Error,
+  error: unknown,
   options: {
     source?: string;
     filePath?: string;
@@ -794,37 +956,213 @@ export function report(
     useColors?: boolean;
   } = {}
 ): Error {
+  // Convert non-Error objects to Error
+  const errorObj = error instanceof Error ? error : new Error(String(error));
+  
+  // Extract source location from stack trace if not provided
+  if (!options.line && !options.column && errorObj.stack) {
+    const stackLines = errorObj.stack.split('\n');
+    for (const line of stackLines) {
+      // Look for file paths with line/column info in stack traces
+      const match = line.match(/\((.*):(\d+):(\d+)\)/) || line.match(/(.*):(\d+):(\d+)/);
+      if (match) {
+        const [_, filePath, lineNum, colNum] = match;
+        // Only use this if it points to a source file and not a node module
+        if (!filePath.includes("node_modules") && !filePath.includes("deno:")) {
+          options.filePath = options.filePath || filePath;
+          options.line = options.line || parseInt(lineNum, 10);
+          options.column = options.column || parseInt(colNum, 10);
+          break;
+        }
+      }
+    }
+  }
+
+  // Also look for line/column information in the error message itself
+  if (!options.line || !options.column) {
+    const msg = errorObj.message;
+    const lineColMatches = [
+      ...msg.matchAll(/(?:at|on|in)?\s*line\s+(\d+)(?:[,:]\s*(?:column|col)?\s*(\d+))?/ig),
+      ...msg.matchAll(/(?:^|[^\d])(\d+):(\d+)(?:\s*-\s*\d+:\d+)?/g)
+    ];
+
+    if (lineColMatches.length > 0) {
+      const bestMatch = lineColMatches[0];
+      if (!options.line) options.line = parseInt(bestMatch[1], 10);
+      if (!options.column && bestMatch[2]) options.column = parseInt(bestMatch[2], 10);
+    }
+  }
+
   // Handle specific error types
-  if (error instanceof BaseParseError) {
+  if (errorObj instanceof BaseParseError) {
     return new ParseError(
-      error.message,
-      error.position,
-      options.source || error.source,
+      errorObj.message,
+      errorObj.position,
+      options.source || errorObj.source,
       options.useColors ?? true
     );
   }
   
   // For any transpiler error, ensure the options are set
-  if (error instanceof TranspilerError) {
+  if (errorObj instanceof TranspilerError) {
     // Create a new instance with merged options
-    return TranspilerError.fromError(error, {
-      source: options.source || error.source,
-      filePath: options.filePath || error.filePath,
-      line: options.line ?? error.line,
-      column: options.column ?? error.column,
+    return TranspilerError.fromError(errorObj, {
+      source: options.source || errorObj.source,
+      filePath: options.filePath || errorObj.filePath,
+      line: options.line ?? errorObj.line,
+      column: options.column ?? errorObj.column,
       useColors: options.useColors ?? true
     });
   }
   
+  // Enhance generic errors with better classification and messages
+  if (!(errorObj instanceof BaseError)) {
+    const msg = errorObj.message.toLowerCase();
+    
+    // Common JavaScript runtime errors with better messages
+    if (msg.includes("is not a function") || msg.includes("is not callable")) {
+      const fnMatch = msg.match(/(?:^|[\s.,;])([\w.]+) is not a function/i);
+      const fnName = fnMatch ? fnMatch[1] : "Unknown method";
+      return new TranspilerError(
+        `Runtime Error: Attempted to call something that is not a function. The method "${fnName}" either doesn't exist or is not a callable function.`,
+        options
+      );
+    }
+    
+    if (msg.includes("cannot read property") || 
+        msg.includes("cannot read") || 
+        msg.includes("is null") || 
+        msg.includes("is undefined")) {
+      
+      // Try to extract the property name and the null/undefined object
+      const propMatch = msg.match(/property ['"](.*?)['"] of/i) || 
+                       msg.match(/cannot read ['"](.*?)['"]/i);
+      const objMatch = msg.match(/of (undefined|null)/i) ||
+                      msg.match(/(undefined|null) has no/i);
+      
+      const propName = propMatch ? propMatch[1] : "unknown property";
+      const objType = objMatch ? objMatch[1] : "null or undefined";
+      
+      return new TranspilerError(
+        `Runtime Error: Cannot access property "${propName}" on ${objType}. Check that the object exists before accessing its properties.`,
+        options
+      );
+    }
+    
+    if (msg.includes("maximum call stack") || msg.includes("stack overflow")) {
+      return new TranspilerError(
+        `Runtime Error: Maximum call stack size exceeded. This is likely caused by infinite recursion. Check for functions that call themselves without a termination condition.`,
+        options
+      );
+    }
+    
+    if (msg.includes("map is not defined") || msg.includes("map is not a function")) {
+      return new TranspilerError(
+        `Runtime Error: The "map" method was called on something that is not an array. Check that your variable is an array before calling map().`,
+        options
+      );
+    }
+    
+    // Type errors
+    if (msg.includes("is not assignable to") || msg.includes("is not of type")) {
+      const expectedTypeMatch = msg.match(/expected [^\s,.:;]+/i) || msg.match(/type [^\s,.:;]+/i);
+      const gotTypeMatch = msg.match(/got [^\s,.:;]+/i) || msg.match(/but was [^\s,.:;]+/i);
+      
+      const expectedType = expectedTypeMatch 
+        ? expectedTypeMatch[0].replace(/^expected /i, "").replace(/^type /i, "") 
+        : "unknown";
+      const actualType = gotTypeMatch 
+        ? gotTypeMatch[0].replace(/^got /i, "").replace(/^but was /i, "") 
+        : "unknown";
+      
+      return new ValidationError(
+        `Type mismatch: ${errorObj.message}`,
+        "type checking",
+        {
+          ...options,
+          expectedType,
+          actualType
+        }
+      );
+    }
+    
+    // Syntax errors 
+    if (msg.includes("unexpected token") || 
+        msg.includes("unexpected identifier") || 
+        msg.includes("expected")) {
+      
+      // Try to extract the unexpected token
+      const tokenMatch = msg.match(/unexpected token ['"](.+?)['"]/i) ||
+                        msg.match(/unexpected (.+?)(?:\s|$)/i);
+      const expectedMatch = msg.match(/expected (.+?)(?:\s|$)/i);
+      
+      const unexpected = tokenMatch ? tokenMatch[1] : "token";
+      const expected = expectedMatch ? expectedMatch[1] : "different syntax";
+      
+      const errorMessage = `Syntax Error: Found unexpected ${unexpected}${expected ? `, expected ${expected}` : ''}.`;
+      
+      // If we have source and line info, create a proper ParseError
+      if (options.source && options.line) {
+        return new ParseError(
+          errorMessage,
+          { 
+            line: options.line, 
+            column: options.column || 1, 
+            offset: 0 
+          },
+          options.source,
+          options.useColors ?? true
+        );
+      }
+      
+      return new TranspilerError(errorMessage, options);
+    }
+    
+    // Binding and scope errors
+    if (msg.includes("is not defined") || 
+        msg.includes("undefined variable") || 
+        msg.includes("cannot find")) {
+      
+      const varMatch = msg.match(/['"]([^'"]+)['"]/);
+      const varName = varMatch ? varMatch[1] : 
+                     msg.match(/(\w+) is not defined/i)?.[1] || "unknown";
+      
+      return new TranspilerError(
+        `Reference Error: The variable or function "${varName}" does not exist in this scope. Check spelling, imports, or add a declaration.`,
+        options
+      );
+    }
+    
+    // Import errors
+    if (msg.includes("failed to resolve") || 
+        msg.includes("cannot find module") || 
+        msg.includes("import") && (msg.includes("error") || msg.includes("failed"))) {
+      
+      const moduleMatch = msg.match(/['"]([^'"]+)['"]/);
+      const modulePath = moduleMatch ? moduleMatch[1] : "unknown module";
+      
+      return new ImportError(
+        `Failed to import module "${modulePath}"`,
+        modulePath,
+        {
+          sourceFile: options.filePath,
+          source: options.source,
+          line: options.line,
+          column: options.column
+        }
+      );
+    }
+  }
+  
   // For generic errors, wrap them
-  return TranspilerError.fromError(error, options);
+  return TranspilerError.fromError(errorObj, options);
 }
 
 /**
  * Print an error to the console
  */
 export function reportError(
-  error: Error,
+  error: unknown,
   options: {
     source?: string;
     filePath?: string;
@@ -869,9 +1207,9 @@ export function withErrorHandling<T, Args extends any[]>(
   return async (...args: Args): Promise<T> => {
     try {
       return await fn(...args);
-    } catch (error) {
+    } catch (error: unknown) {
       if (options.logErrors !== false) {
-        reportError(error instanceof Error ? error : new Error(String(error)), {
+        reportError(error, {
           filePath: options.filePath,
           source: options.source, 
           verbose: true,

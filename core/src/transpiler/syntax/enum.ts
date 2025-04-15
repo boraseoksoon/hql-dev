@@ -8,11 +8,12 @@ import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { perform } from "../error/index.ts";
 import { execute } from "../pipeline/hql-ir-to-ts-ast.ts";
+import { HQLNode } from "../type/hql_ast.ts";
 
 export function parseEnumCase(
   caseList: ListNode,
   currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode
+  transformNode: (node: HQLNode, dir: string) => IR.IRNode | null
 ): IR.IREnumCase {
   return perform(
     () => {

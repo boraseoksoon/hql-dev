@@ -3,7 +3,7 @@ import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI } from "../src/bundler.ts";
 import { globalLogger as logger } from "../src/logger.ts";
 import { setupConsoleLogging, setupLoggingOptions } from "./utils/utils.ts";
-import CommonError, { registerSourceFile } from "../src/common/common-errors.ts";
+import { report, withErrorHandling, registerSourceFile } from "../src/common/common-errors.ts";
 import {
   cleanupAllTempFiles,
   registerExceptionTempFile,
@@ -53,30 +53,31 @@ export async function transpile(): Promise<void> {
     console.log("Verbose logging enabled");
   }
   
+  let source: string;
   try {
     // Read input file for error context
-    let source;
     try {
       source = await Deno.readTextFile(inputPath);
       registerSourceFile(inputPath, source);
     } catch (readError) {
-      console.error(CommonError.report(readError instanceof Error ? readError : new Error(String(readError))));
+      console.error(report(readError, { filePath: inputPath }));
       Deno.exit(1);
     }
 
     // Transpile the input with enhanced error handling
-    const bundledPath = await CommonError.withErrorHandling(
+    const bundledPath = await withErrorHandling(
       () => transpileCLI(inputPath, outputPath, { 
         verbose,
         skipErrorReporting: true
       }),
       { 
         filePath: inputPath, 
+        source,
         context: "CLI transpilation",
         logErrors: false
       }
     )().catch(error => {
-      console.error(CommonError.report(error instanceof Error ? error : new Error(String(error))));
+      console.error(report(error, { filePath: inputPath, source }));
       Deno.exit(1);
     });
 
@@ -85,7 +86,7 @@ export async function transpile(): Promise<void> {
         const finalOutput = await Deno.readTextFile(bundledPath);
         console.log(finalOutput);
       } catch (error) {
-        console.error(CommonError.report(error instanceof Error ? error : new Error(String(error))));
+        console.error(report(error, { filePath: bundledPath }));
         Deno.exit(1);
       }
     } 
@@ -95,7 +96,11 @@ export async function transpile(): Promise<void> {
       try {
         await import("file://" + resolve(bundledPath));
       } catch (error) {
-        console.error(CommonError.report(error instanceof Error ? error : new Error(String(error))));
+        // For runtime errors, try to map back to the original source
+        console.error(report(error, { 
+          filePath: inputPath, 
+          source
+        }));
         Deno.exit(1);
       }
     }
@@ -103,7 +108,8 @@ export async function transpile(): Promise<void> {
     await cleanupAllTempFiles();
     logger.debug("Cleaned up all registered temporary files");
   } catch (error) {
-    console.error(CommonError.report(error instanceof Error ? error : new Error(String(error))));    Deno.exit(1);
+    console.error(report(error, { filePath: inputPath, source: source! }));
+    Deno.exit(1);
   }
 }
 

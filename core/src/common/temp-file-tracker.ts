@@ -19,9 +19,6 @@ export async function cleanupAllTempFiles(): Promise<void> {
     (file) => !exceptionFilesRegistry.has(file),
   );
 
-  logger.debug("yo removal targets:", targets);
-  logger.debug(`Cleaning up ${targets.length} registered temporary files`);
-
   const removalPromises = targets.map(async (file) => {
     try {
       await Deno.remove(file);

@@ -400,7 +400,7 @@ export function transformDo(
         bodyStatements.push({
           type: IR.IRNodeType.ReturnStatement,
           argument: lastExpr
-        });
+        } as IR.IRReturnStatement);
       }
 
       // Return an IIFE (Immediately Invoked Function Expression)

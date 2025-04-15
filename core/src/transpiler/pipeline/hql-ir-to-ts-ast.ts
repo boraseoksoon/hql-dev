@@ -53,7 +53,8 @@ export function convertIRExpr(node: IR.IRNode): ts.Expression {
         return convertAssignmentExpression(node as IR.IRAssignmentExpression);
       case IR.IRNodeType.GetAndCall:
         return convertGetAndCall(node as IR.IRGetAndCall);
-      case IR.IRNodeType.ReturnStatement:
+      case IR.IRNodeType.ReturnStatement: {
+        const irReturn = node as IR.IRReturnStatement;
         return ts.factory.createCallExpression(
           ts.factory.createParenthesizedExpression(
             ts.factory.createArrowFunction(
@@ -62,12 +63,13 @@ export function convertIRExpr(node: IR.IRNode): ts.Expression {
               [],
               undefined,
               ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-              node.argument ? convertIRExpr(node.argument) : ts.factory.createIdentifier("undefined")
+              irReturn.argument ? convertIRExpr(irReturn.argument) : ts.factory.createIdentifier("undefined")
             )
           ),
           undefined,
           []
         );
+      }
       default:
         throw new CodeGenError(
           `Cannot convert node of type ${IR.IRNodeType[node.type] || node.type} to expression`,

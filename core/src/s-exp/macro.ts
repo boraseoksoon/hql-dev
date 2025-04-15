@@ -328,17 +328,8 @@ function evaluateSymbol(expr: SSymbol, env: Environment, logger: Logger): SExp {
             }
           }
         }
-        if (moduleFilePath) {
-          const exportedProps = env.getExportedModuleProps?.(moduleFilePath);
-          if (exportedProps && !exportedProps.has(propertyPath)) {
-            logger.warn(
-              `Warning: Macro '${macroContext}' accessing non-exported property '${propertyPath}' from module '${moduleName}' (${moduleFilePath})`,
-            );
-          }
-        } else {
-          logger.debug(`Module file path for '${moduleName}' couldn't be determined for export validation`);
-        }
       }
+      
       let result: any = moduleValue;
       if (typeof result === "object" && result !== null && propertyPath in result) {
         result = result[propertyPath];

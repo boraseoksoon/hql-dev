@@ -79,14 +79,16 @@ async function run() {
     namespace: "cli",
   });
 
+  let source: string;
+  
   // Read input file for error context
   try {
-    const source = await Deno.readTextFile(inputPath);
+    source = await Deno.readTextFile(inputPath);
     // Register the source for enhanced error handling
     registerSourceFile(inputPath, source);
   } catch (readError) {
     // Use the enhanced error reporter
-    console.error(report(readError));
+    console.error(report(readError, { filePath: inputPath }));
     Deno.exit(1);
   }
   
@@ -115,12 +117,13 @@ async function run() {
       () => transpileCLI(inputPath, tempOutputPath, bundleOptions),
       { 
         filePath: inputPath, 
+        source,
         context: "transpilation",
         logErrors: false // Handle errors ourselves for better formatting
       }
     )().catch(error => {
       // Use enhanced error reporting
-      console.error(report(error));
+      console.error(report(error, { filePath: inputPath, source }));
       Deno.exit(1);
     });
     
@@ -133,23 +136,32 @@ async function run() {
         namespace: "cli",
       });
       
+      // Create a source map between transpiled and original code
+      const transpiled = await Deno.readTextFile(bundledPath);
+      
       // Run the code with error handling
       await withErrorHandling(
         async () => await import("file://" + resolve(bundledPath)),
         { 
-          filePath: bundledPath, 
+          filePath: inputPath, // Use original source file for better errors
+          source,  // Pass original source for context
           context: "execution",
           logErrors: false // Handle errors ourselves
         }
-      )().catch(error => {
+      )().catch((error: unknown) => {
         // Use enhanced error reporting for runtime errors
-        console.error(report(error));
+        // Try to map transpiled JS error back to HQL source
+        const enhancedError = report(error, { 
+          filePath: inputPath, 
+          source 
+        });
+        console.error(enhancedError);
         Deno.exit(1);
       });
     }
   } catch (error) {
     // Use enhanced error reporting
-    console.error(report(error));
+    console.error(report(error, { filePath: inputPath, source }));
     Deno.exit(1);
   } finally {
     try {

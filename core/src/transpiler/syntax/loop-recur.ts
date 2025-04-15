@@ -82,7 +82,7 @@ export function transformLoop(
         "loop bindings require an even number of forms",
         "loop bindings",
         "even number",
-        bindings.elements.length
+        String(bindings.elements.length) // Convert to string to fix type error
       );
     }
 
@@ -186,8 +186,7 @@ export function transformLoop(
         arguments: initialValues
       };
 
-      // Create IIFE to contain both the function declaration and initial call
-      return {
+      const iife: IR.IRCallExpression = {
         type: IR.IRNodeType.CallExpression,
         callee: {
           type: IR.IRNodeType.FunctionExpression,
@@ -200,12 +199,14 @@ export function transformLoop(
               {
                 type: IR.IRNodeType.ReturnStatement,
                 argument: initialCall
-              }
+              } as IR.IRReturnStatement
             ]
-          }
+          } as IR.IRBlockStatement
         },
         arguments: []
       };
+
+      return iife;
     } finally {
       // Always pop the loop context, even on error
       popLoopContext();
@@ -253,11 +254,19 @@ export function transformIfForLoop(
 
     // Transform 'then' expression - wrap in return if not already a return or recur
     const thenExpr = ifExpr.elements[2];
-    let consequent: IR.IRNode;
+    let consequent: IR.IRNode | null = null;
     
     if (isRecurExpression(thenExpr)) {
       // If it's recur, transform directly - recur generates its own return
       consequent = transformNode(thenExpr, currentDir);
+      if (consequent === null) {
+        throw new ValidationError(
+          "Then clause (recur) transformed to null",
+          "if consequent",
+          "valid recur expression",
+          "null"
+        );
+      }
     } else {
       // Otherwise ensure it's returned
       const transformed = transformNode(thenExpr, currentDir);
@@ -276,7 +285,7 @@ export function transformIfForLoop(
         : {
             type: IR.IRNodeType.ReturnStatement,
             argument: transformed
-          };
+          } as IR.IRReturnStatement;
     }
 
     // Transform 'else' expression if it exists
@@ -297,7 +306,7 @@ export function transformIfForLoop(
             : {
                 type: IR.IRNodeType.ReturnStatement,
                 argument: transformed
-              };
+              } as IR.IRReturnStatement;
         }
       }
     }
@@ -308,7 +317,7 @@ export function transformIfForLoop(
       test,
       consequent,
       alternate
-    };
+    } as IR.IRIfStatement;
   } catch (error) {
     throw new TransformError(
       `Failed to transform if for loop: ${error instanceof Error ? error.message : String(error)}`,
@@ -381,7 +390,7 @@ export function transformRecur(
       callee: {
         type: IR.IRNodeType.Identifier,
         name: loopId
-      },
+      } as IR.IRIdentifier,
       arguments: args
     };
 
@@ -390,7 +399,7 @@ export function transformRecur(
     return {
       type: IR.IRNodeType.ReturnStatement,
       argument: loopCall
-    };
+    } as IR.IRReturnStatement;
   } catch (error) {
     throw new TransformError(
       `Failed to transform recur: ${error instanceof Error ? error.message : String(error)}`,
@@ -428,7 +437,7 @@ export function transformLoopBody(
         body: [{
           type: IR.IRNodeType.ReturnStatement,
           argument: transformedExpr
-        }]
+        } as IR.IRReturnStatement]
       };
     }
   }
@@ -467,7 +476,7 @@ export function transformLoopBody(
           bodyNodes.push({
             type: IR.IRNodeType.ReturnStatement,
             argument: transformedExpr
-          });
+          } as IR.IRReturnStatement);
         }
       }
     }

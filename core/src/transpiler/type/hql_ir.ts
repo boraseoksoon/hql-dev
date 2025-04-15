@@ -103,14 +103,22 @@ export interface IRNullLiteral extends IRNode {
 export interface IRIdentifier extends IRNode {
   type: IRNodeType.Identifier;
   name: string;
+  originalName?: string;
   isJS?: boolean;
 }
 
 // Expressions
 export interface IRCallExpression extends IRNode {
   type: IRNodeType.CallExpression;
-  callee: IRNode;
+  callee: IRIdentifier | IRMemberExpression | IRFunctionExpression;
   arguments: IRNode[];
+}
+
+export interface IRAssignmentExpression extends IRNode {
+  type: IRNodeType.AssignmentExpression;
+  operator: string;
+  left: IRNode;
+  right: IRNode;
 }
 
 export interface IRMemberExpression extends IRNode {
@@ -392,7 +400,7 @@ export interface IREnumDeclaration extends IRNode {
 export interface IREnumCase extends IRNode {
   type: IRNodeType.EnumCase;
   id: IRIdentifier;
-  rawValue?: IRNode;
+  rawValue?: IRNode | null;
   associatedValues?: IREnumAssociatedValue[];
   hasAssociatedValues?: boolean;
 }

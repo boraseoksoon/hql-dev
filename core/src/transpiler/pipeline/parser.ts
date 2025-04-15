@@ -247,10 +247,7 @@ function parseList(state: ParserState): SList {
     else if (fnKeywordFound && 
              state.tokens[state.currentPos].type === TokenType.Symbol &&
              state.tokens[state.currentPos].value === "->") {
-      
-      // Mark that we found an arrow token
-      arrowFound = true;
-      
+
       // Add the arrow symbol
       elements.push(parseExpression(state));
       

@@ -18,7 +18,7 @@ import {
 import { performAsync } from "./transpiler/error/index.ts";
 import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash } from "./common/utils.ts";
 import { registerTempFile } from "./common/temp-file-tracker.ts";
-import { globalLogger as logger } from "./logger.ts";
+import { globalLogger as logger, Logger } from "./logger.ts";
 
 const MAX_RETRIES = 3;
 const ESBUILD_RETRY_DELAY_MS = 100;
@@ -74,13 +74,12 @@ export function transpileCLI(
     }
     
     return outPath;
-  }, options.skipErrorReporting ? undefined : `CLI transpilation failed for ${inputPath}`);
+  }, options.skipErrorReporting ? undefined : { context: `CLI transpilation failed for ${inputPath}` });
 }
 
-export function checkForHqlImports(source: string, logger: Logger): boolean {
+export function checkForHqlImports(source: string): boolean {
   const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g;
   const hasHqlImports = hqlImportRegex.test(source);
-  if (hasHqlImports) logger.log(`File contains HQL imports - processing these imports`);
   return hasHqlImports;
 }
 
@@ -318,8 +317,6 @@ async function writeOutput(
       logger.warn(`File '${outputPath}' already exists. Overwriting.`);
     }
     await writeTextFile(outputPath, code);
-    logger.debug(`Successfully wrote ${code.length} bytes to: ${outputPath}`);
-    logger.log(`Output written to: ${outputPath}`);
     registerTempFile(outputPath);
   } catch (error) {
     throw new TranspilerError(
@@ -363,7 +360,7 @@ function processEntryFile(
         path.extname(inputPath) || "no extension",
       );
     }
-  }, `Failed to process entry file ${inputPath}`);
+  }, { context: `Failed to process entry file ${inputPath}` });
 }
 
 async function processHqlEntryFile(
@@ -372,14 +369,14 @@ async function processHqlEntryFile(
   options: BundleOptions,
   logger: Logger,
 ): Promise<string> {
-  logger.log(`Transpiling HQL entry file: ${resolvedInputPath}`);
+  logger.log({ text: `Transpiling HQL entry file: ${resolvedInputPath}`, namespace: "bundler" });
   const [tempDirResult, source] = await Promise.all([
     createTempDirIfNeeded(options, logger),
     readSourceFile(resolvedInputPath),
   ]);
   const tempDir = tempDirResult.tempDir;
   const tempDirCreated = tempDirResult.created;
-  logger.debug(`Read ${source.length} bytes from ${resolvedInputPath}`);
+  logger.log({ text: `Read ${source.length} bytes from ${resolvedInputPath}`, namespace: "bundler" });
   try {
     // Generate TypeScript code from HQL
     let tsCode = await processHql(source, {
@@ -390,8 +387,8 @@ async function processHqlEntryFile(
     });
     
     // Check if the TypeScript code has HQL imports and process them
-    if (checkForHqlImports(tsCode, logger)) {
-      logger.debug("Detected nested HQL imports in transpiled output. Processing them.");
+    if (checkForHqlImports(tsCode)) {
+      logger.log({ text: "Detected nested HQL imports in transpiled output. Processing them.", namespace: "bundler" });
       tsCode = await processHqlImportsInTs(
         tsCode,
         resolvedInputPath,
@@ -403,12 +400,12 @@ async function processHqlEntryFile(
     // Generate an intermediate TypeScript file that will be used by esbuild
     const tsOutputPath = outputPath.replace(/\.js$/, ".ts");
     await writeOutput(tsCode, tsOutputPath, logger);
-    logger.log(`Entry processed and TypeScript output written to ${tsOutputPath}`);
+    logger.log({ text: `Entry processed and TypeScript output written to ${tsOutputPath}`, namespace: "bundler" });
     return tsOutputPath;
   } finally {
     if (tempDirCreated) {
       Deno.remove(tempDir, { recursive: true })
-        .then(() => logger.debug(`Cleaned up temporary directory: ${tempDir}`))
+        .then(() => logger.log({ text: `Cleaned up temporary directory: ${tempDir}`, namespace: "bundler" }))
         .catch((error) =>
           logger.warn(
             `Failed to clean up temporary directory: ${
@@ -427,7 +424,7 @@ async function createTempDirIfNeeded(
   try {
     if (!options.tempDir) {
       const tempDir = await Deno.makeTempDir({ prefix: "hql_bundle_" });
-      logger.debug(`Created temporary directory: ${tempDir}`);
+      logger.log({ text: `Created temporary directory: ${tempDir}`, namespace: "bundler" });
       return { tempDir, created: true };
     }
     return { tempDir: options.tempDir, created: false };
@@ -461,13 +458,12 @@ async function processJsOrTsEntryFile(
 ): Promise<string> {
   try {
     const isTs = isTypeScriptFile(resolvedInputPath);
-    logger.log(`Using ${isTs ? 'TypeScript' : 'JavaScript'} entry file: ${resolvedInputPath}`);
     const source = await Deno.readTextFile(resolvedInputPath);
-    logger.debug(`Read ${source.length} bytes from ${resolvedInputPath}`);
+    logger.log({ text: `Read ${source.length} bytes from ${resolvedInputPath}`, namespace: "bundler" });
     let processedSource = source;
     
     // Process HQL imports in either JS or TS files
-    if (checkForHqlImports(source, logger)) {
+    if (checkForHqlImports(source)) {
       if (isTs) {
         processedSource = await processHqlImportsInTs(
           source,
@@ -511,8 +507,8 @@ function bundleWithEsbuild(
   return performAsync(async () => {
     // Use global logger singleton
 // logger is imported from globalLogger
-    logger.debug(`Bundling ${entryPath} to ${outputPath}`);
-    logger.debug(`Bundling options: ${JSON.stringify(options, null, 2)}`);
+    logger.log({ text: `Bundling ${entryPath} to ${outputPath}`, namespace: "bundler" });
+    logger.log({ text: `Bundling options: ${JSON.stringify(options, null, 2)}`, namespace: "bundler" });
     const tempDirResult = await createTempDirIfNeeded(options, logger);
     const tempDir = tempDirResult.tempDir;
     const cleanupTemp = tempDirResult.created;
@@ -529,16 +525,16 @@ function bundleWithEsbuild(
         options,
         [hqlPlugin, externalPlugin],
       );
-      logger.log(`Starting bundling with esbuild for ${entryPath}`);
+      logger.log({ text: `Starting bundling with esbuild for ${entryPath}`, namespace: "bundler" });
       const result = await runBuildWithRetry(
         buildOptions,
         MAX_RETRIES,
         logger,
       );
       if (options.minify) {
-        logger.log(`Successfully bundled and minified output to ${outputPath}`);
+        logger.log({ text: `Successfully bundled and minified output to ${outputPath}`, namespace: "bundler" });
       } else {
-        logger.log(`Successfully bundled output to ${outputPath}`);
+        logger.log({ text: `Successfully bundled output to ${outputPath}`, namespace: "bundler" });
       }
       return outputPath;
     } catch (error) {
@@ -547,7 +543,7 @@ function bundleWithEsbuild(
     } finally {
       cleanupAfterBundling(tempDir, cleanupTemp, logger);
     }
-  }, `Bundling failed for ${entryPath}`);
+  }, { context: `Bundling failed for ${entryPath}` });
 }
 
 async function runBuildWithRetry(
@@ -560,9 +556,7 @@ async function runBuildWithRetry(
     try {
       const result = await esbuild.build(buildOptions);
       if (result.warnings.length > 0) {
-        logger.warn(
-          `esbuild warnings: ${JSON.stringify(result.warnings, null, 2)}`,
-        );
+        logger.log({ text: `esbuild warnings: ${JSON.stringify(result.warnings, null, 2)}`, namespace: "bundler" });
       }
       await esbuild.stop();
       return result;
@@ -573,7 +567,7 @@ async function runBuildWithRetry(
         error.message.includes("service was stopped") &&
         attempt < maxRetries
       ) {
-        logger.warn(`esbuild service error on attempt ${attempt}, retrying...`);
+        logger.log({ text: `esbuild service error on attempt ${attempt}, retrying...`, namespace: "bundler" });
         await new Promise((resolve) =>
           setTimeout(resolve, ESBUILD_RETRY_DELAY_MS * attempt)
         );
@@ -628,7 +622,7 @@ async function cleanupAfterBundling(
   } catch {}
   if (cleanupTemp) {
     Deno.remove(tempDir, { recursive: true })
-      .then(() => logger.debug(`Cleaned up temporary directory: ${tempDir}`))
+      .then(() => logger.log({ text: `Cleaned up temporary directory: ${tempDir}`, namespace: "bundler" }))
       .catch((error) =>
         logger.warn(
           `Failed to clean up temporary directory: ${

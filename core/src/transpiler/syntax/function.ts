@@ -1444,7 +1444,7 @@ function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
     const paramName = param.name;
 
     // Create an assignment expression for deep copying the parameter
-    statements.push({
+    const node: IR.IRExpressionStatement = {
       type: IR.IRNodeType.ExpressionStatement,
       expression: {
         type: IR.IRNodeType.AssignmentExpression,
@@ -1539,7 +1539,8 @@ function generateParameterCopies(params: IR.IRIdentifier[]): IR.IRNode[] {
           },
         },
       },
-    });
+    } as IR.IRExpressionStatement;
+    statements.push(node);
   }
 
   return statements;

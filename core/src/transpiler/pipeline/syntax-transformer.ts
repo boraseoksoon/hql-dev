@@ -12,8 +12,11 @@ import {
   SSymbol,
 } from "../../s-exp/types.ts";
 import { globalLogger as logger } from "../../logger.ts";
+import { Logger } from "../../logger.ts";
 import { TransformError } from "../error/errors.ts";
 import { perform } from "../error/index.ts";
+import { isHqlFile } from "@core/common/utils.ts";
+import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 
 /**
  * Options for syntax transformation
@@ -61,10 +64,14 @@ export function transformSyntax(
  * Transform a single node, dispatching to specific handlers based on type
  */
 export function transformNode(
-  node: SExp,
+  node: SExp | null,
   enumDefinitions: Map<string, SList>,
   logger: Logger
 ): SExp {
+  if (!node) {
+    return createLiteral(null);
+  }
+
   return perform(
     () => {
       // Handle dot notation for enums (.caseName) in symbol form
