@@ -10,7 +10,6 @@ import {
   SSymbol
 } from "../../s-exp/types.ts";
 import { ParseError } from "../error/errors.ts";
-import { perform } from "../error/index.ts";
 
 enum TokenType {
   LeftParen,
@@ -124,26 +123,14 @@ interface ParserState {
 }
 
 function parseExpression(state: ParserState): SExp {
-  return perform(
-    () => {
-      if (state.currentPos >= state.tokens.length) {
-        const lastPos = state.tokens.length > 0
-          ? state.tokens[state.tokens.length - 1].position
-          : { line: 1, column: 1, offset: 0 };
-        throw new ParseError("Unexpected end of input", lastPos, state.input);
-      }
-      const token = state.tokens[state.currentPos++];
-      return parseExpressionByTokenType(token, state);
-    },
-    "Error parsing expression",
-    ParseError,
-    [
-      state.currentPos < state.tokens.length
-        ? state.tokens[state.currentPos].position
-        : { line: 1, column: 1, offset: 0 },
-      state.input,
-    ],
-  );
+  if (state.currentPos >= state.tokens.length) {
+    const lastPos = state.tokens.length > 0
+      ? state.tokens[state.tokens.length - 1].position
+      : { line: 1, column: 1, offset: 0 };
+    throw new ParseError("Unexpected end of input", lastPos, state.input);
+  }
+  const token = state.tokens[state.currentPos++];
+  return parseExpressionByTokenType(token, state);
 }
 
 function parseExpressionByTokenType(token: Token, state: ParserState): SExp {

@@ -18,5 +18,3 @@ export function formatErrorMessage(error: unknown): string {
   }
   return String(error);
 }
-
-// Export any additional common utilities here as needed.

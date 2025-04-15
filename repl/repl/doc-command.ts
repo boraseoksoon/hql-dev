@@ -3,9 +3,10 @@
 
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { colorText } from "./repl-common.ts";
+import { formatErrorMessage } from "@core/CommonUtils.ts";
 import { builtinDocumentation, specialFormsDocs } from "./repl-help.ts";
 import * as colors from "@core/utils/colors.ts";
-import { CommonUtils } from "./common-utils.ts";
+
 
 /**
  * Handle the :doc command to show documentation for a symbol or module
@@ -106,7 +107,7 @@ export async function commandDoc(evaluator: ModuleAwareEvaluator, target: string
         console.log(`${textColor}No exported symbols.${reset}`);
       }
     } catch (error) {
-      console.error(`${"\x1b[31m"}Error accessing module: ${CommonUtils.formatErrorMessage(error)}${reset}`);
+      console.error(`${"\x1b[31m"}Error accessing module: ${formatErrorMessage(error)}${reset}`);
     }
   } else {
     // Handle symbol documentation
@@ -195,7 +196,7 @@ export async function commandDoc(evaluator: ModuleAwareEvaluator, target: string
         console.log(`${textColor}Try using ${symbolColor}:show ${target}${textColor} for more information.${reset}`);
       }
     } catch (error) {
-      console.error(`${"\x1b[31m"}Error retrieving documentation: ${CommonUtils.formatErrorMessage(error)}${reset}`);
+      console.error(`${"\x1b[31m"}Error retrieving documentation: ${formatErrorMessage(error)}${reset}`);
     }
   }
 }

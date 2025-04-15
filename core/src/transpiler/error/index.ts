@@ -15,17 +15,12 @@ import {
   createErrorReport
 } from './errors.ts';
 
-// If there are any wrappers/utilities unique to the transpiler, define or import them here.
-// Otherwise, use CommonError utilities for generic error handling.
-
-// Example: Re-export generic error handling wrappers from CommonError
-export const withErrorHandling = CommonError.withErrorHandling;
 export const getSuggestion = CommonError.getSuggestion;
 export const registerSourceFile = CommonError.registerSourceFile;
 export const getSourceFile = CommonError.getSourceFile;
 export const formatError = CommonError.formatError;
+export const perform = CommonError.withErrorHandling;
 
-// Export transpiler-specific error types/utilities
 export {
   TranspilerError,
   ParseError,
@@ -35,18 +30,10 @@ export {
   CodeGenError,
   TransformError,
   summarizeNode,
-  createErrorReport
+  createErrorReport,
+  
 };
 
-// If there are transpiler-specific helpers from error-utils, bring them here (or refactor as needed)
-// For now, import and re-export if needed:
-export * from './error-utils.ts';
+export { initializeErrorHandling  } from './error-initializer.ts';
 
-// Add any additional transpiler-specific logic below as needed.
-
-// Re-export initialization logic for consumers
-export { initializeErrorHandling, setupEnhancedErrorHandling } from './error-initializer.ts';
-
-// Re-export ErrorUtils and all error types/utilities
-export { ErrorUtils } from './error-handling.ts';
 export * from './errors.ts';

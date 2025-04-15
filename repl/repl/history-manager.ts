@@ -2,11 +2,11 @@
 // Manages REPL command history with persistence between sessions
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { ensureDir } from "https://deno.land/std@0.224.0/fs/ensure_dir.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
-import { globalLogger as logger } from "@logger/logger.ts";
-import { CommonUtils } from "./common-utils.ts";
+import { globalLogger as logger } from "@core/logger.ts";
 
+
+import { formatErrorMessage } from "@core/CommonUtils.ts";
 const HISTORY_FILE = ".hql_history";
 
 class HistoryManager {
@@ -45,7 +45,7 @@ class HistoryManager {
       this.logger.debug(`Loaded ${lines.length} history entries from ${this.historyPath}`);
       return lines;
     } catch (error: unknown) {
-      this.logger.warn(`Error loading history: ${CommonUtils.formatErrorMessage(error)}`);
+      this.logger.warn(`Error loading history: ${formatErrorMessage(error)}`);
       return [];
     }
   }
@@ -61,7 +61,7 @@ class HistoryManager {
       Deno.writeTextFileSync(this.historyPath, content);
       this.logger.debug(`Saved ${history.length} history entries to ${this.historyPath}`);
     } catch (error: unknown) {
-      this.logger.warn(`Error saving history: ${CommonUtils.formatErrorMessage(error)}`);
+      this.logger.warn(`Error saving history: ${formatErrorMessage(error)}`);
     }
   }
 
@@ -75,7 +75,7 @@ class HistoryManager {
       Deno.writeTextFileSync(this.historyPath, '');
       this.logger.debug(`Cleared all history entries from ${this.historyPath}`);
     } catch (error: unknown) {
-      this.logger.warn(`Error clearing history: ${CommonUtils.formatErrorMessage(error)}`);
+      this.logger.warn(`Error clearing history: ${formatErrorMessage(error)}`);
     }
   }
 }

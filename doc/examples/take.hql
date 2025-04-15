@@ -1,6 +1,6 @@
 ;; examples/take.hql - Test the range functionality
 
-(import [take, range] from "../lib/stdlib/stdlib.hql")
+(import [take, range] from "../../core/lib/stdlib/stdlib.hql")
 
 ;; Test with infinite range - this would crash with an eager implementation
 (console.log "First 5 elements from infinite range:")

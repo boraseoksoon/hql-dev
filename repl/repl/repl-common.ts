@@ -1,12 +1,8 @@
 // src/repl/repl-common.ts
 
-
-
-// Common utilities and shared functionality for the REPL system
-
 import { ReplState } from "./repl-state.ts";
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
-import { Logger } from "@logger/logger.ts";
+import { Logger } from "@core/logger.ts";
 import * as colors from "@core/utils/colors.ts";
 
 /**

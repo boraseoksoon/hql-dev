@@ -1,10 +1,11 @@
 // src/repl/command-executor.ts
-import { CommonUtils } from "./common-utils.ts";
+
+import { formatErrorMessage } from "@core/CommonUtils.ts";
 // Central command execution logic for REPL
 
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { ReplState, resetReplState } from "./repl-state.ts";
-import { Logger } from "@logger/logger.ts";
+import { Logger } from "@core/logger.ts";
 import { 
   ReplStateHandlers, 
   CommonReplOptions, 
@@ -216,7 +217,7 @@ export async function executeCommand(
             // Use result
             console.log("Verbose evaluation result:", result);
           } catch (error) {
-            console.error(`Error: ${CommonUtils.formatErrorMessage(error)}`);
+            console.error(`Error: ${formatErrorMessage(error)}`);
           }
         } else {
           // Toggle verbose mode
@@ -245,7 +246,7 @@ export async function executeCommand(
               console.log(result);
             }
           } catch (error) {
-            console.error(`Error: ${CommonUtils.formatErrorMessage(error)}`);
+            console.error(`Error: ${formatErrorMessage(error)}`);
           }
         } else {
           // Toggle AST mode
@@ -277,7 +278,7 @@ export async function executeCommand(
               console.log("No JavaScript transpilation available.");
             }
           } catch (error) {
-            console.error(`Error: ${CommonUtils.formatErrorMessage(error)}`);
+            console.error(`Error: ${formatErrorMessage(error)}`);
           }
         } else {
           // Toggle JS mode
@@ -307,7 +308,7 @@ export async function executeCommand(
             console.log(`Use 'cd ${args}' to switch to this module.`);
           }
         } catch (error) {
-          console.error(`Error creating module: ${CommonUtils.formatErrorMessage(error)}`);
+          console.error(`Error creating module: ${formatErrorMessage(error)}`);
         }
         return true;
         
@@ -316,7 +317,7 @@ export async function executeCommand(
         return false;
     }
   } catch (error) {
-    printError(`Command error: ${CommonUtils.formatErrorMessage(error)}`, useColors);
+    printError(`Command error: ${formatErrorMessage(error)}`, useColors);
     
     // Reset multiline state on error
     if (replState.multilineMode) {

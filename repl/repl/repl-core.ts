@@ -5,15 +5,16 @@ import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { ReplState, resetReplState, updateParenBalance } from "./repl-state.ts";
 import { Environment } from "@core/environment.ts";
 import { loadSystemMacros } from "@transpiler/hql-transpiler.ts";
-import { Logger, globalLogger as logger } from "@logger/logger.ts";
+import { Logger, globalLogger as logger } from "@core/logger.ts";
 import { historyManager } from "./history-manager.ts";
 import { printBanner, getPrompt, prettyPrintResult } from "./repl-commands.ts";
 import { readLineWithArrowKeys } from "./repl-input.ts";
 import { createTabCompletion } from "./repl-completion.ts";
 import { printError, handleJsEvaluationError, ReplStateHandlers, CommonReplOptions, commandUtils } from "./repl-common.ts";
+import { formatErrorMessage } from "@core/CommonUtils.ts";
 import { executeCommand } from "./command-executor.ts";
 
-import { CommonUtils } from "./common-utils.ts";
+
 
 
 /**
@@ -131,7 +132,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
         });
         logger.log({ text: `File ${file} loaded successfully`, namespace: "repl" });
       } catch (error) {
-        console.error(`Error loading file ${file}: ${CommonUtils.formatErrorMessage(error)}`);
+        console.error(`Error loading file ${file}: ${formatErrorMessage(error)}`);
       }
     }
 
@@ -260,7 +261,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
             prettyPrintResult(result, useColors, showVerbose);
           }
         } catch (error) {
-          const errorMsg = CommonUtils.formatErrorMessage(error);
+          const errorMsg = formatErrorMessage(error);
           
           // Handle JavaScript evaluation errors in a consistent way
           if (error instanceof Error && error.stack?.includes("JavaScript evaluation")) {
@@ -276,11 +277,11 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           }
         }
       } catch (error) {
-        console.error(`Error in REPL loop: ${CommonUtils.formatErrorMessage(error)}`);
+        console.error(`Error in REPL loop: ${formatErrorMessage(error)}`);
       }
     }
   } catch (error) {
-    console.error(`Error starting REPL: ${CommonUtils.formatErrorMessage(error)}`);
+    console.error(`Error starting REPL: ${formatErrorMessage(error)}`);
   } finally {
     // Reset terminal state
     try {

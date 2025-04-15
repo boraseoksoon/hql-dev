@@ -30,6 +30,7 @@ import {
   isRemoteUrl,
   registerModulePath,
 } from "./utils/import-utils.ts";
+import { formatErrorMessage } from "./CommonUtils.ts";
 
 export interface ImportProcessorOptions {
   verbose?: boolean;
@@ -50,9 +51,6 @@ function createLogger(options: ImportProcessorOptions): Logger {
   return new Logger(options.verbose || false);
 }
 
-function formatErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function wrapError(
   context: string,
@@ -297,9 +295,6 @@ async function processImport(
       options.currentFile,
     );
   }
-
-  // Get the module path to check if it's in examples directory
-  const modulePath = getModulePathFromImport(importExpr);
 
   try {
     // Handle different import syntaxes

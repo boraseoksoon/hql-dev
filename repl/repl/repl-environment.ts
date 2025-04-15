@@ -1,7 +1,7 @@
 // src/repl/repl-environment.ts - Enhanced environment for REPL
 
 import { Environment, Value } from "@core/environment.ts";
-import { Logger, globalLogger as logger } from "@logger/logger.ts";
+import { Logger, globalLogger as logger } from "@core/logger.ts";
 import { SExp } from "@s-exp/types.ts";
 
 export interface REPLEnvironmentOptions {

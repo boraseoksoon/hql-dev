@@ -1,7 +1,7 @@
 ;; stdlib-test.hql - Simple tests for HQL standard library functions
 
 ;; Import all utility functions from stdlib
-(import [take, map, filter, reduce, groupBy, keys] from "./lib/stdlib/stdlib.hql")
+(import [take, map, filter, reduce, groupBy, keys] from "../../core/lib/stdlib/stdlib.hql")
 
 ;; Create some test data
 (let numbers [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
