@@ -2,7 +2,7 @@
 // Consolidated entry point for all transpiler-specific error logic.
 // Imports generic error utilities from CommonError to avoid duplication.
 
-import * as CommonError from '../../CommonError.ts';
+import * as CommonError from '../../common/common-errors.ts';
 import {
   TranspilerError,
   ParseError,

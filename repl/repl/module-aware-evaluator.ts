@@ -12,7 +12,7 @@ import { SExp, SList, isImport, isSymbol, isLiteral, SSymbol, isSExpNamespaceImp
 import { ImportError } from "@transpiler/error/errors.ts";
 
 import { Logger } from "@core/logger.ts";
-import { formatErrorMessage } from "@core/CommonUtils.ts";
+import { formatErrorMessage } from "../../core/src/common/common-utils.ts";
 /**
  * Options for the module-aware evaluator
  */

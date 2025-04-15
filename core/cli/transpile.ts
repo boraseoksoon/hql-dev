@@ -4,11 +4,11 @@ import { transpileCLI } from "../src/bundler.ts";
 import {
   cleanupAllTempFiles,
   registerExceptionTempFile,
-} from "../src/utils/temp-file-tracker.ts";
+} from "../src/common/temp-file-tracker.ts";
 import { Logger } from "../src/logger.ts";
 import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
 // New imports for enhanced error handling
-import CommonError, { initializeErrorHandling, registerSourceFile } from "../src/CommonError.ts";
+import CommonError, { registerSourceFile } from "../src/common/common-errors.ts";
 
 function printHelp() {
   // Unchanged

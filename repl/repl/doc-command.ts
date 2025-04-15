@@ -2,7 +2,7 @@
 // Documentation command for the REPL
 
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
-import { formatErrorMessage } from "@core/CommonUtils.ts";
+import { formatErrorMessage } from "../../core/src/common/common-utils.ts";
 import { builtinDocumentation, specialFormsDocs } from "./repl-help.ts";
 
 

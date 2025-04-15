@@ -4,7 +4,7 @@
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
-import { sanitizeIdentifier } from "../../utils/utils.ts";
+import { sanitizeIdentifier } from "../../common/utils.ts";
 
 // Stack to track the current loop context for recur targeting
 const loopContextStack: string[] = [];

@@ -1,6 +1,6 @@
 // src/transpiler/errors.ts
 
-import * as CommonError from '../../CommonError.ts';
+import * as CommonError from '../../common/common-errors.ts';
 
 // Re-export all types
 export type ColorFn = CommonError.ColorFn;

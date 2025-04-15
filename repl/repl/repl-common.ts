@@ -2,7 +2,7 @@
 
 import { ReplState } from "./repl-state.ts";
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
-import * as colors from "@core/utils/colors.ts";
+import * as colors from "../../core/src/common/colors.ts";
 
 /**
  * Shared REPL state handlers

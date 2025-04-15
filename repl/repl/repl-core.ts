@@ -11,7 +11,7 @@ import { printBanner, getPrompt, prettyPrintResult } from "./repl-commands.ts";
 import { readLineWithArrowKeys } from "./repl-input.ts";
 import { createTabCompletion } from "./repl-completion.ts";
 import { printError, handleJsEvaluationError, ReplStateHandlers, CommonReplOptions, commandUtils } from "./repl-common.ts";
-import { formatErrorMessage } from "@core/CommonUtils.ts";
+import { formatErrorMessage } from "../../core/src/common/common-utils.ts";
 import { executeCommand } from "./command-executor.ts";
 
 

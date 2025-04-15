@@ -1,7 +1,7 @@
 // src/repl/repl-ui.ts
 // REPL UI rendering, formatting, and terminal utilities
 
-import * as termColors from "../../core/src/utils/colors.ts";
+import * as termColors from "../../core/src/common/colors.ts";
 
 /**
  * Terminal color utility object with all available colors

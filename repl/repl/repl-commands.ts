@@ -11,7 +11,7 @@ import {
   moduleUtils 
 } from "./repl-common.ts";
 import { getDetailedHelp } from "./repl-help.ts";
-import * as colors from "@core/utils/colors.ts";
+import * as colors from "../../core/src/common/colors.ts";
 
 /**
  * Print the REPL welcome banner with commands and info

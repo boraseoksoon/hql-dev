@@ -4,7 +4,7 @@ import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, HQLNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
-import { sanitizeIdentifier } from "../../utils/utils.ts";
+import { sanitizeIdentifier } from "../../common/utils.ts";
 import { Logger } from "../../logger.ts";
 import { registerPureFunction, verifyFunctionPurity } from "../fx/purity.ts";
 import { isValidType } from "../fx/purity.ts";

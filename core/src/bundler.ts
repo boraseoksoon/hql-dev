@@ -18,8 +18,8 @@ import {
   ValidationError,
 } from "./transpiler/error/errors.ts";
 import { performAsync } from "./transpiler/error/index.ts";
-import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash } from "./utils/utils.ts";
-import { registerTempFile } from "./utils/temp-file-tracker.ts";
+import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash } from "./common/utils.ts";
+import { registerTempFile } from "./common/temp-file-tracker.ts";
 
 const MAX_RETRIES = 3;
 const ESBUILD_RETRY_DELAY_MS = 100;

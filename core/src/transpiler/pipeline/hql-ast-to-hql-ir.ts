@@ -4,7 +4,7 @@
 
 import * as IR from "../type/hql_ir.ts";
 import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../type/hql_ast.ts";
-import { sanitizeIdentifier } from "../../utils/utils.ts";
+import { sanitizeIdentifier } from "../../common/utils.ts";
 import { TransformError, ValidationError } from "../error/errors.ts";
 import { Logger } from "../../logger.ts";
 import { perform } from "../error/index.ts";

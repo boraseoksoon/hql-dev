@@ -6,7 +6,7 @@ import {
   TranspilerError,
   ValidationError,
 } from "./transpiler/error/errors.ts";
-import { LRUCache } from "./utils/lru-cache.ts";
+import { LRUCache } from "./common/lru-cache.ts";
 
 export type Value =
   | string

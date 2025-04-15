@@ -13,7 +13,7 @@ import {
   findExistingImports,
   findExternalModuleReferences,
   importSourceRegistry,
-} from "./utils/import-utils.ts";
+} from "./common/import-utils.ts";
 
 import {
   CodeGenError,

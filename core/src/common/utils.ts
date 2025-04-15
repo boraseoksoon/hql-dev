@@ -57,15 +57,6 @@ export function isRemoteModule(modulePath: string): boolean {
 }
 
 /**
- * Check if a module is a JavaScript module
- */
-export function isJavaScriptModule(modulePath: string): boolean {
-  return modulePath.endsWith(".js") ||
-    modulePath.endsWith(".mjs") ||
-    modulePath.endsWith(".cjs");
-}
-
-/**
  * Check if a path is a remote path (npm, jsr, http)
  */
 export function isRemotePath(path: string): boolean {

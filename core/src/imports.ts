@@ -22,15 +22,15 @@ import {
   ValidationError,
 } from "./transpiler/error/errors.ts";
 import { checkForHqlImports, processHqlImportsInJs } from "./bundler.ts";
-import { registerTempFile } from "./utils/temp-file-tracker.ts";
+import { registerTempFile } from "./common/temp-file-tracker.ts";
 import {
   isHqlFile,
   isJavaScriptModule,
   isRemoteModule,
   isRemoteUrl,
   registerModulePath,
-} from "./utils/import-utils.ts";
-import { formatErrorMessage } from "./CommonUtils.ts";
+} from "./common/import-utils.ts";
+import { formatErrorMessage } from "./common/common-utils.ts";
 
 export interface ImportProcessorOptions {
   verbose?: boolean;

@@ -1,6 +1,6 @@
 // src/repl/command-executor.ts
 
-import { formatErrorMessage } from "@core/CommonUtils.ts";
+import { formatErrorMessage } from "../../core/src/common/common-utils.ts";
 // Central command execution logic for REPL
 
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
