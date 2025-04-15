@@ -5,10 +5,9 @@ import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
-import { Logger } from "../../logger.ts";
+import { globalLogger as logger } from "../../logger.ts";
 import { perform } from "../error/index.ts";
 import { execute } from "../pipeline/hql-ir-to-ts-ast.ts";
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 export function parseEnumCase(
   caseList: ListNode,

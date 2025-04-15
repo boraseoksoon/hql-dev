@@ -2,7 +2,7 @@ import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { CodeGenError } from "../error/errors.ts";
-import { Logger } from "../../logger.ts";
+import { globalLogger as logger } from "../../logger.ts";
 import { convertEnumDeclarationToJsObject } from "../syntax/enum.ts";
 import { convertClassDeclaration, convertNewExpression } from "../syntax/class.ts";
 import { convertConditionalExpression, convertIfStatement } from "../syntax/conditional.ts";
@@ -13,8 +13,6 @@ import { convertFunctionDeclaration, convertFxFunctionDeclaration, convertFnFunc
 import { convertImportDeclaration, convertExportNamedDeclaration, convertExportVariableDeclaration, convertJsImportReference } from "../syntax/import-export.ts";
 import { convertInteropIIFE } from "../syntax/js-interop.ts";
 import { isExpressionNode } from "../syntax/expression.ts";
-
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 export function convertIRExpr(node: IR.IRNode): ts.Expression {
   return execute(node, "IR expression", () => {

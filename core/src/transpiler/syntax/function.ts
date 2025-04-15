@@ -5,7 +5,7 @@ import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, HQLNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
-import { Logger } from "../../logger.ts";
+import { globalLogger as logger } from "../../logger.ts";
 import { registerPureFunction, verifyFunctionPurity } from "../fx/purity.ts";
 import { isValidType } from "../fx/purity.ts";
 import { execute, convertIdentifier, convertBlockStatement, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
@@ -14,8 +14,6 @@ import { transformNode } from "../pipeline/hql-ast-to-hql-ir.ts";
 
 const fnFunctionRegistry = new Map<string, IR.IRFnFunctionDeclaration>();
 const fxFunctionRegistry = new Map<string, IR.IRFxFunctionDeclaration>();
-
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 /**
  * Check if a function call has named arguments

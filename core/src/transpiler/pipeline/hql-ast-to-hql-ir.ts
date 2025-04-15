@@ -6,7 +6,7 @@ import * as IR from "../type/hql_ir.ts";
 import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../type/hql_ast.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { TransformError, ValidationError } from "../error/errors.ts";
-import { Logger } from "../../logger.ts";
+import { globalLogger as logger } from "../../logger.ts";
 import { perform } from "../error/index.ts";
 import { macroCache } from "../../s-exp/macro.ts";
 import { transformStandardFunctionCall, processFunctionBody, transformNamedArgumentCall, handleFxFunctionCall } from "../syntax/function.ts";
@@ -28,9 +28,6 @@ import * as jsInteropModule from "../syntax/js-interop.ts";
 import * as loopRecurModule from "../syntax/loop-recur.ts";
 import * as primitiveModule from "../syntax/primitive.ts";
 import * as quoteModule from "../syntax/quote.ts";
-
-// Initialize logger for this module
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 /**
  * Transform factory to map operators to handler functions

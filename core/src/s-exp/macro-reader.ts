@@ -15,7 +15,7 @@ import {
   LiteralNode,
   SymbolNode,
 } from "../transpiler/type/hql_ast.ts";
-import { Logger } from "../logger.ts";
+import { globalLogger as logger } from "../logger.ts";
 
 /**
  * Options for converting S-expressions to HQL AST
@@ -32,7 +32,6 @@ export function convertToHqlAst(
   sexps: SExp[],
   options: ConversionOptions = {},
 ): HQLNode[] {
-  const logger = new Logger(options.verbose || false);
   logger.debug(`Converting ${sexps.length} S-expressions to HQL AST`);
 
   return sexps.map((sexp) => convertExpr(sexp, logger));

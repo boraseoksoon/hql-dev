@@ -1,6 +1,7 @@
 // src/s-exp/imports.ts
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import { globalLogger as logger } from "./logger.ts";
 import { writeTextFile } from "./platform/platform.ts";
 import {
   isImport,
@@ -47,10 +48,6 @@ interface SLiteral {
   value: string | number | boolean | null;
 }
 
-function createLogger(options: ImportProcessorOptions): Logger {
-  return new Logger(options.verbose || false);
-}
-
 
 function wrapError(
   context: string,
@@ -71,7 +68,7 @@ export async function processImports(
   env: Environment,
   options: ImportProcessorOptions = {},
 ): Promise<void> {
-  const logger = createLogger(options);
+
   const baseDir = options.baseDir || Deno.cwd();
   const previousCurrentFile = env.getCurrentFile();
   const processedFiles = options.processedFiles || new Set<string>();
@@ -285,7 +282,6 @@ async function processImport(
   baseDir: string,
   options: ImportProcessorOptions,
 ): Promise<void> {
-  const logger = createLogger(options);
   const elements = importExpr.elements;
   
   if (elements.length <= 1) {
@@ -342,7 +338,6 @@ async function processNamespaceImport(
   baseDir: string,
   options: ImportProcessorOptions,
 ): Promise<void> {
-  const logger = createLogger(options);
   try {
     if (!isSymbol(elements[1])) {
       throw new ImportError("Module name must be a symbol", "namespace import", options.currentFile);
@@ -382,7 +377,7 @@ async function processVectorBasedImport(
   baseDir: string,
   options: ImportProcessorOptions,
 ): Promise<void> {
-  const logger = createLogger(options);
+
   try {
     if (elements[1].type !== "list") {
       throw new ImportError("Import vector must be a list", "syntax-error", options.currentFile);
@@ -512,7 +507,6 @@ async function loadModuleByType(
   env: Environment,
   options: ImportProcessorOptions,
 ): Promise<void> {
-  const logger = createLogger(options);
   const processedFiles = options.processedFiles!;
   const inProgressFiles = options.inProgressFiles!;
   try {

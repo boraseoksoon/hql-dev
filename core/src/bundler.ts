@@ -5,12 +5,10 @@ import {
   dirname,
   ensureDir,
   exists,
-  isAbsolute,
-  join,
   resolve,
   writeTextFile,
+  join,
 } from "./platform/platform.ts";
-import { Logger } from "./logger.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
 import {
   createErrorReport,
@@ -20,6 +18,7 @@ import {
 import { performAsync } from "./transpiler/error/index.ts";
 import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash } from "./common/utils.ts";
 import { registerTempFile } from "./common/temp-file-tracker.ts";
+import { globalLogger as logger } from "./logger.ts";
 
 const MAX_RETRIES = 3;
 const ESBUILD_RETRY_DELAY_MS = 100;
@@ -39,7 +38,6 @@ export function transpileCLI(
   options: BundleOptions = {},
 ): Promise<string> {
   return performAsync(async () => {
-    const logger = new Logger(options.verbose);
     const startTime = performance.now();
     
     // Skip logging if skipErrorReporting is set
@@ -338,7 +336,8 @@ function processEntryFile(
   options: BundleOptions = {},
 ): Promise<string> {
   return performAsync(async () => {
-    const logger = new Logger(options.verbose);
+    // Use global logger singleton
+// logger is imported from globalLogger
     const resolvedInputPath = resolve(inputPath);
     logger.debug(`Processing entry file: ${resolvedInputPath}`);
     logger.debug(`Output path: ${outputPath}`);
@@ -510,7 +509,8 @@ function bundleWithEsbuild(
   options: BundleOptions = {},
 ): Promise<string> {
   return performAsync(async () => {
-    const logger = new Logger(options.verbose);
+    // Use global logger singleton
+// logger is imported from globalLogger
     logger.debug(`Bundling ${entryPath} to ${outputPath}`);
     logger.debug(`Bundling options: ${JSON.stringify(options, null, 2)}`);
     const tempDirResult = await createTempDirIfNeeded(options, logger);
@@ -644,7 +644,8 @@ function createHqlPlugin(options: {
   tempDir?: string;
   sourceDir?: string;
 }): any {
-  const logger = new Logger(options.verbose);
+  // Use global logger singleton
+// logger is imported from globalLogger
   const processedHqlFiles = new Set<string>();
   const hqlToJsMap = new Map<string, string>();
   return {

@@ -23,6 +23,7 @@ import {
   formatError, 
   getSuggestion, 
 } from "./error/index.ts";
+import { globalLogger as logger } from "../logger.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
@@ -43,7 +44,6 @@ export async function processHql(
   source: string,
   options: ProcessOptions = {},
 ): Promise<string> {
-  const logger = new Logger(options.verbose || false);
   logger.debug("Processing HQL source with S-expression layer");
 
   const timings = new Map<string, number>();
@@ -230,7 +230,6 @@ function handleProcessError(
 }
 
 export async function loadSystemMacros(env: Environment, options: ProcessOptions): Promise<void> {
-  const logger = new Logger(options.verbose || false);
   if (systemMacrosLoaded) {
     logger.debug("System macros already loaded, skipping");
     return;
@@ -270,7 +269,6 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
 }
 
 async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
-  const logger = new Logger(options.verbose);
   if (globalEnv) {
     logger.debug("Reusing existing global environment");
     return globalEnv;

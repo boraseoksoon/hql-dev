@@ -7,14 +7,12 @@ import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
-import { Logger } from "../../logger.ts";
+import { globalLogger as logger } from "../../logger.ts";
 import { perform } from "../error/index.ts";
 import { Environment } from "../../environment.ts";
 import { isUserLevelMacro } from "../../s-exp/macro.ts";
 import { processVectorElements } from "./data-structure.ts";
 import { execute, convertVariableDeclaration } from "../pipeline/hql-ir-to-ts-ast.ts";
-
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
 
 export function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclaration {
   return execute(node, "import declaration", () => {

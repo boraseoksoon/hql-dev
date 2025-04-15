@@ -21,6 +21,7 @@ import { MacroError, TransformError } from "../transpiler/error/errors.ts";
 import { gensym } from "../gensym.ts";
 import { LRUCache } from "../common/lru-cache.ts";
 import { perform } from "../transpiler/error/index.ts";
+import { globalLogger as logger } from "../logger.ts";
 
 // Constants and caches
 const MAX_EXPANSION_ITERATIONS = 100;
@@ -185,7 +186,6 @@ export function expandMacros(
   env: Environment,
   options: MacroExpanderOptions = {},
 ): SExp[] {
-  const logger = new Logger(options.verbose || false);
   const currentFile = options.currentFile;
   const useCache = options.useCache !== false;
   logger.debug(
@@ -263,8 +263,6 @@ export function isUserLevelMacro(
   symbolName: string,
   currentDir: string,
 ): boolean {
-  const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
-
   return perform(
     () => {
       if (!macroCache.has(currentDir)) {
@@ -619,7 +617,6 @@ function expandMacroExpression(
   options: MacroExpanderOptions,
   depth: number,
 ): SExp {
-  const logger = new Logger(options.verbose || false);
   const maxDepth = options.maxExpandDepth || 100;
   
   if (depth > maxDepth) {

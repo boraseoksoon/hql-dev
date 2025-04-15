@@ -1,22 +1,19 @@
-import { Logger } from "../logger.ts";
+import { globalLogger as logger } from "../logger.ts";
 
 const tempFilesRegistry = new Set<string>();
 const exceptionFilesRegistry = new Set<string>();
 
 export function registerTempFile(path: string): void {
-  const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
   tempFilesRegistry.add(path);
   logger.debug(`Registered temporary file >>: ${path}`);
 }
 
 export function registerExceptionTempFile(path: string): void {
-  const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
   exceptionFilesRegistry.add(path);
   logger.debug(`Registered exception temporary file >>: ${path}`);
 }
 
 export async function cleanupAllTempFiles(): Promise<void> {
-  const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
   // Determine only the paths that should be removed
   const targets = Array.from(tempFilesRegistry).filter(
     (file) => !exceptionFilesRegistry.has(file),

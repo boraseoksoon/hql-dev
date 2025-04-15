@@ -105,8 +105,6 @@ async function run() {
       skipErrorReporting: true,
       skipErrorHandling: true
     };
-    
-    const useColors = !args.includes("--no-colors");
 
     // Run the module directly, with a single error handler
     const fileName = inputPath.split("/").pop() || "output";
@@ -213,8 +211,6 @@ export async function evaluateExpression(expr: string): Promise<any> {
  * Run a HQL file (for CLI)
  */
 export async function runHqlFile(filename: string): Promise<void> {
-  // Just call the main run logic, simulating CLI args
-  Deno.args = [filename];
   await run();
 }
 
@@ -223,6 +219,5 @@ export async function runHqlFile(filename: string): Promise<void> {
  */
 export async function transpileHqlFile(filename: string): Promise<void> {
   const { transpile } = await import("./transpile.ts");
-  Deno.args = [filename];
   await transpile();
 }

@@ -2,9 +2,7 @@
 
 import { HQLNode, ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError } from "../error/errors.ts";
-import { Logger } from "../../logger.ts";
-
-const logger = new Logger(Deno.env.get("HQL_DEBUG") === "1");
+import { globalLogger as logger } from "../../logger.ts";
 
 // Registry to track pure functions
 const pureFunctions = new Set<string>();

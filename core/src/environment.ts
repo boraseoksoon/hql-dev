@@ -7,6 +7,7 @@ import {
   ValidationError,
 } from "./transpiler/error/errors.ts";
 import { LRUCache } from "./common/lru-cache.ts";
+import { globalLogger as logger } from "./logger.ts";
 
 export type Value =
   | string
@@ -48,7 +49,6 @@ export class Environment {
     options: { verbose?: boolean } = {},
   ): Promise<Environment> {
     return new Promise((resolve) => {
-      const logger = new Logger(options.verbose);
       logger.debug("Starting global environment initialization");
       if (Environment.globalEnv) {
         logger.debug("Reusing existing global environment");

@@ -3,7 +3,7 @@
 import { transformToIR } from "./transpiler/pipeline/hql-ast-to-hql-ir.ts";
 import { generateTypeScript } from "./transpiler/pipeline/ts-ast-to-ts-code.ts";
 import { expandMacros } from "./s-exp/macro.ts";
-import { Logger } from "./logger.ts";
+import { globalLogger as logger } from "./logger.ts";
 import { Environment } from "./environment.ts";
 import { RUNTIME_FUNCTIONS } from "./transpiler/runtime/runtime.ts";
 import { isImportNode } from "./transpiler/type/hql_ast.ts";
@@ -38,7 +38,6 @@ export async function transformAST(
   currentDir: string,
   options: TransformOptions = {},
 ): Promise<string> {
-  const logger = new Logger(options.verbose);
   const startTime = performance.now();
   let currentPhase = "initialization";
 
