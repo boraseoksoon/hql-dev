@@ -31,7 +31,7 @@ function printHelp() {
   console.error("  deno run -A cli/transpile.ts input.hql output.js");
 }
 
-async function transpile(): Promise<void> {
+export async function transpile(): Promise<void> {
   const args = Deno.args;
 
   // Set up common console logging.
@@ -45,9 +45,7 @@ async function transpile(): Promise<void> {
   const inputPath = args[0];
   let outputPath: string | undefined = undefined;
   let verbose = false;
-  let runAfter = false;
   const printOutput = args.includes("--print");
-  const useColors = !args.includes("--no-colors");
 
   if (args.length > 1 && !args[1].startsWith("--")) {
     outputPath = args[1];

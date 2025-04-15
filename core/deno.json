@@ -21,4 +21,10 @@
     "test-type":"deno run -A ./cli/run.ts ../doc/examples/array+type.hql",
     "test-bug": "deno run -A ./cli/run.ts ../doc/examples/dependency-test/macro-a.hql"
   },
+  "imports": {
+    "@core/": "./src/",
+    "@s-exp/": "./src/s-exp/",
+    "@transpiler/": "./src/transpiler/",
+    "@platform/": "./src/platform/"
+  }
 }

@@ -16,7 +16,7 @@ import { report } from "@transpiler/error/errors.ts";
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 
 import { Logger, globalLogger as logger } from "@core/logger.ts";
-import { formatErrorMessage } from "../../core/src/common/common-utils.ts";
+import { formatErrorMessage } from "@core/common/common-utils.ts";
 
 // Options for REPL evaluation
 export interface REPLEvalOptions {

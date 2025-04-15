@@ -1,4 +1,10 @@
 // cli/run.ts - with enhanced error handling
+
+import { REPLEvaluator } from "../../repl/repl/repl-evaluator.ts";
+import { Environment } from "../src/environment.ts";
+
+// ...existing imports
+
 import { transpileCLI } from "../src/bundler.ts";
 import { resolve } from "../src/platform/platform.ts";
 import logger, { Logger } from "../src/logger.ts";
@@ -182,4 +188,41 @@ async function run() {
 
 if (import.meta.main) {
   run();
+}
+
+// --- HQL CLI/Expression API ---
+
+/**
+ * Evaluate an HQL expression and return the result (for CLI inline eval)
+ */
+export async function evaluateExpression(expr: string): Promise<any> {
+  try {
+    const env = new Environment();
+    const evaluator = new REPLEvaluator(env, { verbose: false });
+    const result = await evaluator.evaluate(expr);
+    // Print only the value (not the JS code)
+    return result.value;
+  } catch (e) {
+    throw new Error(
+      typeof e === "object" && e && "message" in e ? (e as any).message : String(e)
+    );
+  }
+}
+
+/**
+ * Run a HQL file (for CLI)
+ */
+export async function runHqlFile(filename: string): Promise<void> {
+  // Just call the main run logic, simulating CLI args
+  Deno.args = [filename];
+  await run();
+}
+
+/**
+ * Transpile a HQL file (for CLI)
+ */
+export async function transpileHqlFile(filename: string): Promise<void> {
+  const { transpile } = await import("./transpile.ts");
+  Deno.args = [filename];
+  await transpile();
 }
