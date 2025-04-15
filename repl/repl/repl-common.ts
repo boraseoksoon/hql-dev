@@ -2,7 +2,6 @@
 
 import { ReplState } from "./repl-state.ts";
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
-import { Logger } from "@core/logger.ts";
 import * as colors from "@core/utils/colors.ts";
 
 /**

@@ -5,7 +5,6 @@ import { startRepl } from "./repl/repl.ts";
 import { setupConsoleLogging, setupLoggingOptions } from "../core/cli/utils/utils.ts";
 import { Logger } from "@core/logger.ts";
 import logger from "@core/logger.ts";
-import { initializeErrorHandling } from "@transpiler/error/error-initializer.ts";
 
 /**
  * Print help information about REPL usage and options
@@ -93,9 +92,6 @@ async function run() {
   console.log("Starting HQL REPL...");
   
   try {
-    // Initialize error handling
-    await initializeErrorHandling();
-    
     // Start the REPL
     await startRepl(replOptions);
   } catch (error: unknown) {

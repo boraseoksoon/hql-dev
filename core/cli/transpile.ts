@@ -8,7 +8,7 @@ import {
 import { Logger } from "../src/logger.ts";
 import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
 // New imports for enhanced error handling
-import { initializeErrorHandling, registerSourceFile, ErrorUtils } from "../src/transpiler/error/index.ts";
+import CommonError, { initializeErrorHandling, registerSourceFile } from "../src/CommonError.ts";
 
 function printHelp() {
   // Unchanged
@@ -74,17 +74,11 @@ async function transpile(): Promise<void> {
   }
   
   // Setup debug options for enhanced error reporting
-  const { debug, clickablePaths } = setupDebugOptions(args);
+  const { debug } = setupDebugOptions(args);
   if (debug) {
     console.log("Debug mode enabled with enhanced error reporting");
   }
   
-  // Initialize our enhanced error handling system
-  initializeErrorHandling({
-    enableGlobalHandlers: true,
-    enableReplEnhancement: false
-  });
-
   try {
     // Read input file for error context
     let source;
@@ -94,12 +88,12 @@ async function transpile(): Promise<void> {
       registerSourceFile(inputPath, source);
     } catch (readError) {
       // Use the enhanced error reporter
-      console.error(ErrorUtils.report(readError));
+      console.error(CommonError.report(readError instanceof Error ? readError : new Error(String(readError))));
       Deno.exit(1);
     }
 
     // Transpile the input with enhanced error handling
-    const bundledPath = await ErrorUtils.withErrorHandling(
+    const bundledPath = await CommonError.withErrorHandling(
       () => transpileCLI(inputPath, outputPath, { 
         verbose,
         skipErrorReporting: true
@@ -111,7 +105,7 @@ async function transpile(): Promise<void> {
       }
     )().catch(error => {
       // Use enhanced error reporting
-      console.error(ErrorUtils.report(error));
+      console.error(CommonError.report(error instanceof Error ? error : new Error(String(error))));
       Deno.exit(1);
     });
 
@@ -121,7 +115,7 @@ async function transpile(): Promise<void> {
         console.log(finalOutput);
       } catch (error) {
         // Use enhanced error reporting
-        console.error(ErrorUtils.report(error));
+        console.error(CommonError.report(error instanceof Error ? error : new Error(String(error))));
         Deno.exit(1);
       }
     } else if (runAfter) {
@@ -130,7 +124,7 @@ async function transpile(): Promise<void> {
         await import("file://" + resolve(bundledPath));
       } catch (error) {
         // Use enhanced error reporting
-        console.error(ErrorUtils.report(error));
+        console.error(CommonError.report(error instanceof Error ? error : new Error(String(error))));
         Deno.exit(1);
       }
     }
@@ -139,13 +133,7 @@ async function transpile(): Promise<void> {
     logger.debug("Cleaned up all registered temporary files");
   } catch (error) {
     // Use enhanced error reporting
-    reportError(error, {
-      filePath: inputPath,
-      verbose: verbose || debug,
-      useClickablePaths: clickablePaths,
-      includeStack: verbose || debug
-    });
-    Deno.exit(1);
+    console.error(CommonError.report(error instanceof Error ? error : new Error(String(error))));    Deno.exit(1);
   }
 }
 

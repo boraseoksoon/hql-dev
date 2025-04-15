@@ -2,10 +2,8 @@
 // Documentation command for the REPL
 
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
-import { colorText } from "./repl-common.ts";
 import { formatErrorMessage } from "@core/CommonUtils.ts";
 import { builtinDocumentation, specialFormsDocs } from "./repl-help.ts";
-import * as colors from "@core/utils/colors.ts";
 
 
 /**

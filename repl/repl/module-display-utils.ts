@@ -5,7 +5,6 @@ import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { colorText } from "./repl-common.ts";
 import { toInternalName, toUserFacingName } from "./repl-completion.ts";
 import { formatSourceCode } from "./repl-commands.ts";
-import * as colors from "@core/utils/colors.ts";
 
 /**
  * Format a value for pretty display

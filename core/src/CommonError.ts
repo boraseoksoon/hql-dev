@@ -20,6 +20,7 @@ export interface ColorConfig {
  * Create a color configuration based on whether colors are enabled
  */
 export function createColorConfig(useColors: boolean): ColorConfig {
+  const identity = (s: string) => s;
   return useColors ? 
     { 
       red: (s: string) => `\x1b[31m${s}\x1b[0m`, 
@@ -28,41 +29,21 @@ export function createColorConfig(useColors: boolean): ColorConfig {
       cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
       bold: (s: string) => `\x1b[1m${s}\x1b[0m` 
     } : 
-    { 
-      red: (s: string) => s, 
-      yellow: (s: string) => s, 
-      gray: (s: string) => s, 
-      cyan: (s: string) => s,
-      bold: (s: string) => s 
-    };
+    { red: identity, yellow: identity, gray: identity, cyan: identity, bold: identity };
 }
 
 // ---- Source Registry for Error Context ----
-
-/**
- * Registry to store source files for error context
- */
 const sourceRegistry = new Map<string, string>();
 
-/**
- * Register a source file for error context
- */
 export function registerSourceFile(filePath: string, source: string): void {
   sourceRegistry.set(filePath, source);
 }
 
-/**
- * Get a source file from the registry
- */
 export function getSourceFile(filePath: string): string | undefined {
   return sourceRegistry.get(filePath);
 }
 
 // ---- Base Error Classes ----
-
-/**
- * Base error class for all transpiler errors
- */
 export class BaseError extends Error {
   constructor(message: string) {
     super(message);
@@ -70,25 +51,31 @@ export class BaseError extends Error {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 
-  /**
-   * Base version of a formatted message.
-   * Derived classes can override this if needed.
-   */
   public formatMessage(useColors: boolean = true): string {
     return this.message;
   }
   
-  /**
-   * Get a suggestion based on this error
-   */
   public getSuggestion(): string {
     return "Check your code for syntax errors or incorrect types.";
   }
 }
 
 /**
- * Base parse error with position information
+ * Format error context lines with proper coloring
  */
+function formatContextLines(lines: string[], errorLineIndex: number, useColors: boolean): string {
+  const c = createColorConfig(useColors);
+  return lines.map((line, i) => {
+    if (line.startsWith("  │ ")) {
+      return useColors ? c.red(line) : line; // Error pointer
+    } else if (i === errorLineIndex) {
+      return useColors ? c.yellow(line) : line; // Error line
+    } else {
+      return useColors ? c.gray(line) : line; // Context line
+    }
+  }).join('\n');
+}
+
 export class BaseParseError extends BaseError {
   public position: { line: number; column: number; offset: number };
   public source?: string;
@@ -106,14 +93,12 @@ export class BaseParseError extends BaseError {
   }
 
   public override formatMessage(useColors: boolean = true): string {
-    const colorConfig = createColorConfig(useColors);
-    const c = colorConfig;
+    const c = createColorConfig(useColors);
     
     let result = useColors 
       ? c.red(c.bold(`Parse Error: ${this.message} at line ${this.position.line}, column ${this.position.column}`))
       : `Parse Error: ${this.message} at line ${this.position.line}, column ${this.position.column}`;
     
-    // Add a snippet of source if available
     if (this.source) {
       const lines = this.source.split('\n');
       const lineText = lines[this.position.line - 1] || "";
@@ -121,35 +106,20 @@ export class BaseParseError extends BaseError {
       
       result += '\n\n';
       
-      // Add context before
+      const contextLines = [];
+      
       if (this.position.line > 1) {
-        const prevLineText = lines[this.position.line - 2] || "";
-        const prevLineFormatted = useColors
-          ? c.gray(`${this.position.line - 1} │ ${prevLineText}`)
-          : `${this.position.line - 1} │ ${prevLineText}`;
-        result += `${prevLineFormatted}\n`;
+        contextLines.push(`${this.position.line - 1} │ ${lines[this.position.line - 2] || ""}`);
       }
       
-      // Add error line
-      const errorLineFormatted = useColors
-        ? c.yellow(`${this.position.line} │ ${lineText}`)
-        : `${this.position.line} │ ${lineText}`;
-      result += `${errorLineFormatted}\n`;
+      contextLines.push(`${this.position.line} │ ${lineText}`);
+      contextLines.push(`  │ ${pointer}`);
       
-      // Add pointer
-      const pointerFormatted = useColors
-        ? c.red(`  │ ${pointer}`)
-        : `  │ ${pointer}`;
-      result += `${pointerFormatted}\n`;
-      
-      // Add context after
       if (this.position.line < lines.length) {
-        const nextLineText = lines[this.position.line] || "";
-        const nextLineFormatted = useColors
-          ? c.gray(`${this.position.line + 1} │ ${nextLineText}`)
-          : `${this.position.line + 1} │ ${nextLineText}`;
-        result += `${nextLineFormatted}\n`;
+        contextLines.push(`${this.position.line + 1} │ ${lines[this.position.line] || ""}`);
       }
+      
+      result += formatContextLines(contextLines, 1, useColors);
     }
     
     return result;
@@ -169,16 +139,12 @@ export class BaseParseError extends BaseError {
   }
 }
 
-/**
- * Main error class for all transpiler errors with source context
- */
 export class TranspilerError extends BaseError {
   public source?: string;
   public filePath?: string;
   public line?: number;
   public column?: number;
   public contextLines: string[] = [];
-  private colorConfig: ColorConfig;
 
   constructor(
     message: string,
@@ -196,41 +162,29 @@ export class TranspilerError extends BaseError {
     this.filePath = options.filePath;
     this.line = options.line;
     this.column = options.column;
-    this.colorConfig = createColorConfig(options.useColors ?? true);
     
-    // Extract context lines if we have all the location information
+    // Extract context lines if we have location information
     if (this.source && this.line !== undefined) {
       this.extractContextLines();
-    } else if (this.source) {
-      // If we have source but no line, try to extract from message
+    } else if (this.source && !this.line) {
       const lineMatch = message.match(/line (\d+)/i);
       const columnMatch = message.match(/column (\d+)/i);
       
       if (lineMatch) {
         this.line = parseInt(lineMatch[1], 10);
-        if (columnMatch) {
-          this.column = parseInt(columnMatch[1], 10);
-        }
+        this.column = columnMatch ? parseInt(columnMatch[1], 10) : undefined;
         this.extractContextLines();
       }
     } else if (options.filePath && !this.source) {
-      // Try to load source from registry if filePath is available
-      const registeredSource = getSourceFile(options.filePath);
-      if (registeredSource) {
-        this.source = registeredSource;
-        if (this.line !== undefined) {
-          this.extractContextLines();
-        }
+      this.source = getSourceFile(options.filePath);
+      if (this.source && this.line !== undefined) {
+        this.extractContextLines();
       }
     }
     
-    // Fix prototype chain
     Object.setPrototypeOf(this, TranspilerError.prototype);
   }
   
-  /**
-   * Extract context lines from the source
-   */
   private extractContextLines(): void {
     if (!this.source || this.line === undefined) return;
     
@@ -239,44 +193,34 @@ export class TranspilerError extends BaseError {
     
     if (lineIndex < 0 || lineIndex >= lines.length) return;
     
-    // Clear any existing context lines
     this.contextLines = [];
     
-    // Add lines before for context (up to 2)
+    // Add context lines - before, error line, pointer, after
     for (let i = Math.max(0, lineIndex - 2); i < lineIndex; i++) {
       this.contextLines.push(`${i + 1} │ ${lines[i]}`);
     }
     
-    // Add the error line
     this.contextLines.push(`${lineIndex + 1} │ ${lines[lineIndex]}`);
     
-    // Add pointer to the column
     if (this.column !== undefined) {
       this.contextLines.push(`  │ ${' '.repeat(Math.max(0, this.column - 1))}^`);
     }
     
-    // Add lines after for context (up to 2)
     for (let i = lineIndex + 1; i < Math.min(lines.length, lineIndex + 3); i++) {
       this.contextLines.push(`${i + 1} │ ${lines[i]}`);
     }
   }
   
-  /**
-   * Generate an enhanced error message with source context
-   */
   public override formatMessage(useColors: boolean = true): string {
-    const c = useColors ? this.colorConfig : createColorConfig(false);
+    const c = createColorConfig(useColors);
     
-    // Start with basic message
     let result = useColors
       ? c.red(c.bold(`Error: ${this.message}`))
       : `Error: ${this.message}`;
     
-    // Add file location if available
     if (this.filePath) {
       let locationPath = this.filePath;
       
-      // Add line and column if available (creates clickable paths in editors)
       if (this.line !== undefined) {
         locationPath += `:${this.line}`;
         if (this.column !== undefined) {
@@ -287,55 +231,28 @@ export class TranspilerError extends BaseError {
       result += `\n${useColors ? c.cyan("Location:") : "Location:"} ${locationPath}`;
     }
     
-    // Add source context if available
     if (this.contextLines.length > 0) {
       result += '\n\n';
-      
-      for (let i = 0; i < this.contextLines.length; i++) {
-        const line = this.contextLines[i];
-        
-        // Format the lines with different colors
-        if (line.includes(" │ ")) {
-          if (line.startsWith("  │ ")) {
-            // Error pointer
-            result += useColors ? c.red(line) : line;
-            result += '\n';
-          } else if (i === this.contextLines.length - 3 || 
-                    (this.contextLines.length <= 3 && i === this.contextLines.length - 2)) {
-            // Error line
-            result += useColors ? c.yellow(line) : line;
-            result += '\n';
-          } else {
-            // Context line
-            result += useColors ? c.gray(line) : line;
-            result += '\n';
-          }
-        } else {
-          result += line + '\n';
-        }
-      }
+      // Find index of the error line (the one before the pointer)
+      const errorLineIndex = this.contextLines.findIndex(line => line.includes(" │ ")) + 1;
+      result += formatContextLines(this.contextLines, errorLineIndex, useColors);
     } else if (this.source) {
-      // If we have source but extraction failed, show the first few lines
+      // If extraction failed, show the first few lines
       const lines = this.source.split('\n');
       const maxLines = Math.min(5, lines.length);
       
       result += '\n\n';
       for (let i = 0; i < maxLines; i++) {
-        result += useColors ? c.gray(`${i + 1} │ ${lines[i]}`) : `${i + 1} │ ${lines[i]}`;
-        result += '\n';
+        result += `${useColors ? c.gray(`${i + 1} │ ${lines[i]}`) : `${i + 1} │ ${lines[i]}`}\n`;
       }
       if (lines.length > maxLines) {
         result += useColors ? c.gray(`... (${lines.length - maxLines} more lines)`) : `... (${lines.length - maxLines} more lines)`;
-        result += '\n';
       }
     }
     
     return result;
   }
   
-  /**
-   * Create an enhanced error from a basic error
-   */
   static fromError(
     error: Error,
     options: {
@@ -346,18 +263,11 @@ export class TranspilerError extends BaseError {
       useColors?: boolean;
     } = {}
   ): TranspilerError {
-    return new TranspilerError(
-      error.message,
-      options
-    );
+    return new TranspilerError(error.message, options);
   }
 }
 
 // ---- Specialized Error Classes ----
-
-/**
- * Parse errors with enhanced formatting
- */
 export class ParseError extends BaseParseError {
   constructor(
     message: string,
@@ -367,16 +277,25 @@ export class ParseError extends BaseParseError {
   ) {
     super(message, position, source);
     this.name = "ParseError";
-    
-    // Fix prototype chain
     Object.setPrototypeOf(this, ParseError.prototype);
+  }
+}
+
+/**
+ * Base class for specialized error types that include original error
+ */
+export class SpecializedError extends TranspilerError {
+  protected appendOriginalError(formatted: string, originalError?: Error): string {
+    return originalError?.stack 
+      ? `${formatted}\n\nOriginal error:\n${originalError.stack}`
+      : formatted;
   }
 }
 
 /**
  * Macro expansion error
  */
-export class MacroError extends TranspilerError {
+export class MacroError extends SpecializedError {
   public macroName: string;
   public sourceFile?: string;
   public originalError?: Error;
@@ -411,30 +330,21 @@ export class MacroError extends TranspilerError {
   public override formatMessage(useColors: boolean = true): string {
     const c = createColorConfig(useColors);
     
-    let result: string;
+    const message = this.sourceFile
+      ? `Error expanding macro '${this.macroName}' (from ${this.sourceFile}): ${this.message}`
+      : `Error expanding macro '${this.macroName}': ${this.message}`;
     
-    if (this.sourceFile) {
-      result = useColors
-        ? c.red(c.bold(`Error expanding macro '${this.macroName}' (from ${this.sourceFile}): ${this.message}`))
-        : `Error expanding macro '${this.macroName}' (from ${this.sourceFile}): ${this.message}`;
-    } else {
-      result = useColors
-        ? c.red(c.bold(`Error expanding macro '${this.macroName}': ${this.message}`))
-        : `Error expanding macro '${this.macroName}': ${this.message}`;
-    }
+    const result = useColors
+      ? c.red(c.bold(message))
+      : message;
     
     // Add base class formatting
     const baseFormatting = super.formatMessage(useColors);
-    if (baseFormatting.length > result.length) {
-      result = baseFormatting;
-    }
-
-    // Include original error stack if available
-    if (this.originalError?.stack) {
-      result += `\n\nOriginal error:\n${this.originalError.stack}`;
-    }
-
-    return result;
+    
+    return this.appendOriginalError(
+      baseFormatting.length > result.length ? baseFormatting : result,
+      this.originalError
+    );
   }
   
   public override getSuggestion(): string {
@@ -454,7 +364,7 @@ export class MacroError extends TranspilerError {
 /**
  * Import processing error
  */
-export class ImportError extends TranspilerError {
+export class ImportError extends SpecializedError {
   public importPath: string;
   public sourceFile?: string;
   public originalError?: Error;
@@ -489,30 +399,34 @@ export class ImportError extends TranspilerError {
   public override formatMessage(useColors: boolean = true): string {
     const c = createColorConfig(useColors);
     
-    let result: string;
-
-    if (this.sourceFile) {
-      result = useColors
-        ? c.red(c.bold(`Error importing '${this.importPath}' from '${this.sourceFile}': ${this.message}`))
-        : `Error importing '${this.importPath}' from '${this.sourceFile}': ${this.message}`;
-    } else {
-      result = useColors
-        ? c.red(c.bold(`Error importing '${this.importPath}': ${this.message}`))
-        : `Error importing '${this.importPath}': ${this.message}`;
-    }
+    const message = this.sourceFile
+      ? `Error importing '${this.importPath}' from '${this.sourceFile}': ${this.message}`
+      : `Error importing '${this.importPath}': ${this.message}`;
+    
+    const result = useColors
+      ? c.red(c.bold(message))
+      : message;
     
     // Add base class formatting
     const baseFormatting = super.formatMessage(useColors);
-    if (baseFormatting.length > result.length) {
-      result = baseFormatting;
-    }
+    
+    return this.appendOriginalError(
+      baseFormatting.length > result.length ? baseFormatting : result,
+      this.originalError
+    );
+  }
+}
 
-    // Include original error stack if available
-    if (this.originalError?.stack) {
-      result += `\n\nOriginal error:\n${this.originalError.stack}`;
-    }
-
-    return result;
+/**
+ * Helper function to dump node information
+ */
+function dumpNode(result: string, originalNode?: unknown): string {
+  if (!originalNode) return result;
+  
+  try {
+    return `${result}\n\nFull node dump:\n${JSON.stringify(originalNode, null, 2)}`;
+  } catch (e) {
+    return `${result}\n\nCould not stringify original node: ${e instanceof Error ? e.message : String(e)}`;
   }
 }
 
@@ -554,29 +468,17 @@ export class TransformError extends TranspilerError {
   public override formatMessage(useColors: boolean = true): string {
     const c = createColorConfig(useColors);
     
-    let result = useColors
+    const result = useColors
       ? c.red(c.bold(`Error during ${this.phase} transformation: ${this.message}\nNode: ${this.nodeSummary}`))
       : `Error during ${this.phase} transformation: ${this.message}\nNode: ${this.nodeSummary}`;
     
     // Add base class formatting
     const baseFormatting = super.formatMessage(useColors);
-    if (baseFormatting.length > result.length) {
-      result = baseFormatting;
-    }
-
-    if (this.originalNode) {
-      try {
-        result += `\n\nFull node dump:\n${
-          JSON.stringify(this.originalNode, null, 2)
-        }`;
-      } catch (e) {
-        result += `\n\nCould not stringify original node: ${
-          e instanceof Error ? e.message : String(e)
-        }`;
-      }
-    }
-
-    return result;
+    
+    return dumpNode(
+      baseFormatting.length > result.length ? baseFormatting : result,
+      this.originalNode
+    );
   }
 }
 
@@ -615,29 +517,17 @@ export class CodeGenError extends TranspilerError {
   public override formatMessage(useColors: boolean = true): string {
     const c = createColorConfig(useColors);
     
-    let result = useColors
+    const result = useColors
       ? c.red(c.bold(`Error generating code for node type '${this.nodeType}': ${this.message}`))
       : `Error generating code for node type '${this.nodeType}': ${this.message}`;
     
     // Add base class formatting
     const baseFormatting = super.formatMessage(useColors);
-    if (baseFormatting.length > result.length) {
-      result = baseFormatting;
-    }
-
-    if (this.originalNode) {
-      try {
-        result += `\n\nFull node dump:\n${
-          JSON.stringify(this.originalNode, null, 2)
-        }`;
-      } catch (e) {
-        result += `\n\nCould not stringify original node: ${
-          e instanceof Error ? e.message : String(e)
-        }`;
-      }
-    }
-
-    return result;
+    
+    return dumpNode(
+      baseFormatting.length > result.length ? baseFormatting : result,
+      this.originalNode
+    );
   }
 }
 
@@ -690,8 +580,7 @@ export class ValidationError extends TranspilerError {
     }
 
     if (this.expectedType && this.actualType) {
-      result +=
-        `\nExpected type: ${this.expectedType}\nActual type: ${this.actualType}`;
+      result += `\nExpected type: ${this.expectedType}\nActual type: ${this.actualType}`;
     }
 
     return result;
@@ -705,38 +594,26 @@ export class ValidationError extends TranspilerError {
  */
 export function summarizeNode(node: unknown): string {
   if (!node) return "undefined";
-
   if (typeof node === "string") return `"${node}"`;
-
   if (typeof node !== "object") return String(node);
 
   // Handle array-like objects
   if (Array.isArray(node)) {
-    if (node.length <= 3) {
-      return `[${node.map(summarizeNode).join(", ")}]`;
-    }
-    return `[${summarizeNode(node[0])}, ${
-      summarizeNode(node[1])
-    }, ... (${node.length} items)]`;
+    return node.length <= 3
+      ? `[${node.map(summarizeNode).join(", ")}]`
+      : `[${summarizeNode(node[0])}, ${summarizeNode(node[1])}, ... (${node.length} items)]`;
   }
 
   // Handle node objects based on common properties
   if ("type" in node) {
     let summary = `${(node as { type: string }).type}`;
-
-    // Add name for named nodes
-    if ("name" in node) {
-      summary += ` "${(node as { name: string }).name}"`;
-    }
-
-    // Add value for literals
+    if ("name" in node) summary += ` "${(node as { name: string }).name}"`;
     if ("value" in node) {
       const valueStr = typeof (node as { value: unknown }).value === "string"
         ? `"${(node as { value: string }).value}"`
         : String((node as { value: unknown }).value);
       summary += ` ${valueStr}`;
     }
-
     return summary;
   }
 
@@ -750,24 +627,19 @@ export function summarizeNode(node: unknown): string {
 export function formatValue(value: unknown): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
-  
   if (typeof value === "string") {
-    // For long strings, truncate
-    if (value.length > 100) {
-      return `"${value.substring(0, 100)}..."`;
-    }
-    return `"${value}"`;
+    return value.length > 100 ? `"${value.substring(0, 100)}..."` : `"${value}"`;
   }
-  
   if (typeof value === "object") {
     try {
-      // Limit the depth and length of stringified objects
-      return JSON.stringify(value, null, 2).substring(0, 200) + (JSON.stringify(value).length > 200 ? "..." : "");
+      const json = JSON.stringify(value);
+      return json.length > 200 
+        ? JSON.stringify(value, null, 2).substring(0, 200) + "..." 
+        : JSON.stringify(value, null, 2);
     } catch (e) {
       return String(value);
     }
   }
-  
   return String(value);
 }
 
@@ -781,12 +653,10 @@ export function createErrorReport(
 ): string {
   let report = `Error in ${context}: ${error.message}\n`;
   
-  // Add stack trace if available
   if (error.stack) {
     report += `\nStack trace:\n${error.stack.split('\n').slice(1).join('\n')}\n`;
   }
   
-  // Add additional context information
   if (Object.keys(additionalInfo).length > 0) {
     report += "\nAdditional information:\n";
     for (const [key, value] of Object.entries(additionalInfo)) {
@@ -826,50 +696,23 @@ export function parseError(error: ParseError | Error, options: {
  * Add intelligent suggestions based on the error
  */
 export function getSuggestion(error: Error): string {
-  // Check error message for common patterns
   const msg = error.message.toLowerCase();
   
-  if (error instanceof ParseError) {
-    if (msg.includes("unexpected ')'") || msg.includes("unexpected ']'") || msg.includes("unexpected '}'")) {
-      return "Check for mismatched parentheses or brackets. You might have an extra closing delimiter or missing an opening one.";
-    }
-    if (msg.includes("unexpected end of input")) {
-      return "Your expression is incomplete. Check for unclosed parentheses, brackets, or strings.";
-    }
-    return "Review your syntax for errors like mismatched delimiters or invalid tokens.";
+  // Use class-specific suggestions if available
+  if (error instanceof BaseError) {
+    return error.getSuggestion();
   }
   
-  if (error instanceof MacroError) {
-    if (msg.includes("not found") || msg.includes("undefined") || msg.includes("does not exist")) {
-      return "Make sure the macro is defined and imported correctly before using it.";
-    }
-    if (msg.includes("parameter") || msg.includes("argument")) {
-      return "Check that you're passing the correct number and types of arguments to the macro.";
-    }
-    return "Review your macro definition and usage. Ensure parameters match expected types.";
+  // Common error patterns
+  if (msg.includes("unexpected ')'") || msg.includes("unexpected ']'") || msg.includes("unexpected '}'")) {
+    return "Check for mismatched parentheses or brackets. You might have an extra closing delimiter or missing an opening one.";
   }
-  
-  if (error instanceof ImportError) {
-    if (msg.includes("not found") || msg.includes("could not find") || msg.includes("no such file")) {
-      return "Verify that the file exists at the specified path. Check for typos in the path.";
-    }
-    if (msg.includes("circular")) {
-      return "You have a circular dependency. Review your import structure to break the cycle.";
-    }
-    return "Check that the imported file exists and is accessible. Verify import paths are correct.";
+  if (msg.includes("unexpected end of input")) {
+    return "Your expression is incomplete. Check for unclosed parentheses, brackets, or strings.";
   }
-  
-  if (error instanceof ValidationError) {
-    if (msg.includes("type") || msg.includes("expected")) {
-      return "The value doesn't match the expected type. Check the type annotations and values passed.";
-    }
-    return "Review your code for type errors and ensure values match their expected types.";
-  }
-  
   if (msg.includes("undefined") || msg.includes("not defined")) {
     return "The referenced variable or function doesn't exist. Check for typos or add a definition.";
   }
-  
   if (msg.includes("null") || msg.includes("undefined is not an object")) {
     return "You're trying to access a property on null or undefined. Add a check before accessing properties.";
   }
@@ -902,7 +745,7 @@ export function formatError(
       result += `\n\nStack trace:\n${error.stack.split('\n').slice(1).join('\n')}`;
     }
     
-    // Add suggestion if available
+    // Add suggestion
     const suggestion = error.getSuggestion();
     if (suggestion) {
       const colorConfig = createColorConfig(options.useColors ?? true);
@@ -926,6 +769,13 @@ export function formatError(
   // Add stack trace if requested
   if (options.includeStack && error.stack) {
     result += `\n\nStack trace:\n${error.stack.split('\n').slice(1).join('\n')}`;
+  }
+  
+  // Add suggestion
+  const suggestion = getSuggestion(error);
+  if (suggestion) {
+    const colorConfig = createColorConfig(options.useColors ?? true);
+    result += `\n\nSuggestion: ${options.useColors ? colorConfig.cyan(suggestion) : suggestion}`;
   }
   
   return result;
@@ -954,19 +804,16 @@ export function report(
     );
   }
   
-  // For any transpiler error, just ensure the options are set
+  // For any transpiler error, ensure the options are set
   if (error instanceof TranspilerError) {
-    // Copy existing properties
-    const mergedOptions = {
+    // Create a new instance with merged options
+    return TranspilerError.fromError(error, {
       source: options.source || error.source,
       filePath: options.filePath || error.filePath,
       line: options.line ?? error.line,
       column: options.column ?? error.column,
       useColors: options.useColors ?? true
-    };
-    
-    // Create a new instance with merged options
-    return TranspilerError.fromError(error, mergedOptions);
+    });
   }
   
   // For generic errors, wrap them
@@ -989,7 +836,6 @@ export function reportError(
     includeStack?: boolean;
   } = {}
 ): void {
-  // Enhance the error first
   const enhancedError = report(error, {
     source: options.source,
     filePath: options.filePath,
@@ -998,44 +844,13 @@ export function reportError(
     useColors: options.useColors ?? true
   });
   
-  // Format it
   const formatted = formatError(enhancedError, {
     useColors: options.useColors ?? true,
     includeStack: options.includeStack ?? options.verbose ?? false,
     makePathsClickable: options.useClickablePaths ?? true
   });
   
-  // Print to the console
-  if (options.verbose) {
-    console.error("\x1b[31m[VERBOSE ERROR]\x1b[0m", formatted);
-  } else {
-    console.error("\x1b[31m[ERROR]\x1b[0m", formatted);
-  }
-}
-
-/**
- * Set up global error handlers
- */
-export function initializeErrorHandling(opts: {
-  enableGlobalHandlers?: boolean;
-  enableReplEnhancement?: boolean;
-} = {}): void {
-  if (opts.enableGlobalHandlers) {
-    // For browsers
-    if (typeof globalThis.addEventListener === 'function') {
-      globalThis.addEventListener("unhandledrejection", (e: PromiseRejectionEvent) => {
-        reportError(e.reason instanceof Error ? e.reason : new Error(String(e.reason)), { 
-          includeStack: true 
-        });
-      });
-      
-      globalThis.addEventListener("error", (e: ErrorEvent) => {
-        reportError(e.error instanceof Error ? e.error : new Error(String(e.error || e.message)), { 
-          includeStack: true 
-        });
-      });
-    }
-  }
+  console.error(options.verbose ? "\x1b[31m[VERBOSE ERROR]\x1b[0m" : "\x1b[31m[ERROR]\x1b[0m", formatted);
 }
 
 /**
@@ -1071,6 +886,26 @@ export function withErrorHandling<T, Args extends any[]>(
 }
 
 /**
+ * Translates a TypeScript error into a more user-friendly error.
+ */
+export function translateTypeScriptError(error: Error): Error {
+  // Handle common TS error codes
+  if (error.message.includes('TS2304')) {
+    return new TranspilerError(
+      `TypeScript could not find a variable or type name. Did you forget to declare or import it?\n\nOriginal: ${error.message}`
+    );
+  }
+  if (error.message.includes('TS1005')) {
+    return new TranspilerError(
+      `TypeScript expected a semicolon or found unexpected syntax.\n\nOriginal: ${error.message}`
+    );
+  }
+  
+  // Default: wrap in TranspilerError for consistent formatting
+  return new TranspilerError(`TypeScript Error: ${error.message}`);
+}
+
+/**
  * Apply TypeScript error translation to a function
  */
 export function withTypeScriptErrorTranslation<T, Args extends any[]>(
@@ -1081,42 +916,13 @@ export function withTypeScriptErrorTranslation<T, Args extends any[]>(
       return await fn(...args);
     } catch (error) {
       if (error instanceof Error && error.message.includes("TS")) {
-        // Use translateTypeScriptError if available in this file, otherwise implement or import
-        if (typeof translateTypeScriptError === 'function') {
-          throw translateTypeScriptError(error);
-        }
+        throw translateTypeScriptError(error);
       }
       throw error;
     }
   };
 }
 
-
-/**
- * Translates a TypeScript error into a more user-friendly error.
- * This function can be extended to provide richer translations for common TS errors.
- */
-export function translateTypeScriptError(error: Error): Error {
-  // Example: Translate TS error codes/messages to more actionable advice
-  if (error.message.includes('TS2304')) {
-    // Cannot find name '...'.
-    return new TranspilerError(
-      `TypeScript could not find a variable or type name. Did you forget to declare or import it?\n\nOriginal: ${error.message}`
-    );
-  }
-  if (error.message.includes('TS1005')) {
-    // ';' expected.
-    return new TranspilerError(
-      `TypeScript expected a semicolon or found unexpected syntax.\n\nOriginal: ${error.message}`
-    );
-  }
-  // Add more TS error code translations as needed
-
-  // Default: wrap in TranspilerError for consistent formatting
-  return new TranspilerError(`TypeScript Error: ${error.message}`);
-}
-
-// Combine all into a single namespace for easy importing
 const CommonError = {
   // Error classes
   BaseError,
@@ -1139,13 +945,8 @@ const CommonError = {
   report,
   reportError,
   translateTypeScriptError,
-  
-  // Error context utilities
   registerSourceFile,
   getSourceFile,
-  
-  // Global error handling
-  initializeErrorHandling,
   withErrorHandling,
   withTypeScriptErrorTranslation
 };

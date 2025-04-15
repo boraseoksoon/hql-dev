@@ -138,7 +138,6 @@ export class ValidationError extends CommonError.ValidationError {
   }
 }
 
-// Re-export all functions
 export const createColorConfig = CommonError.createColorConfig;
 export const summarizeNode = CommonError.summarizeNode;
 export const formatValue = CommonError.formatValue;
@@ -149,9 +148,7 @@ export const report = CommonError.report;
 export const reportError = CommonError.reportError;
 export const registerSourceFile = CommonError.registerSourceFile;
 export const getSourceFile = CommonError.getSourceFile;
-export const initializeErrorHandling = CommonError.initializeErrorHandling;
 export const withErrorHandling = CommonError.withErrorHandling;
 export const withTypeScriptErrorTranslation = CommonError.withTypeScriptErrorTranslation;
 
-// Default export for convenience
 export default CommonError;

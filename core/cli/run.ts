@@ -4,8 +4,7 @@ import { resolve } from "../src/platform/platform.ts";
 import logger, { Logger } from "../src/logger.ts";
 import { cleanupAllTempFiles } from "../src/utils/temp-file-tracker.ts";
 import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
-// New imports for enhanced error handling
-import { initializeErrorHandling, registerSourceFile, ErrorUtils } from "../src/transpiler/error/index.ts";
+import { registerSourceFile, report, withErrorHandling } from "../src/transpiler/error/errors.ts";
 
 function printHelp() {
   // Unchanged
@@ -60,16 +59,10 @@ async function run() {
   }
   
   // Setup debug options for enhanced error reporting
-  const { debug, clickablePaths } = setupDebugOptions(args);
+  const { debug } = setupDebugOptions(args);
   if (debug) {
     console.log("Debug mode enabled with enhanced error reporting");
   }
-  
-  // Initialize enhanced error handling system
-  initializeErrorHandling({
-    enableGlobalHandlers: true,
-    enableReplEnhancement: false
-  });
 
   const inputPath = resolve(nonOptionArgs[0]);
   logger.log({ text: `Processing entry: ${inputPath}`, namespace: "cli" });
@@ -87,7 +80,7 @@ async function run() {
     registerSourceFile(inputPath, source);
   } catch (readError) {
     // Use the enhanced error reporter
-    console.error(ErrorUtils.report(readError));
+    console.error(report(readError));
     Deno.exit(1);
   }
   
@@ -114,7 +107,7 @@ async function run() {
     const tempOutputPath = `${tempDir}/${fileName.replace(/\.hql$/, ".run.js")}`;
     
     // Transpile the code with error handling
-    const bundledPath = await ErrorUtils.withErrorHandling(
+    const bundledPath = await withErrorHandling(
       () => transpileCLI(inputPath, tempOutputPath, bundleOptions),
       { 
         filePath: inputPath, 
@@ -123,7 +116,7 @@ async function run() {
       }
     )().catch(error => {
       // Use enhanced error reporting
-      console.error(ErrorUtils.report(error));
+      console.error(report(error));
       Deno.exit(1);
     });
     
@@ -137,7 +130,7 @@ async function run() {
       });
       
       // Run the code with error handling
-      await ErrorUtils.withErrorHandling(
+      await withErrorHandling(
         async () => await import("file://" + resolve(bundledPath)),
         { 
           filePath: bundledPath, 
@@ -146,13 +139,13 @@ async function run() {
         }
       )().catch(error => {
         // Use enhanced error reporting for runtime errors
-        console.error(ErrorUtils.report(error));
+        console.error(report(error));
         Deno.exit(1);
       });
     }
   } catch (error) {
     // Use enhanced error reporting
-    console.error(ErrorUtils.report(error));
+    console.error(report(error));
     Deno.exit(1);
   } finally {
     try {

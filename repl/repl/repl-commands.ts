@@ -10,7 +10,6 @@ import {
   confirmAction, 
   moduleUtils 
 } from "./repl-common.ts";
-import { toInternalName, toUserFacingName } from "./repl-completion.ts";
 import { getDetailedHelp } from "./repl-help.ts";
 import * as colors from "@core/utils/colors.ts";
 
