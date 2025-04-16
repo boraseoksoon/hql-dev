@@ -61,10 +61,7 @@ async function run() {
 
   // Setup logging options (verbose & log namespaces).
   const { verbose, logNamespaces } = setupLoggingOptions(args);
-  
-  // Only enable full logging if verbose is requested, not for timing
-  logger.setEnabled(Boolean(verbose));
-  
+  logger.setEnabled(Boolean(verbose || showTiming)); // Enable logger if timing is requested
   if (logNamespaces.length > 0) {
     Logger.allowedNamespaces = logNamespaces;
     console.log(
@@ -114,12 +111,12 @@ async function run() {
       ? PERFORMANCE_MODE
       : { minify: false };
     const bundleOptions = { 
-      verbose: verbose, // Only enable verbose if --verbose was specified
+      verbose: verbose || showTiming, // Enable verbose mode if timing is requested
       tempDir, 
       ...optimizationOptions, 
       skipErrorReporting: true,
       skipErrorHandling: true,
-      showTiming // Pass timing separately
+      showTiming
     };
 
     // Run the module directly, with a single error handler
@@ -247,29 +244,11 @@ export async function evaluateExpression(expr: string, options: RunOptions = {})
  * Run a HQL file (for CLI)
  */
 export async function runHqlFile(filename: string, options: RunOptions = {}): Promise<void> {
-  // Save original args
-  const originalArgs = [...Deno.args];
-  
-  try {
-    // Replace Deno.args with our filename
-    Deno.args.length = 0;
-    Deno.args.push(filename);
-    
-    // Add options as flags
-    if (options.showTiming) {
-      Deno.args.push("--time");
-    }
-    if (options.verbose) {
-      Deno.args.push("--verbose");
-    }
-    
-    // Run with the modified args
-    await run();
-  } finally {
-    // Restore original args
-    Deno.args.length = 0;
-    originalArgs.forEach(arg => Deno.args.push(arg));
+  // Add timing flag to Deno.args if needed
+  if (options.showTiming && !Deno.args.includes("--time")) {
+    Deno.args.push("--time");
   }
+  await run();
 }
 
 /**

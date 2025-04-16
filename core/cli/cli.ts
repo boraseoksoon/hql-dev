@@ -1,120 +1,9 @@
 #!/usr/bin/env -S deno run --allow-read
 /**
- * HQL Command Line Interface (CLI)
- * =================================
- *
- * The HQL CLI provides a flexible interface for running, transpiling, and evaluating HQL (Homoiconic Query Language) code directly from your terminal.
- *
- * ───────────────────────────────────────────────────────────────
- * SUPPORTED COMMANDS & FLAGS
- *
- *   hql run <file>             Execute an HQL source file
- *   hql transpile <file>       Transpile HQL to JavaScript (prints output)
- *   hql '<expr>'               Evaluate an inline HQL expression (preferred)
- *   hql -e "<expr>"            Evaluate an inline expression using -e/--expr flag
- *
- *   --help, -h                 Show usage & help
- *   --version                  Show CLI version
- *   --time                     Print performance metrics (timing)
- *   --verbose                  Enable detailed logging
- *
- *
- * ───────────────────────────────────────────────────────────────
- * USAGE EXAMPLES
- *
- *   # Run a HQL file
- *   hql run hello.hql
- *   hql run scripts/example.hql --time
- *   hql run myfile.hql --verbose
- *
- *   # Transpile a HQL file to JavaScript
- *   hql transpile hello.hql
- *   hql transpile src/logic.hql --time
- *
- *   # Evaluate inline expressions (preferred: single quotes outside, double inside)
- *   hql '(+ 1 2 3)'
- *   hql '(print "hello world")'
- *   hql '(+ 1 1)' --time
- *   hql '(print (+ 2 2))' --verbose
- *
- *   # Alternative: use -e or --expr flag
- *   hql -e '(+ 10 20)'
- *   hql --expr '(print "sum:" (+ 2 3))' --time
- *
- *   # Combine flags (order flexible)
- *   hql '(+ 1 2)' --time --verbose
- *   hql run file.hql --verbose --time
- *
- *   # Show version/help
- *   hql --version
- *   hql --help
- *
- *
- * ───────────────────────────────────────────────────────────────
- * SHELL QUOTING & STRING TIPS
- *
- *   - Always use single quotes '...' around your HQL expressions in the shell.
- *   - Use double quotes "..." for string literals inside HQL.
- *   - Example: hql '(print "hello world")'
- *   - Avoid: hql "(print 'hello world')"   # May break string parsing
- *   - Avoid: hql "(print \"hello\")"      # Double-escaping is error-prone
- *   - For complex expressions, prefer single-quoted shell syntax.
- *
- *   Common quoting mistakes:
- *     - Unbalanced parentheses: hql '(+ 1 2'    # Missing closing parenthesis
- *     - Double quotes around the whole expr: hql "(+ 1 2)"  # May break nested strings
- *
- *   For strings with both single and double quotes, escape as needed or use concatenation.
- *
- *
- * ───────────────────────────────────────────────────────────────
- * ADVANCED USAGE & TIPS
- *
- *   - Evaluate multiple expressions:
- *       hql '(begin (print "a") (print "b"))'
- *   - Print results of expressions:
- *       hql '(+ 1 2)'              # Prints: 3
- *       hql '(print (+ 2 3))'      # Prints: 5
- *   - Performance timing:
- *       hql '(+ 1 2)' --time       # Prints result and timing info
- *   - Verbose/debug logging:
- *       hql '(* 2 3)' --verbose
- *   - Evaluate with file input and flags:
- *       hql run script.hql --time --verbose
- *   - Use -e/--expr anywhere in the argument list:
- *       hql --time -e '(+ 4 5)'
- *
- *
- * ───────────────────────────────────────────────────────────────
- * ERROR HANDLING & TROUBLESHOOTING
- *
- *   - Syntax errors may be caused by incorrect shell quoting.
- *   - If you see 'unexpected token' or 'syntax error', try:
- *       hql '(your-function "your string")'
- *   - Ensure parentheses are balanced and strings are correctly quoted.
- *   - For troubleshooting, use --verbose for more detailed error output.
- *   - Temporary files for expressions are auto-cleaned; errors in cleanup are shown only in verbose mode.
- *
- *
- * ───────────────────────────────────────────────────────────────
- * EXAMPLES FOR COPY/PASTE
- *
- *   hql '(print "hello world")'
- *   hql '(+ 42 58)' --time
- *   hql -e '(print (* 7 6))' --verbose
- *   hql run ./examples/hello.hql
- *   hql transpile ./examples/math.hql
- *
- *
- * ───────────────────────────────────────────────────────────────
- * NOTES
- *   - The CLI is case-sensitive for commands and file paths.
- *   - Expressions are always evaluated as if in a temporary file for consistent behavior.
- *   - Use --help for the latest usage information.
- *
- * For more documentation, see the project README or visit the official repo.
+ * HQL CLI Entrypoint
+ * Supports: run, transpile, and direct expression evaluation
+ * Usage: see --help output
  */
-
 import { runHqlFile } from "./run.ts";
 import { transpile } from "./transpile.ts";
 import { report, registerSourceFile } from "../src/common/common-errors.ts";
@@ -123,6 +12,99 @@ const VERSION = "1.0.0"; // Update as needed
 
 function printHelp() {
   console.log(`\nHQL - Command Line Interface\n\nUSAGE:\n  hql run <file>            Execute an HQL source file\n  hql transpile <file>      Transpile HQL to JavaScript\n  hql '<expr>'              Evaluate an HQL expression inline\n  hql -e "<expr>"           Evaluate with -e flag (alternative syntax)\n  hql --help                Show this help message\n  hql --version             Show version\n  hql --time                Show performance timing information\n  hql --verbose             Show detailed logging information\n\nEXAMPLES:\n  hql run hello.hql\n  hql transpile hello.hql\n  hql '(+ 1 1)'             # prints: 2 (preferred syntax)\n  hql '(print "hello")'     # prints: hello (note the quote nesting)\n  hql '(+ 1 1)' --time      # prints: 2 with performance metrics\n\nNOTE:\n  When using expressions with strings, use single quotes for the shell and\n  double quotes for strings in HQL: hql '(print "hello world")'\n`);
+}
+
+/**
+ * Direct evaluation function that returns the actual value
+ */
+async function evaluateExpressionDirectly(expr: string, options = { showTiming: false, verbose: false }) {
+  const { Environment } = await import("../src/environment.ts");
+  const { REPLEvaluator } = await import("../../repl/repl/repl-evaluator.ts");
+  const { loadSystemMacros } = await import("../src/transpiler/hql-transpiler.ts");
+  const { loadSystemMacroFile } = await import("../src/s-exp/system-macros.ts");
+  const { parse } = await import("../src/transpiler/pipeline/parser.ts");
+  const { transformSyntax } = await import("../src/transpiler/pipeline/syntax-transformer.ts");
+  const { expandMacros } = await import("../src/s-exp/macro.ts");
+  const { convertToHqlAst } = await import("../src/s-exp/macro-reader.ts");
+  const { transformAST } = await import("../src/transformer.ts");
+  
+  // Create and initialize a new environment with all system macros loaded
+  const env = new Environment();
+  env.initializeBuiltins();
+  
+  // Load all system macros explicitly
+  await loadSystemMacros(env, { verbose: options.verbose });
+  
+  // Load standard macros, similar to how we do in run.ts
+  await loadSystemMacroFile("core/lib/macro/core.hql", env, { verbose: options.verbose });
+  await loadSystemMacroFile("core/lib/macro/loop.hql", env, { verbose: options.verbose });
+  
+  // For timing information
+  const startTime = performance.now();
+  const timings: Record<string, number> = {};
+  let timePoint = startTime;
+  
+  const recordTiming = (label: string) => {
+    const now = performance.now();
+    timings[label] = now - timePoint;
+    timePoint = now;
+  };
+  
+  try {
+    // Use direct pipeline execution for better control
+    if (options.verbose) console.log("Parsing input...");
+    const sexps = parse(expr);
+    recordTiming("Parse");
+    
+    if (options.verbose) console.log("Transforming syntax...");
+    const transformed = transformSyntax(sexps, { verbose: options.verbose });
+    recordTiming("Syntax Transform");
+    
+    if (options.verbose) console.log("Processing imports...");
+    // No imports in direct evaluation, but we'll include a placeholder timing
+    recordTiming("Import Processing");
+    
+    if (options.verbose) console.log("Expanding macros...");
+    const expanded = expandMacros(transformed, env, { verbose: options.verbose });
+    recordTiming("Macro Expansion");
+    
+    if (options.verbose) console.log("Converting to HQL AST...");
+    const ast = convertToHqlAst(expanded);
+    recordTiming("AST Conversion");
+    
+    if (options.verbose) console.log("Generating JavaScript code...");
+    const jsCode = await transformAST(ast, Deno.cwd(), { verbose: options.verbose });
+    recordTiming("Code Generation");
+    
+    if (options.verbose) console.log("Evaluating JavaScript...");
+    
+    // Directly evaluate the generated code
+    const result = eval(jsCode);
+    recordTiming("JS Evaluation");
+    
+    // Display timing metrics if requested
+    if (options.showTiming) {
+      const totalTime = Object.values(timings).reduce((sum, t) => sum + t, 0);
+      
+      console.log("\n=== Performance Metrics ===");
+      for (const [label, time] of Object.entries(timings)) {
+        const percent = (time / totalTime) * 100;
+        console.log(`  ${label.padEnd(20)} ${time.toFixed(2)}ms (${percent.toFixed(1)}%)`);
+      }
+      console.log(`  ${"─".repeat(40)}`);
+      console.log(`  Total:              ${totalTime.toFixed(2)}ms`);
+      console.log("================================");
+    }
+    
+    return result;
+  } catch (error) {
+    if (error instanceof Error) {
+      console.error(`Error: ${error.message}`);
+    } else {
+      console.error(`Error: ${String(error)}`);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -166,75 +148,16 @@ function getExpressionFromArgs(args: string[]): string | null {
     }
   }
   
-  // Check for direct expression (non-flag args that don't match a command)
-  // Skip the first argument if it's a command like "run" or "transpile"
-  const commands = ["run", "transpile"];
+  // Check for direct expression (any arg starting with '(' that isn't a flag)
   const nonFlagArgs = args.filter(arg => !arg.startsWith("--") && !arg.startsWith("-"));
-  
-  // If the first argument isn't a known command, it might be an expression
-  if (nonFlagArgs.length > 0 && !commands.includes(nonFlagArgs[0])) {
-    return nonFlagArgs[0];
+  if (nonFlagArgs.length >= 1) {
+    // If it starts with a parenthesis, it's likely an HQL expression
+    if (nonFlagArgs[0].trim().startsWith("(")) {
+      return nonFlagArgs[0];
+    }
   }
   
   return null;
-}
-
-/**
- * Creates a temporary HQL file with the given expression and runs it
- * This ensures a unified execution flow through the transpiler pipeline
- */
-async function evaluate(expr: string, options = { showTiming: false, verbose: false }) {
-  try {
-    // Check if this is a simple expression that should display a result
-    const shouldDisplayResult = !expr.includes("print") && !expr.includes("console.log");
-    
-    // If we need the result displayed, modify the expression
-    let fileContent = expr;
-    if (shouldDisplayResult) {
-      fileContent = `(print ${expr})`;
-    }
-    
-    // Register expression for error context
-    registerSourceFile("REPL-CLI", expr);
-    
-    // Create a temporary file with the expression
-    const tempDir = await Deno.makeTempDir({ prefix: "hql_expr_" });
-    const tempFile = `${tempDir}/expr_${Date.now()}.hql`;
-    
-    // Write the expression to the temporary file
-    await Deno.writeTextFile(tempFile, fileContent);
-    
-    try {
-      // Run the temporary file through the standard pipeline
-      // Pass options separately to ensure timing doesn't enable verbose
-      await runHqlFile(tempFile, { 
-        showTiming: options.showTiming,
-        verbose: options.verbose
-      });
-    } finally {
-      // Clean up the temporary directory
-      try {
-        await Deno.remove(tempDir, { recursive: true });
-      } catch (e) {
-        // Ignore cleanup errors in non-verbose mode
-        if (options.verbose) {
-          console.error(`Error cleaning temporary files: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-    }
-  } catch (e) {
-    // Check if the error might be related to shell quoting
-    const errorMsg = e instanceof Error ? e.message : String(e);
-    if (errorMsg.includes("unexpected token") || errorMsg.includes("syntax error")) {
-      console.error(`\nSyntax Error. This might be caused by shell quoting issues.`);
-      console.error(`Try surrounding your expression with single quotes and using double quotes for strings:`);
-      console.error(`  hql '(your-function "your string")'`);
-    }
-    
-    // Enhanced error reporting
-    console.error(report(e, { source: expr, filePath: "REPL-CLI" }));
-    Deno.exit(1);
-  }
 }
 
 async function main() {
@@ -280,22 +203,40 @@ async function main() {
   // Check for expression evaluation
   const expr = getExpressionFromArgs(args);
   if (expr) {
-    // Check for potential quoting issues and provide helpful feedback
-    const quotingIssue = checkQuotingIssues(expr);
-    if (quotingIssue) {
-      console.error(`Potential issue: ${quotingIssue}`);
-      // Continue anyway - the user might still get their intended result
+    try {
+      // Check for potential quoting issues and provide helpful feedback
+      const quotingIssue = checkQuotingIssues(expr);
+      if (quotingIssue) {
+        console.error(`Potential issue: ${quotingIssue}`);
+        // Continue anyway - the user might still get their intended result
+      }
+      
+      // Register expression for error context
+      registerSourceFile("REPL-CLI", expr);
+      
+      // Use our direct evaluator with separate flag handling
+      const result = await evaluateExpressionDirectly(expr, { 
+        showTiming,
+        verbose 
+      });
+      
+      // Print the result, ensuring undefined isn't displayed as "undefined"
+      if (result !== undefined) {
+        console.log(result);
+      }
+    } catch (e) {
+      // Check if the error might be related to shell quoting
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (errorMsg.includes("unexpected token") || errorMsg.includes("syntax error")) {
+        console.error(`\nSyntax Error. This might be caused by shell quoting issues.`);
+        console.error(`Try surrounding your expression with single quotes and using double quotes for strings:`);
+        console.error(`  hql '(your-function "your string")'`);
+      }
+      
+      // Enhanced error reporting
+      console.error(report(e, { source: expr, filePath: "REPL-CLI" }));
+      Deno.exit(1);
     }
-    
-    if (verbose) {
-      console.log(`Evaluating expression: ${expr}`);
-    }
-    
-    // Use the unified pipeline approach for evaluation
-    await evaluate(expr, { 
-      showTiming,
-      verbose 
-    });
     return;
   }
 
