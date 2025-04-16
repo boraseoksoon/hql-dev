@@ -19,6 +19,8 @@ import { performAsync } from "./transpiler/error/index.ts";
 import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash } from "./common/utils.ts";
 import { registerTempFile } from "./common/temp-file-tracker.ts";
 import { globalLogger as logger, Logger } from "./logger.ts";
+import { Environment } from "./environment.ts";
+import { loadSystemMacroFile, SYSTEM_MACRO_PATHS } from "./s-exp/system-macros.ts";
 
 const MAX_RETRIES = 3;
 const ESBUILD_RETRY_DELAY_MS = 100;
@@ -31,6 +33,7 @@ export interface BundleOptions {
   sourceDir?: string;
   skipErrorReporting?: boolean;
   showTiming?: boolean;
+  environment?: Environment;
 }
 
 export function transpileCLI(
@@ -46,12 +49,24 @@ export function transpileCLI(
       logger.log({ text: `Processing entry: ${inputPath}`, namespace: "cli" });
     }
     
+    // Create a new environment for this transpilation
+    const env = new Environment();
+    env.initializeBuiltins();
+    
+    // Ensure all system macros are loaded
+    for (const macroPath of SYSTEM_MACRO_PATHS) {
+      await loadSystemMacroFile(macroPath, env, { 
+        verbose: options.verbose 
+      });
+    }
+    
     const resolvedInputPath = resolve(inputPath);
     const outPath = determineOutputPath(resolvedInputPath, outputPath);
     const sourceDir = dirname(resolvedInputPath);
     const processedPath = await processEntryFile(resolvedInputPath, outPath, {
       ...options,
       sourceDir,
+      environment: env,  // Pass the environment with preloaded macros
     });
     
     if (!options.skipErrorReporting) {
@@ -342,7 +357,7 @@ function processEntryFile(
 ): Promise<string> {
   return performAsync(async () => {
     // Use global logger singleton
-// logger is imported from globalLogger
+    // logger is imported from globalLogger
     const resolvedInputPath = resolve(inputPath);
     logger.debug(`Processing entry file: ${resolvedInputPath}`);
     logger.debug(`Output path: ${outputPath}`);
@@ -392,6 +407,7 @@ async function processHqlEntryFile(
       verbose: options.verbose,
       tempDir,
       sourceDir: options.sourceDir || dirname(resolvedInputPath),
+      environment: options.environment,  // Pass the environment if provided
     });
     
     // Check if the TypeScript code has HQL imports and process them
@@ -514,7 +530,7 @@ function bundleWithEsbuild(
 ): Promise<string> {
   return performAsync(async () => {
     // Use global logger singleton
-// logger is imported from globalLogger
+    // logger is imported from globalLogger
     logger.log({ text: `Bundling ${entryPath} to ${outputPath}`, namespace: "bundler" });
     logger.log({ text: `Bundling options: ${JSON.stringify(options, null, 2)}`, namespace: "bundler" });
     const tempDirResult = await createTempDirIfNeeded(options, logger);
@@ -647,7 +663,7 @@ function createHqlPlugin(options: {
   sourceDir?: string;
 }): any {
   // Use global logger singleton
-// logger is imported from globalLogger
+  // logger is imported from globalLogger
   const processedHqlFiles = new Set<string>();
   const hqlToJsMap = new Map<string, string>();
   return {

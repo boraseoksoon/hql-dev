@@ -28,13 +28,14 @@ async function evaluateExpressionDirectly(expr: string, options = { showTiming: 
   const { convertToHqlAst } = await import("../src/s-exp/macro-reader.ts");
   const { transformAST } = await import("../src/transformer.ts");
   
-  // Create environment with appropriate options
+  // Create and initialize a new environment with all system macros loaded
   const env = new Environment();
+  env.initializeBuiltins();
   
-  // Initialize system macros with lazy loading
+  // Load all system macros explicitly
   await loadSystemMacros(env, { verbose: options.verbose });
   
-  // Pre-load macros that are commonly used in CLI expressions
+  // Load standard macros, similar to how we do in run.ts
   await loadSystemMacroFile("core/lib/macro/core.hql", env, { verbose: options.verbose });
   await loadSystemMacroFile("core/lib/macro/loop.hql", env, { verbose: options.verbose });
   

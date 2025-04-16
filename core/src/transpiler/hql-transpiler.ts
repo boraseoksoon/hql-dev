@@ -9,7 +9,12 @@ import { convertToHqlAst } from "../s-exp/macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
 import { transformSyntax } from "./pipeline/syntax-transformer.ts";
-import { getSystemMacroPaths, initMacroFileMap } from "../s-exp/system-macros.ts";
+import { 
+  getSystemMacroPaths, 
+  initMacroFileMap,
+  loadSystemMacroFile,
+  SYSTEM_MACRO_PATHS
+} from "../s-exp/system-macros.ts";
 import {
   ImportError,
   MacroError,
@@ -25,10 +30,11 @@ import {
 } from "./error/index.ts";
 import { globalLogger as logger } from "../logger.ts";
 
+// Global state
 let globalEnv: Environment | null = null;
 let systemMacrosInitialized = false;
-const macroExpressionsCache = new Map<string, any[]>();
 
+// Options for the HQL processing pipeline
 interface ProcessOptions {
   verbose?: boolean;
   baseDir?: string;
@@ -37,11 +43,9 @@ interface ProcessOptions {
   skipErrorHandling?: boolean;
   showTiming?: boolean;
   source?: string;
+  environment?: Environment;  // Allow passing an existing environment
 }
 
-/**
- * Get or create the global environment
- */
 export async function getGlobalEnv(options: ProcessOptions = {}): Promise<Environment> {
   if (!globalEnv) {
     globalEnv = new Environment();
@@ -94,7 +98,8 @@ export async function processHql(
     end("Syntax transform", t1);
     
     const t2 = start();
-    const env = await getGlobalEnv(options);
+    // Use provided environment or get global env
+    const env = options.environment || await getGlobalEnv(options);
     if (options.baseDir) env.setCurrentFile(options.baseDir);
     end("Environment setup", t2);
     
@@ -274,16 +279,18 @@ function handleProcessError(
 }
 
 export async function loadSystemMacros(env: Environment, options: ProcessOptions): Promise<void> {
-  if (systemMacrosInitialized) {
-    logger.debug("System macros already initialized, skipping");
-    return;
-  }
-
   try {
-    // Initialize macro file map instead of loading all macros
+    // Initialize macro file map 
     await initMacroFileMap();
+    
+    // IMPORTANT: Always load core macros immediately, not lazily
+    for (const macroPath of SYSTEM_MACRO_PATHS) {
+      logger.debug(`Loading system macros from ${macroPath}`);
+      await loadSystemMacroFile(macroPath, env, { verbose: options.verbose });
+    }
+    
     systemMacrosInitialized = true;
-    logger.debug("System macros initialized for lazy loading");
+    logger.debug("All system macros initialized and loaded");
   } catch (error) {
     if (error instanceof Error) {
       throw new TranspilerError(`Initializing system macro files: ${error.message}`);
