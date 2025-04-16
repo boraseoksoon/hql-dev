@@ -181,239 +181,81 @@ export function defineUserMacro(
 }
 
 /* Expand all macros in a list of S-expressions */
-export async function expandMacrosAsync(
-  exprs: SExp[],
-  env: Environment,
-  options: MacroExpanderOptions = {},
-): Promise<SExp[]> {
-  const logger = env.logger;
-  const expanded: SExp[] = [];
-  const cache = new Map<string, SExp>();
-  
-  for (const expr of exprs) {
-    const expandedExpr = await expandExprAsync(expr, env, options, cache);
-    expanded.push(expandedExpr);
-  }
-  
-  return expanded;
-}
-
-/* Keep the original synchronous version for backward compatibility */
 export function expandMacros(
   exprs: SExp[],
   env: Environment,
   options: MacroExpanderOptions = {},
 ): SExp[] {
-  const logger = env.logger;
-  const expanded: SExp[] = [];
-  const cache = new Map<string, SExp>();
-  
+  const currentFile = options.currentFile;
+  const useCache = options.useCache !== false;
+  logger.debug(
+    `Starting macro expansion on ${exprs.length} expressions${currentFile ? ` in ${currentFile}` : ""}`,
+  );
+
+  if (currentFile) {
+    env.setCurrentFile(currentFile);
+    logger.debug(`Setting current file to: ${currentFile}`);
+  }
+
+  // Process macro definitions (global first, then user-level if a current file is provided)
   for (const expr of exprs) {
-    const expandedExpr = expandExpr(expr, env, options, cache);
-    expanded.push(expandedExpr);
+    if (isDefMacro(expr) && isList(expr)) {
+      defineMacro(expr as SList, env, logger);
+    }
   }
-  
-  return expanded;
-}
+  if (currentFile) {
+    for (const expr of exprs) {
+      if (isUserMacro(expr) && isList(expr)) {
+        defineUserMacro(expr as SList, currentFile, env, logger);
+      }
+    }
+  }
 
-/* Add an async version of expandExpr that can lazy-load macros */
-async function expandExprAsync(
-  expr: SExp,
-  env: Environment, 
-  options: MacroExpanderOptions,
-  cache: Map<string, SExp>,
-): Promise<SExp> {
-  const logger = env.logger;
-  
-  if (expr.type !== "list") {
-    return expr;
-  }
-  
-  const list = expr as SList;
-  if (list.elements.length === 0) {
-    return list;
-  }
-  
-  const first = list.elements[0];
-  if (first.type !== "symbol") {
-    const newElements: SExp[] = [];
-    for (const el of list.elements) {
-      newElements.push(await expandExprAsync(el, env, options, cache));
-    }
-    return { ...list, elements: newElements };
-  }
-  
-  const op = (first as SSymbol).name;
-  
-  /* Handle special forms first (these don't get expanded) */
-  if (isSpecialForm(op)) {
-    return handleSpecialForm(op, list, env, options, cache, expandExprAsync);
-  }
-  
-  /* Check for macro */
-  const macroFn = await env.getMacroAsync(op);
-  if (macroFn) {
-    try {
-      /* Apply the macro */
-      const expanded = macroFn(list.elements.slice(1), env);
-      
-      /* Cache the expansion */
-      const key = sexpToString(list);
-      cache.set(key, expanded);
-      
-      /* Recursively expand the result */
-      return await expandExprAsync(expanded, env, options, cache);
-    } catch (error) {
-      handleMacroError(error, op, list, options);
-      return list;
-    }
-  }
-  
-  /* Not a macro, recursively expand the elements */
-  const newElements: SExp[] = [];
-  for (const el of list.elements) {
-    newElements.push(await expandExprAsync(el, env, options, cache));
-  }
-  
-  return { ...list, elements: newElements };
-}
+  let currentExprs = [...exprs];
+  let iteration = 0;
+  let changed = true;
+  while (changed && iteration < MAX_EXPANSION_ITERATIONS) {
+    changed = false;
+    iteration++;
+    logger.debug(`Macro expansion iteration ${iteration}`);
 
-/* Helper for special forms that works with the async expander */
-async function handleSpecialForm(
-  op: string,
-  list: SList,
-  env: Environment,
-  options: MacroExpanderOptions,
-  cache: Map<string, SExp>,
-  expandFn: (expr: SExp, env: Environment, options: MacroExpanderOptions, cache: Map<string, SExp>) => Promise<SExp>
-): Promise<SExp> {
-  const elements = list.elements;
-  
-  switch (op) {
-    case "quote":
-      return list;
-    case "quasiquote":
-      if (elements.length !== 2) {
-        if (options.currentFile) {
-          throw new MacroError(
-            `quasiquote requires exactly one argument, got ${elements.length - 1}`,
-            "quasiquote",
-            options.currentFile
-          );
-        }
-        throw new Error(`quasiquote requires exactly one argument, got ${elements.length - 1}`);
+    const newExprs = currentExprs.map((expr) => {
+      const exprStr = useCache ? sexpToString(expr) : "";
+      if (useCache && macroExpansionCache.has(exprStr)) {
+        logger.debug(`Cache hit for expression: ${exprStr.substring(0, 30)}...`);
+        return macroExpansionCache.get(exprStr)!;
       }
-      return await expandQuasiquoteAsync(elements[1], env, options, cache, expandFn);
-    case "defmacro":
-    case "macro":
-      if (elements.length < 3) {
-        if (options.currentFile) {
-          throw new MacroError(
-            `${op} requires at least 2 arguments: name and params`,
-            op,
-            options.currentFile
-          );
-        }
-        throw new Error(`${op} requires at least 2 arguments: name and params`);
+      const expandedExpr = expandMacroExpression(expr, env, options, 0);
+      if (useCache) {
+        macroExpansionCache.set(exprStr, expandedExpr);
       }
-      return handleDefMacro(op, elements, env, options.currentFile);
-    default:
-      const newElements: SExp[] = [elements[0]];
-      for (let i = 1; i < elements.length; i++) {
-        newElements.push(await expandFn(elements[i], env, options, cache));
-      }
-      return { ...list, elements: newElements };
-  }
-}
+      return expandedExpr;
+    });
 
-/* Add async version of expandQuasiquote */
-async function expandQuasiquoteAsync(
-  expr: SExp,
-  env: Environment,
-  options: MacroExpanderOptions,
-  cache: Map<string, SExp>,
-  expandFn: (expr: SExp, env: Environment, options: MacroExpanderOptions, cache: Map<string, SExp>) => Promise<SExp>
-): Promise<SExp> {
-  if (expr.type !== "list") {
-    return {
-      type: "list",
-      elements: [
-        { type: "symbol", name: "quote" },
-        expr
-      ]
-    };
-  }
-  
-  const list = expr as SList;
-  if (list.elements.length === 0) {
-    return expr;
-  }
-  
-  const first = list.elements[0];
-  if (first.type === "symbol") {
-    const name = first.name;
-    
-    if (name === "unquote") {
-      if (list.elements.length !== 2) {
-        if (options.currentFile) {
-          throw new MacroError(
-            `unquote requires exactly one argument, got ${list.elements.length - 1}`,
-            "unquote",
-            options.currentFile
-          );
-        }
-        throw new Error(`unquote requires exactly one argument, got ${list.elements.length - 1}`);
-      }
-      return await expandFn(list.elements[1], env, options, cache);
-    }
-    
-    if (name === "unquote-splicing") {
-      if (list.elements.length !== 2) {
-        if (options.currentFile) {
-          throw new MacroError(
-            `unquote-splicing requires exactly one argument, got ${list.elements.length - 1}`,
-            "unquote-splicing",
-            options.currentFile
-          );
-        }
-        throw new Error(`unquote-splicing requires exactly one argument, got ${list.elements.length - 1}`);
-      }
-      /* We can't really expand unquote-splicing here since it depends on the context */
-      /* Just return the original expression */
-      return list;
-    }
-  }
-  
-  /* Recursively process each element */
-  const newElements: SExp[] = [];
-  for (const el of list.elements) {
-    if (el.type === "list" && el.elements.length > 0 && el.elements[0].type === "symbol" && el.elements[0].name === "unquote-splicing") {
-      /* Handle unquote-splicing */
-      if (el.elements.length !== 2) {
-        if (options.currentFile) {
-          throw new MacroError(
-            `unquote-splicing requires exactly one argument, got ${el.elements.length - 1}`,
-            "unquote-splicing",
-            options.currentFile
-          );
-        }
-        throw new Error(`unquote-splicing requires exactly one argument, got ${el.elements.length - 1}`);
-      }
-      
-      /* Special marker for unquote-splicing */
-      newElements.push({
-        type: "list",
-        elements: [
-          { type: "symbol", name: "unquote-splicing" },
-          await expandFn(el.elements[1], env, options, cache)
-        ]
-      });
+    const oldStr = currentExprs.map(sexpToString).join("\n");
+    const newStr = newExprs.map(sexpToString).join("\n");
+    if (oldStr !== newStr) {
+      changed = true;
+      currentExprs = newExprs;
+      logger.debug(`Changes detected in iteration ${iteration}, continuing expansion`);
     } else {
-      newElements.push(await expandQuasiquoteAsync(el, env, options, cache, expandFn));
+      logger.debug(`No changes in iteration ${iteration}, fixed point reached`);
     }
   }
-  
-  return { ...list, elements: newElements };
+
+  if (iteration >= MAX_EXPANSION_ITERATIONS) {
+    logger.warn(
+      `Macro expansion reached maximum iterations (${MAX_EXPANSION_ITERATIONS}). Check for infinite recursion.`,
+    );
+  }
+  logger.debug(`Completed macro expansion after ${iteration} iterations`);
+
+  currentExprs = filterMacroDefinitions(currentExprs, logger);
+  if (currentFile) {
+    env.setCurrentFile(null);
+    logger.debug(`Clearing current file`);
+  }
+  return currentExprs;
 }
 
 /* Check if a symbol represents a user-level macro with caching. */
@@ -1034,233 +876,4 @@ function createMacroEnv(
     env.define(restParam, restList);
   }
   return env;
-}
-
-// Helper functions for the async implementation
-
-// Is this a special form? (quote, quasiquote, etc.)
-function isSpecialForm(name: string): boolean {
-  return ["quote", "quasiquote", "defmacro", "macro"].includes(name);
-}
-
-// Handle macro expansion errors
-function handleMacroError(error: unknown, macroName: string, list: SList, options: MacroExpanderOptions): void {
-  const currentFile = options.currentFile;
-  if (currentFile && error instanceof Error) {
-    throw new MacroError(
-      `Error expanding macro '${macroName}': ${error.message}`,
-      macroName,
-      currentFile,
-      error
-    );
-  } else if (error instanceof Error) {
-    throw new Error(`Error expanding macro '${macroName}': ${error.message}`);
-  } else {
-    throw new Error(`Error expanding macro '${macroName}': Unknown error`);
-  }
-}
-
-// The original expandExpr for the synchronous version
-function expandExpr(
-  expr: SExp,
-  env: Environment,
-  options: MacroExpanderOptions,
-  cache: Map<string, SExp>
-): SExp {
-  if (expr.type !== "list") {
-    return expr;
-  }
-  
-  const list = expr as SList;
-  if (list.elements.length === 0) {
-    return list;
-  }
-  
-  const first = list.elements[0];
-  if (first.type !== "symbol") {
-    const newElements: SExp[] = [];
-    for (const el of list.elements) {
-      newElements.push(expandExpr(el, env, options, cache));
-    }
-    return { ...list, elements: newElements };
-  }
-  
-  const op = (first as SSymbol).name;
-  
-  // Handle special forms first (these don't get expanded)
-  if (isSpecialForm(op)) {
-    return handleSpecialFormSync(op, list, env, options, cache);
-  }
-  
-  // Check for macro
-  const macroFn = env.getMacro(op);
-  if (macroFn) {
-    try {
-      // Apply the macro
-      const expanded = macroFn(list.elements.slice(1), env);
-      
-      // Cache the expansion
-      const key = sexpToString(list);
-      cache.set(key, expanded);
-      
-      // Recursively expand the result
-      return expandExpr(expanded, env, options, cache);
-    } catch (error) {
-      handleMacroError(error, op, list, options);
-      return list;
-    }
-  }
-  
-  // Not a macro, recursively expand the elements
-  const newElements: SExp[] = [];
-  for (const el of list.elements) {
-    newElements.push(expandExpr(el, env, options, cache));
-  }
-  
-  return { ...list, elements: newElements };
-}
-
-// Synchronous version for special forms
-function handleSpecialFormSync(
-  op: string,
-  list: SList,
-  env: Environment,
-  options: MacroExpanderOptions,
-  cache: Map<string, SExp>
-): SExp {
-  const elements = list.elements;
-  
-  switch (op) {
-    case "quote":
-      return list;
-    case "quasiquote":
-      if (elements.length !== 2) {
-        if (options.currentFile) {
-          throw new MacroError(
-            `quasiquote requires exactly one argument, got ${elements.length - 1}`,
-            "quasiquote",
-            options.currentFile
-          );
-        }
-        throw new Error(`quasiquote requires exactly one argument, got ${elements.length - 1}`);
-      }
-      return expandQuasiquoteSync(elements[1], env, options, cache);
-    case "defmacro":
-    case "macro":
-      if (elements.length < 3) {
-        if (options.currentFile) {
-          throw new MacroError(
-            `${op} requires at least 2 arguments: name and params`,
-            op,
-            options.currentFile
-          );
-        }
-        throw new Error(`${op} requires at least 2 arguments: name and params`);
-      }
-      return handleDefMacro(op, elements, env, options.currentFile);
-    default:
-      const newElements: SExp[] = [elements[0]];
-      for (let i = 1; i < elements.length; i++) {
-        newElements.push(expandExpr(elements[i], env, options, cache));
-      }
-      return { ...list, elements: newElements };
-  }
-}
-
-// Synchronous version of expandQuasiquote
-function expandQuasiquoteSync(
-  expr: SExp,
-  env: Environment,
-  options: MacroExpanderOptions,
-  cache: Map<string, SExp>
-): SExp {
-  if (expr.type !== "list") {
-    return {
-      type: "list",
-      elements: [
-        { type: "symbol", name: "quote" },
-        expr
-      ]
-    };
-  }
-  
-  const list = expr as SList;
-  if (list.elements.length === 0) {
-    return expr;
-  }
-  
-  const first = list.elements[0];
-  if (first.type === "symbol") {
-    const name = first.name;
-    
-    if (name === "unquote") {
-      if (list.elements.length !== 2) {
-        if (options.currentFile) {
-          throw new MacroError(
-            `unquote requires exactly one argument, got ${list.elements.length - 1}`,
-            "unquote",
-            options.currentFile
-          );
-        }
-        throw new Error(`unquote requires exactly one argument, got ${list.elements.length - 1}`);
-      }
-      return expandExpr(list.elements[1], env, options, cache);
-    }
-    
-    if (name === "unquote-splicing") {
-      if (list.elements.length !== 2) {
-        if (options.currentFile) {
-          throw new MacroError(
-            `unquote-splicing requires exactly one argument, got ${list.elements.length - 1}`,
-            "unquote-splicing",
-            options.currentFile
-          );
-        }
-        throw new Error(`unquote-splicing requires exactly one argument, got ${list.elements.length - 1}`);
-      }
-      return list;
-    }
-  }
-  
-  // Recursively process each element
-  const newElements: SExp[] = [];
-  for (const el of list.elements) {
-    if (el.type === "list" && el.elements.length > 0 && el.elements[0].type === "symbol" && el.elements[0].name === "unquote-splicing") {
-      // Handle unquote-splicing
-      if (el.elements.length !== 2) {
-        if (options.currentFile) {
-          throw new MacroError(
-            `unquote-splicing requires exactly one argument, got ${el.elements.length - 1}`,
-            "unquote-splicing",
-            options.currentFile
-          );
-        }
-        throw new Error(`unquote-splicing requires exactly one argument, got ${el.elements.length - 1}`);
-      }
-      
-      // Special marker for unquote-splicing
-      newElements.push({
-        type: "list",
-        elements: [
-          { type: "symbol", name: "unquote-splicing" },
-          expandExpr(el.elements[1], env, options, cache)
-        ]
-      });
-    } else {
-      newElements.push(expandQuasiquoteSync(el, env, options, cache));
-    }
-  }
-  
-  return { ...list, elements: newElements };
-}
-
-// Handle macro definition in both sync and async modes
-function handleDefMacro(op: string, elements: SExp[], env: Environment, currentFile: string | undefined): SExp {
-  if (op === "defmacro") {
-    defineMacro({ type: "list", elements }, env, env.logger);
-  } else if (currentFile) {
-    defineUserMacro({ type: "list", elements }, currentFile, env, env.logger);
-  }
-  
-  return { type: "literal", value: null };
 }

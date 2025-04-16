@@ -30,7 +30,6 @@ export interface BundleOptions {
   tempDir?: string;
   sourceDir?: string;
   skipErrorReporting?: boolean;
-  showTiming?: boolean;
 }
 
 export function transpileCLI(
@@ -72,13 +71,6 @@ export function transpileCLI(
         }ms`,
         namespace: "cli"
       });
-    }
-    
-    // Display timing information if requested
-    if (options.showTiming) {
-      console.log(`\n=== Transpilation Performance ===`);
-      console.log(`Total time: ${(endTime - startTime).toFixed(2)}ms`);
-      console.log(`================================`);
     }
     
     return outPath;

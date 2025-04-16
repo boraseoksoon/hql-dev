@@ -8,7 +8,6 @@ import {
 } from "./transpiler/error/errors.ts";
 import { LRUCache } from "./common/lru-cache.ts";
 import { globalLogger as logger } from "./logger.ts";
-import { loadSystemMacroByName } from "./s-exp/system-macros.ts";
 
 export type Value =
   | string
@@ -414,31 +413,6 @@ export class Environment {
 
   getMacro(key: string): MacroFn | undefined {
     return this.macroRegistry.getMacro(key, this.currentFilePath);
-  }
-
-  async getMacroAsync(key: string): Promise<MacroFn | undefined> {
-    // First check if the macro is already defined
-    const existingMacro = this.macroRegistry.getMacro(key, this.currentFilePath);
-    if (existingMacro) {
-      return existingMacro;
-    }
-    
-    // If not found, try to lazily load it
-    try {
-      const loaded = await loadSystemMacroByName(key, this, { 
-        verbose: this.logger.isVerbose 
-      });
-      
-      if (loaded) {
-        // After loading, try to get the macro again
-        return this.macroRegistry.getMacro(key, this.currentFilePath);
-      }
-    } catch (error) {
-      this.logger.debug(`Error lazy-loading system macro '${key}': ${error}`);
-    }
-    
-    // Return undefined if macro not found or loading failed
-    return undefined;
   }
 
   hasModuleMacro(filePath: string, macroName: string): boolean {

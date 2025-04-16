@@ -3,7 +3,7 @@
 
 import { parse } from "@transpiler/pipeline/parser.ts";
 import { transformSyntax } from "@transpiler/pipeline/syntax-transformer.ts";
-import { expandMacros, expandMacrosAsync } from "@s-exp/macro.ts";
+import { expandMacros } from "@s-exp/macro.ts";
 import { processImports } from "@core/imports.ts";
 import { convertToHqlAst } from "@s-exp/macro-reader.ts";
 import { transformAST } from "@core/transformer.ts";
@@ -25,7 +25,6 @@ export interface REPLEvalOptions {
   showAst?: boolean;
   showExpanded?: boolean;
   showJs?: boolean;
-  showTiming?: boolean; // Add new option for timing display
 }
 
 // Result of REPL evaluation
@@ -35,7 +34,6 @@ export interface REPLEvalResult {
   parsedExpressions: SExp[];
   expandedExpressions: SExp[];
   executionTimeMs?: number;
-  metrics?: EvaluationMetrics; // Add metrics to result
 }
 
 // Performance metrics for evaluation stages
@@ -70,7 +68,6 @@ export class REPLEvaluator {
   
   // Metrics for performance monitoring
   private lastMetrics: EvaluationMetrics | null = null;
-  private showTiming: boolean = false;
   
   // Use source registry to leverage the common error handling
   private sourceRegistry = new Map<string, string>();
@@ -80,7 +77,6 @@ export class REPLEvaluator {
     this.logger = logger;
     this.logger.setEnabled(!!options.verbose);
     this.baseDir = options.baseDir || Deno.cwd();
-    this.showTiming = options.showTiming || false;
     
     // Initialize runtime functions immediately
     this.initializeRuntimeFunctions();
@@ -139,37 +135,12 @@ export class REPLEvaluator {
   }
   
   /**
-   * Display performance metrics in a nicely formatted table
-   */
-  displayMetrics(metrics: EvaluationMetrics): void {
-    if (!this.showTiming) return;
-    
-    console.log("\n=== Performance Metrics ===");
-    const total = metrics.totalTimeMs;
-    
-    // Format metrics as a table
-    console.log(`  Parse:              ${metrics.parseTimeMs.toFixed(2)}ms (${((metrics.parseTimeMs / total) * 100).toFixed(1)}%)`);
-    console.log(`  Syntax Transform:   ${metrics.syntaxTransformTimeMs.toFixed(2)}ms (${((metrics.syntaxTransformTimeMs / total) * 100).toFixed(1)}%)`);
-    console.log(`  Import Processing:  ${metrics.importProcessingTimeMs.toFixed(2)}ms (${((metrics.importProcessingTimeMs / total) * 100).toFixed(1)}%)`);
-    console.log(`  Macro Expansion:    ${metrics.macroExpansionTimeMs.toFixed(2)}ms (${((metrics.macroExpansionTimeMs / total) * 100).toFixed(1)}%)`);
-    console.log(`  AST Conversion:     ${metrics.astConversionTimeMs.toFixed(2)}ms (${((metrics.astConversionTimeMs / total) * 100).toFixed(1)}%)`);
-    console.log(`  Code Generation:    ${metrics.codeGenerationTimeMs.toFixed(2)}ms (${((metrics.codeGenerationTimeMs / total) * 100).toFixed(1)}%)`);
-    console.log(`  JS Evaluation:      ${metrics.evaluationTimeMs.toFixed(2)}ms (${((metrics.evaluationTimeMs / total) * 100).toFixed(1)}%)`);
-    console.log(`  ─────────────────────────────────────`);
-    console.log(`  Total:              ${total.toFixed(2)}ms`);
-    console.log("================================");
-  }
-  
-  /**
    * Evaluate a single line of input and return the result
    * With special handling for import statements
    */
   async evaluate(input: string, options: REPLEvalOptions = {}): Promise<REPLEvalResult> {
     // Register the input for error context
     registerSourceFile("REPL", input);
-    
-    // Check if timing should be shown
-    this.showTiming = options.showTiming || this.showTiming;
     
     const log = (message: string) => {
       if (this.logger.isVerbose) this.logger.debug(message);
@@ -210,19 +181,13 @@ export class REPLEvaluator {
         metrics.totalTimeMs = performance.now() - startTime;
         this.lastMetrics = metrics;
         
-        // Display metrics if requested
-        if (this.showTiming) {
-          this.displayMetrics(metrics);
-        }
-        
         // Return the import result
         return {
           value: importResult.message,
           jsCode: "// Import processed directly",
           parsedExpressions: [],
           expandedExpressions: [],
-          executionTimeMs: metrics.totalTimeMs,
-          metrics: this.showTiming ? metrics : undefined
+          executionTimeMs: metrics.totalTimeMs
         };
       }
       
@@ -235,23 +200,26 @@ export class REPLEvaluator {
         { source: input, filePath: "REPL", context: "REPL parsing" }
       )();
       metrics.parseTimeMs = performance.now() - currentTime;
+      log(`Parsed ${sexps.length} expressions`);
       
       log("Transforming syntax...");
       currentTime = performance.now();
-      const transformed = await withErrorHandling(
-        () => transformSyntax(sexps, { verbose: this.logger.isVerbose }),
+      const transformedSexps = await withErrorHandling(
+        () => transformSyntax(sexps, { verbose: options.verbose }),
         { source: input, filePath: "REPL", context: "REPL syntax transformation" }
       )();
       metrics.syntaxTransformTimeMs = performance.now() - currentTime;
+      log(`Transformed to ${transformedSexps.length} expressions`);
       
       log("Processing imports...");
       currentTime = performance.now();
       await withErrorHandling(
-        () => processImports(transformed, this.replEnv.hqlEnv, {
-          verbose: this.logger.isVerbose,
-          baseDir: this.baseDir,
-          currentFile: "REPL"
-        }),
+        async () => {
+          await processImports(transformedSexps, this.replEnv.hqlEnv, {
+            verbose: options.verbose,
+            baseDir: options.baseDir || this.baseDir
+          });
+        },
         { source: input, filePath: "REPL", context: "REPL import processing" }
       )();
       metrics.importProcessingTimeMs = performance.now() - currentTime;
@@ -259,82 +227,74 @@ export class REPLEvaluator {
       log("Expanding macros...");
       currentTime = performance.now();
       const expandedSexps = await withErrorHandling(
-        () => expandMacrosAsync(transformed, this.replEnv.hqlEnv, {
-          verbose: this.logger.isVerbose,
-          currentFile: "REPL"
+        () => expandMacros(transformedSexps, this.replEnv.hqlEnv, {
+          verbose: options.verbose,
         }),
         { source: input, filePath: "REPL", context: "REPL macro expansion" }
       )();
       metrics.macroExpansionTimeMs = performance.now() - currentTime;
+      log(`Expanded to ${expandedSexps.length} expressions`);
       
-      if (options.showExpanded) {
-        console.log("Expanded expressions:", expandedSexps);
-      }
-      
-      log("Converting to HQL AST...");
+      log("Converting to AST...");
       currentTime = performance.now();
-      const hqlAst = await withErrorHandling(
-        () => convertToHqlAst(expandedSexps, { verbose: this.logger.isVerbose }),
+      const ast = await withErrorHandling(
+        () => convertToHqlAst(expandedSexps, { verbose: options.verbose }),
         { source: input, filePath: "REPL", context: "REPL AST conversion" }
       )();
       metrics.astConversionTimeMs = performance.now() - currentTime;
+      log("AST conversion completed");
       
-      if (options.showAst) {
-        console.log("HQL AST:", hqlAst);
-      }
-      
-      log("Generating JavaScript code...");
+      log("Generating JavaScript...");
       currentTime = performance.now();
       const jsCode = await withErrorHandling(
-        () => transformAST(hqlAst, this.baseDir, { verbose: this.logger.isVerbose }),
-        { source: input, filePath: "REPL", context: "REPL code generation" }
+        () => transformAST(ast, options.baseDir || this.baseDir, {
+          verbose: options.verbose,
+          replMode: true
+        }),
+        { source: input, filePath: "REPL", context: "REPL JS transformation" }
       )();
       metrics.codeGenerationTimeMs = performance.now() - currentTime;
+      log("JavaScript generation completed");
       
-      if (options.showJs) {
-        console.log("Generated JavaScript:", jsCode);
-      }
+      log("Cleaning up generated code...");
+      const cleanedCode = this.removeRuntimeFunctions(jsCode);
+      const preparedJs = this.replEnv.prepareJsForRepl(cleanedCode);
       
       log("Evaluating JavaScript...");
       currentTime = performance.now();
-      const result = await withErrorHandling(
-        () => this.evaluateJs(jsCode),
-        { source: input, filePath: "REPL", context: "REPL JS evaluation" }
+      const value = await withErrorHandling(
+        () => this.evaluateJs(preparedJs),
+        { source: preparedJs, filePath: "REPL JS", context: "REPL JS evaluation" }
       )();
       metrics.evaluationTimeMs = performance.now() - currentTime;
+      log("Evaluation completed");
       
-      // Calculate total execution time
+      // Reset current file in environment
+      this.replEnv.hqlEnv.setCurrentFile(null);
+      
+      // Calculate total time
       metrics.totalTimeMs = performance.now() - startTime;
       this.lastMetrics = metrics;
       
-      // Display metrics if requested
-      if (this.showTiming) {
-        this.displayMetrics(metrics);
-      }
-      
+      // Return the evaluation result
       return {
-        value: result,
-        jsCode,
+        value,
+        jsCode: cleanedCode,
         parsedExpressions: sexps,
         expandedExpressions: expandedSexps,
         executionTimeMs: metrics.totalTimeMs,
-        metrics: this.showTiming ? metrics : undefined
       };
     } catch (error: unknown) {
-      // Calculate total time even for errors
-      metrics.totalTimeMs = performance.now() - startTime;
-      this.lastMetrics = metrics;
+      this.replEnv.hqlEnv.setCurrentFile(null);
+      log(`Evaluation error: ${formatErrorMessage(error)}`);
       
-      // For errors, also display timing if requested
-      if (this.showTiming) {
-        console.log(`\n⚠️ Error occurred after ${metrics.totalTimeMs.toFixed(2)}ms`);
-      }
-      
-      // Enhanced error reporting
       if (error instanceof Error) {
-        this.logger.error(`REPL evaluation error: ${formatErrorMessage(error)}`);
-      } else {
-        this.logger.error(`REPL evaluation error: ${String(error)}`);
+        // Use the common error reporting mechanism
+        const enhancedError = report(error, { 
+          source: input, 
+          filePath: "REPL" 
+        });
+        throw enhancedError;
       }
       throw error;
     }
