@@ -31,6 +31,7 @@ const macroExpressionsCache = new Map<string, any[]>();
 
 interface ProcessOptions {
   verbose?: boolean;
+  showTiming?: boolean;
   baseDir?: string;
   sourceDir?: string;
   tempDir?: string;
@@ -46,13 +47,15 @@ export async function processHql(
 ): Promise<string> {
   logger.debug("Processing HQL source with S-expression layer");
 
-  const timings = new Map<string, number>();
-  const start = () => performance.now();
-  const end = (label: string, s: number) => {
-    const t = performance.now() - s;
-    timings.set(label, t);
-    logger.debug(`${label} completed in ${t.toFixed(2)}ms`);
-  };
+  // Configure logger based on options
+  if (options.verbose) {
+    logger.setEnabled(true);
+  }
+  
+  if (options.showTiming) {
+    logger.setTimingOptions({ showTiming: true });
+    logger.startTiming("hql-process", "Total");
+  }
 
   const sourceFilename = options.baseDir ? path.basename(options.baseDir) : "unknown";
   const sourceFilePath = options.baseDir || "unknown";
@@ -62,38 +65,42 @@ export async function processHql(
 
   try {
     // Process all stages with proper error handling
-    const t0 = start();
+    if (options.showTiming) logger.startTiming("hql-process", "Parsing");
     const sexps = parseWithHandling(source, logger);
-    end("Parsing", t0);
+    if (options.showTiming) logger.endTiming("hql-process", "Parsing");
     
-    const t1 = start();
+    if (options.showTiming) logger.startTiming("hql-process", "Syntax transform");
     const canonicalSexps = transformWithHandling(sexps, options.verbose, logger);
-    end("Syntax transform", t1);
+    if (options.showTiming) logger.endTiming("hql-process", "Syntax transform");
     
-    const t2 = start();
+    if (options.showTiming) logger.startTiming("hql-process", "Environment setup");
     const env = await getGlobalEnv(options);
     if (options.baseDir) env.setCurrentFile(options.baseDir);
-    end("Environment setup", t2);
+    if (options.showTiming) logger.endTiming("hql-process", "Environment setup");
     
-    const t3 = start();
+    if (options.showTiming) logger.startTiming("hql-process", "Import processing");
     await processImportsWithHandling(canonicalSexps, env, options);
-    end("Import processing", t3);
+    if (options.showTiming) logger.endTiming("hql-process", "Import processing");
     
-    const t4 = start();
+    if (options.showTiming) logger.startTiming("hql-process", "Macro expansion");
     const expanded = expandWithHandling(canonicalSexps, env, options, logger);
-    end("Macro expansion", t4);
+    if (options.showTiming) logger.endTiming("hql-process", "Macro expansion");
     
-    const t5 = start();
+    if (options.showTiming) logger.startTiming("hql-process", "AST conversion");
     const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
-    end("AST conversion", t5);
+    if (options.showTiming) logger.endTiming("hql-process", "AST conversion");
     
-    const t6 = start();
+    if (options.showTiming) logger.startTiming("hql-process", "JS transformation");
     const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), { verbose: options.verbose });
-    end("JS transformation", t6);
+    if (options.showTiming) logger.endTiming("hql-process", "JS transformation");
 
     if (options.baseDir) env.setCurrentFile(null);
 
-    if (options.verbose) logPerformance(timings, sourceFilename);
+    if (options.showTiming) {
+      logger.endTiming("hql-process", "Total");
+      logger.logPerformance("hql-process", sourceFilename);
+    }
+    
     return jsCode;
   } catch (error) {
     if (options.skipErrorHandling) {
@@ -185,14 +192,19 @@ function logExpressions(label: string, sexps: any[], logger: Logger) {
   if (sexps.length > maxLog) logger.debug(`...and ${sexps.length - maxLog} more expressions`);
 }
 
-function logPerformance(timings: Map<string, number>, file: string) {
+function logPerformance(timings: Map<string, number>, file: string, showTiming = false) {
+  if (!showTiming) return; // Only log if showTiming is true
+  
   const total = Array.from(timings.values()).reduce((a, b) => a + b, 0);
-  console.log(`✅ Successfully processed ${file} in ${total.toFixed(2)}ms`);
-  console.log("Performance metrics:");
+  console.log(`\n=== HQL Transpiler Performance Metrics ===`);
+  console.log(`File: ${file}`);
+  
   for (const [label, time] of timings.entries()) {
     console.log(`  ${label.padEnd(20)} ${time.toFixed(2)}ms (${((time / total) * 100).toFixed(1)}%)`);
   }
+  
   console.log(`  Total                ${total.toFixed(2)}ms`);
+  console.log(`==========================================\n`);
 }
 
 function handleProcessError(

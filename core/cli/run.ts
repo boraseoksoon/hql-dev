@@ -1,30 +1,53 @@
-// cli/run.ts - with enhanced error handling
+/*
+* HQL Run Command (CLI)
+* ====================
+*
+* The run command executes HQL source files directly from the command line.
+*
+* ───────────────────────────────────────────────────────────────
+* USAGE:
+*
+*   deno run -A cli/run.ts <target.hql|target.js> [options]
+*
+* OPTIONS:
+*
+*   --verbose                 Enable verbose logging
+*   --time                    Show performance timing information
+*   --quiet                   Disable console.log output
+*   --log <namespaces>        Filter logging to specific namespaces
+*   --performance             Apply performance optimizations (minification)
+*   --print                   Print final JS output without executing
+*   --debug                   Enable enhanced debugging and error reporting
+*   --no-clickable-paths      Disable clickable file paths in error messages
+*   --help, -h                Display help message
+*/
 
-import { REPLEvaluator } from "../../repl/repl/repl-evaluator.ts";
 import { Environment } from "../src/environment.ts";
-
-// ...existing imports
-
+import { parse } from "../src/transpiler/pipeline/parser.ts";
+import { transformSyntax } from "../src/transpiler/pipeline/syntax-transformer.ts";
+import { expandMacros } from "../src/s-exp/macro.ts";
+import { convertToHqlAst } from "../src/s-exp/macro-reader.ts";
+import { transformAST } from "../src/transformer.ts";
 import { transpileCLI } from "../src/bundler.ts";
 import { resolve } from "../src/platform/platform.ts";
-import logger, { Logger } from "../src/logger.ts";
 import { cleanupAllTempFiles } from "../src/common/temp-file-tracker.ts";
-import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
+import { setupConsoleLogging, parseLogNamespaces, parseDebugOptions, parseCliOptions, applyCliOptions, CliOptions } from "./utils/cli-options.ts";
 import { registerSourceFile, report, withErrorHandling } from "../src/transpiler/error/errors.ts";
+import { globalLogger as logger, Logger } from "../src/logger.ts";
 
 function printHelp() {
-  // Unchanged
   console.error(
     "Usage: deno run -A cli/run.ts <target.hql|target.js> [options]",
   );
   console.error("\nOptions:");
   console.error("  --verbose         Enable verbose logging and enhanced error formatting");
+  console.error("  --time            Show performance timing information");
   console.error("  --quiet           Disable console.log output");
   console.error(
     "  --log <namespaces>  Filter logging to specified namespaces (e.g., --log parser,cli)",
   );
-  console.error("  --performance     Apply performance optimizations");
-  console.error("  --print           Print final JS output directly in CLI");
+  console.error("  --performance     Apply performance optimizations (minification)");
+  console.error("  --print           Print final JS output without executing");
   console.error("  --debug           Enable enhanced debugging and error reporting");
   console.error("  --no-clickable-paths  Disable clickable file paths in error messages");
   console.error("  --help, -h        Display this help message");
@@ -49,29 +72,30 @@ async function run() {
     Deno.exit(1);
   }
 
-  // Setup logging options (verbose & log namespaces).
-  const { verbose, logNamespaces } = setupLoggingOptions(args);
-  logger.setEnabled(verbose);
+  // Parse CLI options and apply to logger
+  const cliOptions = parseCliOptions(args);
+  applyCliOptions(cliOptions);
+
+  // Set up namespace filtering if specified
+  const logNamespaces = parseLogNamespaces(args);
   if (logNamespaces.length > 0) {
     Logger.allowedNamespaces = logNamespaces;
     console.log(
       `Logging restricted to namespaces: ${logNamespaces.join(", ")}`,
     );
   }
-
-  if (verbose) {
-    Deno.env.set("HQL_DEBUG", "1");
-    console.log("Verbose logging enabled");
-  }
   
   // Setup debug options for enhanced error reporting
-  const { debug } = setupDebugOptions(args);
+  const { debug } = parseDebugOptions(args);
   if (debug) {
     console.log("Debug mode enabled with enhanced error reporting");
   }
 
   const inputPath = resolve(nonOptionArgs[0]);
   logger.log({ text: `Processing entry: ${inputPath}`, namespace: "cli" });
+
+  // Start timing the overall process
+  logger.startTiming("run", "Total Processing");
 
   const tempDir = await Deno.makeTempDir({ prefix: "hql_run_" });
   logger.log({
@@ -83,9 +107,11 @@ async function run() {
   
   // Read input file for error context
   try {
+    logger.startTiming("run", "File Reading");
     source = await Deno.readTextFile(inputPath);
     // Register the source for enhanced error handling
     registerSourceFile(inputPath, source);
+    logger.endTiming("run", "File Reading");
   } catch (readError) {
     // Use the enhanced error reporter
     console.error(report(readError, { filePath: inputPath }));
@@ -101,7 +127,8 @@ async function run() {
       ? PERFORMANCE_MODE
       : { minify: false };
     const bundleOptions = { 
-      verbose, 
+      verbose: cliOptions.verbose, 
+      showTiming: false, // Disable timing in transpileCLI to avoid duplicate metrics
       tempDir, 
       ...optimizationOptions, 
       skipErrorReporting: true,
@@ -113,6 +140,7 @@ async function run() {
     const tempOutputPath = `${tempDir}/${fileName.replace(/\.hql$/, ".run.js")}`;
     
     // Transpile the code with error handling
+    logger.startTiming("run", "Transpilation");
     const bundledPath = await withErrorHandling(
       () => transpileCLI(inputPath, tempOutputPath, bundleOptions),
       { 
@@ -126,9 +154,12 @@ async function run() {
       console.error(report(error, { filePath: inputPath, source }));
       Deno.exit(1);
     });
+    logger.endTiming("run", "Transpilation");
     
     if (args.includes("--print")) {
+      logger.startTiming("run", "Read Output");
       const bundledContent = await Deno.readTextFile(bundledPath);
+      logger.endTiming("run", "Read Output");
       console.log(bundledContent);
     } else {
       logger.log({
@@ -136,10 +167,11 @@ async function run() {
         namespace: "cli",
       });
       
-      // Create a source map between transpiled and original code
+      // Read the transpiled code
       const transpiled = await Deno.readTextFile(bundledPath);
       
       // Run the code with error handling
+      logger.startTiming("run", "Execution");
       await withErrorHandling(
         async () => await import("file://" + resolve(bundledPath)),
         { 
@@ -158,7 +190,11 @@ async function run() {
         console.error(enhancedError);
         Deno.exit(1);
       });
+      logger.endTiming("run", "Execution");
     }
+
+    logger.endTiming("run", "Total Processing");
+    logger.logPerformance("run", inputPath.split("/").pop());
   } catch (error) {
     // Use enhanced error reporting
     console.error(report(error, { filePath: inputPath, source }));
@@ -203,36 +239,135 @@ if (import.meta.main) {
 // --- HQL CLI/Expression API ---
 
 /**
- * Evaluate an HQL expression and return the result (for CLI inline eval)
+ * Evaluate an HQL expression and return the result
+ * 
+ * @param expr - HQL expression to evaluate
+ * @param options - CLI options for processing
+ * @returns The result of the evaluation
  */
-export async function evaluateExpression(expr: string): Promise<any> {
+export async function evaluateExpression(expr: string, options: CliOptions = {}): Promise<any> {
   try {
-    // Register the source for error tracking
     registerSourceFile("REPL-CLI", expr);
     
+    // 1. Environment Init
+    logger.startTiming("expr-eval", "Environment Init");
     const env = new Environment();
-    const evaluator = new REPLEvaluator(env, { verbose: false });
-    const result = await evaluator.evaluate(expr);
-    // Print only the value (not the JS code)
-    return result.value;
-  } catch (e) {
-    // Use enhanced error handling
-    const enhancedError = report(e, { source: expr, filePath: "REPL-CLI" });
-    throw enhancedError;
+    env.initializeBuiltins();
+    logger.endTiming("expr-eval", "Environment Init");
+    
+    // 2. Parse
+    logger.startTiming("expr-eval", "Parse");
+    const sexps = parse(expr);
+    logger.endTiming("expr-eval", "Parse");
+    
+    // 3. Syntax Transform
+    logger.startTiming("expr-eval", "Syntax Transform");
+    const transformed = transformSyntax(sexps, { verbose: options.verbose });
+    logger.endTiming("expr-eval", "Syntax Transform");
+    
+    // 4. Macro Expansion
+    logger.startTiming("expr-eval", "Macro Expansion");
+    const expanded = expandMacros(transformed, env, { verbose: options.verbose });
+    logger.endTiming("expr-eval", "Macro Expansion");
+    
+    // 5. AST Conversion
+    logger.startTiming("expr-eval", "AST Conversion");
+    const ast = convertToHqlAst(expanded, { verbose: options.verbose });
+    logger.endTiming("expr-eval", "AST Conversion");
+    
+    // 6. Code Generation
+    logger.startTiming("expr-eval", "Code Generation");
+    const jsCode = await transformAST(ast, Deno.cwd(), { verbose: options.verbose, replMode: true });
+    logger.endTiming("expr-eval", "Code Generation");
+    
+    // 7. JS Evaluation
+    logger.startTiming("expr-eval", "JS Evaluation");
+    // eslint-disable-next-line no-eval
+    const result = eval(jsCode);
+    logger.endTiming("expr-eval", "JS Evaluation");
+    
+    return result;
+  } catch (error) {
+    console.error(report(error, { source: expr, filePath: "REPL-CLI" }));
+    throw error;
   }
 }
 
 /**
- * Run a HQL file (for CLI)
+ * Run an HQL file with specified options
  */
-export async function runHqlFile(filename: string): Promise<void> {
-  await run();
+export async function runHqlFile(filename: string, options: CliOptions = {}): Promise<void> {
+  // Apply options to the global logger
+  applyCliOptions(options);
+  
+  // Create a new version of args that includes our options
+  const newArgs = [filename];
+  if (options.verbose) newArgs.push("--verbose");
+  if (options.showTiming) newArgs.push("--time");
+  
+  // Create a custom run function that uses our args
+  const customRun = async () => {
+    // Store original args
+    const originalArgs = [...Deno.args];
+    
+    try {
+      // Temporarily replace args without modifying the readonly property
+      Object.defineProperty(Deno, "args", {
+        value: newArgs,
+        configurable: true
+      });
+      
+      // Run with our custom args
+      await run();
+    } finally {
+      // Restore original args
+      Object.defineProperty(Deno, "args", {
+        value: originalArgs,
+        configurable: true
+      });
+    }
+  };
+  
+  await customRun();
 }
 
 /**
- * Transpile a HQL file (for CLI)
+ * Transpile an HQL file to JavaScript
  */
-export async function transpileHqlFile(filename: string): Promise<void> {
+export async function transpileHqlFile(filename: string, options: CliOptions = {}): Promise<void> {
+  // Apply options to the global logger
+  applyCliOptions(options);
+  
+  // Import the transpile function
   const { transpile } = await import("./transpile.ts");
-  await transpile();
+  
+  // Create a custom transpile function that uses our options
+  const customTranspile = async () => {
+    // Create new args that include our options
+    const newArgs = [filename];
+    if (options.verbose) newArgs.push("--verbose");
+    if (options.showTiming) newArgs.push("--time");
+    
+    // Store original args
+    const originalArgs = [...Deno.args];
+    
+    try {
+      // Temporarily replace args without modifying the readonly property
+      Object.defineProperty(Deno, "args", {
+        value: newArgs,
+        configurable: true
+      });
+      
+      // Run transpile with our custom args
+      await transpile();
+    } finally {
+      // Restore original args
+      Object.defineProperty(Deno, "args", {
+        value: originalArgs,
+        configurable: true
+      });
+    }
+  };
+  
+  await customTranspile();
 }

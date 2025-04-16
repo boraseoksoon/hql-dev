@@ -2,7 +2,7 @@
 // Uses the enhanced src/repl/repl.ts implementation
 
 import { startRepl } from "./repl/repl.ts";
-import { setupConsoleLogging, setupLoggingOptions } from "../core/cli/utils/utils.ts";
+import { setupConsoleLogging, setupLoggingOptions } from "../core/cli/utils/cli-options.ts";
 import { Logger } from "@core/logger.ts";
 import logger from "@core/logger.ts";
 

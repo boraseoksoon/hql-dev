@@ -25,11 +25,13 @@ const ESBUILD_RETRY_DELAY_MS = 100;
 
 export interface BundleOptions {
   verbose?: boolean;
+  showTiming?: boolean;
   minify?: boolean;
   drop?: string[];
   tempDir?: string;
   sourceDir?: string;
   skipErrorReporting?: boolean;
+  skipErrorHandling?: boolean;
 }
 
 export function transpileCLI(
@@ -40,6 +42,16 @@ export function transpileCLI(
   return performAsync(async () => {
     const startTime = performance.now();
     
+    // Configure global logger based on options
+    if (options.verbose) {
+      logger.setEnabled(true);
+    }
+    
+    if (options.showTiming) {
+      logger.setTimingOptions({ showTiming: true });
+      logger.startTiming("transpile-cli", "Total");
+    }
+    
     // Skip logging if skipErrorReporting is set
     if (!options.skipErrorReporting) {
       logger.log({ text: `Processing entry: ${inputPath}`, namespace: "cli" });
@@ -48,19 +60,36 @@ export function transpileCLI(
     const resolvedInputPath = resolve(inputPath);
     const outPath = determineOutputPath(resolvedInputPath, outputPath);
     const sourceDir = dirname(resolvedInputPath);
+    
+    if (options.showTiming) {
+      logger.startTiming("transpile-cli", "Process Entry");
+    }
+    
     const processedPath = await processEntryFile(resolvedInputPath, outPath, {
       ...options,
       sourceDir,
     });
     
+    if (options.showTiming) {
+      logger.endTiming("transpile-cli", "Process Entry");
+    }
+    
     if (!options.skipErrorReporting) {
       logger.debug(`Entry file processed to: ${processedPath}`);
+    }
+    
+    if (options.showTiming) {
+      logger.startTiming("transpile-cli", "esbuild Bundling");
     }
     
     await bundleWithEsbuild(processedPath, outPath, {
       ...options,
       sourceDir,
     });
+    
+    if (options.showTiming) {
+      logger.endTiming("transpile-cli", "esbuild Bundling");
+    }
     
     const endTime = performance.now();
     
@@ -71,6 +100,11 @@ export function transpileCLI(
         }ms`,
         namespace: "cli"
       });
+    }
+    
+    if (options.showTiming) {
+      logger.endTiming("transpile-cli", "Total");
+      logger.logPerformance("transpile-cli", inputPath.split("/").pop());
     }
     
     return outPath;
