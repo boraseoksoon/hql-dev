@@ -14,7 +14,6 @@ import {
 import { exists } from "jsr:@std/fs@1.0.13";
 import { buildJsModule } from "./build_js_module.ts";
 import { incrementPatch, prompt } from "./utils.ts";
-import { getNextVersionInDir } from "./publish_common.ts";
 
 export async function publishNpm(options: {
   what: string;

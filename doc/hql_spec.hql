@@ -314,7 +314,6 @@
 (let user-name user-obj.name)
 
 ;; --- Multiple Property Access Patterns ---
-(let window-width window.innerWidth)
 (let array-length array.length)
 (let string-upper (message.toUpperCase))
 (let substring (message.substring 0 5))

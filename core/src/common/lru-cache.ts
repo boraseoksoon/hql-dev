@@ -38,7 +38,9 @@ export class LRUCache<K, V> {
     } // If we're at capacity, remove the oldest entry (first in iteration order)
     else if (this.cache.size >= this.maxSize) {
       const oldestKey = this.cache.keys().next().value;
-      this.cache.delete(oldestKey);
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+      }
     }
 
     // Add the new value (goes to the end of the Map's iteration order)

@@ -10,7 +10,9 @@ export async function cleanupDir(dir: string, logger: Logger): Promise<void> {
     await Deno.remove(dir, { recursive: true });
     logger.debug(`Cleaned up directory: ${dir}`);
   } catch (e) {
-    logger.error(`Error cleaning up ${dir}: ${e.message}`);
+    // Handle unknown error type with proper type checking
+    const error = e as Error;
+    logger.error(`Error cleaning up ${dir}: ${error.message}`);
   }
 }
 
@@ -32,7 +34,14 @@ export interface Platform {
   relative(from: string, to: string): string;
   realPathSync(path: string): string;
   execPath(): string;
-  runCmd(options: Deno.RunOptions): Deno.Process;
+  runCmd(options: { 
+    cmd: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+    stdin?: "piped" | "inherit" | "null";
+    stdout?: "piped" | "inherit" | "null";
+    stderr?: "piped" | "inherit" | "null";
+  }): Deno.ChildProcess;
   readDir(path: string): AsyncIterable<Deno.DirEntry>;
   makeTempDir(): Promise<string>;
   exit(code: number): never;
@@ -66,7 +75,24 @@ export const DenoPlatform: Platform = {
   relative: (from: string, to: string): string => stdPath.relative(from, to),
   realPathSync: (path: string): string => Deno.realPathSync(path),
   execPath: (): string => Deno.execPath(),
-  runCmd: (options: Deno.RunOptions): Deno.Process => Deno.run(options),
+  runCmd: (options: { 
+    cmd: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+    stdin?: "piped" | "inherit" | "null";
+    stdout?: "piped" | "inherit" | "null";
+    stderr?: "piped" | "inherit" | "null";
+  }): Deno.ChildProcess => {
+    const command = new Deno.Command(options.cmd[0], {
+      args: options.cmd.slice(1),
+      cwd: options.cwd,
+      env: options.env,
+      stdin: options.stdin,
+      stdout: options.stdout,
+      stderr: options.stderr,
+    });
+    return command.spawn();
+  },
   readDir: (path: string): AsyncIterable<Deno.DirEntry> => Deno.readDir(path),
   makeTempDir: async (): Promise<string> => await Deno.makeTempDir(),
   exit: (code: number): never => Deno.exit(code),

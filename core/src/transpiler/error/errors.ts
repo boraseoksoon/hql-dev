@@ -40,7 +40,7 @@ export class TranspilerError extends CommonError.TranspilerError {
     Object.setPrototypeOf(this, TranspilerError.prototype);
   }
   
-  static fromError(
+  static override fromError(
     error: Error,
     options: {
       source?: string;

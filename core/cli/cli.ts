@@ -1,41 +1,20 @@
-#!/usr/bin/env -S deno run --allow-read
-/*
-* HQL Command Line Interface (CLI)
-* =================================
-*
-* The HQL CLI provides a flexible interface for running, transpiling, and evaluating HQL code.
-*
-* ───────────────────────────────────────────────────────────────
-* SUPPORTED COMMANDS:
-*
-*   hql run <file>             Execute an HQL source file
-*   hql transpile <file>       Transpile HQL to JavaScript
-*   hql '<expr>'               Evaluate an inline HQL expression
-*
-* COMMON OPTIONS:
-*
-*   --help, -h                 Show usage & help
-*   --version                  Show CLI version
-*   --time                     Print performance metrics
-*   --verbose                  Enable detailed logging
-*   --log <namespaces>         Filter log output to specific namespaces
-*/
 import { runHqlFile } from "./run.ts";
-import { transpile } from "./transpile.ts";
-import { report, registerSourceFile } from "../src/common/common-errors.ts";
-import { parseCliOptions, applyCliOptions } from "./utils/cli-options.ts";
-import { globalLogger as logger } from "../src/logger.ts";
+import { parseCliOptions, CliOptions } from "./utils/cli-options.ts";
 
-const VERSION = "1.0.0"; // Update as needed
+// Version information
+const VERSION = "0.1.0";
 
+/**
+ * Print help information to the console
+ */
 function printHelp() {
   console.log(`
 HQL - Command Line Interface
 
 USAGE:
   hql run <file>            Execute an HQL source file
+  hql run '<expr>'          Evaluate an HQL expression
   hql transpile <file>      Transpile HQL to JavaScript
-  hql "<expr>"              Evaluate an HQL expression inline
 
 OPTIONS:
   --help, -h                Show this help message
@@ -47,83 +26,92 @@ OPTIONS:
 EXAMPLES:
   hql run hello.hql
   hql transpile hello.hql
-  hql "(+ 1 1)"             # prints: 2
-  hql "(+ 1 2)" --time      # prints: 3 with performance metrics
+  hql run '(+ 1 1)'         # prints: 2
+  hql run '(+ 1 2)' --time  # prints: 3 with performance metrics
 `);
 }
 
+/**
+ * Display version information
+ */
+function showVersion() {
+  console.log(`HQL CLI version ${VERSION}`);
+}
+
+/**
+ * Validate command and arguments, return target if valid
+ */
+function validateCommand(args: string[]): { command: string; target: string } {
+  const command = args[0];
+  const commandArgs = args.slice(1);
+  
+  // Only accept valid commands
+  if (command !== "run" && command !== "transpile") {
+    console.error(`Error: Unknown command '${command}'`);
+    printHelp();
+    Deno.exit(1);
+  }
+  
+  // Ensure a target is provided
+  if (commandArgs.length === 0) {
+    console.error(`Error: Missing target for '${command}' command`);
+    printHelp();
+    Deno.exit(1);
+  }
+  
+  return { command, target: commandArgs[0] };
+}
+
+/**
+ * Execute the run command
+ */
+async function executeRunCommand(target: string, options: CliOptions) {
+  await runHqlFile(target, options);
+}
+
+/**
+ * Execute the transpile command
+ */
+async function executeTranspileCommand(target: string, options: CliOptions) {
+  const { transpileHqlFile } = await import("./run.ts");
+  await transpileHqlFile(target, options);
+}
+
+/**
+ * Main CLI function
+ */
 async function main() {
   const args = Deno.args;
 
+  // Handle help flag
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     printHelp();
     Deno.exit(0);
   }
+
+  // Handle version flag
   if (args.includes("--version")) {
-    console.log(`hql ${VERSION}`);
+    showVersion();
     Deno.exit(0);
   }
 
-  // Parse CLI options (--verbose, --time)
+  // Parse CLI options
   const cliOptions = parseCliOptions(args);
-  applyCliOptions(cliOptions);
+  
+  // Validate command and get target
+  const { command, target } = validateCommand(args);
 
-  if (args[0] === "run" && args[1]) {
-    try {
-      await runHqlFile(args[1], cliOptions);
-    } catch (e) {
-      // Enhanced error reporting
-      console.error(report(e, { filePath: args[1] }));
-      Deno.exit(1);
+  try {
+    // Process command
+    if (command === "run") {
+      await executeRunCommand(target, cliOptions);
+    } else if (command === "transpile") {
+      await executeTranspileCommand(target, cliOptions);
     }
-    return;
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    Deno.exit(1);
   }
-
-  if (args[0] === "transpile") {
-    try {
-      await transpile();
-    } catch (e) {
-      // Enhanced error reporting
-      console.error(report(e, { filePath: "cli.ts" }));
-      Deno.exit(1);
-    }
-    return;
-  }
-
-  // Direct expression evaluation: hql "(+ 1 1)" [--time]
-  if ((args.length === 1 && args[0].startsWith("(")) || (args.length === 2 && args.some(a => a.startsWith("(") && !a.startsWith("--")))) {
-    // Find the expression argument
-    const exprArg = args.find(a => a.startsWith("(") && !a.startsWith("--"));
-    try {
-      // Register expression for error context
-      registerSourceFile("REPL-CLI", exprArg!);
-      
-      // Start timing the whole operation
-      logger.startTiming("expr-eval", "Total");
-      
-      const { evaluateExpression } = await import("./run.ts");
-      const result = await evaluateExpression(exprArg!, cliOptions);
-      
-      // End timing and log performance if enabled
-      logger.endTiming("expr-eval", "Total");
-      logger.logPerformance("expr-eval", "Expression Evaluation");
-      
-      // Print only the result
-      if (typeof result !== "undefined") {
-        console.log(result);
-      }
-    } catch (e) {
-      // Enhanced error reporting
-      console.error(report(e, { source: exprArg, filePath: "REPL-CLI" }));
-      Deno.exit(1);
-    }
-    return;
-  }
-
-  // Fallback: unknown command
-  console.error("Unknown command or invalid usage.\n");
-  printHelp();
-  Deno.exit(1);
 }
 
 if (import.meta.main) {

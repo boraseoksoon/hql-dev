@@ -6,8 +6,6 @@ import {
   getEnv,
   join,
   makeTempDir,
-  mkdir,
-  readTextFile,
   resolve,
   runCmd,
   writeTextFile,

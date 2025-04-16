@@ -59,10 +59,3 @@ export const bg = {
 export function colorize(text: string, color: string): string {
   return `${color}${text}${reset}`;
 }
-
-/**
- * Create a colorized helper for a specific color
- */
-export function createColorizer(color: string): (text: string) => string {
-  return (text: string) => colorize(text, color);
-} 
