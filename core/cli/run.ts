@@ -12,6 +12,12 @@ import { cleanupAllTempFiles } from "../src/common/temp-file-tracker.ts";
 import { setupConsoleLogging, setupLoggingOptions, setupDebugOptions } from "./utils/utils.ts";
 import { registerSourceFile, report, withErrorHandling } from "../src/transpiler/error/errors.ts";
 
+// Add interface for options
+interface RunOptions {
+  verbose?: boolean;
+  showTiming?: boolean;
+}
+
 function printHelp() {
   // Unchanged
   console.error(
@@ -26,6 +32,7 @@ function printHelp() {
   console.error("  --performance     Apply performance optimizations");
   console.error("  --print           Print final JS output directly in CLI");
   console.error("  --debug           Enable enhanced debugging and error reporting");
+  console.error("  --time            Show performance timing for each pipeline stage");
   console.error("  --no-clickable-paths  Disable clickable file paths in error messages");
   console.error("  --help, -h        Display this help message");
 }
@@ -49,9 +56,12 @@ async function run() {
     Deno.exit(1);
   }
 
+  // Check for timing flag
+  const showTiming = args.includes("--time");
+
   // Setup logging options (verbose & log namespaces).
   const { verbose, logNamespaces } = setupLoggingOptions(args);
-  logger.setEnabled(verbose);
+  logger.setEnabled(Boolean(verbose || showTiming)); // Enable logger if timing is requested
   if (logNamespaces.length > 0) {
     Logger.allowedNamespaces = logNamespaces;
     console.log(
@@ -101,11 +111,12 @@ async function run() {
       ? PERFORMANCE_MODE
       : { minify: false };
     const bundleOptions = { 
-      verbose, 
+      verbose: verbose || showTiming, // Enable verbose mode if timing is requested
       tempDir, 
       ...optimizationOptions, 
       skipErrorReporting: true,
-      skipErrorHandling: true
+      skipErrorHandling: true,
+      showTiming
     };
 
     // Run the module directly, with a single error handler
@@ -205,16 +216,23 @@ if (import.meta.main) {
 /**
  * Evaluate an HQL expression and return the result (for CLI inline eval)
  */
-export async function evaluateExpression(expr: string): Promise<any> {
+export async function evaluateExpression(expr: string, options: RunOptions = {}): Promise<any> {
   try {
     // Register the source for error tracking
     registerSourceFile("REPL-CLI", expr);
     
     const env = new Environment();
-    const evaluator = new REPLEvaluator(env, { verbose: false });
+    const evaluator = new REPLEvaluator(env, { 
+      verbose: options.verbose || options.showTiming || false,
+      showTiming: options.showTiming || false
+    });
     const result = await evaluator.evaluate(expr);
+    
+    // Debug the result object
+    console.log("DEBUG: Complete result object:", JSON.stringify(result));
+    
     // Print only the value (not the JS code)
-    return result.value;
+    return result;
   } catch (e) {
     // Use enhanced error handling
     const enhancedError = report(e, { source: expr, filePath: "REPL-CLI" });
@@ -225,14 +243,22 @@ export async function evaluateExpression(expr: string): Promise<any> {
 /**
  * Run a HQL file (for CLI)
  */
-export async function runHqlFile(filename: string): Promise<void> {
+export async function runHqlFile(filename: string, options: RunOptions = {}): Promise<void> {
+  // Add timing flag to Deno.args if needed
+  if (options.showTiming && !Deno.args.includes("--time")) {
+    Deno.args.push("--time");
+  }
   await run();
 }
 
 /**
  * Transpile a HQL file (for CLI)
  */
-export async function transpileHqlFile(filename: string): Promise<void> {
+export async function transpileHqlFile(filename: string, options: RunOptions = {}): Promise<void> {
+  // Add timing flag to Deno.args if needed
+  if (options.showTiming && !Deno.args.includes("--time")) {
+    Deno.args.push("--time");
+  }
   const { transpile } = await import("./transpile.ts");
-  await transpile();
+  await transpile(options);
 }

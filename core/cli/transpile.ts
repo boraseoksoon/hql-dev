@@ -9,6 +9,12 @@ import {
   registerExceptionTempFile,
 } from "../src/common/temp-file-tracker.ts";
 
+// Define the options interface
+interface TranspileOptions {
+  verbose?: boolean;
+  showTiming?: boolean;
+}
+
 function printHelp() {
   // Unchanged
   console.error(
@@ -18,13 +24,15 @@ function printHelp() {
   console.error("  --run             Run the compiled output");
   console.error("  --verbose, -v     Enable verbose logging and enhanced error formatting");
   console.error("  --print           Print final JS output directly in CLI");
+  console.error("  --time            Show performance metrics for each stage");
   console.error("  --help, -h        Display this help message");
   console.error("\nExamples:");
   console.error("  deno run -A cli/transpile.ts input.hql");
   console.error("  deno run -A cli/transpile.ts input.hql output.js");
+  console.error("  deno run -A cli/transpile.ts input.hql --time");
 }
 
-export async function transpile(): Promise<void> {
+export async function transpile(options: TranspileOptions = {}): Promise<void> {
   const args = Deno.args;
 
   // Set up common console logging.
@@ -37,7 +45,10 @@ export async function transpile(): Promise<void> {
 
   const inputPath = args[0];
   let outputPath: string | undefined = undefined;
-  let verbose = false;
+  
+  // Check for timing flag in args or options
+  const showTiming = args.includes("--time") || options.showTiming;
+  let verbose = options.verbose || false;
 
   if (args.length > 1 && !args[1].startsWith("--")) {
     outputPath = args[1];
@@ -46,12 +57,15 @@ export async function transpile(): Promise<void> {
 
   // Process common logging options.
   const loggingOptions = setupLoggingOptions(args);
-  verbose = loggingOptions.verbose;
+  verbose = loggingOptions.verbose || verbose;
 
   if (verbose) {
     Deno.env.set("HQL_DEBUG", "1");
     console.log("Verbose logging enabled");
   }
+  
+  // Enable logger if timing is requested
+  logger.setEnabled(Boolean(verbose || showTiming));
   
   let source: string;
   try {
@@ -67,8 +81,9 @@ export async function transpile(): Promise<void> {
     // Transpile the input with enhanced error handling
     const bundledPath = await withErrorHandling(
       () => transpileCLI(inputPath, outputPath, { 
-        verbose,
-        skipErrorReporting: true
+        verbose: verbose || showTiming, // Enable verbose mode if timing is requested
+        skipErrorReporting: true,
+        showTiming
       }),
       { 
         filePath: inputPath, 
