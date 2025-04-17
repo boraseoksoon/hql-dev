@@ -1,6 +1,5 @@
 // src/transpiler/hql-transpiler.ts - Refactored
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-import { sexpToString } from "../s-exp/types.ts";
 import { parse } from "./pipeline/parser.ts";
 import { Environment } from "../environment.ts";
 import { expandMacros } from "../s-exp/macro.ts";
@@ -109,7 +108,7 @@ export async function processHql(
     }
     
     // Handle the error with enhanced details
-    return handleProcessError(error, source, options, sourceFilename, logger);
+    return handleProcessError(error, options, logger);
   }
 }
 
@@ -185,33 +184,9 @@ function expandWithHandling(sexps: any[], env: Environment, options: ProcessOpti
   }
 }
 
-function logExpressions(label: string, sexps: any[], logger: Logger) {
-  const maxLog = 5;
-  logger.debug(`${label} ${sexps.length} expressions`);
-  sexps.slice(0, maxLog).forEach((s, i) => logger.debug(`${label} ${i + 1}: ${sexpToString(s)}`));
-  if (sexps.length > maxLog) logger.debug(`...and ${sexps.length - maxLog} more expressions`);
-}
-
-function logPerformance(timings: Map<string, number>, file: string, showTiming = false) {
-  if (!showTiming) return; // Only log if showTiming is true
-  
-  const total = Array.from(timings.values()).reduce((a, b) => a + b, 0);
-  console.log(`\n=== HQL Transpiler Performance Metrics ===`);
-  console.log(`File: ${file}`);
-  
-  for (const [label, time] of timings.entries()) {
-    console.log(`  ${label.padEnd(20)} ${time.toFixed(2)}ms (${((time / total) * 100).toFixed(1)}%)`);
-  }
-  
-  console.log(`  Total                ${total.toFixed(2)}ms`);
-  console.log(`==========================================\n`);
-}
-
 function handleProcessError(
   error: unknown,
-  source: string,
   options: ProcessOptions,
-  sourceFilename: string,
   logger: Logger,
 ): never {
   if (error instanceof Error) {
