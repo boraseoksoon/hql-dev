@@ -1,302 +1,248 @@
+#!/usr/bin/env deno run -A
+
 import { transpileCLI } from "../src/bundler.ts";
 import { resolve } from "../src/platform/platform.ts";
 import { cleanupAllTempFiles } from "../src/common/temp-file-tracker.ts";
-import { setupConsoleLogging, parseLogNamespaces, parseDebugOptions, parseCliOptions, applyCliOptions, CliOptions } from "./utils/cli-options.ts";
-import { registerSourceFile, report, withErrorHandling } from "../src/transpiler/error/errors.ts";
+import {
+  parseLogNamespaces,
+  parseCliOptions,
+  applyCliOptions,
+  CliOptions
+} from "./utils/cli-options.ts";
+import {
+  registerSourceFile,
+  withErrorHandling,
+  report
+} from "../src/transpiler/error/errors.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
 
-function printHelp() {
-  console.error(
-    "Usage: deno run -A cli/run.ts <target.hql|target.js> [options]",
-  );
-  console.error("       deno run -A cli/run.ts '<expression>' [options]");
-  console.error("\nOptions:");
-  console.error("  --verbose         Enable verbose logging and enhanced error formatting");
-  console.error("  --time            Show performance timing information");
-  console.error("  --quiet           Disable console.log output");
-  console.error(
-    "  --log <namespaces>  Filter logging to specified namespaces (e.g., --log parser,cli)",
-  );
-  console.error("  --performance     Apply performance optimizations (minification)");
-  console.error("  --print           Print final JS output without executing");
-  console.error("  --debug           Enable enhanced debugging and error reporting");
-  console.error("  --no-clickable-paths  Disable clickable file paths in error messages");
-  console.error("  --help, -h        Display this help message");
-}
-
 /**
- * Check if input appears to be an HQL expression rather than a file path
+ * Show help flags
  */
-function isExpression(input: string): boolean {
-  // If it starts with a parenthesis, it's likely an expression
-  if (input.trim().startsWith("(")) {
-    return true;
-  }
-  
-  // If it doesn't have an extension, it might be an expression
-  if (!input.includes(".")) {
-    return true;
-  }
-  
-  // Otherwise, assume it's a file path
-  return false;
-}
-
-/**
- * Create a temporary file containing an HQL expression
- */
-async function createExpressionFile(expr: string): Promise<string> {
-  const tempDir = await Deno.makeTempDir({ prefix: "hql_expr_" });
-  const tempFilePath = `${tempDir}/expression.hql`;
-  
-  await Deno.writeTextFile(tempFilePath, expr);
-  logger.log({
-    text: `Created temporary expression file: ${tempFilePath}`,
-    namespace: "cli",
-  });
-  
-  return tempFilePath;
-}
-
-// --- Modularized helpers ---
-
-function parseNonOptionArgs(args: string[]): string[] {
-  return args.filter((arg) => !arg.startsWith("--") && !arg.startsWith("-"));
-}
-
-function shouldPrintHelp(args: string[]): boolean {
+function shouldShowHelp(args: string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
 
-function setupLoggingAndDebug(args: string[]): void {
-  setupConsoleLogging(args);
-  const logNamespaces = parseLogNamespaces(args);
-  if (logNamespaces.length > 0) {
-    Logger.allowedNamespaces = logNamespaces;
-    console.log(`Logging restricted to namespaces: ${logNamespaces.join(", ")}`);
-  }
-  const { debug } = parseDebugOptions(args);
-  if (debug) {
-    console.log("Debug mode enabled with enhanced error reporting");
-  }
+/**
+ * Print CLI usage information
+ */
+function printHelp(): void {
+  console.error("Usage: deno run -A cli/run.ts <target.hql|target.js> [options]");
+  console.error("       deno run -A cli/run.ts '<expression>' [options]");
+  console.error("\nOptions:");
+  console.error("  --verbose             Enable verbose logging and enhanced error formatting");
+  console.error("  --time                Show performance timing information");
+
+  console.error("  --log <namespaces>      Filter logging to specified namespaces");
+
+  console.error("  --print               Print final JS output without executing");
+
+  console.error("  --help, -h            Display this help message");
 }
 
-async function getInputPath(nonOptionArg: string): Promise<{ inputPath: string; tempExpressionFile: string | null }> {
-  if (isExpression(nonOptionArg)) {
-    logger.log({ text: `Processing expression: ${nonOptionArg}`, namespace: "cli" });
-    const tempExpressionFile = await createExpressionFile(nonOptionArg);
-    return { inputPath: tempExpressionFile, tempExpressionFile };
-  } else {
-    const resolved = resolve(nonOptionArg);
-    logger.log({ text: `Processing file: ${resolved}`, namespace: "cli" });
-    return { inputPath: resolved, tempExpressionFile: null };
-  }
+/**
+ * Extract positional args (non-options)
+ */
+function parseNonOptionArgs(args: string[]): string[] {
+  return args.filter(arg => !arg.startsWith("-"));
 }
 
+/**
+ * Determine if input is inline expression
+ */
+function isExpression(input: string): boolean {
+  const t = input.trim();
+  return t.startsWith("(") || !t.includes(".");
+}
+
+/**
+ * Write inline expression to temp file
+ */
+async function createExpressionFile(expr: string): Promise<{ filePath: string; dir: string }> {
+  const dir = await Deno.makeTempDir({ prefix: "hql_expr_" });
+  const filePath = `${dir}/expression.hql`;
+  await Deno.writeTextFile(filePath, expr);
+  logger.log({ text: `Created temporary expression file: ${filePath}`, namespace: "cli" });
+  return { filePath, dir };
+}
+
+/**
+ * Resolve file path or create temp for expression
+ */
+async function getInputPath(arg: string): Promise<{ inputPath: string; exprDir?: string }> {
+  if (isExpression(arg)) {
+    logger.log({ text: `Processing expression: ${arg}`, namespace: "cli" });
+    const { filePath, dir } = await createExpressionFile(arg);
+    return { inputPath: filePath, exprDir: dir };
+  }
+  const resolved = resolve(arg);
+  logger.log({ text: `Processing file: ${resolved}`, namespace: "cli" });
+  return { inputPath: resolved };
+}
+
+/**
+ * Read source, register for errors
+ */
 async function readInputFile(inputPath: string): Promise<string> {
   logger.startTiming("run", "File Reading");
   try {
     const source = await Deno.readTextFile(inputPath);
     registerSourceFile(inputPath, source);
-    logger.endTiming("run", "File Reading");
     return source;
-  } catch (readError) {
-    console.error(report(readError, { filePath: inputPath }));
+  } catch (e) {
+    console.error(report(e, { filePath: inputPath }));
     Deno.exit(1);
+  } finally {
+    logger.endTiming("run", "File Reading");
   }
 }
 
-async function transpileAndMaybeRun({
-  args,
-  cliOptions,
-  inputPath,
-  source,
-  tempDir,
-}: {
-  args: string[];
-  cliOptions: CliOptions;
-  inputPath: string;
-  source: string;
-  tempDir: string;
-}): Promise<void> {
-  const PERFORMANCE_MODE = {
-    minify: true,
-    drop: ["console", "debugger"],
-  };
+/**
+ * Cleanup expression and run temp directories and all registered files
+ */
+async function cleanupTempFiles(exprDir: string | undefined, runDir: string): Promise<void> {
+  if (exprDir) {
+    try {
+      await Deno.remove(exprDir, { recursive: true });
+    } catch { /* ignore */ }
+  }
+  try {
+    await Deno.remove(runDir, { recursive: true });
+  } catch { /* ignore */ }
+  try {
+    await cleanupAllTempFiles();
+  } catch { /* ignore */ }
+}
 
-  const optimizationOptions = args.includes("--performance")
-    ? PERFORMANCE_MODE
+/**
+ * Override Deno.args for internal consumers
+ */
+async function withTemporaryDenoArgs<T>(newArgs: string[], fn: () => Promise<T>): Promise<T> {
+  const orig = [...Deno.args];
+  Object.defineProperty(Deno, "args", { value: newArgs, configurable: true });
+  try {
+    return await fn();
+  } finally {
+    Object.defineProperty(Deno, "args", { value: orig, configurable: true });
+  }
+}
+
+/**
+ * Core transpile + run logic
+ */
+async function transpileAndExecute(
+  args: string[], options: CliOptions, inputPath: string,
+  source: string, runDir: string
+): Promise<void> {
+  const perf = args.includes("--performance")
+    ? { minify: true, drop: ["console", "debugger"] }
     : { minify: false };
 
-  const bundleOptions = {
-    verbose: cliOptions.verbose,
+  const bundleOpts = {
+    verbose: options.verbose,
     showTiming: false,
-    tempDir,
-    ...optimizationOptions,
+    tempDir: runDir,
     skipErrorReporting: true,
     skipErrorHandling: true,
+    ...perf
   };
 
-  const fileName = inputPath.split("/").pop() || "output";
-
-  const tempOutputPath = `${tempDir}/${fileName.replace(/\.hql$/, ".run.js")}`;
+  const name = inputPath.split("/").pop() || "output";
+  const outPath = `${runDir}/${name.replace(/\.hql$/, ".run.js")}`;
 
   logger.startTiming("run", "Transpilation");
-
-  const bundledPath = await withErrorHandling(
-    () => transpileCLI(inputPath, tempOutputPath, bundleOptions),
-    {
-      filePath: inputPath,
-      source,
-      context: "transpilation",
-      logErrors: false,
-    },
-  )().catch((error) => {
-    console.error(report(error, { filePath: inputPath, source }));
+  const bundled = await withErrorHandling(
+    () => transpileCLI(inputPath, outPath, bundleOpts),
+    { filePath: inputPath, source, context: "transpilation", logErrors: false }
+  )().catch(err => {
+    console.error(report(err, { filePath: inputPath, source }));
     Deno.exit(1);
   });
-
   logger.endTiming("run", "Transpilation");
 
   if (args.includes("--print")) {
     logger.startTiming("run", "Read Output");
-
-    const bundledContent = await Deno.readTextFile(bundledPath);
-
+    console.log(await Deno.readTextFile(bundled));
     logger.endTiming("run", "Read Output");
-
-    console.log(bundledContent);
   } else {
-    logger.log({ text: `Running bundled output: ${bundledPath}`, namespace: "cli" });
-
+    logger.log({ text: `Running bundled output: ${bundled}`, namespace: "cli" });
     logger.startTiming("run", "Execution");
-
     await withErrorHandling(
-      async () => await import("file://" + resolve(bundledPath)),
-      {
-        filePath: inputPath,
-        source,
-        context: "execution",
-        logErrors: false,
-      },
-    )().catch((error: unknown) => {
-      const enhancedError = report(error, { filePath: inputPath, source });
-
-      console.error(enhancedError);
-
+      () => import("file://" + resolve(bundled)),
+      { filePath: inputPath, source, context: "execution", logErrors: false }
+    )().catch(err => {
+      console.error(report(err, { filePath: inputPath, source }));
       Deno.exit(1);
     });
-
     logger.endTiming("run", "Execution");
   }
 
   logger.endTiming("run", "Total Processing");
-
-  logger.logPerformance("run", inputPath.split("/").pop());
-}
-
-
-async function cleanupTempFiles({ tempExpressionFile, tempDir }: { tempExpressionFile: string | null; tempDir: string }) {
-  if (tempExpressionFile) {
-    try {
-      const tempExprDir = tempExpressionFile.substring(0, tempExpressionFile.lastIndexOf("/"));
-      await Deno.remove(tempExprDir, { recursive: true });
-      logger.log({ text: `Cleaned up temporary expression directory: ${tempExprDir}`, namespace: "cli" });
-    } catch (e) {
-      logger.log({ text: `Error cleaning up temporary expression directory: ${e instanceof Error ? e.message : String(e)}`, namespace: "cli" });
-    }
-  }
-  try {
-    await Deno.remove(tempDir, { recursive: true });
-    logger.log({ text: `Cleaned up temporary directory: ${tempDir}`, namespace: "cli" });
-  } catch (e) {
-    logger.log({ text: `Error cleaning up temporary directory: ${e instanceof Error ? e.message : String(e)}`, namespace: "cli" });
-  }
-  try {
-    await cleanupAllTempFiles();
-    logger.log({ text: "Cleaned up all registered temporary files", namespace: "cli" });
-  } catch (e) {
-    logger.log({ text: `Error cleaning up temporary files: ${e instanceof Error ? e.message : String(e)}`, namespace: "cli" });
-  }
+  logger.logPerformance("run", name);
 }
 
 /**
- * Run an HQL file with specified options
+ * Programmatic run API
  */
-/**
- * Temporarily override Deno.args for the duration of the callback.
- * This is necessary because Deno.args is read-only and downstream code relies on it for CLI processing.
- * DO NOT REMOVE unless you refactor all CLI consumers to accept arguments directly.
- */
-async function withTemporaryDenoArgs<T>(newArgs: string[], fn: () => Promise<T>): Promise<T> {
-  const originalArgs = [...Deno.args];
-  try {
-    Object.defineProperty(Deno, "args", {
-      value: newArgs,
-      configurable: true
-    });
-    return await fn();
-  } finally {
-    Object.defineProperty(Deno, "args", {
-      value: originalArgs,
-      configurable: true
-    });
-  }
-}
-
-export async function runHqlFile(filename: string, options: CliOptions = {}): Promise<void> {
+export async function runHqlFile(
+  filename: string, options: CliOptions = {}
+): Promise<void> {
   applyCliOptions(options);
-  const newArgs = [filename];
-  if (options.verbose) newArgs.push("--verbose");
-  if (options.showTiming) newArgs.push("--time");
-  await withTemporaryDenoArgs(newArgs, async () => {
-    await run();
-  });
+  const args = [filename, ...(options.verbose ? ["--verbose"] : []), ...(options.showTiming ? ["--time"] : [])];
+  await withTemporaryDenoArgs(args, async () => { await run(); });
 }
 
-
 /**
- * Transpile an HQL file to JavaScript
+ * Programmatic transpile API
  */
-export async function transpileHqlFile(filename: string, options: CliOptions = {}): Promise<void> {
+export async function transpileHqlFile(
+  filename: string, options: CliOptions = {}
+): Promise<void> {
   applyCliOptions(options);
   const { transpile } = await import("./transpile.ts");
-  const newArgs = [filename];
-  if (options.verbose) newArgs.push("--verbose");
-  if (options.showTiming) newArgs.push("--time");
-  await withTemporaryDenoArgs(newArgs, async () => {
-    await transpile();
-  });
+  const args = [filename, ...(options.verbose ? ["--verbose"] : []), ...(options.showTiming ? ["--time"] : [])];
+  await withTemporaryDenoArgs(args, async () => { await transpile(); });
 }
 
-// --- Main orchestrator ---
-
-async function run() {
+/**
+ * Main CLI entry point
+ */
+async function run(): Promise<void> {
   const args = Deno.args;
-  if (shouldPrintHelp(args)) {
+  if (shouldShowHelp(args)) {
     printHelp();
     Deno.exit(0);
   }
-  setupLoggingAndDebug(args);
-  const nonOptionArgs = parseNonOptionArgs(args);
-  if (nonOptionArgs.length < 1) {
+
+  // Handle log namespaces directly
+  const namespaces = parseLogNamespaces(args);
+  if (namespaces.length) {
+    Logger.allowedNamespaces = namespaces;
+    console.log(`Logging restricted to namespaces: ${namespaces.join(", ")}`);
+  }
+
+  const positional = parseNonOptionArgs(args);
+  if (!positional.length) {
     printHelp();
     Deno.exit(1);
   }
   const cliOptions = parseCliOptions(args);
   applyCliOptions(cliOptions);
-  const { inputPath, tempExpressionFile } = await getInputPath(nonOptionArgs[0]);
+
+  const { inputPath, exprDir } = await getInputPath(positional[0]);
   logger.startTiming("run", "Total Processing");
-  const tempDir = await Deno.makeTempDir({ prefix: "hql_run_" });
-  logger.log({ text: `Created temporary directory: ${tempDir}`, namespace: "cli" });
+
+  const runDir = await Deno.makeTempDir({ prefix: "hql_run_" });
+  logger.log({ text: `Created temporary directory: ${runDir}`, namespace: "cli" });
+
   const source = await readInputFile(inputPath);
   try {
-    await transpileAndMaybeRun({ args, cliOptions, inputPath, source, tempDir });
+    await transpileAndExecute(args, cliOptions, inputPath, source, runDir);
   } catch (error) {
     console.error(report(error, { filePath: inputPath, source }));
     Deno.exit(1);
   } finally {
-    await cleanupTempFiles({ tempExpressionFile, tempDir });
+    await cleanupTempFiles(exprDir, runDir);
   }
 }
 

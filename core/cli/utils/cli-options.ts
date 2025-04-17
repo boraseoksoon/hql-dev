@@ -60,30 +60,7 @@ export function parseLogNamespaces(args: string[]): string[] {
   );
 }
 
-/**
- * Parse debug flags like --debug and --no-clickable-paths
- */
-export function parseDebugOptions(args: string[]): { 
-  debug: boolean;
-  clickablePaths: boolean;
-} {
-  return {
-    debug: args.includes("--debug"),
-    clickablePaths: !args.includes("--no-clickable-paths")
-  };
-}
 
-/**
- * Disable console output when --quiet is present or in production environment
- */
-export function setupConsoleLogging(args: string[]): void {
-  const quiet = args.includes("--quiet");
-  const isProduction = Deno.env.get("ENV") === "production";
-  
-  if (quiet || isProduction) {
-    console.log = () => {};
-  }
-}
 
 /**
  * Setup common logging options such as verbose mode and log namespaces.

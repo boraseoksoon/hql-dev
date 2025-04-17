@@ -1,152 +1,179 @@
+#!/usr/bin/env deno run -A
+
 import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI } from "../src/bundler.ts";
-import { globalLogger as logger } from "../src/logger.ts";
-import { setupConsoleLogging } from "./utils/cli-options.ts";
+import { globalLogger as logger, Logger } from "../src/logger.ts";
+import { parseCliOptions, applyCliOptions, CliOptions } from "./utils/cli-options.ts";
 import { report, withErrorHandling, registerSourceFile } from "../src/common/common-errors.ts";
-import { parseCliOptions, applyCliOptions } from "./utils/cli-options.ts";
-import {
-  cleanupAllTempFiles,
-  registerExceptionTempFile,
-} from "../src/common/temp-file-tracker.ts";
+import { cleanupAllTempFiles, registerExceptionTempFile } from "../src/common/temp-file-tracker.ts";
 
-function printHelp() {
-  console.error(
-    "Usage: deno run -A cli/transpile.ts <input.hql|input.js> [output.js] [options]",
-  );
-  console.error("\nOptions:");
-  console.error("  --run             Run the compiled output");
-  console.error("  --verbose, -v     Enable verbose logging");
-  console.error("  --time            Show performance timing information");
-  console.error("  --print           Print final JS output without saving to file");
-  console.error("  --help, -h        Display this help message");
-  console.error("\nExamples:");
-  console.error("  deno run -A cli/transpile.ts input.hql");
-  console.error("  deno run -A cli/transpile.ts input.hql output.js");
-  console.error("  deno run -A cli/transpile.ts input.hql --run --time");
+/**
+ * Utility to time async phases and log durations
+ */
+async function timed<T>(
+  category: string,
+  label: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  logger.startTiming(category, label);
+  try {
+    return await fn();
+  } finally {
+    logger.endTiming(category, label);
+  }
 }
 
-// --- Modularized helpers for transpile CLI ---
+/**
+ * Display CLI usage
+ */
+function printHelp(): void {
+  console.error(
+    `Usage: deno run -A cli/transpile.ts <input.hql|input.js> [output.js] [options]`
+  );
+  console.error("\nOptions:");
+  console.error("  --run             Execute the transpiled output");
+  console.error("  --verbose, -v     Enable verbose logging");
+  console.error("  --time            Show timing for each phase");
+  console.error("  --print           Print JS to stdout instead of writing to file");
+  console.error("  --help, -h        Show this help message");
+  console.error("\nExamples:");
+  console.error("  deno run -A cli/transpile.ts src/file.hql");
+  console.error("  deno run -A cli/transpile.ts src/file.hql dist/file.js --time");
+  console.error("  deno run -A cli/transpile.ts src/file.hql --print --run");
+}
 
-function parseTranspileArgs(args: string[]) {
-  const inputPath = args[0];
-  let outputPath: string | undefined = undefined;
-  if (args.length > 1 && !args[1].startsWith("--")) {
-    outputPath = args[1];
+/**
+ * Parse positional args: input and optional output
+ */
+function parsePaths(
+  args: string[]
+): { inputPath: string; outputPath?: string } {
+  const [inputPath, maybeOutput] = args;
+  if (!inputPath) {
+    printHelp();
+    Deno.exit(1);
+  }
+  let outputPath: string | undefined;
+  if (maybeOutput && !maybeOutput.startsWith("--")) {
+    outputPath = maybeOutput;
     registerExceptionTempFile(outputPath);
   }
   return { inputPath, outputPath };
 }
 
-async function readTranspileInputFile(inputPath: string): Promise<string> {
-  logger.startTiming("transpile", "File Reading");
-  try {
-    const source = await Deno.readTextFile(inputPath);
-    registerSourceFile(inputPath, source);
-    logger.endTiming("transpile", "File Reading");
-    return source;
-  } catch (readError) {
-    console.error(report(readError, { filePath: inputPath }));
-    Deno.exit(1);
-  }
-}
-
-async function transpileInputWithHandling(inputPath: string, outputPath: string | undefined, cliOptions: any, source: string): Promise<string> {
-  logger.startTiming("transpile", "Transpilation");
-  const bundledPath = await withErrorHandling(
-    () => transpileCLI(inputPath, outputPath, {
-      verbose: cliOptions.verbose,
-      showTiming: cliOptions.showTiming,
-      skipErrorReporting: true,
-    }),
-    {
-      filePath: inputPath,
-      source,
-      context: "CLI transpilation",
-      logErrors: false,
-    },
-  )().catch((error) => {
-    console.error(report(error, { filePath: inputPath, source }));
-    Deno.exit(1);
+/**
+ * Read and register source for better error reporting
+ */
+function loadSource(inputPath: string): Promise<string> {
+  return timed("transpile", "File Read", async () => {
+    try {
+      const src = await Deno.readTextFile(inputPath);
+      registerSourceFile(inputPath, src);
+      return src;
+    } catch (err) {
+      console.error(report(err, { filePath: inputPath }));
+      Deno.exit(1);
+    }
   });
-  logger.endTiming("transpile", "Transpilation");
-  return bundledPath;
 }
 
-async function printBundledOutput(bundledPath: string) {
-  try {
-    logger.startTiming("transpile", "Read Output");
-    const finalOutput = await Deno.readTextFile(bundledPath);
-    logger.endTiming("transpile", "Read Output");
-    console.log(finalOutput);
-  } catch (error) {
-    console.error(report(error, { filePath: bundledPath }));
-    Deno.exit(1);
-  }
+/**
+ * Invoke transpiler with error handling
+ */
+function transpile(
+  inputPath: string,
+  outputPath: string | undefined,
+  opts: CliOptions
+): Promise<string> {
+  return timed("transpile", "Compile", async () => {
+    const bundled = await withErrorHandling(
+      () => transpileCLI(inputPath, outputPath, {
+        verbose: opts.verbose,
+        showTiming: opts.showTiming,
+        skipErrorReporting: true
+      }),
+      { filePath: inputPath, source: '', context: 'CLI transpile', logErrors: false }
+    )().catch(err => {
+      console.error(report(err, { filePath: inputPath, source: '' }));
+      Deno.exit(1);
+    });
+    return bundled;
+  });
 }
 
-async function runBundledOutput(bundledPath: string, inputPath: string, source: string) {
-  console.log(`Running bundled output: ${bundledPath}`);
-  try {
-    logger.startTiming("transpile", "Execution");
-    await import("file://" + resolve(bundledPath));
-    logger.endTiming("transpile", "Execution");
-  } catch (error) {
-    console.error(report(error, {
-      filePath: inputPath,
-      source,
-    }));
-    Deno.exit(1);
-  }
+/**
+ * Print bundled JS content
+ */
+function printJS(bundledPath: string): Promise<void> {
+  return timed("transpile", "Output Read", async () => {
+    try {
+      const content = await Deno.readTextFile(bundledPath);
+      console.log(content);
+    } catch (err) {
+      console.error(report(err, { filePath: bundledPath }));
+      Deno.exit(1);
+    }
+  });
 }
 
-async function cleanupTranspileTempFiles() {
-  await cleanupAllTempFiles();
-  logger.debug("Cleaned up all registered temporary files");
+/**
+ * Dynamically import and execute the JS file
+ */
+function runJS(
+  bundledPath: string,
+  inputPath: string,
+  source: string
+): Promise<void> {
+  console.log(`Running: ${bundledPath}`);
+  return timed("transpile", "Execute", async () => {
+    try {
+      await import("file://" + resolve(bundledPath));
+    } catch (err) {
+      console.error(report(err, { filePath: inputPath, source }));
+      Deno.exit(1);
+    }
+  });
 }
 
-// --- Main orchestrator ---
+/**
+ * Clean up all temp files
+ */
+function cleanup(): Promise<void> {
+  return cleanupAllTempFiles().then(() => {
+    logger.debug("All temporary files cleaned up");
+  });
+}
 
-export async function transpile(): Promise<void> {
+/**
+ * Entry point
+ */
+export async function main(): Promise<void> {
   const args = Deno.args;
 
-  setupConsoleLogging(args);
 
-  if (args.length < 1 || args.includes("--help") || args.includes("-h")) {
+  if (!args.length || args.includes("--help") || args.includes("-h")) {
     printHelp();
-    Deno.exit(1);
+    Deno.exit(args.length ? 1 : 0);
   }
 
-  const { inputPath, outputPath } = parseTranspileArgs(args);
+  const { inputPath, outputPath } = parsePaths(args);
+  const opts = parseCliOptions(args);
+  applyCliOptions(opts);
 
-  const cliOptions = parseCliOptions(args);
-  applyCliOptions(cliOptions);
+  const source = await loadSource(inputPath);
+  const bundledPath = await transpile(inputPath, outputPath, opts);
 
-  logger.startTiming("transpile", "Total");
-
-  let source: string;
-  try {
-    source = await readTranspileInputFile(inputPath);
-
-    const bundledPath = await transpileInputWithHandling(inputPath, outputPath, cliOptions, source);
-
-    if (args.includes("--print")) {
-      await printBundledOutput(bundledPath);
-    }
-
-    if (args.includes("--run")) {
-      await runBundledOutput(bundledPath, inputPath, source);
-    }
-
-    logger.endTiming("transpile", "Total");
-    logger.logPerformance("transpile", inputPath.split("/").pop());
-
-    await cleanupTranspileTempFiles();
-  } catch (error) {
-    console.error(report(error, { filePath: inputPath, source: source! }));
-    Deno.exit(1);
+  if (args.includes("--print")) {
+    await printJS(bundledPath);
   }
+  if (args.includes("--run")) {
+    await runJS(bundledPath, inputPath, source);
+  }
+
+  logger.logPerformance("transpile", inputPath.split("/").pop()!);
+  await cleanup();
 }
 
 if (import.meta.main) {
-  transpile();
+  main();
 }

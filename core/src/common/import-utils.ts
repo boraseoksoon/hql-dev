@@ -1,9 +1,7 @@
 // src/utils/import-utils.ts - Centralized import utilities to improve code organization
-import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { HQLNode, isImportNode } from "../transpiler/type/hql_ast.ts";
 import { Environment } from "../environment.ts";
 import { Logger } from "../logger.ts";
-import { ImportError } from "../transpiler/error/errors.ts";
 /**
  * Registry to track import sources and their modules
  * This is used across the codebase to resolve module paths
@@ -124,92 +122,6 @@ export function isModuleExternal(
     logger.debug(`Error checking module ${moduleName}, assuming external`);
     return true;
   }
-}
-
-/**
- * Resolve a module path trying multiple strategies in parallel
- * Returns a resolved path or throws an error if resolution fails
- */
-export async function resolveModulePath(
-  modulePath: string,
-  currentDir: string,
-  sourceDir: string | undefined,
-  logger: Logger,
-): Promise<string> {
-  logger.debug(`Resolving module path: ${modulePath}`);
-
-  // If it's a remote module, no need to resolve
-  if (isRemoteModule(modulePath)) {
-    return modulePath;
-  }
-
-  // Create resolution strategies
-  const strategies = [
-    // Strategy 1: Resolve relative to current directory
-    {
-      name: "relative to current dir",
-      path: path.resolve(currentDir, modulePath),
-      check: async (p: string) => {
-        try {
-          await Deno.stat(p);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-    },
-    // Strategy 2: Resolve relative to source directory
-    {
-      name: "relative to source dir",
-      path: sourceDir ? path.resolve(sourceDir, modulePath) : modulePath,
-      check: async (p: string) => {
-        if (!sourceDir) return false;
-        try {
-          await Deno.stat(p);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-    },
-    // Strategy 3: Resolve relative to CWD
-    {
-      name: "relative to CWD",
-      path: path.resolve(Deno.cwd(), modulePath),
-      check: async (p: string) => {
-        try {
-          await Deno.stat(p);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-    },
-  ];
-
-  // Try all strategies in parallel
-  const results = await Promise.all(
-    strategies.map(async (strategy) => ({
-      name: strategy.name,
-      path: strategy.path,
-      exists: await strategy.check(strategy.path),
-    })),
-  );
-
-  // Find the first successful resolution
-  const success = results.find((result) => result.exists);
-  if (success) {
-    logger.debug(`Resolved ${modulePath} to ${success.path} (${success.name})`);
-    return success.path;
-  }
-
-  // If all strategies fail, throw an error
-  const tried = results.map((r) => r.path).join(", ");
-  throw new ImportError(
-    `Could not resolve module path: ${modulePath}. Tried: ${tried}`,
-    modulePath,
-    currentDir,
-  );
 }
 
 /**
