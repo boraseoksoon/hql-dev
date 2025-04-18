@@ -6,6 +6,7 @@ npm/
 dist/
 build/
 npm/        # if you output an npm package folder via dnt
+bin/
 
 # Log files
 *.log

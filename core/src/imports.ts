@@ -6,6 +6,7 @@ import { Environment, Value } from "./environment.ts";
 import { defineUserMacro, evaluateForMacro } from "./s-exp/macro.ts";
 import { parse } from "./transpiler/pipeline/parser.ts";
 import { checkForHqlImports } from "./bundler.ts";
+import { readFile } from "./common/utils.ts";
 import {
   processJavaScriptFile,
   getImportMapping,
@@ -37,7 +38,6 @@ import {
   wrapError, 
   formatErrorMessage 
 } from "./common/common-utils.ts";
-import { readFile } from "./common/utils.ts";
 export interface ImportProcessorOptions {
   verbose?: boolean;
   baseDir?: string;
@@ -61,7 +61,8 @@ export async function processImports(
   env: Environment,
   options: ImportProcessorOptions = {},
 ): Promise<void> {
-  const baseDir = options.baseDir || Deno.cwd();
+  // Always resolve baseDir relative to this file if not explicitly provided
+const baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../');
   const previousCurrentFile = env.getCurrentFile();
   const processedFiles = options.processedFiles || new Set<string>();
   const inProgressFiles = options.inProgressFiles || new Set<string>();

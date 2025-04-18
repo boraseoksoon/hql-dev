@@ -140,7 +140,8 @@ export class MacroRegistry {
 
   private resolveFullPath(filePath: string): string {
     try {
-      return filePath.startsWith("/") ? filePath : path.resolve(Deno.cwd(), filePath);
+      // Always resolve relative to macro-registry.ts location, not CWD
+return filePath.startsWith("/") ? filePath : path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), filePath);
     } catch {
       return filePath;
     }

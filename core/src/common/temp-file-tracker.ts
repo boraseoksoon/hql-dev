@@ -1,10 +1,10 @@
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import { dirname, fromFileUrl } from "https://deno.land/std@0.224.0/path/mod.ts";
 import { 
   exists, 
   readTextFile, 
   writeTextFile, 
   ensureDir, 
-  dirname, 
   join, 
   basename,
   relative
@@ -69,7 +69,9 @@ export function getImportMapping(original: string): string | undefined {
  * Get the cache directory path
  */
 export async function getCacheDir(): Promise<string> {
-  const cacheRoot = join(Deno.cwd(), HQL_CACHE_DIR, CACHE_VERSION);
+  // Always resolve cache dir relative to the project root, not CWD
+  const projectRoot = join(dirname(fromFileUrl(import.meta.url)), '../../..');
+  const cacheRoot = join(projectRoot, HQL_CACHE_DIR, CACHE_VERSION);
   await ensureDir(cacheRoot);
   return cacheRoot;
 }

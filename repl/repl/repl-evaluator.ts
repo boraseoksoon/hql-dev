@@ -76,7 +76,8 @@ export class REPLEvaluator {
     this.replEnv = new REPLEnvironment(env, { verbose: options.verbose });
     this.logger = logger;
     this.logger.setEnabled(!!options.verbose);
-    this.baseDir = options.baseDir || Deno.cwd();
+    // Always resolve baseDir relative to the REPL evaluator file if not provided
+this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../');
     
     // Initialize runtime functions immediately
     this.initializeRuntimeFunctions();

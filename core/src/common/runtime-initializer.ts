@@ -8,6 +8,7 @@
 import { globalLogger as logger } from "../logger.ts";
 import { exists, join } from "../platform/platform.ts";
 import { processHqlFile, copyNeighborFiles } from "./temp-file-tracker.ts";
+import { dirname, fromFileUrl } from "https://deno.land/std@0.224.0/path/mod.ts";
 
 // Runtime component initialization states
 interface InitializationState {
@@ -108,10 +109,11 @@ class HqlRuntimeInitializer {
     let stdlibSource = '';
     
     // Try to find stdlib in various locations
+    const macroRegistryDir = dirname(fromFileUrl(import.meta.url));
     const possibleLocations = [
-      join(Deno.cwd(), "lib", "stdlib", "stdlib.hql"),
-      join(Deno.cwd(), "core", "lib", "stdlib", "stdlib.hql"),
-      join(Deno.cwd(), "..", "lib", "stdlib", "stdlib.hql")
+      join(macroRegistryDir, '../../lib/stdlib/stdlib.hql'),
+      join(macroRegistryDir, '../../../lib/stdlib/stdlib.hql'),
+      join(macroRegistryDir, '../../../core/lib/stdlib/stdlib.hql')
     ];
     
     for (const location of possibleLocations) {

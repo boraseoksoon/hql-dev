@@ -38,7 +38,7 @@ HQL uses a modern caching system to optimize the transpilation process:
 
 - `--force`: Force regeneration of all files, ignoring cache
 - `--cache-info`: Show information about the cache
-- Run `deno run -A cli/clean-cache.ts` to clean the cache directory
+- Run `deno run -A cli/clean-cache.ts --force` to clean the cache directory without confirmation
 
 ---
 
@@ -54,7 +54,7 @@ deno run -A cli/transpile.ts path/to/file.hql [output.js]
 deno run -A cli/run.ts path/to/file.hql
 
 # Clean the cache
-deno run -A cli/clean-cache.ts
+deno run -A cli/clean-cache.ts --force
 ```
 
 ### Options

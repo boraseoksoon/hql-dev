@@ -38,7 +38,8 @@ export interface ReplOptions {
 export async function startRepl(options: ReplOptions = {}): Promise<void> {
   console.log("Starting HQL REPL...");
   
-  const baseDir = options.baseDir ?? Deno.cwd();
+  // Always resolve baseDir relative to the REPL core file if not provided
+const baseDir = options.baseDir ?? path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../');
   const useColors = options.useColors ?? true;
   const historySize = options.historySize ?? 100;
   const enableCompletion = options.enableCompletion ?? true;

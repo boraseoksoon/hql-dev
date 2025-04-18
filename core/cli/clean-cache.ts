@@ -5,9 +5,9 @@ import { parse } from "https://deno.land/std@0.170.0/flags/mod.ts";
 
 // Parse command line arguments
 const flags = parse(Deno.args, {
-  boolean: ["help", "stats", "force", "h"],
+  boolean: ["help", "stats", "force", "h", "y"],
   string: ["age"],
-  alias: { h: "help" },
+  alias: { h: "help", y: "force" },
 });
 
 if (flags.help || flags.h) {
@@ -15,7 +15,7 @@ if (flags.help || flags.h) {
   console.log("\nOptions:");
   console.log("  --stats         Show cache statistics without cleaning");
   console.log("  --age <days>    Only clear cache entries older than specified days");
-  console.log("  --force         Force clean without confirmation");
+  console.log("  --force, -y     Force clean without confirmation");
   console.log("  --help, -h      Show this help message");
   console.log("\nExamples:");
   console.log("  deno run -A core/cli/clean-cache.ts              # Clean cache with confirmation");

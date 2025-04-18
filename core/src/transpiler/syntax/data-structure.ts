@@ -371,6 +371,15 @@ export function transformCollectionAccess(
 ): IR.IRNode {
   return perform(
     () => {
+      if (list.elements.length < 2) {
+        throw new ValidationError(
+          "Not enough elements for collection access",
+          "collection access",
+          "at least 2 elements (collection and index)",
+          `${list.elements.length} elements`,
+        );
+      }
+
       const collection = transformNode(list.elements[0], currentDir);
       if (!collection) {
         throw new ValidationError(
@@ -391,18 +400,41 @@ export function transformCollectionAccess(
         );
       }
 
-      // Determine if this is a function call or collection access
-      // If the first element is a symbol that contains "lambda" or "function",
-      // treat it as a function call
+      // Enhanced detection for collection vs function call
+      // Check if this is a function call based on type and naming patterns
       if (collection.type === IR.IRNodeType.Identifier) {
         const name = (collection as IR.IRIdentifier).name;
-        if (name.includes("lambda") || name.includes("function")) {
+        // Check for function naming patterns
+        if (name.includes("lambda") || name.includes("function") || name.endsWith("Fn")) {
           // This is likely a lambda or function call
           return {
             type: IR.IRNodeType.CallExpression,
             callee: collection,
             arguments: [index],
           } as IR.IRCallExpression;
+        }
+      } else if (collection.type === IR.IRNodeType.FunctionExpression) {
+        // For function expressions, treat as a function call
+        return {
+          type: IR.IRNodeType.CallExpression,
+          callee: collection,
+          arguments: [index],
+        } as IR.IRCallExpression;
+      } else if (collection.type === IR.IRNodeType.MemberExpression) {
+        // For member expressions that end with method names, treat as a function call
+        const memberExpr = collection as IR.IRMemberExpression;
+        if (memberExpr.property.type === IR.IRNodeType.Identifier) {
+          const propName = (memberExpr.property as IR.IRIdentifier).name;
+          // If the property name suggests a method (common method naming patterns)
+          if (propName.startsWith("get") || propName.startsWith("find") || 
+              propName.startsWith("compute") || propName.startsWith("create") || 
+              propName.startsWith("transform") || propName.endsWith("Method")) {
+            return {
+              type: IR.IRNodeType.CallExpression,
+              callee: collection,
+              arguments: [index],
+            } as IR.IRCallExpression;
+          }
         }
       }
 

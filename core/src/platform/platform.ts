@@ -58,7 +58,8 @@ export interface Platform {
  * DenoPlatform implements the Platform interface using Deno's APIs.
  */
 export const DenoPlatform: Platform = {
-  cwd: () => Deno.cwd(),
+  // Only use this when the user's shell working directory is explicitly required
+cwd: () => Deno.cwd(),
   stat: async (path: string): Promise<Deno.FileInfo> => await Deno.stat(path),
   readTextFile: async (path: string): Promise<string> =>
     await Deno.readTextFile(path),

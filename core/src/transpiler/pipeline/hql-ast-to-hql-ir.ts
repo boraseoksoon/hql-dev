@@ -379,7 +379,7 @@ function transformBasedOnOperator(list: ListNode, op: string, currentDir: string
 
   // This is the critical part - determine if this is a function call or collection access
   if (!isBuiltInOperator(op)) {
-    return determineCallOrAccess(list, currentDir);
+    return determineCallOrAccess(list, currentDir, transformNode);
   }
 
   // Fallback to standard function call
@@ -399,47 +399,83 @@ function isBuiltInOperator(op: string): boolean {
 }
 
 /**
- * Determine if a list represents a function call or collection access
+ * Determines if a list represents a function call or a collection access.
+ * For example, (myFunction arg) is a function call, while (myArray 0) is a collection access.
+ * This function makes the determination based on the types and properties of the elements.
  */
-function determineCallOrAccess(list: ListNode, currentDir: string): IR.IRNode {
-  // Check if we only have one argument and it's a literal, it's likely a collection access
-  const isLikelyCollectionAccess = list.elements.length === 2 &&
-                                  list.elements[1].type === "literal";
+function determineCallOrAccess(
+  list: ListNode,
+  currentDir: string,
+  transformNode: (node: any, dir: string) => IR.IRNode | null
+): IR.IRNode {
+  // First, let's transform the first element to help with better decision making
+  const firstTransformed = transformNode(list.elements[0], currentDir);
+  if (!firstTransformed) {
+    throw new TransformError(
+      "First element transformed to null", 
+      JSON.stringify(list), 
+      "Function or collection access"
+    );
+  }
 
-  if (isLikelyCollectionAccess) {
-    // Handle as collection access
-    return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode);
-  } else {
-    // Handle as function call
-    const callee = transformNode(list.elements[0], currentDir);
-    if (!callee) {
-      throw new ValidationError(
-        "Function callee transformed to null",
-        "function call",
-        "valid function expression",
-        "null"
-      );
-    }
+  // We need to look at the first element to determine if this is a function call or a collection access
+  const first = list.elements[0];
+  
+  // Function call indicators (improved)
+  const isLikelyFunction = (
+    // Check if transformed node is a function type (like Identifier with function naming pattern)
+    (firstTransformed.type === IR.IRNodeType.Identifier && 
+     ((firstTransformed as IR.IRIdentifier).name.includes("function") || 
+      (firstTransformed as IR.IRIdentifier).name.includes("lambda"))) ||
+      
+    // Check if it's a symbol that has "function" or "lambda" in its name
+    (first.type === "symbol" && 
+     ((first as SymbolNode).name.includes("function") || (first as SymbolNode).name.includes("lambda"))) ||
+     
+    // Check for imported function reference (usually a symbol without special characters)
+    (first.type === "symbol" && 
+     !(first as SymbolNode).name.includes("[") && 
+     !(first as SymbolNode).name.includes("]") && 
+     !(first as SymbolNode).name.includes(".")) ||
+     
+    // Function expressions are definitely function calls, not collection access
+    (firstTransformed.type === IR.IRNodeType.FunctionExpression) ||
+    
+    // Check if it's a lambda expression (a list)
+    first.type === "list" ||
+    
+    // If the list has more than 2 elements, it's likely a function call with multiple arguments
+    list.elements.length > 2
+  );
 
-    const args = list.elements.slice(1).map(arg => {
-      const transformed = transformNode(arg, currentDir);
-      if (!transformed) {
-        throw new ValidationError(
-          `Function argument transformed to null: ${JSON.stringify(arg)}`,
-          "function argument",
-          "valid expression",
-          "null"
+  if (isLikelyFunction) {
+    // We already have the transformed first element
+    const func = firstTransformed;
+    
+    const args = [];
+    for (let i = 1; i < list.elements.length; i++) {
+      const arg = transformNode(list.elements[i], currentDir);
+      if (!arg) {
+        throw new TransformError(
+          `Argument ${i} transformed to null`, 
+          JSON.stringify(list), 
+          "Function argument"
         );
       }
-      return transformed;
-    });
+      args.push(arg);
+    }
 
+    // Return a CallExpression
     return {
       type: IR.IRNodeType.CallExpression,
-      callee,
-      arguments: args
+      callee: func,
+      arguments: args,
     } as IR.IRCallExpression;
   }
+  
+  // Otherwise, it's likely a collection access
+  // Pass the already transformed first element to avoid unnecessary duplicate transformation
+  return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode);
 }
 
 /**

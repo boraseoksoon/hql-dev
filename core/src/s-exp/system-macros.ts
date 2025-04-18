@@ -15,15 +15,9 @@ export const SYSTEM_MACRO_PATHS = [
  * Get the absolute paths for all system macro files
  */
 export function getSystemMacroPaths(): string[] {
-  const cwd = Deno.cwd();
-  
-  // Check if we're already in the core directory
-  const isInCoreDir = cwd.endsWith("/core") || cwd.endsWith("\\core");
-  
-  // Paths without 'core/' prefix when already in core directory
-  const actualPaths = isInCoreDir 
-    ? SYSTEM_MACRO_PATHS.map(p => p.replace(/^core\//, ''))
-    : SYSTEM_MACRO_PATHS;
-  
-  return actualPaths.map(macroPath => path.join(cwd, macroPath));
+  // Always resolve macro paths relative to the core/src/s-exp directory (the location of this file)
+  const systemMacrosDir = path.dirname(path.fromFileUrl(import.meta.url));
+  // Go up two levels to reach the project root, then resolve macro files
+  const projectRoot = path.resolve(systemMacrosDir, '../../..');
+  return SYSTEM_MACRO_PATHS.map(macroPath => path.join(projectRoot, macroPath));
 }
