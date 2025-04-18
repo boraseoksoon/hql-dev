@@ -8,6 +8,8 @@ import { generateTypeScript } from "./transpiler/pipeline/ts-ast-to-ts-code.ts";
 import { expandMacros } from "./s-exp/macro.ts";
 import { globalLogger as logger, Logger } from "./logger.ts";
 import { RUNTIME_FUNCTIONS } from "./transpiler/runtime/runtime.ts";
+import { Environment } from "./environment.ts";
+import type { HQLNode } from "./transpiler/type/hql_ast.ts";
 import {
   CodeGenError,
   TransformError,
@@ -19,8 +21,6 @@ import {
   findExternalModuleReferences,
   importSourceRegistry,
 } from "./common/import-utils.ts";
-import { Environment } from "./environment.ts";
-import type { HQLNode } from "./transpiler/type/hql_ast.ts";
 
 /**
  * Timer helper to measure and log transformation phases.

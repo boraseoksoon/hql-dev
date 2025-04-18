@@ -5,7 +5,6 @@ import { globalLogger as logger } from "./logger.ts";
 import { Environment, Value } from "./environment.ts";
 import { defineUserMacro, evaluateForMacro } from "./s-exp/macro.ts";
 import { parse } from "./transpiler/pipeline/parser.ts";
-import { checkForHqlImports } from "./bundler.ts";
 import { readFile } from "./common/utils.ts";
 import {
   processJavaScriptFile,
@@ -62,8 +61,7 @@ export async function processImports(
   options: ImportProcessorOptions = {},
 ): Promise<void> {
   // Always resolve baseDir relative to this file if not explicitly provided
-const baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../');
-  const previousCurrentFile = env.getCurrentFile();
+  const baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../');
   const processedFiles = options.processedFiles || new Set<string>();
   const inProgressFiles = options.inProgressFiles || new Set<string>();
   const importMap = options.importMap || new Map<string, string>();
@@ -653,7 +651,7 @@ async function loadHqlModule(
 }
 
 /**
- * Load a JavaScript module
+ * Load a JavaScript or TypeScript module
  */
 async function loadJavaScriptModule(
   moduleName: string,
@@ -663,11 +661,25 @@ async function loadJavaScriptModule(
   processedFiles: Set<string>,
 ): Promise<void> {
   try {
+    // Handle TypeScript files specially
+    if (resolvedPath.endsWith('.ts')) {
+      logger.debug(`TypeScript import detected: ${resolvedPath}`);
+      
+      // Convert TypeScript to JavaScript
+      const jsOutPath = resolvedPath.replace(/\.ts$/, '.js');
+      await transpileTypeScriptToJavaScript(resolvedPath, jsOutPath);
+      
+      // Use the JavaScript file instead
+      logger.debug(`Using transpiled JavaScript: ${jsOutPath}`);
+      resolvedPath = jsOutPath;
+      modulePath = modulePath.replace(/\.ts$/, '.js');
+    }
+    
     let finalModuleUrl = `file://${resolvedPath}`;
     
     // Check if JS file contains HQL imports or needs processing
     const jsSource = await Deno.readTextFile(resolvedPath);
-    if (checkForHqlImports(jsSource) || jsSource.includes('import') && jsSource.includes('from')) {
+    if (hasHqlImports(jsSource) || jsSource.includes('import') && jsSource.includes('from')) {
       logger.debug(`JS file ${resolvedPath} needs import processing.`);
       
       // Process the file and its imports recursively
@@ -694,6 +706,41 @@ async function loadJavaScriptModule(
       env.getCurrentFile(),
       error instanceof Error ? error : undefined
     );
+  }
+}
+
+/**
+ * Check if source code has HQL imports (local implementation)
+ */
+function hasHqlImports(source: string): boolean {
+  return source.includes('.hql') && (
+    source.includes('import') || 
+    source.includes('require')
+  );
+}
+
+/**
+ * Transpile TypeScript to JavaScript using esbuild
+ */
+async function transpileTypeScriptToJavaScript(
+  tsPath: string,
+  jsPath: string
+): Promise<void> {
+  try {
+    const esbuild = await import("https://deno.land/x/esbuild@v0.17.19/mod.js");
+    
+    await esbuild.build({
+      entryPoints: [tsPath],
+      outfile: jsPath,
+      format: 'esm',
+      target: 'es2020',
+      bundle: false,
+      platform: 'neutral',
+    });
+    
+    logger.debug(`Transpiled ${tsPath} to ${jsPath}`);
+  } catch (error) {
+    throw new Error(`Failed to transpile TypeScript: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

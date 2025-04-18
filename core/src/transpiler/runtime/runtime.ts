@@ -23,5 +23,4 @@ function get(obj, key, notFound = null) {
   const propKey = typeof key === "number" ? String(key) : key;
   return propKey in obj ? obj[propKey] : notFound;
 }
-
 `;

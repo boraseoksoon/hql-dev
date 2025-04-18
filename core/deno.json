@@ -4,7 +4,7 @@
     "test-basics": "deno task test-type && deno task test-class && deno task test-enum && deno task test-binding && deno task test-stdlib",
     "test-control-flow": "deno task test-cond && deno task test-loop",
     "test-functions": "deno task test-function && deno task test-return && deno task test-method-chain-call",
-    "test-imports": "deno task test-import && deno task test-import2 && deno task test-extreme-imports && deno task test-circular-deps",
+    "test-imports": "deno task test-import && deno task test-import2 && deno task test-extreme-imports-simple && deno task test-circular-deps && deno task test-ts-import",
     "test-advanced": "deno task test-control-flow && deno task test-functions && deno task test-new-front-end-transpiler && deno task full-macro-test && deno task test-compile",
 
     "transpile": "deno run -A cli/transpile.ts",
@@ -30,7 +30,10 @@
     "test-bug": "deno run -A ./cli/run.ts ../doc/examples/dependency-test/macro-a.hql",
     "test-circular-deps": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test/circular/a.hql ../doc/examples/test-complex-imports/circular-output.js && deno run -A ../doc/examples/test-complex-imports/circular-output.js",
     "test-circular-simple": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test/circular/a.hql ../doc/examples/test-complex-imports/circular-simple.js && deno run -A ../doc/examples/test-complex-imports/circular-simple.js",
-    "test-extreme-imports": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test/entry.hql ../doc/examples/test-complex-imports/extreme-output.js && deno run -A ../doc/examples/test-complex-imports/extreme-output.js"
+    "test-extreme-imports": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test/entry.hql ../doc/examples/test-complex-imports/extreme-output.js && deno run -A ../doc/examples/test-complex-imports/extreme-output.js",
+    "test-extreme-imports-simple": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test-simple/entry.hql ../doc/examples/test-complex-imports/extreme-simple-output.js && deno run -A ../doc/examples/test-complex-imports/extreme-simple-output.js",
+    "test-js-import": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/ts-import-test/entry.hql ../doc/examples/ts-import-test/output.js && deno run -A ../doc/examples/ts-import-test/output.js",
+    "test-ts-import": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/ts-import-test/entry2.hql ../doc/examples/ts-import-test/output2.js && deno run -A ../doc/examples/ts-import-test/output2.js"
   },
   "imports": {
     "@core/": "./src/",

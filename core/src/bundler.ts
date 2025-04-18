@@ -104,8 +104,22 @@ export function transpileCLI(
   }, options.skipErrorReporting ? undefined : { context: `CLI transpilation failed for ${inputPath}` });
 }
 
+export async function processHqlImportsInJs(
+  jsSource: string,
+  jsFilePath: string,
+  options: BundleOptions,
+): Promise<string> {
+  try {
+    return await processHqlImports(jsSource, jsFilePath, options, true);
+  } catch (error) {
+    throw new TranspilerError(
+      `Processing HQL imports in JS file: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 // File processing functions
-export function checkForHqlImports(source: string): boolean {
+function checkForHqlImports(source: string): boolean {
   return /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g.test(source);
 }
 
@@ -187,7 +201,7 @@ async function processHqlImports(
 }
 
 // Simplified process functions with shared logic
-export async function processHqlImportsInTs(
+async function processHqlImportsInTs(
   tsSource: string,
   tsFilePath: string,
   options: BundleOptions,
@@ -197,20 +211,6 @@ export async function processHqlImportsInTs(
   } catch (error) {
     throw new TranspilerError(
       `Processing HQL imports in TypeScript file: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
-export async function processHqlImportsInJs(
-  jsSource: string,
-  jsFilePath: string,
-  options: BundleOptions,
-): Promise<string> {
-  try {
-    return await processHqlImports(jsSource, jsFilePath, options, true);
-  } catch (error) {
-    throw new TranspilerError(
-      `Processing HQL imports in JS file: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -367,7 +367,9 @@ function createUnifiedBundlePlugin(options: {
   externalPatterns?: string[];
 }): any {
   const processedHqlFiles = new Set<string>();
+  const processedTsFiles = new Set<string>();
   const filePathMap = new Map<string, string>();
+  const circularDependencies = new Map<string, Set<string>>();
   const externalPatterns = options.externalPatterns || DEFAULT_EXTERNAL_PATTERNS;
   
   return {
@@ -395,7 +397,56 @@ function createUnifiedBundlePlugin(options: {
       
       // Handle .hql/.js/.ts files with custom resolver
       build.onResolve({ filter: /\.(hql|js|ts)$/ }, async (args: any) => {
+        // Track circular dependencies
+        if (args.importer) {
+          if (!circularDependencies.has(args.importer)) {
+            circularDependencies.set(args.importer, new Set());
+          }
+          circularDependencies.get(args.importer)!.add(args.path);
+          
+          // Check if this would create a circular dependency
+          const isCircular = checkForCircularDependency(args.importer, args.path, circularDependencies);
+          if (isCircular && options.verbose) {
+            logger.warn(`Circular dependency detected: ${args.importer} -> ${args.path}`);
+          }
+        }
+        
         return resolveHqlImport(args, options);
+      });
+      
+      // Special handling for TypeScript files
+      build.onLoad({ filter: /\.ts$/, namespace: "file" }, async (args: any) => {
+        try {
+          // Skip if already processed
+          if (processedTsFiles.has(args.path)) {
+            return null;
+          }
+          
+          logger.debug(`Processing TypeScript file: ${args.path}`);
+          const contents = await readFile(args.path);
+          
+          // Process HQL imports in TypeScript
+          let processedContent = contents;
+          if (checkForHqlImports(contents)) {
+            processedContent = await processHqlImportsInTs(contents, args.path, {
+              verbose: options.verbose,
+              tempDir: options.tempDir,
+              sourceDir: options.sourceDir,
+            });
+          }
+          
+          processedTsFiles.add(args.path);
+          
+          // Return as TypeScript
+          return {
+            contents: processedContent,
+            loader: "ts",
+            resolveDir: dirname(args.path),
+          };
+        } catch (error) {
+          logger.error(`Error processing TypeScript file ${args.path}: ${formatErrorMessage(error)}`);
+          return null;
+        }
       });
       
       // Load HQL files with custom loader
@@ -493,6 +544,29 @@ function bundleWithEsbuild(
         write: true,
         absWorkingDir: Deno.cwd(),
         nodePaths: [Deno.cwd(), dirname(entryPath)],
+        // Configure TypeScript and other loaders
+        loader: {
+          '.ts': 'ts',
+          '.js': 'js',
+          '.hql': 'ts'
+        },
+        // Enable TypeScript processing
+        tsconfig: JSON.stringify({
+          compilerOptions: {
+            target: "es2020",
+            module: "esnext",
+            moduleResolution: "node",
+            esModuleInterop: true,
+            allowSyntheticDefaultImports: true,
+            resolveJsonModule: true,
+            isolatedModules: true,
+            strict: false,
+            skipLibCheck: true,
+            allowJs: true,
+            forceConsistentCasingInFileNames: true,
+            importsNotUsedAsValues: "preserve",
+          }
+        })
       };
       
       // Run the build
@@ -1037,4 +1111,37 @@ export async function transpileHqlInJs(hqlPath: string, basePath: string): Promi
   } catch (error) {
     throw new Error(`Error transpiling HQL for JS import ${hqlPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/**
+ * Check if adding this dependency would create a circular reference
+ */
+function checkForCircularDependency(
+  source: string, 
+  target: string, 
+  deps: Map<string, Set<string>>,
+  visited: Set<string> = new Set()
+): boolean {
+  // If we've already checked this path, avoid infinite recursion
+  if (visited.has(source)) {
+    return false;
+  }
+  
+  // Check if target depends on source (circular)
+  if (deps.has(target)) {
+    const targetDeps = deps.get(target)!;
+    if (targetDeps.has(source)) {
+      return true;
+    }
+    
+    // Check transitively
+    visited.add(source);
+    for (const dep of targetDeps) {
+      if (checkForCircularDependency(source, dep, deps, visited)) {
+        return true;
+      }
+    }
+  }
+  
+  return false;
 }
