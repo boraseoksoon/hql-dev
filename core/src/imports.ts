@@ -2,23 +2,11 @@
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { globalLogger as logger } from "./logger.ts";
-import { 
-  writeTextFile,
-  dirname,
-  basename,
-  join,
-  ensureDir
-} from "./platform/platform.ts";
 import { Environment, Value } from "./environment.ts";
 import { defineUserMacro, evaluateForMacro } from "./s-exp/macro.ts";
 import { parse } from "./transpiler/pipeline/parser.ts";
-import { checkForHqlImports, processHqlImportsInJs } from "./bundler.ts";
+import { checkForHqlImports } from "./bundler.ts";
 import {
-  getCacheDir,
-  registerTempFile,
-  registerImportMapping,
-  getContentHash,
-  writeToCachedPath,
   processJavaScriptFile,
   getImportMapping,
 } from "./common/temp-file-tracker.ts";

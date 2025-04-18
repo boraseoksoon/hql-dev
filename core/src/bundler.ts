@@ -6,8 +6,6 @@ import {
   ensureDir,
   exists,
   resolve,
-  writeTextFile,
-  join,
   readTextFile
 } from "./platform/platform.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
@@ -17,12 +15,10 @@ import {
   ValidationError,
 } from "./transpiler/error/errors.ts";
 import { performAsync } from "./transpiler/error/index.ts";
-import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash, sanitizeIdentifier } from "./common/utils.ts";
+import { isHqlFile, isJsFile, isTypeScriptFile, sanitizeIdentifier } from "./common/utils.ts";
 import { 
   createTempDir, 
-  getCachedOutput, 
   getCachedPath,
-  getContentHash,
   needsRegeneration, 
   writeToCachedPath,
   registerExplicitOutput,
@@ -31,15 +27,6 @@ import {
   prepareStdlibInCache
 } from "./common/temp-file-tracker.ts";
 import { globalLogger as logger, Logger } from "./logger.ts";
-import {
-  clearCache,
-  getAllTrackedFiles,
-  getCacheDir,
-  getOriginalPath,
-  processCachedImports,
-  registerExceptionTempFile,
-  registerTempFile,
-} from "./common/temp-file-tracker.ts";
 
 // Constants
 const MAX_RETRIES = 3;
@@ -511,6 +498,7 @@ function bundleWithEsbuild(
           verbose: options.verbose,
           tempDir,
           sourceDir: options.sourceDir || dirname(entryPath),
+          externalPatterns: options.drop,
         }),
         createExternalPlugin(),
       ];
@@ -605,15 +593,24 @@ function createHqlPlugin(options: {
   verbose?: boolean;
   tempDir?: string;
   sourceDir?: string;
+  externalPatterns?: string[];
 }): any {
   const processedHqlFiles = new Set<string>();
   const hqlToJsMap = new Map<string, string>();
+  
+  // Default external patterns if not provided
+  const externalPatterns = options.externalPatterns || [
+    '.js', '.jsx', '.mjs', '.cjs', 'node:', 'https://', 'http://'
+  ];
   
   return {
     name: "hql-plugin",
     setup(build: any) {
       build.onResolve({ filter: /\.(js|ts|hql)$/ }, async (args: any) => {
-        return resolveHqlImport(args, options, logger);
+        return resolveHqlImport(args, {
+          ...options, 
+          externalPatterns
+        }, logger);
       });
       
       build.onLoad({ filter: /.*/, namespace: "hql" }, async (args: any) => {
@@ -817,9 +814,27 @@ async function resolveImportPath(
 
 async function resolveHqlImport(
   args: any,
-  options: { verbose?: boolean; tempDir?: string; sourceDir?: string },
+  options: { 
+    verbose?: boolean; 
+    tempDir?: string; 
+    sourceDir?: string;
+    externalPatterns?: string[];
+  },
   logger: Logger,
 ): Promise<any> {
+  // Default external patterns
+  const externalPatterns = options.externalPatterns || [
+    '.js', '.jsx', '.mjs', '.cjs', 'node:', 'https://', 'http://'
+  ];
+
+  // Check if this import should be treated as external without warning
+  if (externalPatterns.some(pattern => 
+      args.path.endsWith(pattern) || 
+      args.path.startsWith(pattern))) {
+    logger.debug(`Treating as external: "${args.path}"`);
+    return { path: args.path, external: true };
+  }
+  
   logger.debug(
     `Resolving import: "${args.path}" from importer: ${
       args.importer || "unknown"
@@ -958,61 +973,14 @@ async function resolveHqlImport(
     };
   }
   
-  // Return unresolved if no strategies worked
-  logger.warn(`Could not resolve "${args.path}" from "${args.importer || 'unknown'}"`);
+  // Only log warning if verbose is enabled
+  if (options.verbose) {
+    logger.warn(`Could not resolve "${args.path}" from "${args.importer || 'unknown'}"`);
+  } else {
+    logger.debug(`Could not resolve "${args.path}" from "${args.importer || 'unknown'}" (suppressed warning)`);
+  }
+  
   return { path: args.path, external: true };
-}
-
-async function processHqlToTypeScript(
-  hqlPath: string,
-  tsOutputPath: string,
-  options: {
-    verbose?: boolean;
-    tempDir?: string;
-    sourceDir?: string;
-  },
-  logger: Logger
-): Promise<void> {
-  if (!await exists(tsOutputPath)) {
-    logger.debug(`Transpiling HQL import to TypeScript: ${hqlPath} -> ${tsOutputPath}`);
-    
-    // Read the HQL source
-    const hqlSource = await Deno.readTextFile(hqlPath);
-    
-    // Process it to TypeScript
-    const tsCode = await processHql(hqlSource, {
-      baseDir: dirname(hqlPath),
-      verbose: options.verbose,
-      tempDir: options.tempDir,
-      sourceDir: options.sourceDir || dirname(hqlPath),
-    });
-    
-    // Write TypeScript output
-    await writeOutput(tsCode, tsOutputPath, logger);
-  } else {
-    logger.debug(`Using existing TypeScript file: ${tsOutputPath}`);
-  }
-}
-
-async function processTypeScriptToJavaScript(
-  tsPath: string,
-  jsOutputPath: string,
-  options: {
-    verbose?: boolean;
-    sourceDir?: string;
-  },
-  logger: Logger
-): Promise<void> {
-  if (!await exists(jsOutputPath)) {
-    logger.debug(`Generating JavaScript from TypeScript: ${tsPath} -> ${jsOutputPath}`);
-    
-    await bundleWithEsbuild(tsPath, jsOutputPath, {
-      verbose: options.verbose,
-      sourceDir: options.sourceDir || dirname(tsPath),
-    });
-  } else {
-    logger.debug(`Using existing JavaScript file: ${jsOutputPath}`);
-  }
 }
 
 async function createTempDirIfNeeded(
