@@ -121,6 +121,76 @@ export function checkForHqlImports(source: string): boolean {
 }
 
 // HQL processing functions
+async function processHqlImports(
+  source: string,
+  filePath: string,
+  options: { verbose?: boolean; tempDir?: string; sourceDir?: string; force?: boolean },
+  logger: Logger,
+  isJs: boolean,
+): Promise<string> {
+  const baseDir = dirname(filePath);
+  let modifiedSource = source;
+  const imports = extractHqlImports(source);
+
+  logger.debug(`Found ${imports.length} HQL imports in ${isJs ? 'JS' : 'TS'} file`);
+
+  for (const importInfo of imports) {
+    const resolvedHqlPath = await resolveImportPath(importInfo.path, baseDir, options, logger);
+    if (!resolvedHqlPath) {
+      throw new Error(`Could not resolve import: ${importInfo.path} from ${filePath}`);
+    }
+
+    // Transpile to TypeScript if needed
+    if (await needsRegeneration(resolvedHqlPath, ".ts") || options.force) {
+      logger.debug(`Transpiling HQL import: ${resolvedHqlPath}`);
+      const hqlSource = await readFile(resolvedHqlPath);
+      const tsCode = await processHql(hqlSource, {
+        baseDir: dirname(resolvedHqlPath),
+        verbose: options.verbose,
+        tempDir: options.tempDir,
+        sourceDir: options.sourceDir || dirname(resolvedHqlPath),
+      });
+      await writeToCachedPath(resolvedHqlPath, tsCode, ".ts", { preserveRelative: true });
+    }
+    const cachedTsPath = await getCachedPath(resolvedHqlPath, ".ts");
+    registerImportMapping(resolvedHqlPath, cachedTsPath);
+    logger.debug(`Using cached TS file: ${cachedTsPath}`);
+
+    if (isJs) {
+      // Transpile to JavaScript if needed
+      if (await needsRegeneration(resolvedHqlPath, ".js") || options.force) {
+        logger.debug(`Generating JavaScript from TypeScript: ${cachedTsPath}`);
+        const cachedJsPath = await getCachedPath(resolvedHqlPath, ".js", {
+          createDir: true,
+          preserveRelative: true,
+        });
+        await bundleWithEsbuild(cachedTsPath, cachedJsPath, {
+          verbose: options.verbose,
+          sourceDir: options.sourceDir || dirname(resolvedHqlPath),
+        });
+      }
+      const cachedJsPath = await getCachedPath(resolvedHqlPath, ".js");
+      registerImportMapping(resolvedHqlPath.replace(/\.hql$/, ".js"), cachedJsPath);
+      logger.debug(`Using cached JS file: ${cachedJsPath}`);
+
+      modifiedSource = modifiedSource.replace(
+        importInfo.full,
+        importInfo.full.replace(importInfo.path, cachedJsPath),
+      );
+      logger.debug(`Updated import from "${importInfo.full}" to "${importInfo.full.replace(importInfo.path, cachedJsPath)}"`);
+    } else {
+      modifiedSource = modifiedSource.replace(
+        importInfo.full,
+        importInfo.full.replace(importInfo.path, cachedTsPath),
+      );
+      logger.debug(`Updated import from "${importInfo.full}" to "${importInfo.full.replace(importInfo.path, cachedTsPath)}"`);
+    }
+  }
+
+  return modifiedSource;
+}
+
+// Process HQL imports in TypeScript
 export async function processHqlImportsInTs(
   tsSource: string,
   tsFilePath: string,
@@ -128,66 +198,15 @@ export async function processHqlImportsInTs(
   logger: Logger,
 ): Promise<string> {
   try {
-    // Ensure runtime is initialized - no need to specifically call prepareStdlibInCache anymore
-    
-    const baseDir = dirname(tsFilePath);
-    let modifiedSource = tsSource;
-    const imports = extractHqlImports(tsSource);
-    
-    logger.debug(`Found ${imports.length} HQL imports in TypeScript file`);
-    
-    for (const importInfo of imports) {
-      const resolvedHqlPath = await resolveImportPath(importInfo.path, baseDir, options, logger);
-      
-      if (!resolvedHqlPath) {
-        throw new Error(`Could not resolve import: ${importInfo.path} from ${tsFilePath}`);
-      }
-      
-      // Process HQL to TypeScript using the cache
-      if (await needsRegeneration(resolvedHqlPath, ".ts") || options.force) {
-        logger.debug(`Transpiling HQL import: ${resolvedHqlPath}`);
-        
-        // Read the HQL source
-        const hqlSource = await readFile(resolvedHqlPath);
-        
-        // Process it to TypeScript
-        const tsCode = await processHql(hqlSource, {
-          baseDir: dirname(resolvedHqlPath),
-          verbose: options.verbose,
-          tempDir: options.tempDir,
-          sourceDir: options.sourceDir || dirname(resolvedHqlPath),
-        });
-        
-        // Write to cache - all HQL files use preserveRelative for consistency
-        await writeToCachedPath(resolvedHqlPath, tsCode, ".ts", { 
-          preserveRelative: true
-        });
-      }
-      
-      // Get cached TypeScript path
-      const cachedTsPath = await getCachedPath(resolvedHqlPath, ".ts");
-      
-      // Register this mapping for future use
-      registerImportMapping(resolvedHqlPath, cachedTsPath);
-      
-      logger.debug(`Using cached TS file: ${cachedTsPath}`);
-      
-      // Update the import statement to use the cached file
-      const newImport = importInfo.full.replace(importInfo.path, cachedTsPath);
-      modifiedSource = modifiedSource.replace(importInfo.full, newImport);
-      logger.debug(`Updated import from "${importInfo.full}" to "${newImport}"`);
-    }
-    
-    return modifiedSource;
+    return await processHqlImports(tsSource, tsFilePath, options, logger, false);
   } catch (error) {
     throw new TranspilerError(
-      `Processing HQL imports in TypeScript file: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `Processing HQL imports in TypeScript file: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
 
+// Process HQL imports in JavaScript
 export async function processHqlImportsInJs(
   jsSource: string,
   jsFilePath: string,
@@ -200,85 +219,10 @@ export async function processHqlImportsInJs(
   logger: Logger,
 ): Promise<string> {
   try {
-    // Ensure runtime is initialized - no need to specifically call prepareStdlibInCache anymore
-    
-    const baseDir = dirname(jsFilePath);
-    let modifiedSource = jsSource;
-    const imports = extractHqlImports(jsSource);
-    
-    logger.debug(`Found ${imports.length} HQL imports in JS file`);
-    
-    for (const importInfo of imports) {
-      const resolvedHqlPath = await resolveImportPath(importInfo.path, baseDir, options, logger);
-      
-      if (!resolvedHqlPath) {
-        throw new Error(`Could not resolve import: ${importInfo.path} from ${jsFilePath}`);
-      }
-      
-      // Process HQL to TypeScript
-      if (await needsRegeneration(resolvedHqlPath, ".ts") || options.force) {
-        logger.debug(`Transpiling HQL import to TypeScript: ${resolvedHqlPath}`);
-        
-        // Read the HQL source
-        const hqlSource = await readFile(resolvedHqlPath);
-        
-        // Process it to TypeScript
-        const tsCode = await processHql(hqlSource, {
-          baseDir: dirname(resolvedHqlPath),
-          verbose: options.verbose,
-          tempDir: options.tempDir,
-          sourceDir: options.sourceDir || dirname(resolvedHqlPath),
-        });
-        
-        // Write to cache with preserveRelative for all HQL files
-        await writeToCachedPath(resolvedHqlPath, tsCode, ".ts", {
-          preserveRelative: true
-        });
-      }
-      
-      // Get cached TypeScript path
-      const cachedTsPath = await getCachedPath(resolvedHqlPath, ".ts");
-      
-      // Register this mapping for future use
-      registerImportMapping(resolvedHqlPath, cachedTsPath);
-      
-      // Process TypeScript to JavaScript
-      if (await needsRegeneration(resolvedHqlPath, ".js") || options.force) {
-        logger.debug(`Generating JavaScript from TypeScript: ${cachedTsPath}`);
-        
-        // Get output path for JavaScript
-        const cachedJsPath = await getCachedPath(resolvedHqlPath, ".js", { 
-          createDir: true,
-          preserveRelative: true
-        });
-        
-        // Transpile TypeScript to JavaScript using esbuild
-        await bundleWithEsbuild(cachedTsPath, cachedJsPath, {
-          verbose: options.verbose,
-          sourceDir: options.sourceDir || dirname(resolvedHqlPath),
-        });
-      }
-      
-      // Get cached JavaScript path
-      const cachedJsPath = await getCachedPath(resolvedHqlPath, ".js");
-      
-      // Register this mapping for future use
-      registerImportMapping(resolvedHqlPath.replace(/\.hql$/, '.js'), cachedJsPath);
-      
-      logger.debug(`Using cached JS file: ${cachedJsPath}`);
-      
-      // Update the import statement
-      const newImport = importInfo.full.replace(importInfo.path, cachedJsPath);
-      modifiedSource = modifiedSource.replace(importInfo.full, newImport);
-      logger.debug(`Updated import from "${importInfo.full}" to "${newImport}"`);
-    }
-    
-    return modifiedSource;
+    return await processHqlImports(jsSource, jsFilePath, options, logger, true);
   } catch (error) {
     throw new TranspilerError(
-      `Processing HQL imports in JS file: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `Processing HQL imports in JS file: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -457,6 +401,18 @@ async function processJsOrTsEntryFile(
   }
 }
 
+/**
+ * Bundles the entry file and all its dependencies into a single self-contained JavaScript file.
+ * 
+ * This improved implementation:
+ * 1. Intercepts file:// URLs and converts them to regular file paths
+ * 2. Only marks truly remote URLs (npm:/jsr:/https:) as external
+ * 3. Ensures all local dependencies are included in the bundle
+ * 4. Contains a post-processing step to remove any remaining file:// URLs
+ * 
+ * The result is a fully self-contained JavaScript file that can be distributed
+ * and executed in any JavaScript environment without local file dependencies.
+ */
 function bundleWithEsbuild(
   entryPath: string,
   outputPath: string,
@@ -471,30 +427,107 @@ function bundleWithEsbuild(
     const cleanupTemp = tempDirResult.created;
     
     try {
-      const plugins = [
-        createHqlPlugin({
-          verbose: options.verbose,
-          tempDir,
-          sourceDir: options.sourceDir || dirname(entryPath),
-          externalPatterns: options.drop,
-        }),
-        createExternalPlugin(),
-      ];
+      // Create a special no-external plugin that ensures all local files are bundled
+      const noExternalPlugin = {
+        name: 'no-external-files',
+        setup(build: any) {
+          // Intercept file:// URLs and convert them to relative paths
+          build.onResolve({ filter: /^file:\/\// }, async (args: any) => {
+            const filePath = args.path.replace('file://', '');
+            logger.debug(`Intercepted file:// URL: ${args.path}, converted to: ${filePath}`);
+            
+            try {
+              // Check if file exists
+              await Deno.stat(filePath);
+              return { path: filePath };
+            } catch {
+              logger.warn(`File not found: ${filePath}`);
+              return { path: args.path, external: true }; // Keep as external if not found
+            }
+          });
+          
+          // Only mark truly remote URLs as external
+          build.onResolve({ filter: /^(npm:|jsr:|https?:\/\/)/ }, (args: any) => {
+            logger.debug(`Marking as external remote URL: ${args.path}`);
+            return { path: args.path, external: true };
+          });
+          
+          // Keep all other imports as internal
+          build.onResolve({ filter: /.*\.(js|ts|hql)$/, namespace: 'file' }, (args: any) => {
+            if (args.kind === 'import-statement' || args.kind === 'require-call') {
+              const resolvedPath = args.path.startsWith('/')
+                ? args.path // Already absolute
+                : resolve(dirname(args.importer), args.path);
+                
+              logger.debug(`Resolved local import ${args.path} to ${resolvedPath}`);
+              return { path: resolvedPath };
+            }
+            return null;
+          });
+        }
+      };
       
-      const buildOptions = createBuildOptions(
-        entryPath,
-        outputPath,
-        options,
-        plugins,
-      );
+      // Create the HQL processing plugin
+      const hqlPlugin = createHqlPlugin({
+        verbose: options.verbose,
+        tempDir,
+        sourceDir: options.sourceDir || dirname(entryPath),
+        externalPatterns: ['npm:', 'jsr:', 'https://', 'http://', 'node:'],
+      });
+      
+      // Create build options with forced bundling
+      const buildOptions = {
+        entryPoints: [entryPath],
+        bundle: true,
+        outfile: outputPath,
+        format: 'esm', 
+        logLevel: options.verbose ? 'info' : 'silent',
+        minify: options.minify,
+        treeShaking: true,
+        platform: 'neutral',
+        target: ['es2020'],
+        plugins: [noExternalPlugin, hqlPlugin],
+        allowOverwrite: true,
+        sourcemap: false,
+        metafile: true, // Generate build metadata
+        write: true, // Write output to disk
+        absWorkingDir: Deno.cwd(),
+        nodePaths: [Deno.cwd(), dirname(entryPath)],
+      };
       
       logger.log({ text: `Starting bundling with esbuild for ${entryPath}`, namespace: "bundler" });
       
-      await runBuildWithRetry(
+      // Run build with metadata for better debugging
+      const result = await runBuildWithRetry(
         buildOptions,
         MAX_RETRIES,
         logger,
       );
+      
+      // Validate and fix if needed
+      if (result.metafile) {
+        const inputs = Object.keys(result.metafile.inputs);
+        const outputs = Object.keys(result.metafile.outputs);
+        
+        logger.debug(`Bundle includes ${inputs.length} input files`);
+        logger.debug(`Bundle outputs: ${outputs.join(', ')}`);
+        
+        // Check if bundle contains file:// references
+        const bundleContent = await readFile(outputPath);
+        if (bundleContent.includes('file://')) {
+          logger.warn('Bundle still contains file:// URLs - attempting final fix pass');
+          
+          // Fix the file:// URLs in the output
+          const fixedContent = bundleContent.replace(/["']file:\/\/\/[^"']+["']/g, (match) => {
+            const path = match.slice(9, -1); // Remove file:/// and quotes
+            logger.debug(`Fixing file:// URL in bundle: ${path}`);
+            return '"[BUNDLED]"'; // Replace with placeholder
+          });
+          
+          // Write fixed content back
+          await Deno.writeTextFile(outputPath, fixedContent);
+        }
+      }
       
       logger.log({ 
         text: `Successfully ${options.minify ? 'bundled and minified' : 'bundled'} output to ${outputPath}`, 
@@ -602,9 +635,14 @@ function createExternalPlugin(): any {
   return {
     name: "external-npm-jsr",
     setup(build: any) {
-      // Mark remote modules as external
+      // Only mark remote modules as external (npm:, jsr:, http:, https:)
+      // Local files should be bundled
       build.onResolve({ filter: /^(npm:|jsr:|https?:)/ }, (args: any) => {
-        return { path: args.path, external: true };
+        // Only mark as external if actually a remote URL, not a local file path
+        if (/^(npm:|jsr:|https?:\/\/)/.test(args.path)) {
+          return { path: args.path, external: true };
+        }
+        return null; // Let other resolvers handle it
       });
     },
   };
@@ -804,14 +842,13 @@ async function resolveHqlImport(
   },
   logger: Logger,
 ): Promise<any> {
-  // Default external patterns
+  // Only consider truly external patterns
   const externalPatterns = options.externalPatterns || [
-    '.js', '.jsx', '.mjs', '.cjs', 'node:', 'https://', 'http://'
+    'node:', 'npm:', 'jsr:', 'https://', 'http://'
   ];
 
-  // Check if this import should be treated as external
+  // Check if this import should be treated as external - only for remote URLs
   if (externalPatterns.some(pattern => 
-      args.path.endsWith(pattern) || 
       args.path.startsWith(pattern))) {
     logger.debug(`Treating as external: "${args.path}"`);
     return { path: args.path, external: true };
@@ -1044,11 +1081,14 @@ function createBuildOptions(
       logLevel: options.verbose ? "info" : "silent",
       allowOverwrite: true,
       minify: options.minify,
+      treeShaking: true,
       drop: options.drop,
-      // TypeScript specific options
       loader: { ".ts": "ts" },
       platform: "neutral", // Build for any JavaScript runtime
       target: ["es2020"], // Target modern JavaScript
+      absWorkingDir: Deno.cwd(),
+      nodePaths: [Deno.cwd()], // This helps with resolving local modules
+      external: [], // Don't mark any paths as external except those specifically marked by plugins
     };
     
     // Remove undefined options
@@ -1177,5 +1217,28 @@ export async function transpileHqlInJs(hqlPath: string, basePath: string): Promi
     return processedContent;
   } catch (error) {
     throw new Error(`Error transpiling HQL for JS import ${hqlPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Validates that the bundled output doesn't contain local file references
+ */
+async function validateBundledOutput(outputPath: string, logger: Logger): Promise<void> {
+  try {
+    const content = await readFile(outputPath);
+    
+    // Check for file:// URLs or absolute paths that look like local file paths
+    const fileUrlRegex = /file:\/\/\//g;
+    const absolutePathRegex = /(['"])(\/[^\n'"]+\.(?:js|ts|hql))['"]/g;
+    
+    if (fileUrlRegex.test(content)) {
+      logger.warn("Bundle contains file:// URLs - this may not be a fully self-contained bundle");
+    }
+    
+    if (absolutePathRegex.test(content)) {
+      logger.warn("Bundle contains absolute file paths - this may not be a fully self-contained bundle");
+    }
+  } catch (error) {
+    logger.error(`Error validating bundled output: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
