@@ -15,6 +15,7 @@ USAGE:
   hql run <file>            Execute an HQL source file
   hql run '<expr>'          Evaluate an HQL expression
   hql transpile <file>      Transpile HQL to JavaScript
+  hql repl                  Start the interactive REPL
 
 OPTIONS:
   --help, -h                Show this help message
@@ -26,6 +27,7 @@ OPTIONS:
 EXAMPLES:
   hql run hello.hql
   hql transpile hello.hql
+  hql repl                  # Start the REPL
   hql run '(+ 1 1)'         # prints: 2
   hql run '(+ 1 2)' --time  # prints: 3 with performance metrics
 `);
@@ -41,19 +43,19 @@ function showVersion() {
 /**
  * Validate command and arguments, return target if valid
  */
-function validateCommand(args: string[]): { command: string; target: string } {
+function validateCommand(args: string[]): { command: string; target?: string } {
   const command = args[0];
   const commandArgs = args.slice(1);
   
-  // Only accept valid commands
-  if (command !== "run" && command !== "transpile") {
+  // Accept valid commands
+  if (command !== "run" && command !== "transpile" && command !== "repl") {
     console.error(`Error: Unknown command '${command}'`);
     printHelp();
     Deno.exit(1);
   }
   
-  // Ensure a target is provided
-  if (commandArgs.length === 0) {
+  // Ensure a target is provided for run/transpile
+  if ((command === "run" || command === "transpile") && commandArgs.length === 0) {
     console.error(`Error: Missing target for '${command}' command`);
     printHelp();
     Deno.exit(1);
@@ -75,6 +77,14 @@ async function executeRunCommand(target: string, options: CliOptions) {
 async function executeTranspileCommand(target: string, options: CliOptions) {
   const { transpileHqlFile } = await import("./run.ts");
   await transpileHqlFile(target, options);
+}
+
+/**
+ * Execute the repl command
+ */
+async function executeReplCommand(options: CliOptions) {
+  const { startRepl } = await import("../../repl/repl/repl.ts");
+  await startRepl({ verbose: options.verbose });
 }
 
 /**
@@ -104,9 +114,11 @@ async function main() {
   try {
     // Process command
     if (command === "run") {
-      await executeRunCommand(target, cliOptions);
+      await executeRunCommand(target!, cliOptions);
     } else if (command === "transpile") {
-      await executeTranspileCommand(target, cliOptions);
+      await executeTranspileCommand(target!, cliOptions);
+    } else if (command === "repl") {
+      await executeReplCommand(cliOptions);
     }
   } catch (error) {
     console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);

@@ -32,11 +32,8 @@ function printHelp(): void {
   console.error("\nOptions:");
   console.error("  --verbose             Enable verbose logging and enhanced error formatting");
   console.error("  --time                Show performance timing information");
-
-  console.error("  --log <namespaces>      Filter logging to specified namespaces");
-
+  console.error("  --log <namespaces>    Filter logging to specified namespaces");
   console.error("  --print               Print final JS output without executing");
-
   console.error("  --help, -h            Display this help message");
 }
 

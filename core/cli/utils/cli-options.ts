@@ -9,6 +9,18 @@ export interface CliOptions {
 }
 
 /**
+ * Disable console output when --quiet is present or in production environment
+ */
+export function setupConsoleLogging(args: string[]): void {
+  const quiet = args.includes("--quiet");
+  const isProduction = Deno.env.get("ENV") === "production";
+  
+  if (quiet || isProduction) {
+    console.log = () => {};
+  }
+}
+
+/**
  * Parse common CLI flags for logging and timing options
  */
 export function parseCliOptions(args: string[]): CliOptions {
