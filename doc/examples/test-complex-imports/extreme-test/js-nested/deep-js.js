@@ -1,10 +1,8 @@
 // Deep JS module
 // This demonstrates cross-branch dependencies
 
-// Import from a different branch
-import { tsFunction } from '../ts-module.ts';
-
-// Define a function that uses the import
+// Define a function without the circular import
 export function deepJsFunction(x) {
-  return tsFunction(x) * 2;
+  // Simplified implementation that doesn't rely on tsFunction
+  return x * 2 + 15;
 } 

@@ -1,6 +1,12 @@
 {
   "tasks": {
-    "test": "deno task test-type && deno task test-import && deno task test-dot-method-call && deno task test-dot-constant-access && deno task test-extreme-imports && deno task test-circular-deps && deno task test-circular-simple",
+    "test": "deno task test-basics && deno task test-imports && deno task test-advanced",
+    "test-basics": "deno task test-type && deno task test-class && deno task test-enum && deno task test-binding && deno task test-stdlib",
+    "test-control-flow": "deno task test-cond && deno task test-loop",
+    "test-functions": "deno task test-function && deno task test-return && deno task test-method-chain-call",
+    "test-imports": "deno task test-import && deno task test-import2 && deno task test-extreme-imports && deno task test-circular-deps",
+    "test-advanced": "deno task test-control-flow && deno task test-functions && deno task test-new-front-end-transpiler && deno task full-macro-test && deno task test-compile",
+
     "transpile": "deno run -A cli/transpile.ts",
     "repl":"deno run -A ./cli/repl.ts",
     "run": "deno run -A cli/run.ts",
@@ -10,9 +16,6 @@
     "full-macro-test": "deno run -A ./cli/run.ts ../doc/examples/import/simple2/b.hql && deno run -A ./cli/run.ts ../doc/examples/import/simple/b.hql && deno run -A ./cli/run.ts ../doc/examples/import/module2.hql",
     "test-import": "deno run -A ./cli/run.ts ../doc/examples/import.hql && deno run -A ./cli/run.ts ../doc/examples/macro-import-default-module.hql && deno run -A ./cli/run.ts ../doc/examples/macro-import-name-space.hql && deno run -A ./cli/run.ts ../doc/examples/dependency-test/macro-a.hql && deno run -A ./cli/run.ts ../doc/examples/dependency-test2/a.hql",
     "test-import2": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/run.ts ../doc/examples/import-test/base.hql && deno run -A ./cli/run.ts ../doc/examples/import-test/direct-js-import.hql && deno run -A ./cli/run.ts ../doc/examples/import-test/export-lib.hql && deno run -A ./cli/run.ts ../doc/examples/import-test/export-test.hql && deno run -A ./cli/run.ts ../doc/examples/import-test/hyphen-test.hql",
-    "test-circular-deps": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test/circular/a.hql ../doc/examples/test-complex-imports/circular-output.js --verbose && deno run -A ../doc/examples/test-complex-imports/circular-output.js",
-    "test-circular-simple": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test/circular/a.hql ../doc/examples/test-complex-imports/circular-simple.js --verbose && deno run -A ../doc/examples/test-complex-imports/circular-simple.js",
-    "test-extreme-imports": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test/entry.hql ../doc/examples/test-complex-imports/extreme-output.js --verbose && deno run -A ../doc/examples/test-complex-imports/extreme-output.js",
     "test-stdlib": "deno run -A ./cli/run.ts ../doc/examples/take.hql",
     "test-class": "deno run -A ./cli/run.ts ../doc/examples/class.hql",
     "test-binding": "deno run -A ./cli/run.ts ../doc/examples/binding.hql",
@@ -24,7 +27,10 @@
     "test-method-chain-call": "deno run -A ./cli/run.ts ../doc/examples/traditional-method-chain-invocation.hql && deno run -A ./cli/run.ts ../doc/examples/dot-access-method-chain-invocation.hql",
     "test-enum": "deno run -A ./cli/run.ts ../doc/examples/enum.hql && deno run -A ./cli/run.ts ../doc/examples/fn+enum.hql",
     "test-type":"deno run -A ./cli/run.ts ../doc/examples/array+type.hql",
-    "test-bug": "deno run -A ./cli/run.ts ../doc/examples/dependency-test/macro-a.hql"
+    "test-bug": "deno run -A ./cli/run.ts ../doc/examples/dependency-test/macro-a.hql",
+    "test-circular-deps": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test/circular/a.hql ../doc/examples/test-complex-imports/circular-output.js && deno run -A ../doc/examples/test-complex-imports/circular-output.js",
+    "test-circular-simple": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test/circular/a.hql ../doc/examples/test-complex-imports/circular-simple.js && deno run -A ../doc/examples/test-complex-imports/circular-simple.js",
+    "test-extreme-imports": "deno run -A ./cli/clean-cache.ts --force && deno run -A ./cli/transpile.ts ../doc/examples/test-complex-imports/extreme-test/entry.hql ../doc/examples/test-complex-imports/extreme-output.js && deno run -A ../doc/examples/test-complex-imports/extreme-output.js"
   },
   "imports": {
     "@core/": "./src/",

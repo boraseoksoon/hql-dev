@@ -6,13 +6,14 @@ function add5(value) {
 function add5AndDouble(value) {
   return add5(value) * 2;
 }
-function main() {
+function circularFunction() {
   let result = add5AndDouble(baseValue);
   console.log("Calculation result:", result);
   return result;
 }
-main();
+circularFunction();
 export {
   add5,
-  add5AndDouble
+  add5AndDouble,
+  circularFunction
 };

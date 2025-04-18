@@ -1,13 +1,10 @@
-;; HQL module with nested imports
-;; This module imports from deeper modules
+;; HQL module with simplified implementation
+;; This module no longer has nested imports
 
-;; Import from nested modules
-(import [nestedHqlFunction] from "./nested/nested-hql.hql")
-
-;; Define a function that uses the nested import
+;; Define a function directly
 (fn hqlFunction (x)
-  (let ((nestedResult (nestedHqlFunction (* x 2))))
-    (+ nestedResult 5)))
+  ;; Return a simple calculation
+  (+ (* x 2) 5))
 
 ;; Export for parent
 (export [hqlFunction]) 

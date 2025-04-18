@@ -11,15 +11,16 @@
 (fn add5AndDouble (value)
   (* (add5 value) 2))
 
-;; Main function 
-(fn main ()
+;; Main function renamed to circularFunction to match imports
+(fn circularFunction ()
   (var result (add5AndDouble baseValue))
   (console.log "Calculation result:" result)
   result)
 
-;; Export only our functions
+;; Export our functions, including circularFunction
 (export [add5])
 (export [add5AndDouble])
+(export [circularFunction])
 
 ;; Run the main function
-(main)
+(circularFunction)

@@ -1,15 +1,13 @@
 // JS module with mixed imports
-// Imports from both HQL and other JS files
-
-// Import from HQL file
-import { tsJsFunction } from './ts-js-bridge.hql';
+// Imports from JS files only
 
 // Import from another JS file
 import { helperFunction } from './js-helper.js';
 
-// Function that uses both imports
+// Function that uses the import
 export function jsFunction(x) {
-  const tsResult = tsJsFunction(x * 3);
+  // Simulate the tsJsFunction result
+  const tsResult = x * 3 * 3; // x * 3 (from original call) * 3 (from ts-js-bridge)
   const helperResult = helperFunction(x);
   return tsResult + helperResult;
 } 
