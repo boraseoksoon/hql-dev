@@ -2,17 +2,16 @@
 
 import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI } from "../src/bundler.ts";
-import { globalLogger as logger, Logger } from "../src/logger.ts";
+import { globalLogger as logger } from "../src/logger.ts";
 import { parseCliOptions, applyCliOptions, CliOptions } from "./utils/cli-options.ts";
 import { report, withErrorHandling, registerSourceFile } from "../src/common/common-errors.ts";
 import { 
   cleanupAllTempFiles, 
   getCacheDir,
-  getCachedPath,
-  needsRegeneration,
   registerExplicitOutput,
   getCacheStats
 } from "../src/common/temp-file-tracker.ts";
+import { initializeRuntime } from "../src/common/runtime-initializer.ts";
 
 /**
  * Utility to time async phases and log durations
@@ -188,6 +187,9 @@ export async function main(): Promise<void> {
     printHelp();
     Deno.exit(args.length ? 1 : 0);
   }
+  
+  // Initialize runtime early - this will prevent redundant initializations later
+  await initializeRuntime();
   
   // Handle cache info request
   if (args.includes("--cache-info")) {

@@ -1,4 +1,3 @@
-import { globalLogger as logger } from "../logger.ts";
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { 
   exists, 
@@ -7,17 +6,12 @@ import {
   ensureDir, 
   dirname, 
   join, 
-  resolve,
   basename,
   relative
 } from "../platform/platform.ts";
 import { transpileHqlInJs } from "../bundler.ts";
-import { 
-  isHqlFile, 
-  isJsFile, 
-  isTypeScriptFile,
-  escapeRegExp 
-} from "./utils.ts";
+import { escapeRegExp } from "./utils.ts";
+import { globalLogger as logger } from "../logger.ts";
 
 // Cache directory configuration
 const HQL_CACHE_DIR = ".hql-cache";
@@ -115,25 +109,6 @@ export async function getContentHash(filePath: string): Promise<string> {
 }
 
 /**
- * Ensure the relative source directory is preserved in cache
- * 
- * This is important for imports that refer to neighboring files
- */
-async function prepareSourceDirInCache(sourcePath: string, hash: string): Promise<string> {
-  const cacheDir = await getCacheDir();
-  const sourceDir = dirname(sourcePath);
-  
-  // Create a path structure that includes entire relative directory structure
-  const relativePath = path.relative(Deno.cwd(), sourceDir);
-  const cacheDirForSource = join(cacheDir, relativePath);
-  
-  // Create source directory in cache to maintain relative imports
-  await ensureDir(cacheDirForSource);
-  
-  return cacheDirForSource;
-}
-
-/**
  * Get cached path for a source file with specific target extension
  */
 export async function getCachedPath(
@@ -153,10 +128,6 @@ export async function getCachedPath(
   const baseFilename = sourceFilename.replace(/\.[^\.]+$/, '');
   const targetFilename = baseFilename + targetExt;
   
-  // Determine if this is a preserveRelative case (e.g. stdlib)
-  const forcePreserveRelative = sourceFilename === "stdlib.hql" || sourceFilename === "stdlib.ts";
-  const shouldPreserveRelative = options.preserveRelative || forcePreserveRelative;
-  
   // IMPORTANT: For HQL files, default to preserveRelative unless explicitly set to false
   // This ensures consistent paths across imports
   if (sourcePath.endsWith('.hql') && options.preserveRelative !== false) {
@@ -165,7 +136,7 @@ export async function getCachedPath(
   
   let outputPath: string;
   
-  if (shouldPreserveRelative) {
+  if (options.preserveRelative) {
     // CRITICAL FIX: When preserving relative structure, make sure we handle 
     // running from the core directory correctly
     let sourceRelative = relative(Deno.cwd(), dirname(sourcePath));
@@ -176,13 +147,10 @@ export async function getCachedPath(
       // We're running from core directory, adjust paths
       // Remove "core/" from the beginning if present
       sourceRelative = sourceRelative.replace(/^core\//, "");
-      
-      // Use project root (parent of core) as the base
-      outputPath = join(cacheDir, sourceRelative, targetFilename);
-    } else {
-      // Normal case - preserve directory structure
-      outputPath = join(cacheDir, sourceRelative, targetFilename);
     }
+    
+    // Use preserved directory structure
+    outputPath = join(cacheDir, sourceRelative, targetFilename);
   } else {
     // Use standard hash-based structure (flat)
     outputPath = join(cacheDir, "temp", shortHash + targetExt);
@@ -193,105 +161,6 @@ export async function getCachedPath(
   }
   
   return outputPath;
-}
-
-/**
- * Ensure stdlib files are properly cached and accessible
- */
-export async function ensureStdlibInCache(): Promise<string> {
-  const cacheDir = await getCacheDir();
-  const stdlibSource = join(Deno.cwd(), "lib", "stdlib", "stdlib.hql");
-  
-  try {
-    // Check if stdlib exists
-    if (!await exists(stdlibSource)) {
-      // Try alternative location (core/lib/stdlib)
-      const altStdlibSource = join(Deno.cwd(), "core", "lib", "stdlib", "stdlib.hql");
-      if (await exists(altStdlibSource)) {
-        logger.debug(`Found stdlib at alternate location: ${altStdlibSource}`);
-        
-        // Cache the stdlib file with preserveRelative option
-        // This ensures its directory structure is maintained
-        const hash = await getContentHash(altStdlibSource);
-        const shortHash = hash.substring(0, 8);
-        
-        // Create the directory structure in cache that matches expected imports
-        const stdlibCacheDir = join(cacheDir, "lib", "stdlib");
-        const hashDir = join(stdlibCacheDir, shortHash);
-        await ensureDir(hashDir);
-        
-        // Also ensure the non-hashed path exists for direct imports
-        await ensureDir(stdlibCacheDir);
-        
-        // Process stdlib and copy to cache
-        const hqlSource = await readTextFile(altStdlibSource);
-        
-        // Copy the HQL file itself
-        await writeTextFile(join(stdlibCacheDir, "stdlib.hql"), hqlSource);
-        
-        // Handle JS directory if it exists (for stdlib implementations)
-        const jsDir = join(dirname(altStdlibSource), "js");
-        if (await exists(jsDir)) {
-          // Copy JS directory to both locations
-          const targetJsDir = join(stdlibCacheDir, "js");
-          const hashJsDir = join(hashDir, "js");
-          await ensureDir(targetJsDir);
-          await ensureDir(hashJsDir);
-          
-          // Copy all files
-          for await (const entry of Deno.readDir(jsDir)) {
-            if (entry.isFile) {
-              const content = await readTextFile(join(jsDir, entry.name));
-              await writeTextFile(join(targetJsDir, entry.name), content);
-              await writeTextFile(join(hashJsDir, entry.name), content);
-              logger.debug(`Copied stdlib JS file to cache: ${entry.name}`);
-            }
-          }
-        }
-        
-        logger.debug(`Prepared stdlib in cache at: ${stdlibCacheDir}`);
-        return join(stdlibCacheDir, "stdlib.hql");
-      }
-      
-      logger.warn(`Stdlib not found at expected locations`);
-      return stdlibSource;
-    }
-    
-    // Same process for the standard location
-    const hash = await getContentHash(stdlibSource);
-    const shortHash = hash.substring(0, 8);
-    const stdlibCacheDir = join(cacheDir, "lib", "stdlib");
-    const hashDir = join(stdlibCacheDir, shortHash);
-    
-    await ensureDir(hashDir);
-    await ensureDir(stdlibCacheDir);
-    
-    const hqlSource = await readTextFile(stdlibSource);
-    await writeTextFile(join(stdlibCacheDir, "stdlib.hql"), hqlSource);
-    
-    // Copy JS directory if it exists
-    const jsDir = join(dirname(stdlibSource), "js");
-    if (await exists(jsDir)) {
-      const targetJsDir = join(stdlibCacheDir, "js");
-      const hashJsDir = join(hashDir, "js");
-      await ensureDir(targetJsDir);
-      await ensureDir(hashJsDir);
-      
-      for await (const entry of Deno.readDir(jsDir)) {
-        if (entry.isFile) {
-          const content = await readTextFile(join(jsDir, entry.name));
-          await writeTextFile(join(targetJsDir, entry.name), content);
-          await writeTextFile(join(hashJsDir, entry.name), content);
-        }
-      }
-    }
-    
-    logger.debug(`Prepared stdlib in cache at: ${stdlibCacheDir}`);
-    return join(stdlibCacheDir, "stdlib.hql");
-  } catch (error) {
-    logger.debug(`Error preparing stdlib: ${error}`);
-    return stdlibSource;
-  }
 }
 
 /**
@@ -463,7 +332,7 @@ async function processFileContent(
  * Copy neighbor files needed for relative imports
  * This ensures files referenced through relative imports are available
  */
-export async function copyNeighborFiles(sourcePath: string, outputDir: string): Promise<void> {
+export async function copyNeighborFiles(sourcePath: string, outputDir?: string): Promise<void> {
   try {
     const sourceDir = dirname(sourcePath);
     logger.debug(`Checking for js directory near ${sourcePath}`);
@@ -473,48 +342,36 @@ export async function copyNeighborFiles(sourcePath: string, outputDir: string): 
     if (await exists(jsDir)) {
       logger.debug(`Found js directory at ${jsDir}`);
       
-      // Create js directory in all possible output locations
+      // Create js directory in the cache
       const cacheDir = await getCacheDir();
       
-      // Copy to multiple locations to ensure it works regardless of how files are referenced
-      const locations = [];
-      
-      // 1. In the cache directory preserving relative structure from working directory
+      // Get the relative path which is used in our preserved directory structure
       const sourceRelative = path.relative(Deno.cwd(), sourceDir);
-      const preservedJsDir = join(cacheDir, sourceRelative, "js");
-      locations.push(preservedJsDir);
+      let targetPath = sourceRelative;
       
-      // 2. With the hash-based directory structure
-      const hash = await getContentHash(sourcePath);
-      const shortHash = hash.substring(0, 8);
-      const hashJsDir = join(cacheDir, sourceRelative, shortHash, "js");
-      locations.push(hashJsDir);
-      
-      // 3. Handle running from core directory - remove 'core/' prefix if needed
-      if (sourceRelative.startsWith("core/")) {
-        const coreRelative = sourceRelative.replace(/^core\//, "");
-        const coreJsDir = join(cacheDir, coreRelative, "js");
-        locations.push(coreJsDir);
-        
-        // Also with hash
-        const coreHashJsDir = join(cacheDir, coreRelative, shortHash, "js");
-        locations.push(coreHashJsDir);
+      // Handle running from core directory
+      const currentDir = basename(Deno.cwd());
+      if (currentDir === "core" && sourceRelative.startsWith("core/")) {
+        // Remove 'core/' prefix for consistency
+        targetPath = sourceRelative.replace(/^core\//, "");
       }
       
-      // Create all target directories and copy files
-      for (const targetDir of locations) {
-        await ensureDir(targetDir);
-        logger.debug(`Created js directory at ${targetDir}`);
-        
-        // Copy all files from js dir
-        for await (const entry of Deno.readDir(jsDir)) {
-          if (entry.isFile) {
-            const sourceFile = join(jsDir, entry.name);
-            const targetFile = join(targetDir, entry.name);
-            const content = await readTextFile(sourceFile);
-            await writeTextFile(targetFile, content);
-            logger.debug(`Copied file: ${sourceFile} -> ${targetFile}`);
-          }
+      // Determine target directory - either specified or derived from source
+      const targetDir = outputDir || join(cacheDir, targetPath);
+      const targetJsDir = join(targetDir, "js");
+      
+      // Ensure the directory exists
+      await ensureDir(targetJsDir);
+      logger.debug(`Created js directory at ${targetJsDir}`);
+      
+      // Copy all files from js dir
+      for await (const entry of Deno.readDir(jsDir)) {
+        if (entry.isFile) {
+          const sourceFile = join(jsDir, entry.name);
+          const targetFile = join(targetJsDir, entry.name);
+          const content = await readTextFile(sourceFile);
+          await writeTextFile(targetFile, content);
+          logger.debug(`Copied file: ${sourceFile} -> ${targetFile}`);
         }
       }
     } else {
@@ -697,10 +554,6 @@ async function restoreRelativePaths(
   const outputDir = dirname(outputPath);
   let result = content;
   
-  // Get the project root (important for path resolution)
-  const projectRoot = Deno.cwd().endsWith('/core') ? 
-    dirname(Deno.cwd()) : Deno.cwd();
-  
   // Find all cache path references
   const cachePathRegex = new RegExp(`file:\/\/(${escapeRegExp(cacheDir)}\/[^"']+)`, 'g');
   
@@ -712,7 +565,6 @@ async function restoreRelativePaths(
       // Calculate relative path from output file to original
       try {
         // First check if we're dealing with the core/ path issue
-        const isCachePath = p1.includes('/.hql-cache/');
         const isCoreCachePath = p1.includes('/core/.hql-cache/');
         
         // If we have a core/.hql-cache path, we need to fix it
@@ -761,79 +613,41 @@ async function restoreRelativePaths(
  */
 export async function getCacheStats(): Promise<{ files: number, bytes: number }> {
   const cacheDir = await getCacheDir();
-  let files = 0;
-  let bytes = 0;
-  
   try {
-    for await (const entry of Deno.readDir(cacheDir)) {
-      if (entry.isFile) {
-        files++;
-        const info = await Deno.stat(join(cacheDir, entry.name));
-        bytes += info.size;
-      } else if (entry.isDirectory) {
-        // Recursively process subdirectories
-        const { files: subFiles, bytes: subBytes } = await getDirStats(join(cacheDir, entry.name));
-        files += subFiles;
-        bytes += subBytes;
-      }
-    }
+    return await getDirStats(cacheDir);
   } catch (error) {
     logger.debug(`Error getting cache stats: ${error}`);
+    return { files: 0, bytes: 0 };
   }
-  
-  return { files, bytes };
 }
 
-/**
- * Helper to get stats for a directory
- */
 async function getDirStats(dir: string): Promise<{ files: number, bytes: number }> {
   let files = 0;
   let bytes = 0;
   
   try {
     for await (const entry of Deno.readDir(dir)) {
-      const fullPath = join(dir, entry.name);
-      if (entry.isFile) {
+      const entryPath = path.join(dir, entry.name);
+      
+      if (entry.isDirectory) {
+        const subStats = await getDirStats(entryPath);
+        files += subStats.files;
+        bytes += subStats.bytes;
+      } else if (entry.isFile) {
         files++;
-        const info = await Deno.stat(fullPath);
-        bytes += info.size;
-      } else if (entry.isDirectory) {
-        const { files: subFiles, bytes: subBytes } = await getDirStats(fullPath);
-        files += subFiles;
-        bytes += subBytes;
+        try {
+          const stat = await Deno.stat(entryPath);
+          bytes += stat.size;
+        } catch {
+          // Ignore errors for individual files
+        }
       }
     }
   } catch (error) {
-    logger.debug(`Error getting directory stats for ${dir}: ${error}`);
+    logger.debug(`Error reading directory ${dir}: ${error}`);
   }
   
   return { files, bytes };
-}
-
-// Backward compatibility functions
-export function registerTempFile(path: string): void {
-  logger.debug(`Received request to register temp file: ${path}`);
-  // In the new system, we don't need to track individual files
-  // But we keep this function for backward compatibility
-}
-
-export function registerExceptionTempFile(path: string): void {
-  logger.debug(`Received request to register exception file: ${path}`);
-  // Register as explicit output in new system
-  registerExplicitOutput(path);
-}
-
-export function getCachedFileContent(filePath: string): string | undefined {
-  logger.debug(`Received request to get cached content for: ${filePath}`);
-  // This function existed in the old system but we don't use it in the new one
-  // Return undefined as we don't cache file contents in memory anymore
-  return undefined;
-}
-
-export function getAllTrackedFiles(): string[] {
-  // Legacy function for backward compatibility
-  return [];
 }
 
 /**
@@ -855,121 +669,6 @@ export async function clearCache(): Promise<void> {
   
   // Recreate the cache directory
   await ensureDir(cacheDir);
-}
-
-/**
- * Special function to prepare stdlib in the cache
- * This creates a predictable location for the stdlib files
- */
-export async function prepareStdlibInCache(): Promise<void> {
-  const cacheDir = await getCacheDir();
-  let stdlibSource = '';
-  let jsDir = '';
-  
-  // Try to find stdlib in various locations
-  const possibleLocations = [
-    join(Deno.cwd(), "lib", "stdlib", "stdlib.hql"),
-    join(Deno.cwd(), "core", "lib", "stdlib", "stdlib.hql"),
-    join(Deno.cwd(), "..", "lib", "stdlib", "stdlib.hql")
-  ];
-  
-  for (const location of possibleLocations) {
-    if (await exists(location)) {
-      stdlibSource = location;
-      jsDir = join(dirname(location), "js");
-      break;
-    }
-  }
-  
-  if (!stdlibSource) {
-    logger.warn("Could not find stdlib.hql in any of the expected locations");
-    return;
-  }
-  
-  logger.debug(`Found stdlib at: ${stdlibSource}`);
-  
-  try {
-    // Create predictable cache locations for stdlib
-    const stdlibCacheDir = join(cacheDir, "lib", "stdlib");
-    await ensureDir(stdlibCacheDir);
-    
-    // 1. Copy the HQL file itself
-    const hqlContent = await readTextFile(stdlibSource);
-    const stdlibHqlPath = join(stdlibCacheDir, "stdlib.hql");
-    await writeTextFile(stdlibHqlPath, hqlContent);
-    
-    // 2. Create typescript version
-    try {
-      // We don't want to import the whole transpiler, so we'll just create a basic .ts wrapper
-      const tsContent = `// Generated TypeScript wrapper for stdlib.hql
-import { _take, _map, _filter, _reduce, _range, _rangeGenerator, _groupBy, _keys } from "./js/stdlib.js";
-
-export const take = _take;
-export const map = _map;
-export const filter = _filter;
-export const reduce = _reduce;
-export const range = _range;
-export const groupBy = _groupBy;
-export const keys = _keys;
-`;
-      const stdlibTsPath = join(stdlibCacheDir, "stdlib.ts");
-      await writeTextFile(stdlibTsPath, tsContent);
-      logger.debug(`Created stdlib TypeScript wrapper at: ${stdlibTsPath}`);
-      
-      // Register this as a known mapping
-      registerImportMapping(stdlibSource, stdlibTsPath);
-      registerImportMapping(stdlibSource.replace(/\.hql$/, '.ts'), stdlibTsPath);
-      
-      // Also register with hash directory format
-      const hash = await getContentHash(stdlibSource);
-      const shortHash = hash.substring(0, 8);
-      const hashDir = join(stdlibCacheDir, shortHash);
-      await ensureDir(hashDir);
-      
-      const hashedStdlibTsPath = join(hashDir, "stdlib.ts");
-      await writeTextFile(hashedStdlibTsPath, tsContent);
-      logger.debug(`Created hashed stdlib TypeScript wrapper at: ${hashedStdlibTsPath}`);
-      
-      // 3. Copy JS implementations if they exist
-      if (await exists(jsDir)) {
-        const jsCacheDir = join(stdlibCacheDir, "js");
-        const hashedJsCacheDir = join(hashDir, "js");
-        await ensureDir(jsCacheDir);
-        await ensureDir(hashedJsCacheDir);
-        
-        for await (const entry of Deno.readDir(jsDir)) {
-          if (entry.isFile) {
-            let jsContent = await readTextFile(join(jsDir, entry.name));
-            
-            // Sanitize any exported identifiers with hyphens
-            const exportWithHyphenRegex = /export\s+(const|let|var|function)\s+([a-zA-Z0-9_-]+)/g;
-            let exportMatch;
-            while ((exportMatch = exportWithHyphenRegex.exec(jsContent)) !== null) {
-              const exportId = exportMatch[2];
-              if (exportId.includes('-')) {
-                const sanitized = sanitizeHqlIdentifier(exportId);
-                const fullMatch = exportMatch[0];
-                const replacement = fullMatch.replace(exportId, sanitized);
-                jsContent = jsContent.replace(fullMatch, replacement);
-                
-                // Also replace all other occurrences of this identifier
-                const idRegex = new RegExp(`\\b${exportId}\\b`, 'g');
-                jsContent = jsContent.replace(idRegex, sanitized);
-              }
-            }
-            
-            await writeTextFile(join(jsCacheDir, entry.name), jsContent);
-            await writeTextFile(join(hashedJsCacheDir, entry.name), jsContent);
-            logger.debug(`Copied JS implementation: ${entry.name}`);
-          }
-        }
-      }
-    } catch (error) {
-      logger.error(`Error preparing stdlib TypeScript: ${error}`);
-    }
-  } catch (error) {
-    logger.error(`Error preparing stdlib in cache: ${error}`);
-  }
 }
 
 /**
@@ -1034,7 +733,7 @@ async function processJsImportsInJs(content: string, filePath: string): Promise<
   
   while ((match = jsImportRegex.exec(content)) !== null) {
     const fullImport = match[0];
-    let importPath = match[1];
+    const importPath = match[1];
     
     // Skip absolute imports
     if (importPath.startsWith('file://') || importPath.startsWith('http') || 
@@ -1090,33 +789,34 @@ async function processJsImportsInJs(content: string, filePath: string): Promise<
         const underscorePath = path.join(directory, underscoreFileName);
         
         if (await exists(underscorePath)) {
+          foundFile = true;
           logger.debug(`Found JS import with underscore name: ${importPath} -> ${underscorePath}`);
           
-          // For cached files, copy the JS file to the cache
-          if (!explicitOutputs.has(filePath)) {
-            const cachedJsPath = await writeToCachedPath(underscorePath, await readTextFile(underscorePath), "", {
-              preserveRelative: true
-            });
-            
-            // Register the mapping
-            registerImportMapping(resolvedImportPath, cachedJsPath); // Map from the expected path to the actual cache path
-            
-            // Determine new import path
-            let newImportPath: string;
-            if (importPath.endsWith('.js')) {
-              newImportPath = `file://${cachedJsPath}`;
-            } else {
-              // Preserve the original import without extension if that's how it was written
-              newImportPath = `file://${cachedJsPath.replace(/\.js$/, '')}`;
-            }
-            
-            const newImport = fullImport.replace(importPath, newImportPath);
-            modifiedContent = modifiedContent.replace(fullImport, newImport);
-            logger.debug(`Rewritten JS import (underscore variant): ${importPath} -> ${newImportPath}`);
+          // Copy to cache
+          const cachedJsPath = await writeToCachedPath(underscorePath, await readTextFile(underscorePath), "", {
+            preserveRelative: true
+          });
+          
+          // Register the mapping
+          registerImportMapping(resolvedImportPath, cachedJsPath);
+          
+          // Determine new import path
+          let newImportPath: string;
+          if (importPath.endsWith('.js')) {
+            newImportPath = `file://${cachedJsPath}`;
+          } else {
+            // Preserve the original import without extension if that's how it was written
+            newImportPath = `file://${cachedJsPath.replace(/\.js$/, '')}`;
           }
-        } else {
-          logger.debug(`Could not find JS file for import: ${importPath} (tried ${resolvedImportPath} and ${underscorePath})`);
+          
+          const newImport = fullImport.replace(importPath, newImportPath);
+          modifiedContent = modifiedContent.replace(fullImport, newImport);
+          logger.debug(`Rewritten JS import (underscore variant): ${importPath} -> ${newImportPath}`);
         }
+      }
+      
+      if (!foundFile) {
+        logger.debug(`Could not find JS file for import: ${importPath} (tried ${resolvedImportPath} and ${path.join(directory, fileNameBase.replace(/-/g, '_') + '.js')})`);
       }
     } catch (error) {
       logger.debug(`Error processing JS import ${importPath}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1131,7 +831,7 @@ async function processJsImportsInJs(content: string, filePath: string): Promise<
   while ((importMatch = namedImportRegex.exec(modifiedContent)) !== null) {
     const importedIds = importMatch[1].split(',').map(id => id.trim());
     let needsUpdate = false;
-    let newImportList = [];
+    const newImportList = [];
     
     for (const id of importedIds) {
       // Handle "as" syntax in imports
@@ -1383,11 +1083,7 @@ async function processHqlFile(sourceFile: string): Promise<string> {
     logger.debug(`Transpiling HQL to TypeScript: ${sourceFile}`);
     
     // Run the transpiler via bundler
-    const content = await readTextFile(sourceFile);
     const tsContent = await transpileHqlInJs(sourceFile, dirname(sourceFile));
-    
-    // Process any nested imports in the TypeScript content
-    // This is critical for handling multi-level dependencies
     const processedContent = await processNestedImports(tsContent, sourceFile, cachedTsPath);
     
     // Write to cache
@@ -1406,6 +1102,51 @@ async function processHqlFile(sourceFile: string): Promise<string> {
   }
 }
 
-// Add this to the exports at the top of the file
-export { processHqlFile };
+/**
+ * Interface for temporary directory creation result
+ */
+export interface TempDirResult {
+  tempDir: string;
+  created: boolean;
+}
 
+/**
+ * Creates a temporary directory if one is not already provided.
+ * Used by both bundler and import processing.
+ * 
+ * @param options Options containing an optional tempDir
+ * @param prefix Prefix for the temporary directory name
+ * @param logger Optional logger instance
+ * @returns TempDirResult containing the directory path and whether it was created
+ */
+export async function createTempDirIfNeeded(
+  options: { tempDir?: string; verbose?: boolean },
+  prefix: string = "hql_temp_",
+  logger?: { debug: (msg: string) => void; log: (msg: any) => void; }
+): Promise<TempDirResult> {
+  try {
+    // Use provided temp directory if available
+    if (options.tempDir) {
+      if (logger?.debug) {
+        logger.debug(`Using existing temp directory: ${options.tempDir}`);
+      }
+      return { tempDir: options.tempDir, created: false };
+    }
+    
+    // Create new temp directory
+    const tempDir = await Deno.makeTempDir({ prefix });
+    
+    if (logger?.debug) {
+      logger.debug(`Created temporary directory: ${tempDir}`);
+    } else if (logger?.log && options.verbose) {
+      logger.log({ text: `Created temporary directory: ${tempDir}`, namespace: "utils" });
+    }
+    
+    return { tempDir, created: true };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    throw new Error(`Creating temporary directory: ${errorMsg}`);
+  }
+}
+
+export { processHqlFile };

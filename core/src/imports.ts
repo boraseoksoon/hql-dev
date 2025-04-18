@@ -9,6 +9,7 @@ import { checkForHqlImports } from "./bundler.ts";
 import {
   processJavaScriptFile,
   getImportMapping,
+  createTempDirIfNeeded
 } from "./common/temp-file-tracker.ts";
 import {
   isImport,
@@ -32,8 +33,11 @@ import {
   isRemoteUrl,
   registerModulePath,
 } from "./common/import-utils.ts";
-import { formatErrorMessage } from "./common/common-utils.ts";
-
+import { 
+  wrapError, 
+  formatErrorMessage 
+} from "./common/common-utils.ts";
+import { readFile } from "./common/utils.ts";
 export interface ImportProcessorOptions {
   verbose?: boolean;
   baseDir?: string;
@@ -47,23 +51,6 @@ export interface ImportProcessorOptions {
 interface SLiteral {
   type: "literal";
   value: string | number | boolean | null;
-}
-
-/**
- * Throws a standardized error related to import processing
- */
-function wrapError(
-  context: string,
-  error: unknown,
-  modulePath: string,
-  currentFile?: string,
-): never {
-  throw new ImportError(
-    `${context}: ${formatErrorMessage(error)}`,
-    modulePath,
-    currentFile,
-    error instanceof Error ? error : undefined,
-  );
 }
 
 /**
@@ -89,13 +76,14 @@ export async function processImports(
     }
     
     // Initialize temp directory and analyze imports
-    const tempDir = await createTempDirIfNeeded(options);
+    const tempDirResult = await createTempDirIfNeeded(options, "hql_imports_", logger);
+    const tempDir = tempDirResult.tempDir;
     const importExprs = filterImportExpressions(exprs);
     
-    // Categorize and process imports
+    // Categorize imports and process them
     const { remoteImports, localImports } = categorizeImports(importExprs);
     
-    // Process remote imports in parallel for efficiency
+    // Process remote imports in parallel
     if (remoteImports.length > 0) {
       await processImportsInParallel(
         remoteImports,
@@ -111,7 +99,7 @@ export async function processImports(
       );
     }
     
-    // Process local imports sequentially to avoid race conditions
+    // Process local imports sequentially
     if (localImports.length > 0) {
       await processImportsSequentially(
         localImports,
@@ -133,33 +121,55 @@ export async function processImports(
     }
     
     // Mark file as processed
-    finalizeFileProcessing(options.currentFile, inProgressFiles, processedFiles);
-  } catch (error) {
-    wrapError("Processing imports", error, options.currentFile || "imports", options.currentFile);
-  } finally {
-    env.setCurrentFile(previousCurrentFile);
-  }
-} 
-
-/**
- * Creates a temporary directory for import processing if needed
- */
-async function createTempDirIfNeeded(options: ImportProcessorOptions): Promise<string> {
-  if (!options.tempDir) {
-    try {
-      const tempDir = await Deno.makeTempDir({ prefix: "hql_imports_" });
-      logger.debug(`Created temporary directory: ${tempDir}`);
-      return tempDir;
-    } catch (error) {
-      wrapError("Creating temporary directory", error, "temp_dir", options.currentFile);
+    if (options.currentFile) {
+      inProgressFiles.delete(options.currentFile);
+      processedFiles.add(options.currentFile);
+      logger.debug(`Completed processing imports for: ${options.currentFile}`);
     }
+  } catch (error) {
+    wrapError("Processing file exports and definitions", error, options.currentFile || "unknown", options.currentFile);
   }
-  logger.debug(`Using existing temp directory: ${options.tempDir}`);
-  return options.tempDir || "";
 }
 
 /**
- * Filters and returns import expressions from the provided S-expressions
+ * Collect export definitions from expressions
+ */
+function collectExportDefinitions(expressions: SExp[]): { name: string; value: SExp | null }[] {
+  const exportDefinitions: { name: string; value: SExp | null }[] = [];
+  
+  for (const expr of expressions) {
+    if (expr.type !== "list" || expr.elements.length === 0 || 
+        !isSymbol(expr.elements[0]) || expr.elements[0].name !== "export") {
+      continue;
+    }
+    
+    // Handle vector exports
+    if (expr.elements.length === 2 && expr.elements[1].type === "list") {
+      const vectorElements = (expr.elements[1] as SList).elements;
+      const elements = processVectorElements(vectorElements);
+      
+      for (const elem of elements) {
+        if (isSymbol(elem)) {
+          exportDefinitions.push({ name: (elem as SSymbol).name, value: null });
+          logger.debug(`Collected vector export: ${(elem as SSymbol).name}`);
+        }
+      }
+    } 
+    // Handle named exports
+    else if (expr.elements.length === 3 && 
+             expr.elements[1].type === "literal" && 
+             typeof (expr.elements[1] as SLiteral).value === "string") {
+      const exportName = (expr.elements[1] as SLiteral).value as string;
+      exportDefinitions.push({ name: exportName, value: expr.elements[2] });
+      logger.debug(`Collected string export with expression: "${exportName}"`);
+    }
+  }
+  
+  return exportDefinitions;
+}
+
+/**
+ * Filter import expressions from S-expressions
  */
 function filterImportExpressions(exprs: SExp[]): SList[] {
   const importExprs = exprs.filter(
@@ -170,7 +180,7 @@ function filterImportExpressions(exprs: SExp[]): SList[] {
 }
 
 /**
- * Categorizes imports into remote and local types
+ * Categorize imports into remote and local types
  */
 function categorizeImports(importExprs: SList[]): {
   remoteImports: SList[];
@@ -195,7 +205,7 @@ function categorizeImports(importExprs: SList[]): {
 }
 
 /**
- * Process a collection of imports in parallel
+ * Process imports in parallel (for remote imports)
  */
 async function processImportsInParallel(
   imports: SList[],
@@ -217,7 +227,7 @@ async function processImportsInParallel(
 }
 
 /**
- * Process a collection of imports sequentially
+ * Process imports sequentially (for local imports)
  */
 async function processImportsSequentially(
   imports: SList[],
@@ -237,7 +247,7 @@ async function processImportsSequentially(
 }
 
 /**
- * Process file content for definitions and exports
+ * Process file content, including definitions and exports
  */
 function processFileContent(
   exprs: SExp[],
@@ -245,8 +255,10 @@ function processFileContent(
   options: ImportProcessorOptions,
 ): void {
   try {
+    // Process definitions
     processFileDefinitions(exprs, env);
     
+    // Process exports if current file is defined
     if (options.currentFile) {
       const moduleExports = {};
       processFileExportsAndDefinitions(exprs, env, moduleExports, options.currentFile);
@@ -263,22 +275,7 @@ function processFileContent(
 }
 
 /**
- * Finalizes the processing of a file by updating tracking sets
- */
-function finalizeFileProcessing(
-  currentFile: string | undefined,
-  inProgressFiles: Set<string>,
-  processedFiles: Set<string>,
-): void {
-  if (currentFile) {
-    inProgressFiles.delete(currentFile);
-    processedFiles.add(currentFile);
-    logger.debug(`Completed processing imports for: ${currentFile}`);
-  }
-}
-
-/**
- * Extracts module path from an import expression
+ * Extract module path from import expression
  */
 function getModulePathFromImport(importExpr: SList): string {
   try {
@@ -301,7 +298,7 @@ function getModulePathFromImport(importExpr: SList): string {
       return String((importExpr.elements[1] as SLiteral).value);
     }
   } catch (_e) {
-    // Error parsing the import expression, fall back to "unknown"
+    // Error parsing import expression, fall back to "unknown"
   }
   return "unknown";
 }
@@ -326,7 +323,7 @@ async function processImport(
   }
 
   try {
-    // Handle different import syntaxes based on pattern
+    // Determine import type and process accordingly
     if (elements.length === 2 && elements[1].type === "literal") {
       await processSimpleImport(elements, env, baseDir, options);
     } else if (isSExpNamespaceImport(elements)) {
@@ -649,8 +646,6 @@ async function loadHqlModule(
     wrapError(`Importing HQL module ${moduleName}`, error, modulePath, options.currentFile);
   } finally {
     env.setCurrentFile(previousCurrentFile);
-    
-    // Finalize processing
     inProgressFiles.delete(resolvedPath);
     processedFiles.add(resolvedPath);
   }
@@ -682,8 +677,6 @@ async function loadJavaScriptModule(
       if (cachedPath) {
         finalModuleUrl = `file://${cachedPath}`;
         logger.debug(`Using cached JS file: ${cachedPath}`);
-      } else {
-        logger.debug(`No cached path found for ${resolvedPath}, using original path`);
       }
     }
     
@@ -774,20 +767,6 @@ async function loadHttpModule(
     logger.debug(`Imported HTTP module: ${moduleName}`);
   } catch (error) {
     wrapError(`Importing HTTP module ${moduleName}`, error, modulePath, env.getCurrentFile());
-  }
-}
-
-/**
- * Read a file with error handling
- */
-async function readFile(
-  filePath: string,
-  currentFile: string | undefined,
-): Promise<string> {
-  try {
-    return await Deno.readTextFile(filePath);
-  } catch (error) {
-    wrapError(`Reading file ${filePath}`, error, filePath, currentFile);
   }
 }
 
@@ -895,102 +874,52 @@ function processFileExportsAndDefinitions(
       }
     }
     
-    // Collect export definitions
+    // Collect and process exports
     const exportDefinitions = collectExportDefinitions(expressions);
     
-    // Process exports
-    processExports(exportDefinitions, env, moduleExports, filePath);
+    for (const { name, value } of exportDefinitions) {
+      try {
+        // Check if it's a macro export
+        if (env.hasModuleMacro(filePath, name)) {
+          env.exportMacro(filePath, name);
+          logger.debug(`Marked macro ${name} as exported from ${filePath}`);
+          continue;
+        }
+        
+        // Try to evaluate the export expression if present
+        if (value) {
+          try {
+            const evaluatedValue = evaluateForMacro(value, env, logger);
+            moduleExports[name] = evaluatedValue;
+            logger.debug(`Added export "${name}" with evaluated expression`);
+            continue;
+          } catch (evalError) {
+            logger.debug(`Failed to evaluate expression for export "${name}": ${formatErrorMessage(evalError)}`);
+          }
+        }
+        
+        // Fall back to looking up the value from environment
+        try {
+          const lookupValue = env.lookup(name);
+          moduleExports[name] = lookupValue;
+          logger.debug(`Added export "${name}" with looked-up value`);
+        } catch (lookupError) {
+          logger.warn(`Symbol not found for export: "${name}"`);
+          
+          // Special handling for HQL files
+          if (filePath.endsWith(".hql")) {
+            moduleExports[name] = null;
+          } else {
+            wrapError(`Lookup failed for export "${name}"`, lookupError, filePath, filePath);
+          }
+        }
+      } catch (error) {
+        if (!(error instanceof ValidationError && error.message.includes("Symbol not found"))) {
+          wrapError(`Failed to export symbol "${name}"`, error, filePath, filePath);
+        }
+      }
+    }
   } catch (error) {
     wrapError("Processing file exports and definitions", error, filePath, filePath);
-  }
-}
-
-/**
- * Collect export definitions from expressions
- */
-function collectExportDefinitions(expressions: SExp[]): { name: string; value: SExp | null }[] {
-  const exportDefinitions: { name: string; value: SExp | null }[] = [];
-  
-  for (const expr of expressions) {
-    if (expr.type !== "list" || expr.elements.length === 0 || 
-        !isSymbol(expr.elements[0]) || expr.elements[0].name !== "export") {
-      continue;
-    }
-    
-    // Handle vector exports like (export [a b c])
-    if (expr.elements.length === 2 && expr.elements[1].type === "list") {
-      const vectorElements = (expr.elements[1] as SList).elements;
-      const elements = processVectorElements(vectorElements);
-      
-      for (const elem of elements) {
-        if (isSymbol(elem)) {
-          exportDefinitions.push({ name: (elem as SSymbol).name, value: null });
-          logger.debug(`Collected vector export: ${(elem as SSymbol).name}`);
-        }
-      }
-    } 
-    // Handle named exports like (export "name" expression)
-    else if (expr.elements.length === 3 && 
-             expr.elements[1].type === "literal" && 
-             typeof (expr.elements[1] as SLiteral).value === "string") {
-      const exportName = (expr.elements[1] as SLiteral).value as string;
-      exportDefinitions.push({ name: exportName, value: expr.elements[2] });
-      logger.debug(`Collected string export with expression: "${exportName}"`);
-    }
-  }
-  
-  return exportDefinitions;
-}
-
-/**
- * Process exports by handling macros and values
- */
-function processExports(
-  exportDefinitions: { name: string; value: SExp | null }[],
-  env: Environment,
-  moduleExports: Record<string, Value>,
-  filePath: string,
-): void {
-  for (const { name, value } of exportDefinitions) {
-    try {
-      // Check if it's a macro export
-      if (env.hasModuleMacro(filePath, name)) {
-        env.exportMacro(filePath, name);
-        logger.debug(`Marked macro ${name} as exported from ${filePath}`);
-        continue;
-      }
-      
-      // Try to evaluate the export expression if present
-      if (value) {
-        try {
-          const evaluatedValue = evaluateForMacro(value, env, logger);
-          moduleExports[name] = evaluatedValue;
-          logger.debug(`Added export "${name}" with evaluated expression`);
-          continue;
-        } catch (evalError) {
-          logger.debug(`Failed to evaluate expression for export "${name}": ${formatErrorMessage(evalError)}`);
-        }
-      }
-      
-      // Fall back to looking up the value from environment
-      try {
-        const lookupValue = env.lookup(name);
-        moduleExports[name] = lookupValue;
-        logger.debug(`Added export "${name}" with looked-up value`);
-      } catch (lookupError) {
-        logger.warn(`Symbol not found for export: "${name}"`);
-        
-        // Special handling for HQL files
-        if (filePath.endsWith(".hql")) {
-          moduleExports[name] = null;
-        } else {
-          wrapError(`Lookup failed for export "${name}"`, lookupError, filePath, filePath);
-        }
-      }
-    } catch (error) {
-      if (!(error instanceof ValidationError && error.message.includes("Symbol not found"))) {
-        wrapError(`Failed to export symbol "${name}"`, error, filePath, filePath);
-      }
-    }
   }
 }

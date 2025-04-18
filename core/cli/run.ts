@@ -2,13 +2,11 @@
 
 import { transpileCLI } from "../src/bundler.ts";
 import { resolve } from "../src/platform/platform.ts";
-import { 
-  cleanupAllTempFiles, 
-  createTempDir, 
+import {
+  clearCache,
   registerExplicitOutput,
-  getImportMapping,
-  registerImportMapping,
-  prepareStdlibInCache
+  createTempDir,
+  cleanupAllTempFiles
 } from "../src/common/temp-file-tracker.ts";
 import {
   parseLogNamespaces,
@@ -16,14 +14,10 @@ import {
   applyCliOptions,
   CliOptions
 } from "./utils/cli-options.ts";
-import {
-  registerSourceFile,
-  withErrorHandling,
-  report
-} from "../src/transpiler/error/errors.ts";
+import { registerSourceFile, report } from "../src/transpiler/error/errors.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
-import { parse } from "https://deno.land/std@0.170.0/flags/mod.ts";
 import { basename, dirname } from "../src/platform/platform.ts";
+import { initializeRuntime } from "../src/common/runtime-initializer.ts";
 
 /**
  * Show help flags
@@ -104,19 +98,6 @@ async function readInputFile(inputPath: string): Promise<string> {
 }
 
 /**
- * Cleanup expression and run temp directories and all registered files
- */
-async function cleanupTempFiles(exprDir: string | undefined, runDir: string): Promise<void> {
-  // All temp directories are now managed by the cache system
-  // Just run the cleanup to handle everything
-  try {
-    await cleanupAllTempFiles();
-  } catch (error) { 
-    logger.debug(`Error during cleanup: ${error}`);
-  }
-}
-
-/**
  * Override Deno.args for internal consumers
  */
 async function withTemporaryDenoArgs<T>(newArgs: string[], fn: () => Promise<T>): Promise<T> {
@@ -140,8 +121,13 @@ async function transpileAndExecute(
   runDir: string,
 ): Promise<void> {
   try {
-    // Prepare stdlib in cache - this creates cache locations for stdlib
-    await prepareStdlibInCache();
+    // Start timing if requested
+    const tStart = performance.now();
+    
+    // Configure logger based on verbose flag
+    if (options.verbose) {
+      logger.setEnabled(true);
+    }
     
     // Create a temp JS file for the transpiled code
     const jsOutputPath = `${runDir}/${basename(inputPath)}.js`;
@@ -222,13 +208,15 @@ export async function transpileHqlFile(
 }
 
 /**
- * Main CLI entry point
+ * Main entry point for the HQL CLI
  */
-async function run(): Promise<void> {
-  const args = Deno.args;
+export async function run(args: string[] = Deno.args): Promise<number> {
+  // Initialize the runtime first
+  await initializeRuntime();
+  
   if (shouldShowHelp(args)) {
     printHelp();
-    Deno.exit(0);
+    return 0;
   }
 
   // Handle log namespaces directly
@@ -241,7 +229,7 @@ async function run(): Promise<void> {
   const positional = parseNonOptionArgs(args);
   if (!positional.length) {
     printHelp();
-    Deno.exit(1);
+    return 1;
   }
   const cliOptions = parseCliOptions(args);
   applyCliOptions(cliOptions);
@@ -257,10 +245,11 @@ async function run(): Promise<void> {
     await transpileAndExecute(args, cliOptions, inputPath, source, runDir);
   } catch (error) {
     console.error(report(error, { filePath: inputPath, source }));
-    Deno.exit(1);
+    return 1;
   } finally {
-    await cleanupTempFiles(exprDir, runDir);
+    await cleanupAllTempFiles();
   }
+  return 0;
 }
 
 if (import.meta.main) {

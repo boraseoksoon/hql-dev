@@ -107,3 +107,104 @@ export function isJsFile(filePath: string): boolean {
 export function isTypeScriptFile(filePath: string): boolean {
   return filePath.endsWith(".ts") || filePath.endsWith(".tsx");
 }
+
+/**
+ * Read a file with standardized error handling.
+ * 
+ * @param filePath Path to the file to read
+ * @param context Optional context for error messages
+ * @returns File content as string
+ */
+export async function readFile(
+  filePath: string,
+  context?: string
+): Promise<string> {
+  try {
+    const content = await Deno.readTextFile(filePath);
+    return content;
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Reading file ${filePath}${context ? ` (${context})` : ''}: ${errorMsg}`
+    );
+  }
+}
+
+/**
+ * Try to read a file, returning null if it doesn't exist or can't be read.
+ * 
+ * @param filePath Path to the file to read
+ * @param logger Optional logger to record debug information
+ * @returns File content or null if the file can't be read
+ */
+export async function tryReadFile(
+  filePath: string,
+  logger?: { debug: (msg: string) => void }
+): Promise<string | null> {
+  try {
+    const content = await Deno.readTextFile(filePath);
+    if (logger?.debug) {
+      logger.debug(`Successfully read ${content.length} bytes from ${filePath}`);
+    }
+    return content;
+  } catch (e) {
+    if (logger?.debug) {
+      logger.debug(
+        `Failed to read file ${filePath}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    return null;
+  }
+}
+
+/**
+ * Find the actual path of a file by checking multiple possible locations.
+ * 
+ * @param filePath Primary path to check
+ * @param logger Optional logger for debug information
+ * @param alternativePaths Additional paths to check
+ * @returns The actual file path
+ */
+export async function findActualFilePath(
+  filePath: string,
+  logger?: { debug: (msg: string) => void; error: (msg: string) => void },
+  alternativePaths: string[] = []
+): Promise<string> {
+  // Check primary path
+  if (await tryReadFile(filePath, logger) !== null) {
+    return filePath;
+  }
+  
+  if (logger?.debug) {
+    logger.debug(`File not found at ${filePath}, trying alternative locations`);
+  }
+  
+  // Check provided alternative paths
+  for (const altPath of alternativePaths) {
+    if (await tryReadFile(altPath, logger) !== null) {
+      if (logger?.debug) {
+        logger.debug(`Found file at alternative location: ${altPath}`);
+      }
+      return altPath;
+    }
+  }
+  
+  // Try basename in current directory as fallback
+  const basename = filePath.split('/').pop() || filePath;
+  const alternativePath = Deno.cwd() + '/' + basename;
+  
+  if (await tryReadFile(alternativePath, logger) !== null) {
+    if (logger?.debug) {
+      logger.debug(`Found file at fallback location: ${alternativePath}`);
+    }
+    return alternativePath;
+  }
+  
+  // No path worked
+  const triedPaths = [filePath, ...alternativePaths, alternativePath].join(', ');
+  const errorMsg = `File not found: ${filePath}, also tried: ${triedPaths}`;
+  if (logger?.error) {
+    logger.error(errorMsg);
+  }
+  throw new Error(errorMsg);
+}
