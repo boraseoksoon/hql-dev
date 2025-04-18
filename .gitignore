@@ -35,4 +35,7 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
-.cache/ 
+.cache/
+
+# HQL cache directory
+.hql-cache/ 

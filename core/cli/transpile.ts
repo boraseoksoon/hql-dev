@@ -5,7 +5,14 @@ import { transpileCLI } from "../src/bundler.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
 import { parseCliOptions, applyCliOptions, CliOptions } from "./utils/cli-options.ts";
 import { report, withErrorHandling, registerSourceFile } from "../src/common/common-errors.ts";
-import { cleanupAllTempFiles, registerExceptionTempFile } from "../src/common/temp-file-tracker.ts";
+import { 
+  cleanupAllTempFiles, 
+  getCacheDir,
+  getCachedPath,
+  needsRegeneration,
+  registerExplicitOutput,
+  getCacheStats
+} from "../src/common/temp-file-tracker.ts";
 
 /**
  * Utility to time async phases and log durations
@@ -35,11 +42,14 @@ function printHelp(): void {
   console.error("  --verbose, -v     Enable verbose logging");
   console.error("  --time            Show timing for each phase");
   console.error("  --print           Print JS to stdout instead of writing to file");
+  console.error("  --force           Force recompilation even if file hasn't changed");
+  console.error("  --cache-info      Show information about the cache");
   console.error("  --help, -h        Show this help message");
   console.error("\nExamples:");
   console.error("  deno run -A cli/transpile.ts src/file.hql");
   console.error("  deno run -A cli/transpile.ts src/file.hql dist/file.js --time");
   console.error("  deno run -A cli/transpile.ts src/file.hql --print --run");
+  console.error("  deno run -A cli/transpile.ts src/file.hql --force");
 }
 
 /**
@@ -56,7 +66,6 @@ function parsePaths(
   let outputPath: string | undefined;
   if (maybeOutput && !maybeOutput.startsWith("--")) {
     outputPath = maybeOutput;
-    registerExceptionTempFile(outputPath);
   }
   return { inputPath, outputPath };
 }
@@ -78,6 +87,21 @@ function loadSource(inputPath: string): Promise<string> {
 }
 
 /**
+ * Show cache statistics
+ */
+async function showCacheInfo(): Promise<void> {
+  const cacheDir = await getCacheDir();
+  const stats = await getCacheStats();
+  
+  console.log("\nHQL Cache Information:");
+  console.log(`Cache directory: ${cacheDir}`);
+  console.log(`Files in cache: ${stats.files}`);
+  console.log(`Cache size: ${(stats.bytes / 1024 / 1024).toFixed(2)} MB`);
+  
+  Deno.exit(0);
+}
+
+/**
  * Invoke transpiler with error handling
  */
 function transpile(
@@ -86,17 +110,27 @@ function transpile(
   opts: CliOptions
 ): Promise<string> {
   return timed("transpile", "Compile", async () => {
+    // Set up cache-aware compilation
+    const resolvedInputPath = resolve(inputPath);
+    
+    // Register output file if provided
+    if (outputPath) {
+      registerExplicitOutput(outputPath);
+    }
+    
     const bundled = await withErrorHandling(
-      () => transpileCLI(inputPath, outputPath, {
+      () => transpileCLI(resolvedInputPath, outputPath, {
         verbose: opts.verbose,
         showTiming: opts.showTiming,
-        skipErrorReporting: true
+        skipErrorReporting: true,
+        force: opts.force
       }),
       { filePath: inputPath, source: '', context: 'CLI transpile', logErrors: false }
     )().catch(err => {
       console.error(report(err, { filePath: inputPath, source: '' }));
       Deno.exit(1);
     });
+    
     return bundled;
   });
 }
@@ -140,7 +174,7 @@ function runJS(
  */
 function cleanup(): Promise<void> {
   return cleanupAllTempFiles().then(() => {
-    logger.debug("All temporary files cleaned up");
+    logger.debug("Cleanup complete");
   });
 }
 
@@ -150,15 +184,26 @@ function cleanup(): Promise<void> {
 export async function main(): Promise<void> {
   const args = Deno.args;
 
-
   if (!args.length || args.includes("--help") || args.includes("-h")) {
     printHelp();
     Deno.exit(args.length ? 1 : 0);
+  }
+  
+  // Handle cache info request
+  if (args.includes("--cache-info")) {
+    await showCacheInfo();
+    return;
   }
 
   const { inputPath, outputPath } = parsePaths(args);
   const opts = parseCliOptions(args);
   applyCliOptions(opts);
+
+  // Show cache directory in verbose mode
+  if (opts.verbose) {
+    const cacheDir = await getCacheDir();
+    logger.debug(`Using cache directory: ${cacheDir}`);
+  }
 
   const source = await loadSource(inputPath);
   const bundledPath = await transpile(inputPath, outputPath, opts);

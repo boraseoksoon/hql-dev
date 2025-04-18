@@ -8,6 +8,7 @@ import {
   resolve,
   writeTextFile,
   join,
+  readTextFile
 } from "./platform/platform.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
 import {
@@ -16,9 +17,29 @@ import {
   ValidationError,
 } from "./transpiler/error/errors.ts";
 import { performAsync } from "./transpiler/error/index.ts";
-import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash } from "./common/utils.ts";
-import { registerTempFile } from "./common/temp-file-tracker.ts";
+import { isHqlFile, isJsFile, isTypeScriptFile, simpleHash, sanitizeIdentifier } from "./common/utils.ts";
+import { 
+  createTempDir, 
+  getCachedOutput, 
+  getCachedPath,
+  getContentHash,
+  needsRegeneration, 
+  writeToCachedPath,
+  registerExplicitOutput,
+  getImportMapping,
+  registerImportMapping,
+  prepareStdlibInCache
+} from "./common/temp-file-tracker.ts";
 import { globalLogger as logger, Logger } from "./logger.ts";
+import {
+  clearCache,
+  getAllTrackedFiles,
+  getCacheDir,
+  getOriginalPath,
+  processCachedImports,
+  registerExceptionTempFile,
+  registerTempFile,
+} from "./common/temp-file-tracker.ts";
 
 // Constants
 const MAX_RETRIES = 3;
@@ -34,6 +55,7 @@ export interface BundleOptions {
   sourceDir?: string;
   skipErrorReporting?: boolean;
   skipErrorHandling?: boolean;
+  force?: boolean;
 }
 
 interface TempDirResult {
@@ -124,6 +146,9 @@ export async function processHqlImportsInTs(
   logger: Logger,
 ): Promise<string> {
   try {
+    // Prepare stdlib in cache
+    await prepareStdlibInCache();
+    
     const baseDir = dirname(tsFilePath);
     let modifiedSource = tsSource;
     const imports = extractHqlImports(tsSource);
@@ -137,19 +162,40 @@ export async function processHqlImportsInTs(
         throw new Error(`Could not resolve import: ${importInfo.path} from ${tsFilePath}`);
       }
       
-      // Generate a TypeScript file for the imported HQL file
-      const hqlOutputPath = resolvedHqlPath.replace(/\.hql$/, ".ts");
-      
-      if (!await exists(hqlOutputPath)) {
-        logger.debug(`Transpiling HQL import: ${resolvedHqlPath} -> ${hqlOutputPath}`);
-        await transpileCLI(resolvedHqlPath, hqlOutputPath, options);
-      } else {
-        logger.debug(`Using existing transpiled file: ${hqlOutputPath}`);
+      // Process HQL to TypeScript using the cache
+      if (await needsRegeneration(resolvedHqlPath, ".ts") || options.force) {
+        logger.debug(`Transpiling HQL import: ${resolvedHqlPath}`);
+        
+        // Read the HQL source
+        const hqlSource = await readSourceFile(resolvedHqlPath);
+        
+        // Process it to TypeScript
+        const tsCode = await processHql(hqlSource, {
+          baseDir: dirname(resolvedHqlPath),
+          verbose: options.verbose,
+          tempDir: options.tempDir,
+          sourceDir: options.sourceDir || dirname(resolvedHqlPath),
+        });
+        
+        // Determine if this is a stdlib file which needs special handling
+        const isStdlibFile = basename(resolvedHqlPath) === "stdlib.hql";
+        
+        // Write to cache with preserveRelative option for stdlib files
+        await writeToCachedPath(resolvedHqlPath, tsCode, ".ts", { 
+          preserveRelative: isStdlibFile 
+        });
       }
       
-      // Update the import statement
-      const relativePath = importInfo.path.replace(/\.hql$/, ".ts");
-      const newImport = importInfo.full.replace(importInfo.path, relativePath);
+      // Get cached TypeScript path
+      const cachedTsPath = await getCachedPath(resolvedHqlPath, ".ts");
+      
+      // Register this mapping for future use
+      registerImportMapping(resolvedHqlPath, cachedTsPath);
+      
+      logger.debug(`Using cached TS file: ${cachedTsPath}`);
+      
+      // Update the import statement to use the cached file
+      const newImport = importInfo.full.replace(importInfo.path, cachedTsPath);
       modifiedSource = modifiedSource.replace(importInfo.full, newImport);
       logger.debug(`Updated import from "${importInfo.full}" to "${newImport}"`);
     }
@@ -171,10 +217,14 @@ export async function processHqlImportsInJs(
     verbose?: boolean;
     tempDir?: string;
     sourceDir?: string;
+    force?: boolean;
   },
   logger: Logger,
 ): Promise<string> {
   try {
+    // Prepare stdlib in cache
+    await prepareStdlibInCache();
+    
     const baseDir = dirname(jsFilePath);
     let modifiedSource = jsSource;
     const imports = extractHqlImports(jsSource);
@@ -188,16 +238,63 @@ export async function processHqlImportsInJs(
         throw new Error(`Could not resolve import: ${importInfo.path} from ${jsFilePath}`);
       }
       
-      // Generate TypeScript and JavaScript files
-      const hqlTsOutputPath = resolvedHqlPath.replace(/\.hql$/, ".ts");
-      const hqlJsOutputPath = resolvedHqlPath.replace(/\.hql$/, ".js");
+      // Determine if this is a stdlib file which needs special handling
+      const isStdlibFile = basename(resolvedHqlPath) === "stdlib.hql";
       
-      await processHqlToTypeScript(resolvedHqlPath, hqlTsOutputPath, options, logger);
-      await processTypeScriptToJavaScript(hqlTsOutputPath, hqlJsOutputPath, options, logger);
+      // Process HQL to TypeScript using cache
+      if (await needsRegeneration(resolvedHqlPath, ".ts") || options.force) {
+        logger.debug(`Transpiling HQL import to TypeScript: ${resolvedHqlPath}`);
+        
+        // Read the HQL source
+        const hqlSource = await readSourceFile(resolvedHqlPath);
+        
+        // Process it to TypeScript
+        const tsCode = await processHql(hqlSource, {
+          baseDir: dirname(resolvedHqlPath),
+          verbose: options.verbose,
+          tempDir: options.tempDir,
+          sourceDir: options.sourceDir || dirname(resolvedHqlPath),
+        });
+        
+        // Write to cache with preserveRelative option for stdlib
+        await writeToCachedPath(resolvedHqlPath, tsCode, ".ts", {
+          preserveRelative: isStdlibFile
+        });
+      }
       
-      // Update the import statement for JavaScript files
-      const relativePath = importInfo.path.replace(/\.hql$/, ".js");
-      const newImport = importInfo.full.replace(importInfo.path, relativePath);
+      // Get cached TypeScript path
+      const cachedTsPath = await getCachedPath(resolvedHqlPath, ".ts");
+      
+      // Register this mapping for future use
+      registerImportMapping(resolvedHqlPath, cachedTsPath);
+      
+      // Process TypeScript to JavaScript
+      if (await needsRegeneration(resolvedHqlPath, ".js") || options.force) {
+        logger.debug(`Generating JavaScript from TypeScript: ${cachedTsPath}`);
+        
+        // Get output path for JavaScript
+        const cachedJsPath = await getCachedPath(resolvedHqlPath, ".js", { 
+          createDir: true,
+          preserveRelative: isStdlibFile
+        });
+        
+        // Transpile TypeScript to JavaScript using esbuild
+        await bundleWithEsbuild(cachedTsPath, cachedJsPath, {
+          verbose: options.verbose,
+          sourceDir: options.sourceDir || dirname(resolvedHqlPath),
+        });
+      }
+      
+      // Get cached JavaScript path
+      const cachedJsPath = await getCachedPath(resolvedHqlPath, ".js");
+      
+      // Register this mapping for future use
+      registerImportMapping(resolvedHqlPath.replace(/\.hql$/, '.js'), cachedJsPath);
+      
+      logger.debug(`Using cached JS file: ${cachedJsPath}`);
+      
+      // Update the import statement to use the cached file
+      const newImport = importInfo.full.replace(importInfo.path, cachedJsPath);
       modifiedSource = modifiedSource.replace(importInfo.full, newImport);
       logger.debug(`Updated import from "${importInfo.full}" to "${newImport}"`);
     }
@@ -222,12 +319,31 @@ async function writeOutput(
     const outputDir = dirname(outputPath);
     await ensureDir(outputDir);
     
+    // Cache system approach:
+    // 1. Create a synthetic source path (could be the output path as source)
+    // 2. Write to cache first
+    // 3. Mark as explicit output so it gets copied at the end
+    
+    // Get file extension to properly cache
+    const ext = path.extname(outputPath);
+    
+    // Write to cache first (using output path as both source and target)
+    const cachedPath = await writeToCachedPath(
+      outputPath, 
+      code, 
+      ext,
+      { preserveRelative: true }
+    );
+    
+    logger.debug(`Written output to cache: ${cachedPath}`);
+    
+    // Register for final output
+    registerExplicitOutput(outputPath);
+    
     if (await exists(outputPath)) {
-      logger.warn(`File '${outputPath}' already exists. Overwriting.`);
+      logger.warn(`File '${outputPath}' already exists. Will be overwritten when cache is cleaned up.`);
     }
     
-    await writeTextFile(outputPath, code);
-    registerTempFile(outputPath);
   } catch (error) {
     throw new TranspilerError(
       `Failed to write output to '${outputPath}': ${
@@ -280,14 +396,14 @@ async function processHqlEntryFile(
 ): Promise<string> {
   logger.log({ text: `Transpiling HQL entry file: ${resolvedInputPath}`, namespace: "bundler" });
   
-  const [tempDirResult, source] = await Promise.all([
-    createTempDirIfNeeded(options, logger),
-    readSourceFile(resolvedInputPath),
-  ]);
+  // Prepare stdlib in cache
+  await prepareStdlibInCache();
   
-  const tempDir = tempDirResult.tempDir;
-  const tempDirCreated = tempDirResult.created;
+  // Create temp directory
+  const tempDir = await createTempDir("entry");
   
+  // Read source file
+  const source = await readSourceFile(resolvedInputPath);
   logger.log({ text: `Read ${source.length} bytes from ${resolvedInputPath}`, namespace: "bundler" });
   
   try {
@@ -310,14 +426,18 @@ async function processHqlEntryFile(
       );
     }
     
-    // Write the TypeScript output
-    const tsOutputPath = outputPath.replace(/\.js$/, ".ts");
-    await writeOutput(tsCode, tsOutputPath, logger);
+    // Write TypeScript output to cache
+    const tsOutputPath = await writeToCachedPath(resolvedInputPath, tsCode, ".ts");
+    
+    // Register the explicit output path
+    if (outputPath) {
+      registerExplicitOutput(outputPath);
+    }
     
     logger.log({ text: `Entry processed and TypeScript output written to ${tsOutputPath}`, namespace: "bundler" });
     return tsOutputPath;
-  } finally {
-    await cleanupTempDir(tempDirCreated, tempDir, logger);
+  } catch (error) {
+    throw error;
   }
 }
 
@@ -538,32 +658,33 @@ async function loadHqlFile(
     processedHqlFiles.add(args.path);
     
     const actualPath = await findActualFilePath(args.path, logger);
-    const fileHash = simpleHash(actualPath).toString();
-    const outputDir = join(options.tempDir || "", fileHash);
     
-    const [, tsCode] = await Promise.all([
-      ensureDir(outputDir),
-      transpileHqlFile(actualPath, options.sourceDir, options.verbose),
-    ]);
+    // Transpile HQL to TypeScript
+    const tsCode = await transpileHqlFile(actualPath, options.sourceDir, options.verbose);
     
-    const outTsFileName = basename(actualPath, ".hql") + ".ts";
-    const tsTempPath = join(outputDir, outTsFileName);
+    // Write to cache instead of temp file
+    const cachedTsPath = await writeToCachedPath(
+      actualPath, 
+      tsCode, 
+      ".ts", 
+      { preserveRelative: true }
+    );
     
-    await writeTextFile(tsTempPath, tsCode);
-    logger.debug(`Written transpiled TypeScript to: ${tsTempPath}`);
+    // Register explicit output so it's preserved
+    registerExplicitOutput(cachedTsPath);
     
-    // Register for cleanup
-    registerTempFile(tsTempPath);
+    logger.debug(`Written transpiled TypeScript to cache: ${cachedTsPath}`);
     
-    hqlToJsMap.set(args.path, tsTempPath);
+    // Map file paths
+    hqlToJsMap.set(args.path, cachedTsPath);
     if (args.path !== actualPath) {
-      hqlToJsMap.set(actualPath, tsTempPath);
+      hqlToJsMap.set(actualPath, cachedTsPath);
     }
     
     return {
       contents: tsCode,
       loader: "ts", // Tell esbuild this is TypeScript
-      resolveDir: dirname(tsTempPath),
+      resolveDir: dirname(cachedTsPath),
     };
   } catch (error) {
     throw new TranspilerError(
@@ -705,6 +826,33 @@ async function resolveHqlImport(
     }`,
   );
   
+  // Check for direct mappings first (fastest path)
+  const cachedMapping = getImportMapping(args.path);
+  if (cachedMapping) {
+    logger.debug(`Found direct mapping for ${args.path} -> ${cachedMapping}`);
+    return {
+      path: cachedMapping,
+      namespace: "file",
+    };
+  }
+  
+  // Try to resolve from importer and check mapping
+  if (args.importer && args.path.endsWith('.hql')) {
+    const importerDir = dirname(args.importer);
+    const resolvedPath = args.path.startsWith('.') ? 
+      resolve(importerDir, args.path) : args.path;
+      
+    const mappedPath = getImportMapping(resolvedPath);
+    if (mappedPath) {
+      logger.debug(`Found resolved mapping for ${args.path} -> ${mappedPath}`);
+      return {
+        path: mappedPath,
+        namespace: "file",
+      };
+    }
+  }
+  
+  // If no mappings found, use resolution strategies
   const resolutionStrategies: ResolutionStrategy[] = [
     {
       description: "relative to importer",
@@ -717,6 +865,15 @@ async function resolveHqlImport(
           const relativePath = resolve(importerDir, args.path);
           try {
             await Deno.stat(relativePath);
+            // Register this path for future lookups
+            if (relativePath.endsWith('.hql')) {
+              // Also try to register the TypeScript and JavaScript versions
+              const tsPath = relativePath.replace(/\.hql$/, '.ts');
+              if (await exists(tsPath)) {
+                registerImportMapping(relativePath, tsPath);
+                logger.debug(`Registered mapping: ${relativePath} -> ${tsPath}`);
+              }
+            }
             logger.debug(`Found import at ${relativePath} (relative to importer)`);
             return true;
           } catch {
@@ -791,11 +948,19 @@ async function resolveHqlImport(
     logger.debug(
       `Resolved "${args.path}" to "${successResult.path}" (${successResult.description})`,
     );
+    // Register this mapping for future use
+    if (args.path.endsWith('.hql') && successResult.path.endsWith('.hql')) {
+      registerImportMapping(args.path, successResult.path);
+    }
     return {
       path: successResult.path,
       namespace: args.path.endsWith(".hql") ? "hql" : "file",
     };
   }
+  
+  // Return unresolved if no strategies worked
+  logger.warn(`Could not resolve "${args.path}" from "${args.importer || 'unknown'}"`);
+  return { path: args.path, external: true };
 }
 
 async function processHqlToTypeScript(
@@ -824,13 +989,8 @@ async function processHqlToTypeScript(
     
     // Write TypeScript output
     await writeOutput(tsCode, tsOutputPath, logger);
-    
-    // Register TypeScript file for cleanup
-    registerTempFile(tsOutputPath);
   } else {
     logger.debug(`Using existing TypeScript file: ${tsOutputPath}`);
-    // Still register for cleanup
-    registerTempFile(tsOutputPath);
   }
 }
 
@@ -850,13 +1010,8 @@ async function processTypeScriptToJavaScript(
       verbose: options.verbose,
       sourceDir: options.sourceDir || dirname(tsPath),
     });
-    
-    // Register JavaScript file for cleanup
-    registerTempFile(jsOutputPath);
   } else {
     logger.debug(`Using existing JavaScript file: ${jsOutputPath}`);
-    // Still register for cleanup
-    registerTempFile(jsOutputPath);
   }
 }
 
@@ -952,6 +1107,62 @@ async function transpileHqlFile(
   }
 }
 
+function handleBundlingError(
+  error: unknown,
+  entryPath: string,
+  outputPath: string,
+  verbose: boolean | undefined,
+): void {
+  if (error instanceof TranspilerError) return;
+  
+  const errorMsg = error instanceof Error ? error.message : String(error);
+  
+  if (verbose) {
+    const errorReport = createErrorReport(
+      error instanceof Error ? error : new Error(errorMsg),
+      "esbuild bundling",
+      {
+        entryPath,
+        outputPath,
+        attempts: MAX_RETRIES,
+      },
+    );
+    console.error("Detailed esbuild error report:");
+    console.error(errorReport);
+  }
+}
+
+async function cleanupAfterBundling(
+  tempDir: string,
+  cleanupTemp: boolean,
+  logger: Logger,
+): Promise<void> {
+  try {
+    await esbuild.stop();
+  } catch {}
+  
+  await cleanupTempDir(cleanupTemp, tempDir, logger);
+}
+
+async function cleanupTempDir(
+  shouldCleanup: boolean,
+  tempDir: string,
+  logger: Logger
+): Promise<void> {
+  if (shouldCleanup) {
+    try {
+      await Deno.remove(tempDir, { recursive: true });
+      logger.log({ text: `Cleaned up temporary directory: ${tempDir}`, namespace: "bundler" });
+    } catch (error) {
+      logger.warn(
+        `Failed to clean up temporary directory: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+}
+
 function createBuildOptions(
   entryPath: string,
   outputPath: string,
@@ -1012,58 +1223,95 @@ function determineOutputPath(
   return resolvedInputPath + ".bundle.js";
 }
 
-function handleBundlingError(
-  error: unknown,
-  entryPath: string,
-  outputPath: string,
-  verbose: boolean | undefined,
-): void {
-  if (error instanceof TranspilerError) return;
-  
-  const errorMsg = error instanceof Error ? error.message : String(error);
-  
-  if (verbose) {
-    const errorReport = createErrorReport(
-      error instanceof Error ? error : new Error(errorMsg),
-      "esbuild bundling",
-      {
-        entryPath,
-        outputPath,
-        attempts: MAX_RETRIES,
-      },
-    );
-    console.error("Detailed esbuild error report:");
-    console.error(errorReport);
-  }
-}
-
-async function cleanupAfterBundling(
-  tempDir: string,
-  cleanupTemp: boolean,
-  logger: Logger,
-): Promise<void> {
+/**
+ * Transpile HQL content to TypeScript from a path
+ * Used by the processHqlImportsInJs function
+ */
+export async function transpileHqlInJs(hqlPath: string, basePath: string): Promise<string> {
   try {
-    await esbuild.stop();
-  } catch {}
-  
-  await cleanupTempDir(cleanupTemp, tempDir, logger);
-}
-
-async function cleanupTempDir(
-  shouldCleanup: boolean,
-  tempDir: string,
-  logger: Logger
-): Promise<void> {
-  if (shouldCleanup) {
-    try {
-      await Deno.remove(tempDir, { recursive: true });
-      logger.log({ text: `Cleaned up temporary directory: ${tempDir}`, namespace: "bundler" });
-    } catch (error) {
-      logger.warn(
-        `Failed to clean up temporary directory: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+    // Read the HQL content
+    const hqlContent = await readTextFile(hqlPath);
+    
+    // Transpile to TypeScript using the existing processHql function
+    const tsContent = await processHql(hqlContent, {
+      baseDir: dirname(hqlPath),
+      sourceDir: basePath,
+    });
+    
+    // Ensure all hyphenated identifiers are properly handled
+    // This addresses issues when importing from another file with hyphenated identifiers
+    let processedContent = tsContent;
+    
+    // Process imported identifiers with hyphens
+    const importIdentifierRegex = /import\s+{\s*([^}]+)\s*}\s+from/g;
+    let importMatch;
+    
+    while ((importMatch = importIdentifierRegex.exec(tsContent)) !== null) {
+      const identifiers = importMatch[1].split(',').map(id => id.trim());
+      let foundHyphen = false;
+      const processedIds = identifiers.map(id => {
+        const parts = id.split(' as ');
+        const baseName = parts[0].trim();
+        
+        if (baseName.includes('-')) {
+          foundHyphen = true;
+          const sanitized = sanitizeIdentifier(baseName);
+          if (parts.length > 1) {
+            return `${sanitized} as ${parts[1].trim()}`;
+          }
+          return sanitized;
+        }
+        return id;
+      });
+      
+      if (foundHyphen) {
+        const oldImport = `{ ${importMatch[1]} }`;
+        const newImport = `{ ${processedIds.join(', ')} }`;
+        processedContent = processedContent.replace(oldImport, newImport);
+      }
     }
+    
+    // Process exported identifiers with hyphens
+    const exportRegex = /export\s+(const|let|var|function)\s+([a-zA-Z0-9_-]+)/g;
+    let exportMatch;
+    
+    while ((exportMatch = exportRegex.exec(tsContent)) !== null) {
+      const exportType = exportMatch[1];
+      const exportName = exportMatch[2];
+      
+      if (exportName.includes('-')) {
+        const sanitized = sanitizeIdentifier(exportName);
+        const oldExport = `export ${exportType} ${exportName}`;
+        const newExport = `export ${exportType} ${sanitized}`;
+        processedContent = processedContent.replace(oldExport, newExport);
+        
+        // Also replace other occurrences of the identifier
+        const idRegex = new RegExp(`\\b${exportName}\\b`, 'g');
+        processedContent = processedContent.replace(idRegex, sanitized);
+      }
+    }
+    
+    // Handle namespace import identifiers
+    const namespaceImportRegex = /import\s+\*\s+as\s+([a-zA-Z0-9_-]+)\s+from/g;
+    let namespaceMatch;
+    
+    while ((namespaceMatch = namespaceImportRegex.exec(tsContent)) !== null) {
+      const importName = namespaceMatch[1];
+      
+      if (importName.includes('-')) {
+        const sanitized = sanitizeIdentifier(importName);
+        const oldImport = `* as ${importName} from`;
+        const newImport = `* as ${sanitized} from`;
+        processedContent = processedContent.replace(oldImport, newImport);
+        
+        // Also replace all references to this namespace
+        const namespaceRegex = new RegExp(`\\b${importName}\\.`, 'g');
+        processedContent = processedContent.replace(namespaceRegex, `${sanitized}.`);
+      }
+    }
+    
+    return processedContent;
+  } catch (error) {
+    throw new Error(`Error transpiling HQL for JS import ${hqlPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

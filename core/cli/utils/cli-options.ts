@@ -6,6 +6,7 @@ import { globalLogger } from "../../src/logger.ts";
 export interface CliOptions {
   verbose?: boolean;
   showTiming?: boolean;
+  force?: boolean;
 }
 
 /**
@@ -27,6 +28,7 @@ export function parseCliOptions(args: string[]): CliOptions {
   return {
     verbose: args.includes("--verbose") || args.includes("-v"),
     showTiming: args.includes("--time"),
+    force: args.includes("--force"),
   };
 }
 

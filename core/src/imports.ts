@@ -2,12 +2,26 @@
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { globalLogger as logger } from "./logger.ts";
-import { writeTextFile } from "./platform/platform.ts";
+import { 
+  writeTextFile,
+  dirname,
+  basename,
+  join,
+  ensureDir
+} from "./platform/platform.ts";
 import { Environment, Value } from "./environment.ts";
 import { defineUserMacro, evaluateForMacro } from "./s-exp/macro.ts";
 import { parse } from "./transpiler/pipeline/parser.ts";
 import { checkForHqlImports, processHqlImportsInJs } from "./bundler.ts";
-import { registerTempFile } from "./common/temp-file-tracker.ts";
+import {
+  getCacheDir,
+  registerTempFile,
+  registerImportMapping,
+  getContentHash,
+  writeToCachedPath,
+  processJavaScriptFile,
+  getImportMapping,
+} from "./common/temp-file-tracker.ts";
 import {
   isImport,
   isLiteral,
@@ -137,7 +151,7 @@ export async function processImports(
   } finally {
     env.setCurrentFile(previousCurrentFile);
   }
-}
+} 
 
 /**
  * Creates a temporary directory for import processing if needed
@@ -667,26 +681,22 @@ async function loadJavaScriptModule(
   try {
     let finalModuleUrl = `file://${resolvedPath}`;
     
-    // Check if JS file contains HQL imports
+    // Check if JS file contains HQL imports or needs processing
     const jsSource = await Deno.readTextFile(resolvedPath);
-    if (checkForHqlImports(jsSource)) {
-      logger.debug(`JS file ${resolvedPath} contains nested HQL imports. Pre-processing them.`);
+    if (checkForHqlImports(jsSource) || jsSource.includes('import') && jsSource.includes('from')) {
+      logger.debug(`JS file ${resolvedPath} needs import processing.`);
       
-      // Process nested HQL imports
-      const processedSource = await processHqlImportsInJs(
-        jsSource,
-        resolvedPath,
-        { verbose: logger.enabled },
-        logger,
-      );
+      // Process the file and its imports recursively
+      await processJavaScriptFile(resolvedPath);
       
-      // Write processed JS to temporary file
-      const tempFilePath = resolvedPath.replace(/\.js$/, ".temp.js");
-      await writeTextFile(tempFilePath, processedSource);
-      registerTempFile(tempFilePath);
-      finalModuleUrl = `file://${tempFilePath}`;
-      
-      logger.debug(`Wrote pre-processed JS to temporary file: ${tempFilePath}`);
+      // Get the cached path
+      const cachedPath = getImportMapping(resolvedPath);
+      if (cachedPath) {
+        finalModuleUrl = `file://${cachedPath}`;
+        logger.debug(`Using cached JS file: ${cachedPath}`);
+      } else {
+        logger.debug(`No cached path found for ${resolvedPath}, using original path`);
+      }
     }
     
     // Import and register the module

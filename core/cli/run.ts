@@ -2,7 +2,14 @@
 
 import { transpileCLI } from "../src/bundler.ts";
 import { resolve } from "../src/platform/platform.ts";
-import { cleanupAllTempFiles } from "../src/common/temp-file-tracker.ts";
+import { 
+  cleanupAllTempFiles, 
+  createTempDir, 
+  registerExplicitOutput,
+  getImportMapping,
+  registerImportMapping,
+  prepareStdlibInCache
+} from "../src/common/temp-file-tracker.ts";
 import {
   parseLogNamespaces,
   parseCliOptions,
@@ -15,6 +22,8 @@ import {
   report
 } from "../src/transpiler/error/errors.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
+import { parse } from "https://deno.land/std@0.170.0/flags/mod.ts";
+import { basename, dirname } from "../src/platform/platform.ts";
 
 /**
  * Show help flags
@@ -56,7 +65,7 @@ function isExpression(input: string): boolean {
  * Write inline expression to temp file
  */
 async function createExpressionFile(expr: string): Promise<{ filePath: string; dir: string }> {
-  const dir = await Deno.makeTempDir({ prefix: "hql_expr_" });
+  const dir = await createTempDir("expr");
   const filePath = `${dir}/expression.hql`;
   await Deno.writeTextFile(filePath, expr);
   logger.log({ text: `Created temporary expression file: ${filePath}`, namespace: "cli" });
@@ -98,17 +107,13 @@ async function readInputFile(inputPath: string): Promise<string> {
  * Cleanup expression and run temp directories and all registered files
  */
 async function cleanupTempFiles(exprDir: string | undefined, runDir: string): Promise<void> {
-  if (exprDir) {
-    try {
-      await Deno.remove(exprDir, { recursive: true });
-    } catch { /* ignore */ }
-  }
-  try {
-    await Deno.remove(runDir, { recursive: true });
-  } catch { /* ignore */ }
+  // All temp directories are now managed by the cache system
+  // Just run the cleanup to handle everything
   try {
     await cleanupAllTempFiles();
-  } catch { /* ignore */ }
+  } catch (error) { 
+    logger.debug(`Error during cleanup: ${error}`);
+  }
 }
 
 /**
@@ -125,57 +130,72 @@ async function withTemporaryDenoArgs<T>(newArgs: string[], fn: () => Promise<T>)
 }
 
 /**
- * Core transpile + run logic
+ * Function to transpile and execute an HQL file
  */
 async function transpileAndExecute(
-  args: string[], options: CliOptions, inputPath: string,
-  source: string, runDir: string
+  args: string[],
+  options: CliOptions,
+  inputPath: string,
+  source: string,
+  runDir: string,
 ): Promise<void> {
-  const perf = args.includes("--performance")
-    ? { minify: true, drop: ["console", "debugger"] }
-    : { minify: false };
-
-  const bundleOpts = {
-    verbose: options.verbose,
-    showTiming: false,
-    tempDir: runDir,
-    skipErrorReporting: true,
-    skipErrorHandling: true,
-    ...perf
-  };
-
-  const name = inputPath.split("/").pop() || "output";
-  const outPath = `${runDir}/${name.replace(/\.hql$/, ".run.js")}`;
-
-  logger.startTiming("run", "Transpilation");
-  const bundled = await withErrorHandling(
-    () => transpileCLI(inputPath, outPath, bundleOpts),
-    { filePath: inputPath, source, context: "transpilation", logErrors: false }
-  )().catch(err => {
-    console.error(report(err, { filePath: inputPath, source }));
-    Deno.exit(1);
-  });
-  logger.endTiming("run", "Transpilation");
-
-  if (args.includes("--print")) {
-    logger.startTiming("run", "Read Output");
-    console.log(await Deno.readTextFile(bundled));
-    logger.endTiming("run", "Read Output");
-  } else {
-    logger.log({ text: `Running bundled output: ${bundled}`, namespace: "cli" });
-    logger.startTiming("run", "Execution");
-    await withErrorHandling(
-      () => import("file://" + resolve(bundled)),
-      { filePath: inputPath, source, context: "execution", logErrors: false }
-    )().catch(err => {
-      console.error(report(err, { filePath: inputPath, source }));
-      Deno.exit(1);
+  try {
+    // Prepare stdlib in cache - this creates cache locations for stdlib
+    await prepareStdlibInCache();
+    
+    // Create a temp JS file for the transpiled code
+    const jsOutputPath = `${runDir}/${basename(inputPath)}.js`;
+    
+    // Run the compiler
+    await transpileCLI(inputPath, jsOutputPath, {
+      verbose: options.verbose,
+      showTiming: options.showTiming,
+      tempDir: runDir,
+      sourceDir: dirname(inputPath),
+      skipErrorReporting: false,
+      force: true, // Always regenerate to ensure latest code is used
     });
-    logger.endTiming("run", "Execution");
+    
+    // Execute the transpiled code
+    logger.debug(`Running transpiled code from: ${jsOutputPath}`);
+    
+    // Create a dynamic import URL
+    const importUrl = `file://${jsOutputPath}`;
+    
+    try {
+      // Dynamic import of the transpiled code
+      const module = await import(importUrl);
+      
+      // Check if the module has a default export to execute
+      if (module.default && typeof module.default === "function") {
+        logger.debug("Found default export function, executing it");
+        const result = await module.default();
+        
+        // If the default export returned a value, log it
+        if (result !== undefined) {
+          console.log(result);
+        }
+      } else {
+        // If no default export, the module was likely already executed during import
+        logger.debug("Module imported successfully");
+      }
+    } catch (error) {
+      // Format and report execution errors
+      report(error, {
+        source,
+        filePath: inputPath,
+      });
+    }
+  } catch (error) {
+    // Format and report transpilation errors
+    report(error, {
+      source,
+      filePath: inputPath,
+    });
+  } finally {
+    logger.debug("Cleaning up temporary files");
+    await cleanupAllTempFiles();
   }
-
-  logger.endTiming("run", "Total Processing");
-  logger.logPerformance("run", name);
 }
 
 /**
@@ -196,9 +216,9 @@ export async function transpileHqlFile(
   filename: string, options: CliOptions = {}
 ): Promise<void> {
   applyCliOptions(options);
-  const { transpile } = await import("./transpile.ts");
+  const { main } = await import("./transpile.ts");
   const args = [filename, ...(options.verbose ? ["--verbose"] : []), ...(options.showTiming ? ["--time"] : [])];
-  await withTemporaryDenoArgs(args, async () => { await transpile(); });
+  await withTemporaryDenoArgs(args, async () => { await main(); });
 }
 
 /**
@@ -229,7 +249,7 @@ async function run(): Promise<void> {
   const { inputPath, exprDir } = await getInputPath(positional[0]);
   logger.startTiming("run", "Total Processing");
 
-  const runDir = await Deno.makeTempDir({ prefix: "hql_run_" });
+  const runDir = await createTempDir("run");
   logger.log({ text: `Created temporary directory: ${runDir}`, namespace: "cli" });
 
   const source = await readInputFile(inputPath);

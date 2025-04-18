@@ -4,6 +4,7 @@
     "transpile": "deno run -A cli/transpile.ts",
     "repl":"deno run -A ./cli/repl.ts",
     "run": "deno run -A cli/run.ts",
+    "clean-cache": "deno run -A ./cli/clean-cache.ts",
     "test-hql-spec": "deno task run ../doc/hql_spec.hql",
     "test-new-front-end-transpiler": "deno run -A ./cli/run.ts ../doc/examples/macro.hql && deno task test-hql-spec",
     "full-macro-test": "deno run -A ./cli/run.ts ../doc/examples/import/simple2/b.hql && deno run -A ./cli/run.ts ../doc/examples/import/simple/b.hql && deno run -A ./cli/run.ts ../doc/examples/import/module2.hql",
