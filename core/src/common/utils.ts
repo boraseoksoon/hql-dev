@@ -1,5 +1,11 @@
 // src/utils.ts - Refactored
 
+import { 
+  isTypeScriptFile as isTypeScript, 
+  isJsFile as isJs, 
+  isHqlFile as isHql 
+} from "./import-utils.ts";
+
 const REMOTE_PATH_PREFIXES = new Set(["npm:", "jsr:", "http:", "https:"]);
 
 /**
@@ -90,22 +96,21 @@ export function simpleHash(str: string): number {
  * Check if a file is an HQL file
  */
 export function isHqlFile(filePath: string): boolean {
-  return filePath.endsWith(".hql");
+  return isHql(filePath)
 }
 
 /**
  * Check if a file is a JavaScript file
  */
 export function isJsFile(filePath: string): boolean {
-  return filePath.endsWith(".js") || filePath.endsWith(".mjs") ||
-    filePath.endsWith(".cjs");
+  return isJs(filePath)
 }
 
 /**
  * Check if a file is a TypeScript file
  */
 export function isTypeScriptFile(filePath: string): boolean {
-  return filePath.endsWith(".ts") || filePath.endsWith(".tsx");
+  return isTypeScript(filePath)
 }
 
 /**
