@@ -12,6 +12,7 @@ import {
 import { transpileHqlInJs } from "../bundler.ts";
 import { escapeRegExp } from "./utils.ts";
 import { globalLogger as logger } from "../logger.ts";
+import { CircularDependencyError } from "../imports.ts";
 
 // Cache directory configuration
 const HQL_CACHE_DIR = ".hql-cache";
@@ -677,7 +678,7 @@ export async function clearCache(): Promise<void> {
  * Process JavaScript files to fix their import paths when copied to cache
  * This ensures relative imports still work after moving to the cache
  */
-export async function processJavaScriptFile(filePath: string): Promise<void> {
+export async function processJavaScriptFile(filePath: string, options: { importStack?: string[] } = {}): Promise<void> {
   try {
     // Check if the file exists
     if (!await exists(filePath)) {
@@ -685,11 +686,21 @@ export async function processJavaScriptFile(filePath: string): Promise<void> {
       return;
     }
     
+    // Check for circular dependencies
+    const importStack = options.importStack || [];
+    if (importStack.includes(filePath)) {
+      const cycle = [...importStack, filePath];
+      logger.warn(`Circular dependency detected in JS processing:`);
+      throw new CircularDependencyError(cycle, filePath, options.importStack?.[options.importStack.length - 1]);
+    }
+    
     // Read the JS file
     const content = await readTextFile(filePath);
     
     // Process the file for imports
-    const processedContent = await processJavaScriptImports(content, filePath);
+    const processedContent = await processJavaScriptImports(content, filePath, { 
+      importStack: [...importStack, filePath] 
+    });
     
     // Write to cache
     const cachedPath = await writeToCachedPath(filePath, processedContent, ".js", { 
@@ -701,19 +712,27 @@ export async function processJavaScriptFile(filePath: string): Promise<void> {
     
     logger.debug(`Processed JavaScript file ${filePath} -> ${cachedPath}`);
   } catch (error) {
+    if (error instanceof CircularDependencyError) {
+      throw error; // Re-throw circular dependency errors
+    }
     logger.debug(`Error processing JavaScript file ${filePath}: ${error}`);
+    throw error;
   }
 }
 
 /**
  * Process imports in JavaScript files to work in the cache directory
  */
-async function processJavaScriptImports(content: string, filePath: string): Promise<string> {
+async function processJavaScriptImports(
+  content: string, 
+  filePath: string, 
+  options: { importStack?: string[] } = {}
+): Promise<string> {
   // First process HQL imports
-  let result = await processHqlImportsInJs(content, filePath);
+  let result = await processHqlImportsInJs(content, filePath, options);
   
   // Then process JS imports to handle hyphenated filenames
-  result = await processJsImportsInJs(result, filePath);
+  result = await processJsImportsInJs(result, filePath, options);
   
   return result;
 }
@@ -722,7 +741,11 @@ async function processJavaScriptImports(content: string, filePath: string): Prom
  * Process JavaScript imports in a JavaScript file, handling potential hyphenated filenames.
  * This is specifically for fixing issues with files that have hyphens in their names.
  */
-async function processJsImportsInJs(content: string, filePath: string): Promise<string> {
+async function processJsImportsInJs(
+  content: string, 
+  filePath: string, 
+  options: { importStack?: string[] } = {}
+): Promise<string> {
   // Find JavaScript imports (both .js and without extension)
   const jsImportRegex = /import\s+.*\s+from\s+['"]([^'"]+(?:\.js|(?!\.\w+)(?!["'])))['"]/g;
   let modifiedContent = content;
@@ -751,6 +774,13 @@ async function processJsImportsInJs(content: string, filePath: string): Promise<
       // Resolve relative import path
       const resolvedImportPath = path.resolve(dirname(filePath), pathForResolving);
       
+      // Check for circular dependencies
+      const importStack = options.importStack || [];
+      if (importStack.includes(resolvedImportPath)) {
+        logger.warn(`Circular dependency detected when processing JS imports: ${filePath} -> ${resolvedImportPath}`);
+        continue;
+      }
+      
       // Handle potential filename variations for hyphenated paths
       const directory = dirname(resolvedImportPath);
       const fileName = path.basename(resolvedImportPath);
@@ -762,25 +792,26 @@ async function processJsImportsInJs(content: string, filePath: string): Promise<
         foundFile = true;
         // For cached files, copy the JS file to the cache
         if (!explicitOutputs.has(filePath)) {
-          const cachedJsPath = await writeToCachedPath(resolvedImportPath, await readTextFile(resolvedImportPath), "", {
-            preserveRelative: true
+          // Process nested imports with updated stack
+          await processJavaScriptFile(resolvedImportPath, { 
+            importStack: [...importStack, filePath] 
           });
           
-          // Register the mapping
-          registerImportMapping(resolvedImportPath, cachedJsPath);
-          
-          // Determine new import path
-          let newImportPath: string;
-          if (importPath.endsWith('.js')) {
-            newImportPath = `file://${cachedJsPath}`;
-          } else {
-            // Preserve the original import without extension if that's how it was written
-            newImportPath = `file://${cachedJsPath.replace(/\.js$/, '')}`;
+          const cachedJsPath = getImportMapping(resolvedImportPath);
+          if (cachedJsPath) {
+            // Determine new import path
+            let newImportPath: string;
+            if (importPath.endsWith('.js')) {
+              newImportPath = `file://${cachedJsPath}`;
+            } else {
+              // Preserve the original import without extension if that's how it was written
+              newImportPath = `file://${cachedJsPath.replace(/\.js$/, '')}`;
+            }
+            
+            const newImport = fullImport.replace(importPath, newImportPath);
+            modifiedContent = modifiedContent.replace(fullImport, newImport);
+            logger.debug(`Rewritten JS import: ${importPath} -> ${newImportPath}`);
           }
-          
-          const newImport = fullImport.replace(importPath, newImportPath);
-          modifiedContent = modifiedContent.replace(fullImport, newImport);
-          logger.debug(`Rewritten JS import: ${importPath} -> ${newImportPath}`);
         }
       }
       
@@ -890,7 +921,11 @@ async function processJsImportsInJs(content: string, filePath: string): Promise<
 /**
  * Process HQL imports in a JavaScript file, transpiling the HQL files and updating import paths.
  */
-async function processHqlImportsInJs(content: string, filePath: string): Promise<string> {
+async function processHqlImportsInJs(
+  content: string, 
+  filePath: string, 
+  options: { importStack?: string[] } = {}
+): Promise<string> {
   // Find HQL imports
   const hqlImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.(hql))['"]/g;
   let modifiedContent = content;
@@ -905,131 +940,56 @@ async function processHqlImportsInJs(content: string, filePath: string): Promise
     const fullImport = match[0];
     const importPath = match[1];
     
-    // Skip absolute imports
-    if (importPath.startsWith('file://') || importPath.startsWith('http') || 
-        importPath.startsWith('npm:') || importPath.startsWith('jsr:')) {
-      logger.debug(`Skipping absolute import: ${importPath}`);
-      continue;
-    }
-    
     try {
       // Resolve relative import path
       const resolvedImportPath = path.resolve(dirname(filePath), importPath);
       
-      // Check if the HQL file exists
-      if (await exists(resolvedImportPath)) {
-        logger.debug(`Found HQL import in JS file: ${importPath}`);
-        
-        // Use the processHqlFile function which handles nested imports properly
-        const cachedTsPath = await processHqlFile(resolvedImportPath);
-        
-        // CRITICAL: Use absolute path with file:// for cache references
-        const newImportPath = `file://${cachedTsPath}`;
-        
-        // Modify the import to use the new path
-        const newImport = fullImport.replace(importPath, newImportPath);
-        modifiedContent = modifiedContent.replace(fullImport, newImport);
-        logger.debug(`Rewritten HQL import in JS: ${importPath} -> ${newImportPath}`);
-      } else {
-        logger.debug(`Could not find HQL file: ${resolvedImportPath}`);
+      // Check for circular dependencies
+      const importStack = options.importStack || [];
+      if (importStack.includes(resolvedImportPath)) {
+        const cycle = [...importStack, resolvedImportPath];
+        logger.warn(`Circular dependency detected when processing HQL imports: ${filePath} -> ${resolvedImportPath}`);
+        throw new CircularDependencyError(cycle, resolvedImportPath, filePath);
       }
-    } catch (error) {
-      logger.debug(`Error processing HQL import in JS ${importPath}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  
-  return modifiedContent;
-}
-
-/**
- * Process nested imports in transpiled TypeScript content
- * This is critical for handling multi-level dependencies correctly
- */
-async function processNestedImports(
-  content: string, 
-  originalPath: string, 
-  cachedPath: string
-): Promise<string> {
-  // Find all imports in the transpiled TypeScript
-  const importRegex = /import\s+.*\s+from\s+['"]([^'"]+)['"]/g;
-  let modifiedContent = content;
-  let match;
-  
-  // Reset lastIndex
-  importRegex.lastIndex = 0;
-  
-  logger.debug(`Processing nested imports in ${cachedPath}`);
-  
-  while ((match = importRegex.exec(content)) !== null) {
-    const fullImport = match[0];
-    const importPath = match[1];
-    
-    // Skip absolute imports
-    if (importPath.startsWith('file://') || importPath.startsWith('http') || 
-        importPath.startsWith('npm:') || importPath.startsWith('jsr:')) {
-      continue;
-    }
-    
-    try {
-      // Resolve the import path relative to the original source file
-      const originalDir = dirname(originalPath);
-      const resolvedImportPath = path.resolve(originalDir, importPath);
       
-      // Check if this import is for an HQL file that needs to be cached
-      if (resolvedImportPath.endsWith('.hql')) {
-        if (await exists(resolvedImportPath)) {
-          // Process the HQL file to ensure it's in the cache
-          // This ensures the import chain is processed correctly
-          const processedHqlPath = await processHqlFile(resolvedImportPath);
-          
-          // CRITICAL: Update import to use absolute file:// URL to cached path
-          const newImport = fullImport.replace(importPath, `file://${processedHqlPath}`);
-          modifiedContent = modifiedContent.replace(fullImport, newImport);
-          logger.debug(`Rewritten nested import: ${importPath} -> file://${processedHqlPath}`);
-        }
-      } 
-      // Handle TypeScript imports specially to ensure they reference cached versions
-      else if (resolvedImportPath.endsWith('.ts')) {
-        if (await exists(resolvedImportPath)) {
-          // Get or create the cached version
-          const cachedImportPath = await getCachedPath(resolvedImportPath, '.ts', {
-            preserveRelative: true,
-            createDir: true
+      logger.debug(`Found HQL import in JS file: ${importPath}`);
+      
+      if (await exists(resolvedImportPath)) {
+        logger.debug(`Processing HQL file: ${resolvedImportPath}`);
+        
+        try {
+          // Process the HQL file with updated import stack
+          await processHqlFile(resolvedImportPath, { 
+            importStack: [...importStack, filePath] 
           });
           
-          // Register the mapping
-          registerImportMapping(resolvedImportPath, cachedImportPath);
-          
-          // CRITICAL: Update import to use absolute file:// URL to cached path
-          const newImport = fullImport.replace(importPath, `file://${cachedImportPath}`);
-          modifiedContent = modifiedContent.replace(fullImport, newImport);
-          logger.debug(`Rewritten nested TS import: ${importPath} -> file://${cachedImportPath}`);
-        }
-      }
-      // Handle JavaScript imports
-      else if (resolvedImportPath.endsWith('.js')) {
-        if (await exists(resolvedImportPath)) {
-          // Process JS file to handle any HQL imports it might have
-          await processJavaScriptFile(resolvedImportPath);
-          
-          // Check if the JS file has been mapped to a cached version
-          const cachedJsPath = getImportMapping(resolvedImportPath);
-          
-          if (cachedJsPath) {
-            // Use the cached version
-            const newImport = fullImport.replace(importPath, `file://${cachedJsPath}`);
+          // Get the cached TypeScript path
+          const cachedTsPath = getImportMapping(resolvedImportPath);
+          if (cachedTsPath) {
+            // Update the import to point to the TypeScript file
+            const newImportPath = `file://${cachedTsPath}`;
+            const newImport = fullImport.replace(importPath, newImportPath);
             modifiedContent = modifiedContent.replace(fullImport, newImport);
-            logger.debug(`Rewritten nested JS import: ${importPath} -> file://${cachedJsPath}`);
+            logger.debug(`Rewritten HQL import: ${importPath} -> ${newImportPath}`);
           } else {
-            // Use the original path but with file:// prefix for absolute imports
-            const newImport = fullImport.replace(importPath, `file://${resolvedImportPath}`);
-            modifiedContent = modifiedContent.replace(fullImport, newImport);
-            logger.debug(`Rewritten JS import to absolute path: ${importPath} -> file://${resolvedImportPath}`);
+            logger.debug(`No cached path found for HQL import: ${importPath}`);
           }
+        } catch (error) {
+          if (error instanceof CircularDependencyError) {
+            throw error; // Re-throw circular dependency errors
+          }
+          logger.debug(`Error processing HQL import ${importPath}: ${error instanceof Error ? error.message : String(error)}`);
+          throw error;
         }
+      } else {
+        logger.debug(`HQL import file not found: ${resolvedImportPath}`);
       }
     } catch (error) {
-      logger.debug(`Error processing nested import ${importPath}: ${error instanceof Error ? error.message : String(error)}`);
+      if (error instanceof CircularDependencyError) {
+        throw error; // Re-throw circular dependency errors
+      }
+      logger.debug(`Error processing HQL import ${importPath}: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     }
   }
   
@@ -1037,69 +997,25 @@ async function processNestedImports(
 }
 
 /**
- * Convert hyphenated names to JavaScript-compatible names
- * (either camelCase or snake_case depending on configuration)
+ * Process an HQL file by transpiling it and registering its mapping
  */
-function sanitizeHqlIdentifier(name: string, useSnakeCase = true): string {
-  if (!name.includes('-')) {
-    return name;
-  }
-  
-  if (useSnakeCase) {
-    // Convert hyphens to underscores (snake_case)
-    return name.replace(/-/g, '_');
-  } else {
-    // Convert to camelCase
-    return name.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
-  }
-}
-
-/**
- * Process HQL file to TypeScript, ensuring correct cache paths for imports
- */
-async function processHqlFile(sourceFile: string): Promise<string> {
-  logger.debug(`Processing HQL file: ${sourceFile}`);
+async function processHqlFile(sourceFile: string, options: { importStack?: string[] } = {}): Promise<string> {
+  logger.debug(`Transpiling HQL to TypeScript: ${sourceFile}`);
   
   try {
-    // ALWAYS use preserveRelative for HQL files to ensure consistent path structure
-    const cachedTsPath = await getCachedPath(sourceFile, '.ts', { 
-      createDir: true,
-      preserveRelative: true  // Always preserve relative structure for HQL files
-    });
+    // Import the transpiler dynamically to avoid circular dependencies
+    const { transpileHqlInJs } = await import('../bundler.ts');
     
-    // Check if we need to process this file
-    if (await exists(cachedTsPath)) {
-      // File exists in cache, check if it's still valid
-      if (!await needsRegeneration(sourceFile, '.ts')) {
-        logger.debug(`Using cached TypeScript for ${sourceFile}: ${cachedTsPath}`);
-        
-        // Register the mapping for future use
-        registerImportMapping(sourceFile, cachedTsPath);
-        registerImportMapping(sourceFile.replace(/\.hql$/, '.ts'), cachedTsPath);
-        
-        return cachedTsPath;
-      }
-    }
+    // Process the HQL file - transpileHqlInJs doesn't support importStack yet
+    // so we'll need to implement circular detection at a higher level
+    const outputPath = await transpileHqlInJs(sourceFile, dirname(sourceFile));
     
-    // Process the HQL file to TypeScript
-    logger.debug(`Transpiling HQL to TypeScript: ${sourceFile}`);
+    // Register the mapping from HQL to TS
+    registerImportMapping(sourceFile, outputPath);
     
-    // Run the transpiler via bundler
-    const tsContent = await transpileHqlInJs(sourceFile, dirname(sourceFile));
-    const processedContent = await processNestedImports(tsContent, sourceFile, cachedTsPath);
-    
-    // Write to cache
-    await Deno.writeTextFile(cachedTsPath, processedContent);
-    
-    // Register the mapping for future use
-    registerImportMapping(sourceFile, cachedTsPath);
-    registerImportMapping(sourceFile.replace(/\.hql$/, '.ts'), cachedTsPath);
-    
-    logger.debug(`Processed HQL file ${sourceFile} to ${cachedTsPath}`);
-    
-    return cachedTsPath;
+    return outputPath;
   } catch (error) {
-    logger.error(`Error processing HQL file ${sourceFile}: ${error instanceof Error ? error.message : String(error)}`);
+    logger.debug(`Error processing HQL file ${sourceFile}: ${error instanceof Error ? error.message : String(error)}`);
     throw error;
   }
 }
@@ -1148,6 +1064,24 @@ export async function createTempDirIfNeeded(
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     throw new Error(`Creating temporary directory: ${errorMsg}`);
+  }
+}
+
+/**
+ * Convert hyphenated names to JavaScript-compatible names
+ * (either camelCase or snake_case depending on configuration)
+ */
+function sanitizeHqlIdentifier(name: string, useSnakeCase = true): string {
+  if (!name.includes('-')) {
+    return name;
+  }
+  
+  if (useSnakeCase) {
+    // Convert hyphens to underscores (snake_case)
+    return name.replace(/-/g, '_');
+  } else {
+    // Convert to camelCase
+    return name.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
   }
 }
 
