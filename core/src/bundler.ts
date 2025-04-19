@@ -419,27 +419,79 @@ function createUnifiedBundlePlugin(options: {
         try {
           // Skip if already processed
           if (processedTsFiles.has(args.path)) {
+            logger.debug(`Skipping already processed TypeScript file: ${args.path}`);
             return null;
           }
           
           logger.debug(`Processing TypeScript file: ${args.path}`);
           const contents = await readFile(args.path);
           
-          // Process HQL imports in TypeScript
-          let processedContent = contents;
+          // Preprocess TypeScript to identify HQL imports before attempting to process
           if (checkForHqlImports(contents)) {
-            processedContent = await processHqlImportsInTs(contents, args.path, {
+            // First register current TS file to break potential circular dependencies
+            processedTsFiles.add(args.path);
+            
+            // Pre-process any HQL imports to ensure they're cached before proceeding
+            const imports = extractHqlImports(contents);
+            for (const imp of imports) {
+              const hqlImportPath = imp.path;
+              if (hqlImportPath.endsWith('.hql')) {
+                // Resolve the HQL path relative to the TS file
+                const resolvedPath = await resolveImportPath(
+                  hqlImportPath,
+                  dirname(args.path),
+                  { sourceDir: options.sourceDir }
+                );
+                
+                if (resolvedPath) {
+                  try {
+                    logger.debug(`Pre-processing HQL import in TypeScript: ${resolvedPath}`);
+                    
+                    // Transpile the HQL file to TS
+                    const tsCode = await transpileHqlFile(resolvedPath, options.sourceDir, options.verbose);
+                    
+                    // Cache the transpiled file
+                    const cachedPath = await cacheTranspiledFile(resolvedPath, tsCode, ".ts", { 
+                      preserveRelative: true 
+                    });
+                    
+                    // Register direct mapping for TS imports
+                    const tsPath = resolvedPath.replace(/\.hql$/, '.ts');
+                    registerImportMapping(tsPath, cachedPath);
+                    
+                    // Also register path with .js extension for JS imports
+                    const jsPath = resolvedPath.replace(/\.hql$/, '.js');
+                    const jsTargetPath = cachedPath.replace(/\.ts$/, '.js');
+                    registerImportMapping(jsPath, jsTargetPath);
+                    
+                    logger.debug(`Pre-processed HQL import: ${resolvedPath} → ${cachedPath}`);
+                  } catch (error) {
+                    logger.warn(`Error pre-processing HQL import in TypeScript: ${resolvedPath}: ${formatErrorMessage(error)}`);
+                  }
+                }
+              }
+            }
+            
+            // Now process HQL imports in TypeScript normally
+            const processedContent = await processHqlImportsInTs(contents, args.path, {
               verbose: options.verbose,
               tempDir: options.tempDir,
               sourceDir: options.sourceDir,
             });
+            
+            // Return as TypeScript
+            return {
+              contents: processedContent,
+              loader: "ts",
+              resolveDir: dirname(args.path),
+            };
           }
           
           processedTsFiles.add(args.path);
           
           // Return as TypeScript
           return {
-            contents: processedContent,
+            contents: contents,
             loader: "ts",
             resolveDir: dirname(args.path),
           };
@@ -780,6 +832,26 @@ async function resolveHqlImport(
     return { path: args.path, external: true };
   }
   
+  // Special handling for .hql files referenced in TS/JS files
+  if (args.path.endsWith('.hql') && args.importer && 
+      (args.importer.endsWith('.ts') || args.importer.endsWith('.js'))) {
+    // Check for a cached JS version first
+    const jsPath = args.path.replace(/\.hql$/, '.js');
+    const cachedJsMapping = getImportMapping(jsPath);
+    if (cachedJsMapping) {
+      logger.debug(`Cached JS mapping for HQL file: ${jsPath} → ${cachedJsMapping}`);
+      return { path: cachedJsMapping, namespace: "file" };
+    }
+    
+    // Check for a cached TS version
+    const tsPath = args.path.replace(/\.hql$/, '.ts');
+    const cachedTsMapping = getImportMapping(tsPath);
+    if (cachedTsMapping) {
+      logger.debug(`Cached TS mapping for HQL file: ${tsPath} → ${cachedTsMapping}`);
+      return { path: cachedTsMapping, namespace: "file" };
+    }
+  }
+  
   // Check import mapping cache
   const cachedMapping = getImportMapping(args.path);
   if (cachedMapping) {
@@ -814,12 +886,24 @@ async function resolveHqlImport(
     try {
       await Deno.stat(relativePath);
       
-      // Register for future lookups if HQL file
+      // Handle HQL files specially to ensure consistent conversion
       if (relativePath.endsWith('.hql')) {
+        // Check if we already have a cached TS version
         const tsPath = relativePath.replace(/\.hql$/, '.ts');
-        if (await exists(tsPath)) {
-          registerImportMapping(relativePath, tsPath);
+        const cachedTsPath = getImportMapping(tsPath);
+        
+        if (cachedTsPath) {
+          logger.debug(`Using cached TS mapping for HQL: ${relativePath} → ${cachedTsPath}`);
+          registerImportMapping(relativePath, cachedTsPath);
+          return { path: cachedTsPath, namespace: "file" };
         }
+        
+        // Process through HQL namespace to ensure proper transpilation
+        logger.debug(`Routing HQL file through HQL namespace: ${relativePath}`);
+        return {
+          path: relativePath,
+          namespace: "hql",
+        };
       }
       
       logger.debug(`Resolved relative to importer: ${args.path} → ${relativePath}`);
@@ -1010,6 +1094,20 @@ async function cacheTranspiledFile(
   
   // Register mapping for future lookups
   registerImportMapping(originalPath, cachedPath);
+  
+  // Register both .ts and .js versions of this path 
+  // to help with cross-language imports
+  if (extension === '.ts') {
+    const jsPath = originalPath.replace(/\.(hql|ts)$/, '.js');
+    const jsTargetPath = cachedPath.replace(/\.ts$/, '.js');
+    registerImportMapping(jsPath, jsTargetPath);
+  }
+  
+  // Register cache directory version mapping
+  const cacheDirPath = originalPath.replace(/^.*\/([^/]+)$/, '.hql-cache/$1');
+  if (cacheDirPath !== originalPath) {
+    registerImportMapping(cacheDirPath, cachedPath);
+  }
   
   // If extension differs, register the extension-variant too
   if (!originalPath.endsWith(extension)) {

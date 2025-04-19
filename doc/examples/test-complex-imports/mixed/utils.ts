@@ -14,6 +14,13 @@ export function tsFunction(num: number): number {
   return tsMultiply(num, 3);
 }
 
+// Function that demonstrates the circular import
+export function testCircularImport(): number {
+  console.log("Testing circular import from TypeScript");
+  // This would call the HQL-defined function
+  return mixedFunction ? mixedFunction() : 0;
+}
+
 // Also export a type for completeness
 export interface DataType {
   id: number;
