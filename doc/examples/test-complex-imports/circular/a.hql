@@ -9,8 +9,8 @@
 
 ;; Define the exported function that uses B's function
 (fn circularFunction ()
-  (let ((result (incrementCircular circularValue)))
-    (+ result 5)))
+  (var result (incrementCircular circularValue))
+  (+ result 5))
 
 ;; Export the value for B to use
 (export [circularValue])

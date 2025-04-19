@@ -6,8 +6,8 @@
 
 ;; Define a function that uses the nested import
 (fn hqlFunction (x)
-  (let ((nestedResult (nestedHqlFunction (* x 2))))
-    (+ nestedResult 5)))
+  (var nestedResult (nestedHqlFunction (* x 2)))
+  (+ nestedResult 5))
 
 ;; Export for parent
 (export [hqlFunction]) 

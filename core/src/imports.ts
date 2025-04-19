@@ -14,29 +14,57 @@ import {
 import {
   isImport,
   isLiteral,
-  isSExpNamespaceImport,
-  isSExpVectorImport,
   isSymbol,
   SExp,
   SList,
   SSymbol,
+  SLiteral,
+  isSExpNamespaceImport,
+  isSExpVectorImport
 } from "./s-exp/types.ts";
 import {
-  ImportError,
-  MacroError,
-  ValidationError,
-} from "./transpiler/error/errors.ts";
-import {
-  isHqlFile,
-  isJavaScriptModule,
-  isRemoteModule,
   isRemoteUrl,
   registerModulePath,
+  isRemoteModule,
+  isHqlFile,
+  isJsFile,
+  isTypeScriptFile
 } from "./common/import-utils.ts";
-import { 
-  wrapError, 
-  formatErrorMessage 
-} from "./common/common-utils.ts";
+import { wrapError, formatErrorMessage } from "./common/common-utils.ts";
+import { perform } from "./transpiler/error/index.ts";
+
+// Define missing error classes
+class MacroError extends Error {
+  constructor(message: string, public macroName: string, public filePath?: string) {
+    super(message);
+    this.name = "MacroError";
+  }
+}
+
+class ImportError extends Error {
+  constructor(
+    message: string, 
+    public modulePath: string, 
+    public importingFile?: string,
+    public cause?: Error
+  ) {
+    super(message);
+    this.name = "ImportError";
+  }
+}
+
+class ValidationError extends Error {
+  constructor(
+    message: string,
+    public context: string,
+    public expected: string,
+    public actual: string
+  ) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
 export interface ImportProcessorOptions {
   verbose?: boolean;
   baseDir?: string;
@@ -45,11 +73,6 @@ export interface ImportProcessorOptions {
   inProgressFiles?: Set<string>;
   importMap?: Map<string, string>;
   currentFile?: string;
-}
-
-interface SLiteral {
-  type: "literal";
-  value: string | number | boolean | null;
 }
 
 /**
@@ -552,14 +575,14 @@ async function loadModule(
   const inProgressFiles = options.inProgressFiles || new Set<string>();
   
   try {
-    // Skip already processed modules
-    if (processedFiles.has(resolvedPath)) {
+    // Skip already processed modules (except HQL which handles this internally)
+    if (!isHqlFile(modulePath) && processedFiles.has(resolvedPath)) {
       logger.debug(`Skipping already processed import: ${resolvedPath}`);
       return;
     }
     
-    // Handle circular imports
-    if (inProgressFiles.has(resolvedPath)) {
+    // Handle circular imports (except HQL which handles this internally)
+    if (!isHqlFile(modulePath) && inProgressFiles.has(resolvedPath)) {
       logger.debug(`Detected circular import for ${resolvedPath}, will be resolved by parent process`);
       return;
     }
@@ -569,8 +592,10 @@ async function loadModule(
       await loadRemoteModule(moduleName, modulePath, env);
     } else if (isHqlFile(modulePath)) {
       await loadHqlModule(moduleName, modulePath, resolvedPath, env, options);
-    } else if (isJavaScriptModule(modulePath)) {
+    } else if (isJsFile(modulePath)) {
       await loadJavaScriptModule(moduleName, modulePath, resolvedPath, env, processedFiles);
+    } else if (isTypeScriptFile(modulePath)) {
+      await loadTypeScriptModule(moduleName, modulePath, resolvedPath, env, processedFiles);
     } else {
       throw new ImportError(`Unsupported import file type: ${modulePath}`, modulePath, options.currentFile);
     }
@@ -611,6 +636,41 @@ async function loadHqlModule(
   const tempDir = options.tempDir || "";
   const importMap = options.importMap || new Map<string, string>();
   
+  // Skip if already processed
+  if (processedFiles.has(resolvedPath)) {
+    logger.debug(`Skipping already processed module: ${resolvedPath}`);
+    return;
+  }
+  
+  // Check for circular imports
+  if (inProgressFiles.has(resolvedPath)) {
+    logger.debug(`Detected circular import for ${resolvedPath}, handling with pre-registration`);
+    
+    try {
+      // For circular imports, we need to pre-register empty module
+      // to allow imports to succeed, then fill it later
+      const emptyExports: Record<string, any> = {};
+      env.importModule(moduleName, emptyExports);
+      
+      // Read and parse to find exports for pre-registration
+      const fileContent = await readFile(resolvedPath, options.currentFile);
+      const importedExprs = parse(fileContent);
+      
+      // Extract exports ahead of time
+      const exportDefinitions = collectExportDefinitions(importedExprs);
+      for (const { name } of exportDefinitions) {
+        logger.debug(`Pre-registering export for circular dependency: ${name}`);
+        // Register placeholder null values that will be replaced later when fully processed
+        emptyExports[name] = null;
+      }
+      
+      return;
+    } catch (error) {
+      logger.warn(`Failed to pre-register exports for circular dependency: ${resolvedPath}`);
+      return;
+    }
+  }
+  
   // Mark as in progress to detect circular imports
   inProgressFiles.add(resolvedPath);
   
@@ -623,8 +683,14 @@ async function loadHqlModule(
     // Set context for processing
     env.setCurrentFile(resolvedPath);
     
-    // Process definitions and imports
+    // Process definitions first - create stubs for functions and variables
     processFileDefinitions(importedExprs, env);
+    
+    // Create module exports object early for circular dependencies
+    const moduleExports = {};
+    env.importModule(moduleName, moduleExports);
+    
+    // Process imports - allow circular references to find the pre-registered module
     await processImports(importedExprs, env, {
       verbose: options.verbose,
       baseDir: path.dirname(resolvedPath),
@@ -635,10 +701,8 @@ async function loadHqlModule(
       currentFile: resolvedPath,
     });
     
-    // Process exports and define module
-    const moduleExports = {};
+    // Now process exports and fill in the module exports
     processFileExportsAndDefinitions(importedExprs, env, moduleExports, resolvedPath);
-    env.importModule(moduleName, moduleExports);
     
     logger.debug(`Imported HQL module: ${moduleName}`);
   } catch (error) {
@@ -651,7 +715,40 @@ async function loadHqlModule(
 }
 
 /**
- * Load a JavaScript or TypeScript module
+ * Load a TypeScript module by transpiling it to JavaScript first
+ */
+async function loadTypeScriptModule(
+  moduleName: string,
+  modulePath: string,
+  resolvedPath: string,
+  env: Environment,
+  processedFiles: Set<string>,
+): Promise<void> {
+  try {
+    logger.debug(`TypeScript import detected: ${resolvedPath}`);
+    
+    // Convert TypeScript to JavaScript
+    const jsOutPath = resolvedPath.replace(/\.tsx?$/, '.js');
+    await transpileTypeScriptToJavaScript(resolvedPath, jsOutPath);
+    
+    // Use the JavaScript file instead
+    logger.debug(`Using transpiled JavaScript: ${jsOutPath}`);
+    const jsModulePath = modulePath.replace(/\.tsx?$/, '.js');
+    
+    // Use the standard JavaScript module loader for the transpiled file
+    await loadJavaScriptModule(moduleName, jsModulePath, jsOutPath, env, processedFiles);
+  } catch (error) {
+    throw new ImportError(
+      `Importing TypeScript module ${moduleName}: ${error instanceof Error ? error.message : String(error)}`,
+      modulePath,
+      env.getCurrentFile(),
+      error instanceof Error ? error : undefined
+    );
+  }
+}
+
+/**
+ * Load a JavaScript module
  */
 async function loadJavaScriptModule(
   moduleName: string,
@@ -661,20 +758,6 @@ async function loadJavaScriptModule(
   processedFiles: Set<string>,
 ): Promise<void> {
   try {
-    // Handle TypeScript files specially
-    if (resolvedPath.endsWith('.ts')) {
-      logger.debug(`TypeScript import detected: ${resolvedPath}`);
-      
-      // Convert TypeScript to JavaScript
-      const jsOutPath = resolvedPath.replace(/\.ts$/, '.js');
-      await transpileTypeScriptToJavaScript(resolvedPath, jsOutPath);
-      
-      // Use the JavaScript file instead
-      logger.debug(`Using transpiled JavaScript: ${jsOutPath}`);
-      resolvedPath = jsOutPath;
-      modulePath = modulePath.replace(/\.ts$/, '.js');
-    }
-    
     let finalModuleUrl = `file://${resolvedPath}`;
     
     // Check if JS file contains HQL imports or needs processing
@@ -925,6 +1008,14 @@ function processFileExportsAndDefinitions(
     // Collect and process exports
     const exportDefinitions = collectExportDefinitions(expressions);
     
+    // For handling circular dependencies, we should first pre-register
+    // all exports with placeholder values if they're not already in the moduleExports
+    for (const { name } of exportDefinitions) {
+      if (moduleExports[name] === undefined) {
+        moduleExports[name] = null;
+      }
+    }
+    
     for (const { name, value } of exportDefinitions) {
       try {
         // Check if it's a macro export
@@ -952,11 +1043,19 @@ function processFileExportsAndDefinitions(
           moduleExports[name] = lookupValue;
           logger.debug(`Added export "${name}" with looked-up value`);
         } catch (lookupError) {
-          logger.warn(`Symbol not found for export: "${name}"`);
+          // Only warn if the export wasn't pre-registered (which would indicate a circular dependency)
+          if (moduleExports[name] === undefined) {
+            logger.warn(`Symbol not found for export: "${name}"`);
+          } else {
+            logger.debug(`Symbol not found for export "${name}", using placeholder for circular dependency`);
+          }
           
           // Special handling for HQL files
           if (filePath.endsWith(".hql")) {
-            moduleExports[name] = null;
+            // Only assign null if not already set (preserve pre-registered values)
+            if (moduleExports[name] === undefined) {
+              moduleExports[name] = null;
+            }
           } else {
             wrapError(`Lookup failed for export "${name}"`, lookupError, filePath, filePath);
           }

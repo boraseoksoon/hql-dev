@@ -41,11 +41,11 @@ var moduleTs = function() {
 }();
 function extremeFunction() {
   let tsResult = moduleTs.tsFunction(30);
-  let circResult = circularFunction();
+  let circResult = circularFunction;
   return tsResult + circResult;
 }
 console.log("TS module result:", moduleTs.tsFunction(15));
-console.log("Circular result:", circularFunction());
+console.log("Circular result:", circularFunction);
 console.log("Combined result:", extremeFunction());
 export {
   extremeFunction

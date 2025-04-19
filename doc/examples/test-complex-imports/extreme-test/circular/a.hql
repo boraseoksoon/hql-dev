@@ -1,26 +1,25 @@
-;; Simplified test file without circular dependencies
+;; Circular dependency test file (a.hql)
+;; This file imports b.hql, which in turn imports back to this file
 
-;; Define a value
-(var baseValue 10)
+(import [incrementCircular] from "./b.hql")
 
-;; Define a function that uses the value
-(fn add5 (value)
-  (+ value 5))
+(fn myFunction (x)
+  (+ x 10))
 
-;; Define a function that uses our add5 function
-(fn add5AndDouble (value)
-  (* (add5 value) 2))
+(fn getValueFromFunction (x)
+  (myFunction x))
 
-;; Main function renamed to circularFunction to match imports
-(fn circularFunction ()
-  (var result (add5AndDouble baseValue))
-  (console.log "Calculation result:" result)
-  result)
+;; This is a function call, not a collection access  
+(console.log "Result of function call:" (getValueFromFunction 5))
 
-;; Export our functions, including circularFunction
-(export [add5])
-(export [add5AndDouble])
-(export [circularFunction])
+;; Test the imported function (circular dependency)
+(console.log "Result of circular import function:" (incrementCircular 10))
 
-;; Run the main function
-(circularFunction)
+;; Create a collection to test collection access
+(var myCollection ["a" "b" "c"])
+
+;; This is a collection access, not a function call
+(console.log "Element from collection:" (myCollection 1))
+
+;; Export functions for b.hql
+(export [myFunction])

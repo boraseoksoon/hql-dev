@@ -363,14 +363,17 @@ export function transformNew(
 
 /**
  * Transform collection access syntax: (myList 2) => (get myList 2)
+ * This handles accessing elements from collections like arrays, maps, and sets.
  */
 export function transformCollectionAccess(
   list: ListNode,
   currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode | null
+  transformNode: (node: any, dir: string) => IR.IRNode | null,
+  transformedCollection?: IR.IRNode
 ): IR.IRNode {
   return perform(
     () => {
+      // Validate list has at least collection and index
       if (list.elements.length < 2) {
         throw new ValidationError(
           "Not enough elements for collection access",
@@ -380,7 +383,8 @@ export function transformCollectionAccess(
         );
       }
 
-      const collection = transformNode(list.elements[0], currentDir);
+      // Use the provided transformed collection if available, otherwise transform it
+      const collection = transformedCollection || transformNode(list.elements[0], currentDir);
       if (!collection) {
         throw new ValidationError(
           "Collection transformed to null",
@@ -400,45 +404,31 @@ export function transformCollectionAccess(
         );
       }
 
-      // Enhanced detection for collection vs function call
-      // Check if this is a function call based on type and naming patterns
-      if (collection.type === IR.IRNodeType.Identifier) {
-        const name = (collection as IR.IRIdentifier).name;
-        // Check for function naming patterns
-        if (name.includes("lambda") || name.includes("function") || name.endsWith("Fn")) {
-          // This is likely a lambda or function call
+      // Specific handling for different collection types
+      
+      // For sets, use the 'has' method if we're checking for existence
+      if (collection.type === IR.IRNodeType.NewExpression) {
+        const callee = (collection as IR.IRNewExpression).callee;
+        if (callee.type === IR.IRNodeType.Identifier && 
+            (callee as IR.IRIdentifier).name === "Set") {
+          // For Set objects, convert (mySet 2) to (mySet.has(2))
           return {
             type: IR.IRNodeType.CallExpression,
-            callee: collection,
+            callee: {
+              type: IR.IRNodeType.MemberExpression,
+              object: collection,
+              property: {
+                type: IR.IRNodeType.Identifier,
+                name: "has",
+              } as IR.IRIdentifier,
+              computed: false,
+            } as IR.IRMemberExpression,
             arguments: [index],
           } as IR.IRCallExpression;
         }
-      } else if (collection.type === IR.IRNodeType.FunctionExpression) {
-        // For function expressions, treat as a function call
-        return {
-          type: IR.IRNodeType.CallExpression,
-          callee: collection,
-          arguments: [index],
-        } as IR.IRCallExpression;
-      } else if (collection.type === IR.IRNodeType.MemberExpression) {
-        // For member expressions that end with method names, treat as a function call
-        const memberExpr = collection as IR.IRMemberExpression;
-        if (memberExpr.property.type === IR.IRNodeType.Identifier) {
-          const propName = (memberExpr.property as IR.IRIdentifier).name;
-          // If the property name suggests a method (common method naming patterns)
-          if (propName.startsWith("get") || propName.startsWith("find") || 
-              propName.startsWith("compute") || propName.startsWith("create") || 
-              propName.startsWith("transform") || propName.endsWith("Method")) {
-            return {
-              type: IR.IRNodeType.CallExpression,
-              callee: collection,
-              arguments: [index],
-            } as IR.IRCallExpression;
-          }
-        }
       }
 
-      // Otherwise, use the get function for collection access
+      // Generic collection access using 'get' function
       return {
         type: IR.IRNodeType.CallExpression,
         callee: {

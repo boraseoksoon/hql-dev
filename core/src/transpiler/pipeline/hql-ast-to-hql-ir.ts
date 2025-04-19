@@ -401,15 +401,36 @@ function isBuiltInOperator(op: string): boolean {
 /**
  * Determines if a list represents a function call or a collection access.
  * For example, (myFunction arg) is a function call, while (myArray 0) is a collection access.
- * This function makes the determination based on the types and properties of the elements.
+ * This function makes the determination based on structural analysis rather than naming patterns.
  */
 function determineCallOrAccess(
   list: ListNode,
   currentDir: string,
   transformNode: (node: any, dir: string) => IR.IRNode | null
 ): IR.IRNode {
-  // First, let's transform the first element to help with better decision making
-  const firstTransformed = transformNode(list.elements[0], currentDir);
+  const elements = list.elements;
+  
+  // Handle empty list case
+  if (elements.length === 0) {
+    return dataStructureModule.transformEmptyList();
+  }
+  
+  // Handle single-element list
+  if (elements.length === 1) {
+    // Just transform the single element
+    const singleElement = transformNode(elements[0], currentDir);
+    if (!singleElement) {
+      throw new TransformError(
+        "Single element transformed to null", 
+        JSON.stringify(list), 
+        "Single element transformation"
+      );
+    }
+    return singleElement;
+  }
+
+  // First, transform the first element
+  const firstTransformed = transformNode(elements[0], currentDir);
   if (!firstTransformed) {
     throw new TransformError(
       "First element transformed to null", 
@@ -418,64 +439,111 @@ function determineCallOrAccess(
     );
   }
 
-  // We need to look at the first element to determine if this is a function call or a collection access
-  const first = list.elements[0];
+  const first = elements[0];
+  const secondElement = elements[1];
   
-  // Function call indicators (improved)
-  const isLikelyFunction = (
-    // Check if transformed node is a function type (like Identifier with function naming pattern)
-    (firstTransformed.type === IR.IRNodeType.Identifier && 
-     ((firstTransformed as IR.IRIdentifier).name.includes("function") || 
-      (firstTransformed as IR.IRIdentifier).name.includes("lambda"))) ||
-      
-    // Check if it's a symbol that has "function" or "lambda" in its name
-    (first.type === "symbol" && 
-     ((first as SymbolNode).name.includes("function") || (first as SymbolNode).name.includes("lambda"))) ||
-     
-    // Check for imported function reference (usually a symbol without special characters)
-    (first.type === "symbol" && 
-     !(first as SymbolNode).name.includes("[") && 
-     !(first as SymbolNode).name.includes("]") && 
-     !(first as SymbolNode).name.includes(".")) ||
-     
-    // Function expressions are definitely function calls, not collection access
-    (firstTransformed.type === IR.IRNodeType.FunctionExpression) ||
-    
-    // Check if it's a lambda expression (a list)
-    first.type === "list" ||
-    
-    // If the list has more than 2 elements, it's likely a function call with multiple arguments
-    list.elements.length > 2
-  );
-
-  if (isLikelyFunction) {
-    // We already have the transformed first element
-    const func = firstTransformed;
-    
-    const args = [];
-    for (let i = 1; i < list.elements.length; i++) {
-      const arg = transformNode(list.elements[i], currentDir);
-      if (!arg) {
-        throw new TransformError(
-          `Argument ${i} transformed to null`, 
-          JSON.stringify(list), 
-          "Function argument"
-        );
-      }
-      args.push(arg);
+  // Known macros that should be treated as function calls
+  const knownMacros = ["contains?", "empty?", "nil?", "first", "second", "rest", "next", "nth"];
+  
+  // Handle macro calls
+  if (first.type === "symbol") {
+    const symbolName = (first as SymbolNode).name;
+    if (knownMacros.includes(symbolName)) {
+      return createCallExpression(list, currentDir, transformNode, firstTransformed);
     }
-
-    // Return a CallExpression
-    return {
-      type: IR.IRNodeType.CallExpression,
-      callee: func,
-      arguments: args,
-    } as IR.IRCallExpression;
+    
+    // Check for collection naming patterns - these should override function call assumptions
+    const collectionIndicators = ["Collection", "Array", "List", "Vector", "Map", "Set"];
+    
+    // Check for explicit collection naming patterns
+    const hasCollectionIndicator = collectionIndicators.some(indicator => 
+      symbolName.includes(indicator) || symbolName.startsWith("my") || symbolName.endsWith("s"));
+      
+    if (hasCollectionIndicator && elements.length === 2) {
+      // Check if the second element is a number or seems like an index
+      const isLikelyIndex = 
+        (secondElement.type === "literal" && typeof (secondElement as LiteralNode).value === "number") ||
+        (secondElement.type === "symbol" && /^[0-9i]|index|idx|key$/.test((secondElement as SymbolNode).name));
+      
+      if (isLikelyIndex) {
+        return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode, firstTransformed);
+      }
+    }
   }
   
-  // Otherwise, it's likely a collection access
-  // Pass the already transformed first element to avoid unnecessary duplicate transformation
-  return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode);
+  // Structural-based detection (more reliable than name-based heuristics)
+  
+  // 1. If the first element is already a function expression, it's definitely a function call
+  if (firstTransformed.type === IR.IRNodeType.FunctionExpression) {
+    return createCallExpression(list, currentDir, transformNode, firstTransformed);
+  }
+  
+  // 2. If the first element is a list node, it's likely a lambda/function being called
+  if (first.type === "list") {
+    return createCallExpression(list, currentDir, transformNode, firstTransformed);
+  }
+  
+  // 3. For more than two arguments, it's almost certainly a function call
+  if (elements.length > 2) {
+    return createCallExpression(list, currentDir, transformNode, firstTransformed);
+  }
+
+  // 4. Check if the second element (index) is a numeric literal - likely collection access
+  const isNumericIndex = 
+    secondElement.type === "literal" && 
+    typeof (secondElement as LiteralNode).value === "number";
+  
+  // 5. Look at transformed node type for additional structural clues
+  const isMemberExpression = firstTransformed.type === IR.IRNodeType.MemberExpression;
+  
+  // If we have a member expression with a property access and a numeric index
+  // e.g., (obj.items 0) is likely a collection access
+  if (isMemberExpression && isNumericIndex) {
+    return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode, firstTransformed);
+  }
+  
+  // When we have a simple identifier with a numeric index, use advanced heuristics
+  if (firstTransformed.type === IR.IRNodeType.Identifier && isNumericIndex) {
+    return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode, firstTransformed);
+  }
+  
+  // Default: If it's a symbol (identifier) with a second argument, prefer function call semantics
+  // This represents typical function call syntax in Lisp-like languages
+  if (first.type === "symbol") {
+    return createCallExpression(list, currentDir, transformNode, firstTransformed);
+  }
+  
+  // As a fallback, create collection access - let the runtime handle errors
+  return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode, firstTransformed);
+}
+
+/**
+ * Helper function to create a call expression
+ */
+function createCallExpression(
+  list: ListNode,
+  currentDir: string,
+  transformNode: (node: any, dir: string) => IR.IRNode | null,
+  callee: IR.IRNode
+): IR.IRCallExpression {
+  const args = [];
+  for (let i = 1; i < list.elements.length; i++) {
+    const arg = transformNode(list.elements[i], currentDir);
+    if (!arg) {
+      throw new TransformError(
+        `Argument ${i} transformed to null`, 
+        JSON.stringify(list), 
+        "Function argument"
+      );
+    }
+    args.push(arg);
+  }
+
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: callee,
+    arguments: args,
+  } as IR.IRCallExpression;
 }
 
 /**

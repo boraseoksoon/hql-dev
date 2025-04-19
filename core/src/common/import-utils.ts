@@ -42,6 +42,20 @@ export function isJavaScriptModule(filePath: string): boolean {
 }
 
 /**
+ * Check if a file path is a TypeScript file
+ */
+export function isTypeScriptFile(filePath: string): boolean {
+  return filePath.endsWith(".ts") || filePath.endsWith(".tsx");
+}
+
+/**
+ * Check if a file path is a JavaScript file
+ */
+export function isJsFile(filePath: string): boolean {
+  return filePath.endsWith(".js") || filePath.endsWith(".mjs") || filePath.endsWith(".cjs");
+}
+
+/**
  * Extract import information from an import node
  * Returns [moduleName, importPath] or [null, null] if not an import
  */

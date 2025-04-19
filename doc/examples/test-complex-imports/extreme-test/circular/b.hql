@@ -1,17 +1,14 @@
-;; Circular dependency test file B
-;; This is imported by A and also imports from A
+;; Circular dependency test file (b.hql)
+;; This file imports a.hql, which in turn imports back to this file
 
-;; Import from A creating a circular dependency
-(import [baseValue] from "./a.hql")
+(import [myFunction] from "./a.hql")
 
-;; Function that uses the imported value from A
-(fn incrementCircular (value)
-  (+ value baseValue))
+;; Define a function that uses the imported function
+(fn incrementCircular (x)
+  (+ (myFunction x) 1))
 
-;; Test function to demonstrate accessing the imported value
-(fn testAccess ()
-  (console.log "Base value from a.hql:" baseValue)
-  baseValue)
+;; Test the imported function with a literal value
+(console.log "Direct result from b.hql:" (myFunction 20))
 
-;; Export the function for A to use
+;; Export our incrementCircular function for a.hql
 (export [incrementCircular])

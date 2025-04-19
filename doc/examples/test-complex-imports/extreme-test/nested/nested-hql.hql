@@ -6,10 +6,10 @@
 
 ;; Define a function that uses the import
 (fn nestedHqlFunction (x)
-  (let ((deepResult (deepJsFunction x)))
-    ;; Test collection access
-    (let ((arr [1 2 3 4 5]))
-      (+ deepResult (arr 2)))))
+  (var deepResult (deepJsFunction x))
+  ;; Test collection access
+  (var arr [1 2 3 4 5])
+  (+ deepResult (arr 2)))
 
 ;; Export for parent
 (export [nestedHqlFunction]) 
