@@ -4,7 +4,7 @@
     "dev": "deno run -A cli/run.ts",
     "transpile": "deno run -A cli/transpile.ts",
     "clean-cache": "deno run -A cli/clean-cache.ts --force",
-    "test-publish": "",
+    
     "test-type": "deno run -A ./cli/run.ts ../doc/examples/array+type.hql",
     "test-class": "deno run -A ./cli/run.ts ../doc/examples/class.hql",
     "test-enum": "deno run -A ./cli/run.ts ../doc/examples/enum.hql && deno run -A ./cli/run.ts ../doc/examples/fn+enum.hql",
