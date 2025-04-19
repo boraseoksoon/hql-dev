@@ -21,11 +21,11 @@ in detail:
 
 1. S-Expression Parsing (src/s-exp/parser.ts) CopyHQL Input: (fn add [a b] (+ a
    b)) │ v Tokenization ┌─────────────────────────┐ │ LEFT_PAREN: ( │ │ SYMBOL:
-   defn │ │ SYMBOL: add │ │ LEFT_BRACKET: [ │ │ SYMBOL: a │ │ SYMBOL: b │ │
+   fn │ │ SYMBOL: add │ │ LEFT_BRACKET: [ │ │ SYMBOL: a │ │ SYMBOL: b │ │
    RIGHT_BRACKET: ] │ │ LEFT_PAREN: ( │ │ SYMBOL: + │ │ SYMBOL: a │ │ SYMBOL: b
    │ │ RIGHT_PAREN: ) │ │ RIGHT_PAREN: ) │ └─────────────────────────┘ │ v
    S-Expression Tree ┌─────────────────────────┐ │ { │ │ type: 'list', │ │
-   elements: [ │ │ {type: 'symbol', │ │ name: 'defn'}, │ │ {type: 'symbol', │ │
+   elements: [ │ │ {type: 'symbol', │ │ name: 'fn'}, │ │ {type: 'symbol', │ │
    name: 'add'}, │ │ {type: 'list', │ │ elements: [...]}, │ │ {type: 'list', │ │
    elements: [...]} │ │ ] │ │ } │ └─────────────────────────┘
 
@@ -59,10 +59,10 @@ modules
    └───────────────────────┘ │ v ┌───────────────────────┐ │ (if (> x 0) │ │ (do
    │ │ (println "Positive")│ │ (process x)) │ │ nil) │ └───────────────────────┘
 
-Supports system-level macros (defmacro) Supports user-level macros (macro)
-Implements macro hygiene using gensym Provides quasiquote and unquote for
-template-based macros Uses fixed-point iteration to fully expand all macros
-Handles nested macro expansions Caches macro expansions for performance
+Supports system-level macros (defmacro) Supports user-level macros (macro) Implements
+macro hygiene using gensym Provides quasiquote and unquote for template-based
+macros Uses fixed-point iteration to fully expand all macros Handles nested
+macro expansions Caches macro expansions for performance
 
 4. HQL AST Conversion (src/s-exp/macro-reader.ts) Copy┌───────────────────────┐
    ┌───────────────────────┐ │ Expanded S-expressions│ │ HQL AST │ │ after macro
@@ -80,7 +80,7 @@ AST node types Handles special cases like method calls
 
 Transforms HQL AST into a JavaScript-friendly IR Maps HQL constructs to their
 JavaScript counterparts Handles primitive operations (+, -, *, /, etc.)
-Processes special forms (if, fn, def, etc.) Transforms collection operations
+Processes special forms (if, fn, let, etc.) Transforms collection operations
 (get, first, rest) Handles interop with JavaScript (js-call, js-get)
 
 6. TypeScript AST Generation (src/transpiler/hql-ir-to-ts-ast.ts)
@@ -116,11 +116,11 @@ orchestrator of the entire pipeline: Copyfunction processHql(source, options) {
 8. Generate JavaScript code
 9. Return the final JavaScript } Handling Core.hql The system loads a core
    library (lib/core.hql) that contains standard macros and functions:
-   Copy(defmacro defn (name params & body) `(let ~name (lambda ~params ~@body)))
+   Copy(fn fn (name params & body) `(let ~name (lambda ~params ~@body)))
 
-(defmacro or (a b) `(if ~a ~a ~b))
+(fn or (a b) `(if ~a ~a ~b))
 
-(defmacro and (x y) `(if ~x ~y ~x)) These macros form the standard library and
+(fn and (x y) `(if ~x ~y ~x)) These macros form the standard library and
 are available in all HQL programs. Environment Management The Environment class
 (src/environment.ts) is central to the transpiler:
 
@@ -151,7 +151,7 @@ with Example Let's trace through an end-to-end example: CopyHQL Input: (fn greet
 (let message (greet "World"))
 
 Parsing: Create S-expression tree Import Processing: Load any imports (none in
-this example) Macro Expansion: Expand defn macro to (let greet (lambda [name]
+this example) Macro Expansion: Expand fn macro to (let greet (lambda [name]
 ...)) AST Conversion: Convert to HQL AST representation IR Generation: Convert
 to JavaScript-oriented IR with function declarations TypeScript AST: Convert to
 TypeScript AST with function expression Code Generation: Output final JavaScript
@@ -197,8 +197,7 @@ system, providing compile-time code transformation:
 
 Supports two types of macros:
 
-System-level macros via defmacro User-level macros via macro statement (with
-module scope)
+System-level macros via fn User-level macros via fn statement (with module scope)
 
 Implements hygienic macros through the gensym function to avoid variable capture
 Provides powerful template capabilities via quasiquote/unquote Uses fixed-point

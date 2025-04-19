@@ -18,9 +18,9 @@ homoiconicity. Essential Special Forms: Implement these directly in the
 evaluator (or as built‑in primitives) because they cannot be defined using other
 forms: quote: Prevents evaluation (returns the expression as data). if: A
 conditional expression that always returns a value. fn (or lambda): For
-anonymous function creation. def: For global bindings. defn: Syntactic sugar for
+anonymous function creation. let: For global bindings. fn: Syntactic sugar for
 defining functions (it could eventually be a macro that expands into a
-combination of def and fn). Primitive Operations: Provide a minimal set of
+combination of let and fn). Primitive Operations: Provide a minimal set of
 built‑in operations (arithmetic, list operations, equality) that macros and the
 evaluator can rely on. These primitives remain as part of the core because they
 need to be efficient and are not easily defined in terms of more basic
@@ -96,7 +96,7 @@ migration.
 
 5. Step-by-Step Roadmap Define the Minimal Core: Create AST types for literals,
    symbols, and lists. Implement a minimal evaluator for core forms (quote, if,
-   fn, def, defn). Build a standard environment with arithmetic, list
+   fn, def, fn). Build a standard environment with arithmetic, list
    operations, and equality primitives. Implement the Macro System: Implement
    defmacro to register macro definitions. Write a recursive macro expander that
    processes the AST and expands all macros into core forms. Refactor Built‑Ins
@@ -125,7 +125,7 @@ migration.
    JavaScript AST and then into a self-contained JS file. Next Steps: Finalize
    the core AST and evaluator (ensuring everything is an expression). Implement
    and test a robust macro expander with defmacro. Refactor built‑ins (like
-   defn, import, export) as macros. Integrate these stages into your transpiler
+   fn, import, export) as macros. Integrate these stages into your transpiler
    pipeline and confirm that the final output is a single bundled JS file.
    Continue refining and testing until the system is stable. This roadmap
    emphasizes a clear separation between a minimal, self-contained kernel and a
@@ -150,13 +150,13 @@ bindings, and function definitions yield a value. Essential Primitives Only: AST
 Types: Basic nodes for literals, symbols, and lists. Core Evaluation Forms:
 quote: Returns its argument without evaluation. if: Evaluates a condition and
 then returns one branch or the other. fn / lambda: Creates anonymous functions
-that always return the value of their last expression. def / defn: Bind names to
+that always return the value of their last expression. let / fn: Bind names to
 values (or functions) in the environment. Basic Operations: A minimal set of
 arithmetic, list operations, and equality primitives that serve as the
 foundation for macro expansion and further language constructs. Macro
 Everywhere: Core Built as Primitives: The kernel contains only the
 non‑derivable, essential forms. Higher‑Level Constructs as Macros: Every other
-feature—such as defn (which can be defined in terms of def and fn), import,
+feature—such as fn (which can be defined in terms of let and fn), import,
 export, print, and even control structures like let or cond—is defined as a
 macro that expands into the minimal core forms. Uniformity: Since macros expand
 into expressions, every language construct remains expression‑oriented. This
@@ -181,7 +181,7 @@ term you only target Deno. Where You Are Now
 Unified JS Interop Achieved: Your transpiler already transforms expressions like
 (message.toUpperCase) into an IIFE that checks and calls the member with the
 correct this binding. Basic Evaluator and Built‑Ins: You have a working
-evaluator that implements constructs like def, defn, and basic arithmetic
+evaluator that implements constructs like def, fn, and basic arithmetic
 directly in the evaluator. However, these built‑ins are not yet implemented as
 macros over a minimal core. Platform Abstraction in Place: You have a platform
 abstraction layer that currently wraps Deno’s APIs, ensuring that the caller’s
@@ -212,13 +212,13 @@ literals, symbols, and lists. Core Evaluator: Write a minimal evaluator that
 handles: quote: (quote exp) returns the expression unevaluated. if: (if cond
 then else) returns a value based on the condition. fn: (lambda [params] body...)
 returns a function where the last expression in the body is automatically
-returned. def: (let name value) binds a value globally. defn: (fn name [params]
+returned. let: (let name value) binds a value globally. fn: (fn name [params]
 body...) is syntactic sugar for defining a function. Primitive Functions:
 Provide basic operations (arithmetic, list manipulation, equality). Example
 (simplified pseudocode):
 
 ;; AST: literal, symbol, list ;; Evaluator: every expression returns a value ;;
-Core built-ins: quote, if, fn, def, defn, +, -, *, /, cons, car, cdr, eq? Step
+Core built-ins: quote, if, fn, def, fn, +, -, *, /, cons, car, cdr, eq? Step
 2: Implement the Macro System defmacro: Define a special form that lets you
 write macros, e.g.: (defmacro defmacro [name params & body] ;; Register macro
 definition in the macro environment ) Macro Expander: Create a function that
@@ -226,8 +226,8 @@ walks the AST and replaces macro invocations with their expansions. Ensure that
 after expansion, only core forms remain. Expression Everywhere: Guarantee that
 macro expansion preserves the property that every form yields a value. Step 3:
 Refactor Built‑Ins as Macros High‑Level Constructs: Gradually convert your
-built‑in forms like defn, import, and export into macros that expand into core
-forms (for example, defn expands into a def with a lambda). JS Interop: If
+built‑in forms like fn, import, and export into macros that expand into core
+forms (for example, fn expands into a let with a lambda). JS Interop: If
 desired, also wrap interop forms as macros to provide uniform expression
 behavior. Step 4: Integrate the Transpiler Pipeline Parsing: Write a parser that
 converts HQL source code into an AST. Macro Expansion: Apply your macro expander
@@ -289,13 +289,13 @@ Example: HQL source:
 AST recursively. It looks for lists where the first element is a macro (as
 defined via defmacro) and expands them. After expansion, the AST consists solely
 of core constructs (like quote, if, fn, def, etc.), ensuring everything is an
-expression. Example: Suppose you have a macro defined for defn that expands into
+expression. Example: Suppose you have a macro defined for fn that expands into
 (let name (lambda [params] body...)). Before expansion, you might see:
 
 (fn ok () "OK") After macro expansion, it becomes something like:
 
 (let ok (lambda [] "OK")) In the AST, the macro-expander replaces the high-level
-defn form with the corresponding core expression. Macro-Expanded HQL AST → HQL
+fn form with the corresponding core expression. Macro-Expanded HQL AST → HQL
 IR IR Generation: The macro-expanded AST is transformed into an intermediate
 representation (IR) that normalizes the structure of the program. The IR uses a
 small set of node types corresponding to the minimal core forms. This IR
@@ -327,7 +327,7 @@ HQL raw code ↓ (Parsing) HQL AST ↓ (Macro Expansion) Macro-expanded HQL AST 
 TypeScript raw code (Final bundled JS file)
 
 At each stage, every construct is maintained as an expression. Macro expansion
-is performed right after parsing so that higher‑level constructs (like defn,
+is performed right after parsing so that higher‑level constructs (like fn,
 import, export, JS interop forms) are transformed into the minimal core forms.
 This guarantees uniformity and ensures that the final output is a fully
 self-contained JS file ready for execution on Deno.

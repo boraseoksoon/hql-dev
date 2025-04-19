@@ -26,13 +26,13 @@ The HQL Module Publishing System provides a robust, user-friendly mechanism for 
 
 ```bash
 # Basic usage (defaults to JSR registry)
-deno run -A core/cli/hql_publish.ts <module-path> [--dry-run]
+deno run -A core/cli/publish.ts <module-path> [--dry-run]
 
 # Publishing to JSR with explicit name/version
-deno run -A core/cli/hql_publish.ts <module-path> jsr <package-name> <version> [--dry-run]
+deno run -A core/cli/publish.ts <module-path> jsr <package-name> <version> [--dry-run]
 
 # Publishing to NPM
-deno run -A core/cli/hql_publish.ts <module-path> npm <package-name> <version> [--dry-run]
+deno run -A core/cli/publish.ts <module-path> npm <package-name> <version> [--dry-run]
 ```
 
 ### CLI Arguments
@@ -51,7 +51,6 @@ The publishing system supports the following environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HQL_JSR_USER` | Default JSR username for package naming | System username or `js-user` |
 | `DRY_RUN_PUBLISH` | Enable dry run mode globally | `false` |
 | `SKIP_LOGIN_CHECK` | Skip authentication checks | `false` |
 | `HQL_DEV` | Development mode with simplified checks | `false` |

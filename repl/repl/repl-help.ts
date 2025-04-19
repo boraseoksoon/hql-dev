@@ -150,10 +150,8 @@ export const builtinDocumentation: Record<string, string> = {
   "do": "Evaluates expressions in sequence.\nUsage: (do expr1 expr2 ...)",
   
   // Definitions
-  "def": "Defines a global variable.\nUsage: (def name value)",
-  "fn": "Defines a function.\nUsage: (fn name [params] body)",
-  "defn": "Shorthand to define a named function.\nUsage: (defn name [params] body)",
-  "let": "Creates local bindings.\nUsage: (let [name1 val1, name2 val2] body ...)",
+  "fn": "Defines a function.\nUsage: (fn name (params) body)",
+  "let": "Creates a variable binding.\nUsage: (let name value)",
   
   // Sequence functions
   "map": "Applies function to items in collection.\nUsage: (map f coll)",

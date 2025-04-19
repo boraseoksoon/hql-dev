@@ -167,7 +167,6 @@ export interface ReplState {
     // Check for typical functional constructs that need indentation
     const functionalConstructs = [
       /\(\s*fn\s+[^)]*$/,                  // (fn name
-      /\(\s*defn\s+[^)]*$/,                // (defn name
       /\(\s*let\s+[^)]*$/,                 // (let [bindings]
       /\(\s*if\s+[^)]*$/,                  // (if condition
       /\(\s*when\s+[^)]*$/,                // (when condition

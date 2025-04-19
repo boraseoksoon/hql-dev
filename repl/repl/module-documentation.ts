@@ -76,41 +76,6 @@ export class ModuleDependencyTracker {
   }
   
   /**
-   * Check if a change to a module would break dependents
-   */
-  async checkForBreakingChanges(moduleName: string, removedSymbols: string[]): Promise<Map<string, string[]>> {
-    const dependents = this.getDependents(moduleName);
-    const breakingChanges = new Map<string, string[]>();
-    
-    for (const dependent of dependents) {
-      const affectedSymbols: string[] = [];
-      
-      // Check each symbol being removed to see if it's imported by the dependent
-      for (const symbol of removedSymbols) {
-        const isImported = await this.isSymbolImportedBy(symbol, moduleName, dependent);
-        if (isImported) {
-          affectedSymbols.push(symbol);
-        }
-      }
-      
-      if (affectedSymbols.length > 0) {
-        breakingChanges.set(dependent, affectedSymbols);
-      }
-    }
-    
-    return breakingChanges;
-  }
-  
-  /**
-   * Check if a specific symbol is imported by another module
-   */
-  private async isSymbolImportedBy(symbolName: string, fromModule: string, toModule: string): Promise<boolean> {
-    // This implementation will depend on how imports are tracked in your system
-    // For now, return false to avoid breaking anything
-    return false;
-  }
-  
-  /**
    * Generate import suggestions based on what's being used
    */
   async generateImportSuggestions(code: string, currentModule: string): Promise<Map<string, string[]>> {
@@ -143,7 +108,7 @@ export class ModuleDependencyTracker {
     const matches = code.match(symbolRegex) || [];
     
     // Filter out duplicates and keywords
-    const keywords = ["def", "defn", "fn", "if", "let", "do", "when", "while", "loop", 
+    const keywords = ["var", "fx", "fn", "if", "let", "do", "when", "while", "loop", 
                      "for", "import", "export", "module", "true", "false", "nil"];
     
     return [...new Set(matches)].filter(symbol => !keywords.includes(symbol));
@@ -244,10 +209,9 @@ export class DocumentationManager {
     this.builtinDocs.set("do", "Evaluates expressions in sequence.\nUsage: (do expr1 expr2 ...)");
     
     // Definitions
-    this.builtinDocs.set("def", "Defines a global variable.\nUsage: (def name value)");
-    this.builtinDocs.set("fn", "Defines a function.\nUsage: (fn name [params] body)");
-    this.builtinDocs.set("defn", "Shorthand to define a named function.\nUsage: (defn name [params] body)");
-    this.builtinDocs.set("let", "Creates local bindings.\nUsage: (let [name1 val1, name2 val2] body ...)");
+    this.builtinDocs.set("fn", "Defines a function.\nUsage: (fn name (params) body)");
+    this.builtinDocs.set("let", "Creates local bindings.\nUsage: (let (name1 val1, name2 val2) body ...)");
+    this.builtinDocs.set("var", "Defines a global variable.\nUsage: (var name value)");
     
     // Sequence functions
     this.builtinDocs.set("map", "Applies function to items in collection.\nUsage: (map f coll)");

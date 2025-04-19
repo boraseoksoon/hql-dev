@@ -1,17 +1,17 @@
 #!/usr/bin/env -S deno run -A
-// cli/hql_publish.ts - CLI utility for publishing HQL modules
+// cli/publish.ts - CLI utility for publishing HQL modules
 
-import { publish } from "./publish/publish.ts";
+import { publish } from "./publish/index.ts";
 import { parseArgs } from "jsr:@std/cli@1.0.13/parse-args";
-import { exit } from "../src/platform/platform.ts";
-import { report } from "../src/common/common-errors.ts";
+import { exit } from "@platform/platform.ts";
+import { report } from "@core/common/common-errors.ts";
 
 function showHelp() {
   console.log(`
 HQL Publish Tool - Publish HQL modules to NPM or JSR
 
 USAGE:
-  hql_publish [options] <what> [platform] [name] [version]
+  publish [options] <what> [platform] [name] [version]
 
 PLATFORMS:
   jsr     Publish to JSR (default)
@@ -26,10 +26,10 @@ OPTIONS:
   -help, -h      Show this help message
 
 EXAMPLES:
-  hql_publish ./my-module
-  hql_publish ./my-module npm
-  hql_publish ./my-module jsr my-awesome-package 1.2.3
-  hql_publish ./my-module -where=jsr -name=my-awesome-package -version=1.2.3
+  publish ./my-module
+  publish ./my-module npm
+  publish ./my-module jsr my-awesome-package 1.2.3
+  publish ./my-module -where=jsr -name=my-awesome-package -version=1.2.3
 `);
 }
 
@@ -72,7 +72,7 @@ if (import.meta.main) {
   main().catch((error) => {
     // Enhanced error reporting for unhandled errors
     const enhancedError = report(error, { 
-      filePath: "hql_publish.ts", 
+      filePath: "publish.ts", 
       useColors: true
     });
     console.error("\n❌ Unhandled error:", enhancedError.message);

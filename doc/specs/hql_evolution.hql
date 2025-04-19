@@ -4,7 +4,7 @@
 
 ;;;;;;;;;;; fx
 
-;; advanced defn with type and named and default parameter 
+;; advanced fn with type and named and let ault parameter 
 
 (fx add (a: Int b: Int = 0) (-> Int)
   (+ a b)
@@ -19,8 +19,8 @@
   (fields
     (name)         ;; required field
     (age)          ;; required field
-    (x 10)         ;; field with default value 10
-    (y nil))       ;; field with default nil (e.g. for dependency injection)
+    (x 10)         ;; field with let ault value 10
+    (y nil))       ;; field with let ault nil (e.g. for dependency injection)
 
   (methods
     (fn greet (self)

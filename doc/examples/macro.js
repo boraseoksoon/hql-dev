@@ -187,7 +187,7 @@ console["log"]("\\n=== Combined test ===");
     }(x - 50)
     : null;
 })(100);
-console["log"]("\\n=== Testing 'defn' macro ===");
+console["log"]("\\n=== Testing 'fn' macro ===");
 const multiply = function (a, b) {
   return a * b;
 };

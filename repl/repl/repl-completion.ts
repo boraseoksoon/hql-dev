@@ -98,7 +98,7 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
       // Check if we're in a syntax pattern that can benefit from progressive completion
       // This is important for the new syntax completion feature
       const syntaxKeywords = [
-        "import", "def", "defn", "fn", "fn->", "lambda", "let", "if", "when", "unless", 
+        "import", "def", "fn", "fn", "fn->", "lambda", "let", "if", "when", "unless", 
         "cond", "case", "do", "->", "->>", "map", "filter", "reduce", "for-each", 
         "try", "module", "export", "fx", "print", "console.log"
       ];
@@ -107,8 +107,7 @@ export function createTabCompletion(evaluator: ModuleAwareEvaluator, getCurrentM
       // First check for exact syntax pattern matches or continuations
       if (currentWord && syntaxKeywords.some(kw => currentWord.toLowerCase() === kw.toLowerCase()) || 
           line.trim().startsWith('(import') || 
-          line.trim().startsWith('(def') ||
-          line.trim().startsWith('(defn') ||
+          line.trim().startsWith('(var') ||
           line.trim().startsWith('(fn') || 
           line.trim().startsWith('(lambda') ||
           line.trim().startsWith('(let') ||

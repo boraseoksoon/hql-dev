@@ -295,23 +295,6 @@ export class SyntaxCompletionHandler extends CompletionHandler {
       "(import [] from ",     // Third tab adds closing bracket and from keyword
       "(import [] from \"\")" // Fourth tab adds quotes and closing paren
     ],
-    // For example with express import
-    "import express": [
-      "(import express",
-      "(import express from",
-      "(import express from \"npm:express\")"
-    ],
-    // Define statement pattern
-    "def": [
-      "(def ",
-      "(def name value)"
-    ],
-    // Function definition pattern - using proper HQL syntax from examples
-    "defn": [
-      "(defn ",
-      "(defn name (args) ",
-      "(defn name (args) body)"
-    ],
     // Named function pattern - from examples/fn.hql
     "fn": [
       "(fn ",
@@ -571,7 +554,7 @@ export class SyntaxCompletionHandler extends CompletionHandler {
     // If we're inside a parenthesized expression
     if (normalizedInput.startsWith('(')) {
       const patternKeywords = [
-        'import', 'def', 'defn', 'fn', 'fn->', 'lambda', 'let', 'if', 'when', 'unless',
+        'import', 'def', 'fn', 'fn', 'fn->', 'lambda', 'let', 'if', 'when', 'unless',
         'cond', 'case', 'do', '->', '->>', 'map', 'filter', 'reduce', 'for-each',
         'try', 'module', 'export', 'fx', 'print', 'console.log'
       ];
@@ -688,7 +671,7 @@ export class SpecialFormCompletionHandler extends CompletionHandler {
   private specialForms = [
     "if", "cond", "do", "let", "fn", "macro", "import", "export", 
     "module", "quote", "quasiquote", "unquote", "unquote-splicing",
-    "set", "def", "defn", "defmacro", "try", "catch", "finally",
+    "set", "def", "fn", "defmacro", "try", "catch", "finally",
     "throw", "new", "instanceof", "typeof", "print", "pprint"
   ];
   

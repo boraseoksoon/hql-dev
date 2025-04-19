@@ -107,7 +107,7 @@ Type HQL expressions to evaluate them:
 hql[user]> (+ 1 2)
 3
 
-hql[user]> (defn square [x] (* x x))
+hql[user]> (fn square (x) (* x x))
 [Function: square]
 
 hql[user]> (square 5)
@@ -124,10 +124,10 @@ Modules help organize your code. You can create and switch between modules:
 hql[user]> :go math
 Switched to module: math
 
-hql[math]> (defn square [x] (* x x))
+hql[math]> (fn square (x) (* x x))
 [Function: square]
 
-hql[math]> (defn cube [x] (* x x x))
+hql[math]> (fn cube (x) (* x x x))
 [Function: cube]
 
 hql[math]> (cube 3)
@@ -223,7 +223,7 @@ Symbol names:
 You can write multiline code by starting an expression and pressing Enter when the parentheses aren't balanced:
 
 ```
-hql[user]> (defn factorial [n]
+hql[user]> (fn factorial (n)
   (if (= n 0)
     1
     (* n (factorial (- n 1)))))
@@ -384,8 +384,8 @@ The REPL state is stored in a JSON file with the following structure:
       "definitions": {
         "variables": {},
         "functions": {
-          "square": { "_type": "function", "source": "function square(x) { return x * x; }", "originalSource": "(defn square [x] (* x x))" },
-          "cube": { "_type": "function", "source": "function cube(x) { return x * x * x; }", "originalSource": "(defn cube [x] (* x x x))" }
+          "square": { "_type": "function", "source": "function square(x) { return x * x; }", "originalSource": "(fn square (x) (* x x))" },
+          "cube": { "_type": "function", "source": "function cube(x) { return x * x * x; }", "originalSource": "(fn cube (x) (* x x x))" }
         },
         "macros": {}
       },
@@ -439,107 +439,3 @@ In the next version, the REPL will fully integrate with the file system to:
 This will create complete consistency between REPL modules and HQL files:
 ```
 hql[user]> :go math
-```
-Will create/edit `math.hql` automatically.
-
-### Database-Backed Persistence (Future)
-
-To support production-grade use cases with high performance and reliability, future versions will:
-
-1. **Replace file-based storage** with a proper database system
-2. **Support high-volume usage** for production environments
-3. **Implement transaction guarantees** for data integrity
-4. **Enable multi-user concurrent access** for collaborative development
-5. **Support efficient querying** of modules and symbols
-
-This will allow the REPL to serve as a central component in larger systems, supporting thousands of concurrent users while maintaining data integrity.
-
-The REPL persistence layer is a critical foundation of the HQL ecosystem. Once the MVP phase is complete, a vertical improvement strategy will focus on strengthening this foundation rather than horizontal expansion with more options. The goal is to:
-
-- Create a robust, reliable persistence layer using modern database technologies available in Deno
-- Replace the fragile and brittle file system approach for long-term stability
-- Enable the REPL to function as a central server component that can handle millions of parallel requests
-- Ensure user data is treated as critical infrastructure with appropriate safeguards
-- Position the REPL as a fundamental component of larger systems, with proxies to handle scale
-
-While these enhancements are important for the future, the current focus remains on delivering a complete MVP that establishes the core functionality and user experience.
-
-### Additional Future Enhancements
-
-1. **Enhanced autocompletion** - Context-aware symbol completion
-2. **Interactive tutorials** - Built-in tutorials for learning HQL
-3. **Documentation browser** - Access to function documentation directly in REPL
-4. **Package management** - Integration with package management systems
-
-## Command Reference Details
-
-### The `:see` Command
-
-The `:see` command provides a consistent and powerful way to inspect REPL content. It follows a logical pattern that makes it intuitive to use:
-
-**Current Module Context:**
-- `:see` - Show all information (symbols, exports, etc.) for the current module
-- `:see symbol-name` - Show information for a specific symbol in the current module
-- `:see exports` - Show all exported symbols from the current module
-
-**System-Wide Context:**
-- `:see all` - Show all information across all modules in the system
-- `:see all:symbols` - Show all symbols across all modules
-- `:see all:modules` - Show all module names available in the system
-
-**Specific Module Context:**
-- `:see module-name` - Show all information for a specific module
-- `:see module-name:symbol-name` - Show information for a specific symbol in a specific module
-- `:see module-name:exports` - Show exported symbols from a specific module
-
-Examples:
-
-```
-hql[user]> :see
-// Shows all symbols and exports in the 'user' module
-
-hql[user]> :see factorial
-// Shows details of the 'factorial' function in the current module
-
-hql[user]> :see exports
-// Shows all exported symbols from the current 'user' module
-
-hql[user]> :see all:modules
-// Lists all modules in the system
-
-hql[user]> :see math
-// Shows all symbols and exports in the 'math' module
-
-hql[user]> :see math:square
-// Shows details of the 'square' function in the 'math' module
-
-hql[user]> :see math:exports
-// Shows all exported symbols from the 'math' module
-```
-
-This consistent approach means users can easily navigate from broad system-wide views down to specific symbol details using a predictable pattern. 
-
-#### Removing Symbols and Modules
-
-```
-# Remove a symbol from the current module
-hql[math]> rm square
-Symbol 'square' removed
-
-# Remove an entire module (with confirmation)
-hql[user]> rm math
-Are you sure you want to remove module 'math'? (y/n) y
-Module 'math' has been removed.
-
-# Force remove a module without confirmation
-hql[user]> rm -f math
-Module 'math' has been removed.
-
-# Remove a specific symbol from a module
-hql[user]> rm geometry:circle
-Symbol 'circle' removed from module 'geometry'
-
-# Using the : command version
-hql[user]> :remove -f math:factorial
-Symbol 'factorial' removed from module 'math'.
-``` 
