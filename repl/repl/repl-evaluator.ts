@@ -17,7 +17,6 @@ import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 
 import { Logger, globalLogger as logger } from "@core/logger.ts";
 import { formatErrorMessage } from "@core/common/common-utils.ts";
-import { processError } from "../../core/src/common/error-pipeline.ts";
 
 // Options for REPL evaluation
 export interface REPLEvalOptions {
@@ -290,24 +289,15 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
       this.replEnv.hqlEnv.setCurrentFile(null);
       log(`Evaluation error: ${formatErrorMessage(error)}`);
       
-      // Use safe error handling without filesystem operations
-      // Instead of using the pipeline for filesystem operations, just create a better error message
-      let enhancedMessage = error instanceof Error ? error.message : String(error);
-      
-      // Add context information without writing to the filesystem
       if (error instanceof Error) {
-        // Add source context information
-        enhancedMessage = `REPL evaluation error: ${enhancedMessage}`;
-        
-        // Simply throw the enhanced error for REPL display
-        const wrappedError = new Error(enhancedMessage);
-        if (error.stack) {
-          wrappedError.stack = error.stack;
-        }
-        throw wrappedError;
+        // Use the common error reporting mechanism
+        const enhancedError = report(error, { 
+          source: input, 
+          filePath: "REPL" 
+        });
+        throw enhancedError;
       }
-      
-      throw new Error(`REPL evaluation error: ${enhancedMessage}`);
+      throw error;
     }
   }
 
@@ -440,18 +430,25 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
         message: `Successfully imported ${importInfo.moduleName} from "${importInfo.modulePath}"`
       };
     } catch (error: unknown) {
-      // Use the unified error pipeline
-      const processedError = processError(error, {
-        source: input,
-        filePath: "REPL Import",
-        context: "REPL import processing",
-        logErrors: false,
-        rethrow: false
-      });
+      // Use common error handling
+      if (error instanceof Error) {
+        const enhancedError = report(error, {
+          source: input,
+          filePath: "REPL Import"
+        });
+        
+        const errorMessage = enhancedError.message || "Unknown error";
+        this.logger.error(`Import error: ${errorMessage}`);
+        
+        return {
+          success: false,
+          moduleName: 'unknown',
+          message: `Import failed: ${errorMessage}`
+        };
+      }
       
-      const errorMessage = processedError.message || "Unknown error";
+      const errorMessage = String(error);
       this.logger.error(`Import error: ${errorMessage}`);
-      
       return {
         success: false,
         moduleName: 'unknown',
