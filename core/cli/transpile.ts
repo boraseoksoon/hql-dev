@@ -4,7 +4,7 @@ import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI } from "../src/bundler.ts";
 import { globalLogger as logger } from "../src/logger.ts";
 import { parseCliOptions, applyCliOptions, CliOptions } from "./utils/cli-options.ts";
-import { report, withErrorHandling, registerSourceFile } from "../src/common/common-errors.ts";
+import { report, withErrorHandling, registerSourceFile, reportError } from "../src/common/common-errors.ts";
 import { 
   cleanupAllTempFiles, 
   getCacheDir,
@@ -12,6 +12,8 @@ import {
   getCacheStats
 } from "../src/common/temp-file-tracker.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
+import { CircularDependencyError } from "../src/imports.ts";
+import { TranspilerError } from "../src/transpiler/error/errors.ts";
 
 /**
  * Utility to time async phases and log durations
@@ -43,12 +45,13 @@ function printHelp(): void {
   console.error("  --print           Print JS to stdout instead of writing to file");
   console.error("  --force           Force recompilation even if file hasn't changed");
   console.error("  --cache-info      Show information about the cache");
+  console.error("  --debug           Show detailed error information including stack traces");
   console.error("  --help, -h        Show this help message");
   console.error("\nExamples:");
   console.error("  deno run -A cli/transpile.ts src/file.hql");
   console.error("  deno run -A cli/transpile.ts src/file.hql dist/file.js --time");
   console.error("  deno run -A cli/transpile.ts src/file.hql --print --run");
-  console.error("  deno run -A cli/transpile.ts src/file.hql --force");
+  console.error("  deno run -A cli/transpile.ts src/file.hql --debug");
 }
 
 /**
@@ -201,24 +204,109 @@ export async function main(): Promise<void> {
   const opts = parseCliOptions(args);
   applyCliOptions(opts);
 
-  // Show cache directory in verbose mode
-  if (opts.verbose) {
-    const cacheDir = await getCacheDir();
-    logger.debug(`Using cache directory: ${cacheDir}`);
-  }
+  // Define source variable outside try/catch so it's available in error handling
+  let source = "";
+  
+  try {
+    const startTime = performance.now();
+        
+    // Show cache directory in verbose mode
+    if (opts.verbose) {
+      const cacheDir = await getCacheDir();
+      logger.debug(`Using cache directory: ${cacheDir}`);
+    }
 
-  const source = await loadSource(inputPath);
-  const bundledPath = await transpile(inputPath, outputPath, opts);
+    source = await loadSource(inputPath);
+    const bundledPath = await transpile(inputPath, outputPath, opts);
 
-  if (args.includes("--print")) {
-    await printJS(bundledPath);
+    if (args.includes("--print")) {
+      await printJS(bundledPath);
+    }
+    if (args.includes("--run")) {
+      await runJS(bundledPath, inputPath, source);
+    }
+    
+    const endTime = performance.now();
+    
+    if (opts.verbose) {
+      logCompletionMessage(opts, bundledPath, startTime, endTime);
+    }
+    
+    logger.logPerformance("transpile", inputPath.split("/").pop()!);
+    await cleanup();
+  } catch (error) {
+    // Different error handling based on mode
+    if (args.includes("--debug")) {
+      // Debug mode - show complete error details with stack trace
+      try {
+        reportError(error, {
+          filePath: inputPath,
+          source,
+          verbose: true,
+          includeStack: true,
+          useClickablePaths: true
+        });
+      } catch (e) {
+        // Fallback if reportError fails
+        console.error("\n\x1b[31m[ERROR]\x1b[0m Full error details:", error);
+      }
+    } else if (opts.verbose) {
+      // Verbose mode - show detailed error but without stack trace
+      try {
+        reportError(error, {
+          filePath: inputPath,
+          source,
+          verbose: true,
+          includeStack: false,
+          useClickablePaths: true
+        });
+      } catch (e) {
+        // Fallback if reportError fails
+        console.error("\n\x1b[31m[ERROR]\x1b[0m Detailed error:", error);
+      }
+    } else {
+      // Normal mode - show simplified error with clickable file paths
+      try {
+        reportError(error, {
+          filePath: inputPath,
+          source,
+          verbose: false,
+          includeStack: false,
+          useClickablePaths: true
+        });
+        
+        // Suggest using debug flag for more details
+        console.error("\nFor detailed information with stack trace, run with --debug flag");
+      } catch (e) {
+        // Fallback to basic error reporting if reportError fails
+        let message = String(error);
+        if (message.includes('\n')) {
+          // Only take the first line
+          message = message.split('\n')[0];
+        }
+        
+        // Clean up and simplify the message
+        message = message.replace(/^Error: /, '');
+        
+        console.error(`\nError: ${message}`);
+        console.error("\nFor detailed information, run with --debug flag");
+      }
+    }
+    
+    Deno.exit(1);
   }
-  if (args.includes("--run")) {
-    await runJS(bundledPath, inputPath, source);
-  }
+}
 
-  logger.logPerformance("transpile", inputPath.split("/").pop()!);
-  await cleanup();
+// Add near the end, before main is called
+function logCompletionMessage(
+  options: any,
+  outputPath: string,
+  startTime: number,
+  endTime: number
+): void {
+  const duration = endTime - startTime;
+  console.log(`\nTranspilation complete in ${(duration / 1000).toFixed(2)}s`);
+  console.log(`Output written to: ${outputPath}`);
 }
 
 if (import.meta.main) {

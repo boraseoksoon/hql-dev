@@ -3,7 +3,7 @@ import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { parse } from "./pipeline/parser.ts";
 import { Environment } from "../environment.ts";
 import { expandMacros } from "../s-exp/macro.ts";
-import { processImports } from "../imports.ts";
+import { processImports, CircularDependencyError } from "../imports.ts";
 import { convertToHqlAst } from "../s-exp/macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
@@ -35,6 +35,7 @@ interface ProcessOptions {
   sourceDir?: string;
   tempDir?: string;
   skipErrorHandling?: boolean;
+  importStack?: string[];
 }
 
 /**
@@ -149,20 +150,34 @@ function transformWithHandling(sexps: any[], verbose: boolean | undefined, logge
 
 async function processImportsWithHandling(sexps: any[], env: Environment, options: ProcessOptions) {
   try {
+    // Create or use import stack for circular dependency detection
+    const importStack = options.importStack || [];
+    if (options.baseDir && importStack.includes(options.baseDir)) {
+      // We have a circular dependency
+      const cycle = [...importStack, options.baseDir];
+      throw new CircularDependencyError(
+        cycle,
+        "circular import",
+        options.baseDir
+      );
+    }
+    
+    // Pass the import stack to processImports
     await processImports(sexps, env, {
       verbose: options.verbose,
       baseDir: options.baseDir || Deno.cwd(),
       tempDir: options.tempDir,
       currentFile: options.baseDir,
+      importStack: options.baseDir ? [...importStack, options.baseDir] : importStack,
     });
   } catch (error: unknown) {
-    if (error instanceof ImportError) throw error;
+    if (error instanceof CircularDependencyError) throw error;
     
     if (error instanceof Error) {
       throw new ImportError(`Failed to process imports: ${error.message}`, "unknown", options.baseDir, error);
     }
     
-    throw new ImportError(`Failed to process imports: ${String(error)}`, "unknown", options.baseDir, undefined);
+    throw new ImportError(`Failed to process imports: ${String(error)}`, "unknown", options.baseDir);
   }
 }
 
@@ -189,21 +204,18 @@ function handleProcessError(
   options: ProcessOptions,
   logger: Logger,
 ): never {
-  if (error instanceof Error) {
-    // Format the error with enhanced details
-    const formattedError = formatError(error, { 
-      filePath: options.baseDir,
-      useColors: true,
-      includeStack: options.verbose 
-    });
-    
-    // Log the enhanced error message
-    logger.error(`❌ Error processing HQL: ${formattedError}`);
-    
-    // Add suggestion if verbose
+  if (error instanceof CircularDependencyError) {
+    // Just rethrow circular dependency errors
+    throw error;
+  } else if (error instanceof Error) {
+    // Only log details in verbose mode
     if (options.verbose) {
-      const suggestion = getSuggestion(error);
-      logger.info(`Suggestion: ${suggestion}`);
+      const formattedError = formatError(error, { 
+        filePath: options.baseDir,
+        useColors: true,
+        includeStack: true
+      });
+      logger.error(`Error processing HQL: ${formattedError}`);
     }
     
     // Rethrow the original error
@@ -211,7 +223,6 @@ function handleProcessError(
   } else {
     // For non-Error objects, convert to TranspilerError
     const genericError = new TranspilerError(`Error processing HQL: ${String(error)}`);
-    logger.error(`❌ ${genericError.message}`);
     throw genericError;
   }
 }
