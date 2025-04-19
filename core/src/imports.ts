@@ -46,45 +46,10 @@ class ImportError extends Error {
     message: string, 
     public modulePath: string, 
     public importingFile?: string,
-    public override cause?: Error
+    public cause?: Error
   ) {
     super(message);
     this.name = "ImportError";
-  }
-}
-
-class CircularDependencyError extends Error {
-  constructor(
-    public readonly cycle: string[],
-    public readonly modulePath: string,
-    public readonly importingFile?: string,
-    public override readonly cause?: Error
-  ) {
-    const formattedCycle = cycle.map(path => `  → ${path}`).join('\n');
-    const message = `Circular dependency detected!
-
-Import cycle:
-${formattedCycle}
-
-This creates problems because:
-1. Modules may attempt to use values from each other before they're fully initialized
-2. The initialization order becomes unpredictable
-3. One module may receive partially initialized exports from another`;
-    
-    super(message);
-    this.name = "CircularDependencyError";
-  }
-  
-  /**
-   * Get a suggestion for how to fix this circular dependency
-   */
-  public getSuggestion(): string {
-    return `To fix this circular dependency, try:
-1. Create a third module that both modules can import
-2. Use dynamic imports to break the cycle
-3. Use dependency injection
-4. Restructure your code to remove the dependency cycle
-5. Use interfaces or types to break circular references`;
   }
 }
 
@@ -627,15 +592,9 @@ async function loadModule(
     }
     
     // Handle circular imports (except HQL which handles this internally)
-    if (options.inProgressFiles && options.inProgressFiles.has(resolvedPath)) {
-      logger.debug(`Circular dependency detected for ${resolvedPath}`);
-      const cycle = [...(options.importStack || []), resolvedPath];
-      throw new CircularDependencyError(
-        cycle,
-        resolvedPath,
-        options.currentFile,
-        undefined
-      );
+    if (!isHqlFile(modulePath) && inProgressFiles.has(resolvedPath)) {
+      logger.debug(`Detected circular import for ${resolvedPath}, will be resolved by parent process`);
+      return;
     }
     
     // Choose loading strategy based on module type
@@ -684,19 +643,15 @@ async function loadHqlModule(
 ): Promise<void> {
   const importStack = options.importStack || [];
 
-  // Check for circular dependencies
+  // Circular dependency detection (strict)
   if (importStack.includes(resolvedPath)) {
-    const cycle = [...importStack, resolvedPath];
-    throw new CircularDependencyError(
-      cycle,
+    const cycle = [...importStack, resolvedPath].map((f) => `→ ${f}`).join('\n');
+    throw new ImportError(
+      `Circular dependency detected!\nImport stack:\n${cycle}`,
       resolvedPath,
       options.currentFile
     );
   }
-  
-  // Create new import stack with current file
-  const newImportStack = [...importStack, resolvedPath];
-  
   const processedFiles = options.processedFiles || new Set<string>();
   const inProgressFiles = options.inProgressFiles || new Set<string>();
   const tempDir = options.tempDir || "";
@@ -710,13 +665,31 @@ async function loadHqlModule(
   
   // Check for circular imports
   if (inProgressFiles.has(resolvedPath)) {
-    logger.debug(`Circular dependency detected for ${resolvedPath}`);
-    const cycle = [...importStack, resolvedPath];
-    throw new CircularDependencyError(
-      cycle,
-      resolvedPath,
-      options.currentFile
-    );
+    logger.debug(`Detected circular import for ${resolvedPath}, handling with pre-registration`);
+    
+    try {
+      // For circular imports, we need to pre-register empty module
+      // to allow imports to succeed, then fill it later
+      const emptyExports: Record<string, any> = {};
+      env.importModule(moduleName, emptyExports);
+      
+      // Read and parse to find exports for pre-registration
+      const fileContent = await readFile(resolvedPath, options.currentFile);
+      const importedExprs = parse(fileContent);
+      
+      // Extract exports ahead of time
+      const exportDefinitions = collectExportDefinitions(importedExprs);
+      for (const { name } of exportDefinitions) {
+        logger.debug(`Pre-registering export for circular dependency: ${name}`);
+        // Register placeholder null values that will be replaced later when fully processed
+        emptyExports[name] = null;
+      }
+      
+      return;
+    } catch (error) {
+      logger.warn(`Failed to pre-register exports for circular dependency: ${resolvedPath}`);
+      return;
+    }
   }
   
   // Mark as in progress to detect circular imports
@@ -748,7 +721,7 @@ async function loadHqlModule(
       inProgressFiles,
       importMap,
       currentFile: resolvedPath,
-      importStack: newImportStack,
+      importStack,
     });
     
     // Now process exports and fill in the module exports
@@ -773,22 +746,7 @@ async function loadTypeScriptModule(
   resolvedPath: string,
   env: Environment,
   processedFiles: Set<string>,
-  options: ImportProcessorOptions = {},
 ): Promise<void> {
-  // Check for circular dependencies in TS imports
-  const importStack = options.importStack || [];
-  if (importStack.includes(resolvedPath)) {
-    const cycle = [...importStack, resolvedPath];
-    throw new CircularDependencyError(
-      cycle,
-      resolvedPath,
-      options.currentFile
-    );
-  }
-
-  // Create new import stack with current file
-  const newImportStack = [...importStack, resolvedPath];
-  
   try {
     logger.debug(`TypeScript import detected: ${resolvedPath}`);
     
@@ -801,12 +759,8 @@ async function loadTypeScriptModule(
     const jsModulePath = modulePath.replace(/\.tsx?$/, '.js');
     
     // Use the standard JavaScript module loader for the transpiled file
-    await loadJavaScriptModule(moduleName, jsModulePath, jsOutPath, env, processedFiles, 
-      { ...options, importStack: newImportStack });
+    await loadJavaScriptModule(moduleName, jsModulePath, jsOutPath, env, processedFiles);
   } catch (error) {
-    if (error instanceof CircularDependencyError) {
-      throw error; // Re-throw circular dependency errors
-    }
     throw new ImportError(
       `Importing TypeScript module ${moduleName}: ${error instanceof Error ? error.message : String(error)}`,
       modulePath,
@@ -825,22 +779,7 @@ async function loadJavaScriptModule(
   resolvedPath: string,
   env: Environment,
   processedFiles: Set<string>,
-  options: ImportProcessorOptions = {},
 ): Promise<void> {
-  // Check for circular dependencies in JS imports
-  const importStack = options.importStack || [];
-  if (importStack.includes(resolvedPath)) {
-    const cycle = [...importStack, resolvedPath];
-    throw new CircularDependencyError(
-      cycle,
-      resolvedPath,
-      options.currentFile
-    );
-  }
-
-  // Create new import stack with current file
-  const newImportStack = [...importStack, resolvedPath];
-  
   try {
     let finalModuleUrl = `file://${resolvedPath}`;
     
@@ -850,7 +789,7 @@ async function loadJavaScriptModule(
       logger.debug(`JS file ${resolvedPath} needs import processing.`);
       
       // Process the file and its imports recursively
-      await processJavaScriptFile(resolvedPath, { importStack: newImportStack });
+      await processJavaScriptFile(resolvedPath);
       
       // Get the cached path
       const cachedPath = getImportMapping(resolvedPath);
@@ -867,9 +806,6 @@ async function loadJavaScriptModule(
     
     logger.debug(`Imported JS module: ${moduleName} from ${finalModuleUrl}`);
   } catch (error) {
-    if (error instanceof CircularDependencyError) {
-      throw error; // Re-throw circular dependency errors
-    }
     throw new ImportError(
       `Importing JS module ${moduleName}: ${error instanceof Error ? error.message : String(error)}`,
       modulePath,
@@ -1157,6 +1093,3 @@ function processFileExportsAndDefinitions(
     wrapError("Processing file exports and definitions", error, filePath, filePath);
   }
 }
-
-// Export the CircularDependencyError to be used in other files
-export { CircularDependencyError };

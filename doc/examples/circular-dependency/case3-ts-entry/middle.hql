@@ -2,7 +2,7 @@
 ;; This demonstrates circular dependency where TS → HQL → JS → TS
 
 ;; Import the JS file that will be part of the cycle
-(import [log_js] from "./final.js")
+(import { log_js } from "./final.js")
 
 ;; Define a simple power function
 (fn power_hql (base exponent)

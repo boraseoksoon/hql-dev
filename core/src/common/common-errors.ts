@@ -1,7 +1,5 @@
 // CommonError.ts - Centralized error handling utilities
 
-import { CircularDependencyError } from "../imports.ts";
-
 /**
  * Colorizer function for terminal output
  */
@@ -47,8 +45,6 @@ export function getSourceFile(filePath: string): string | undefined {
 
 // ---- Base Error Classes ----
 export class BaseError extends Error {
-  public filePath?: string;
-  
   constructor(message: string) {
     super(message);
     this.name = "BaseError";
@@ -145,7 +141,7 @@ export class BaseParseError extends BaseError {
 
 export class TranspilerError extends BaseError {
   public source?: string;
-  public override filePath?: string;
+  public filePath?: string;
   public line?: number;
   public column?: number;
   public contextLines: string[] = [];
@@ -503,7 +499,7 @@ export class ImportError extends SpecializedError {
   public importPath: string;
   public sourceFile?: string;
   public originalError?: Error;
-  
+
   constructor(
     message: string,
     importPath: string,
@@ -530,43 +526,25 @@ export class ImportError extends SpecializedError {
     this.originalError = options.originalError;
     Object.setPrototypeOf(this, ImportError.prototype);
   }
-  
+
   public override formatMessage(useColors: boolean = true): string {
     const c = createColorConfig(useColors);
-    const formatted = super.formatMessage(useColors);
-    return this.appendOriginalError(formatted, this.originalError);
-  }
-  
-  public override getSuggestion(): string {
-    // Detect circular dependency errors
-    if (this.message.toLowerCase().includes("circular") && 
-        (this.message.toLowerCase().includes("dependency") || 
-         this.message.toLowerCase().includes("import"))) {
-      
-      // Extract cycle information if available
-      const cycleMatch = this.message.match(/cycle:?\s*(.*)/i) || 
-                         this.message.match(/(\s*→\s*.+)+/i);
-      const cyclePath = cycleMatch ? cycleMatch[1] : "";
-      
-      return `Circular dependencies prevent proper initialization and can cause runtime errors.
-
-How to fix:
-1. Identify the circular dependency path in the error message
-2. Resolve by:
-   - Moving shared code to a separate module
-   - Using dependency injection
-   - Using dynamic imports for lazy-loading
-   - Creating interface modules to break dependency cycles
-   - Using forward declarations`;
-    }
     
-    // Basic import error
-    return `Import failed for module '${this.importPath}'. Check:
-1. The file exists at the specified path
-2. The import path is correct (check case sensitivity)
-3. File permissions are appropriate
-4. No syntax errors in the imported file
-5. The exported symbols match what you're trying to import`;
+    const message = this.sourceFile
+      ? `Error importing '${this.importPath}' from '${this.sourceFile}': ${this.message}`
+      : `Error importing '${this.importPath}': ${this.message}`;
+    
+    const result = useColors
+      ? c.red(c.bold(message))
+      : message;
+    
+    // Add base class formatting
+    const baseFormatting = super.formatMessage(useColors);
+    
+    return this.appendOriginalError(
+      baseFormatting.length > result.length ? baseFormatting : result,
+      this.originalError
+    );
   }
 }
 
@@ -924,17 +902,9 @@ export function formatError(
   if (error instanceof BaseError) {
     let result = error.formatMessage(options.useColors ?? true);
     
-    // Make file paths clickable if requested
-    if (options.makePathsClickable && error.filePath) {
-      result = makeFilePathsClickable(result, error.filePath);
-    }
-    
     // Add stack trace if requested
     if (options.includeStack && error.stack) {
-      const stackTrace = error.stack.split('\n').slice(1).join('\n');
-      const clickableStackTrace = options.makePathsClickable ? 
-        makeStackTraceClickable(stackTrace) : stackTrace;
-      result += `\n\nStack trace:\n${clickableStackTrace}`;
+      result += `\n\nStack trace:\n${error.stack.split('\n').slice(1).join('\n')}`;
     }
     
     // Add suggestion
@@ -958,17 +928,9 @@ export function formatError(
   
   let result = enhancedError.formatMessage(options.useColors ?? true);
   
-  // Make file paths clickable if requested
-  if (options.makePathsClickable && options.filePath) {
-    result = makeFilePathsClickable(result, options.filePath);
-  }
-  
   // Add stack trace if requested
   if (options.includeStack && error.stack) {
-    const stackTrace = error.stack.split('\n').slice(1).join('\n');
-    const clickableStackTrace = options.makePathsClickable ? 
-      makeStackTraceClickable(stackTrace) : stackTrace;
-    result += `\n\nStack trace:\n${clickableStackTrace}`;
+    result += `\n\nStack trace:\n${error.stack.split('\n').slice(1).join('\n')}`;
   }
   
   // Add suggestion
@@ -982,68 +944,18 @@ export function formatError(
 }
 
 /**
- * Makes file paths in a string clickable by converting to file:// URLs
- */
-function makeFilePathsClickable(text: string, referenceFilePath?: string): string {
-  // Replace file paths that contain line and column information
-  // Example: /path/to/file.ts:10:5 -> file:///path/to/file.ts:10:5
-  return text.replace(/([^\s"':;,]+(?:\.(?:hql|js|jsx|ts|tsx))(?::\d+(?::\d+)?)?)/g, (match) => {
-    // Split path from line/column
-    const [path, ...lineCol] = match.split(':');
-    
-    // Create clickable path
-    const fileUrl = `file://${path}`;
-    
-    // Add back line/column info if present
-    return lineCol.length ? `${fileUrl}:${lineCol.join(':')}` : fileUrl;
-  });
-}
-
-/**
- * Makes file paths in stack traces clickable
- */
-function makeStackTraceClickable(stackTrace: string): string {
-  // Look for file paths in stack trace lines
-  return stackTrace.replace(
-    /(\s+at\s+(?:.*?)\s+\(?)([^\s()]+:\d+:\d+)(\)?)/g,
-    (match, prefix, fileInfo, suffix) => {
-      // Extract path and line/column
-      const [path, line, col] = fileInfo.split(':');
-      
-      // Skip non-file paths like "native" or "deno:" internal paths
-      if (path.includes('deno:') || path === 'native') {
-        return match;
-      }
-      
-      // Create clickable format
-      const fileUrl = `file://${path}`;
-      return `${prefix}${fileUrl}:${line}:${col}${suffix}`;
-    }
-  );
-}
-
-/**
  * Enhance errors by adding source context and choosing the right error type
  */
 export function report(
   error: unknown,
   options: {
-    filePath?: string;
     source?: string;
-    context?: string; 
-    useColors?: boolean;
-    includeStack?: boolean;
+    filePath?: string;
     line?: number;
     column?: number;
+    useColors?: boolean;
   } = {}
-): string {
-  const { filePath, source, context, useColors = false, includeStack = true } = options;
-
-  // Special case for circular dependencies
-  if (error instanceof CircularDependencyError) {
-    return error.message;
-  }
-
+): Error {
   // Convert non-Error objects to Error
   const errorObj = error instanceof Error ? error : new Error(String(error));
   
@@ -1088,7 +1000,7 @@ export function report(
       errorObj.position,
       options.source || errorObj.source,
       options.useColors ?? true
-    ).formatMessage(options.useColors ?? true);
+    );
   }
   
   // For any transpiler error, ensure the options are set
@@ -1100,7 +1012,7 @@ export function report(
       line: options.line ?? errorObj.line,
       column: options.column ?? errorObj.column,
       useColors: options.useColors ?? true
-    }).formatMessage(options.useColors ?? true);
+    });
   }
   
   // Enhance generic errors with better classification and messages
@@ -1114,7 +1026,7 @@ export function report(
       return new TranspilerError(
         `Runtime Error: Attempted to call something that is not a function. The method "${fnName}" either doesn't exist or is not a callable function.`,
         options
-      ).formatMessage(options.useColors ?? true);
+      );
     }
     
     if (msg.includes("cannot read property") || 
@@ -1134,21 +1046,21 @@ export function report(
       return new TranspilerError(
         `Runtime Error: Cannot access property "${propName}" on ${objType}. Check that the object exists before accessing its properties.`,
         options
-      ).formatMessage(options.useColors ?? true);
+      );
     }
     
     if (msg.includes("maximum call stack") || msg.includes("stack overflow")) {
       return new TranspilerError(
         `Runtime Error: Maximum call stack size exceeded. This is likely caused by infinite recursion. Check for functions that call themselves without a termination condition.`,
         options
-      ).formatMessage(options.useColors ?? true);
+      );
     }
     
     if (msg.includes("map is not defined") || msg.includes("map is not a function")) {
       return new TranspilerError(
         `Runtime Error: The "map" method was called on something that is not an array. Check that your variable is an array before calling map().`,
         options
-      ).formatMessage(options.useColors ?? true);
+      );
     }
     
     // Improve handling of array method errors
@@ -1165,7 +1077,7 @@ export function report(
       return new TranspilerError(
         `Runtime Error: The "${methodName}" method was called on something that is not an array or doesn't support this operation. Check that your variable has the correct type before calling "${methodName}()".`,
         options
-      ).formatMessage(options.useColors ?? true);
+      );
     }
     
     // Type errors
@@ -1188,7 +1100,7 @@ export function report(
           expectedType,
           actualType
         }
-      ).formatMessage(options.useColors ?? true);
+      );
     }
     
     // Syntax errors 
@@ -1217,10 +1129,10 @@ export function report(
           },
           options.source,
           options.useColors ?? true
-        ).formatMessage(options.useColors ?? true);
+        );
       }
       
-      return new TranspilerError(errorMessage, options).formatMessage(options.useColors ?? true);
+      return new TranspilerError(errorMessage, options);
     }
     
     // Binding and scope errors
@@ -1235,7 +1147,7 @@ export function report(
       return new TranspilerError(
         `Reference Error: The variable or function "${varName}" does not exist in this scope. Check spelling, imports, or add a declaration.`,
         options
-      ).formatMessage(options.useColors ?? true);
+      );
     }
     
     // Import errors
@@ -1255,12 +1167,12 @@ export function report(
           line: options.line,
           column: options.column
         }
-      ).formatMessage(options.useColors ?? true);
+      );
     }
   }
   
   // For generic errors, wrap them
-  return TranspilerError.fromError(errorObj, options).formatMessage(options.useColors ?? true);
+  return TranspilerError.fromError(errorObj, options);
 }
 
 /**
@@ -1287,14 +1199,11 @@ export function reportError(
     useColors: options.useColors ?? true
   });
   
-  const formatted = formatError(
-    typeof enhancedError === 'string' ? new Error(enhancedError) : enhancedError as Error, 
-    {
-      useColors: options.useColors ?? true,
-      includeStack: options.includeStack ?? options.verbose ?? false,
-      makePathsClickable: options.useClickablePaths ?? true
-    }
-  );
+  const formatted = formatError(enhancedError, {
+    useColors: options.useColors ?? true,
+    includeStack: options.includeStack ?? options.verbose ?? false,
+    makePathsClickable: options.useClickablePaths ?? true
+  });
   
   console.error(options.verbose ? "\x1b[31m[VERBOSE ERROR]\x1b[0m" : "\x1b[31m[ERROR]\x1b[0m", formatted);
 }
