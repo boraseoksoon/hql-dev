@@ -1,5 +1,18 @@
 // cli/publish/publish_common.ts - Improved version
-import { runCmd } from "../../src/platform/platform.ts";
+
+/**
+ * Run a command and get its output as text
+ */
+async function runCommandAndGetOutput(cmd: string[]): Promise<string> {
+  const command = new Deno.Command(cmd[0], {
+    args: cmd.slice(1),
+    stdout: "piped",
+    stderr: "piped",
+  });
+  
+  const { stdout } = await command.output();
+  return new TextDecoder().decode(stdout).trim();
+}
 
 /**
  * Check that required tools (Deno, npm) are installed and configured.
@@ -14,65 +27,46 @@ export async function checkEnvironment(
   try {
     // Check for Deno
     console.log(`  → Checking Deno installation`);
-    const denoProc = runCmd({
-      cmd: ["deno", "--version"],
-      stdout: "piped",
-      stderr: "null",
-    });
-    const denoOutput = await denoProc.output();
-    denoProc.close();
-    if (denoOutput.length === 0) {
+    try {
+      const denoVersionText = await runCommandAndGetOutput(["deno", "--version"]);
+      console.log(`  ✅ Deno is installed: ${denoVersionText.split("\n")[0]}`);
+    } catch (_error) {
       console.error(
         `  ❌ Deno not found. Please install Deno: https://deno.land/manual/getting_started/installation`,
       );
       return false;
     }
-    console.log(`  ✅ Deno is installed`);
 
     // Check for npm if needed
     if (publishTarget === "npm") {
-      // npm checking code remains unchanged
       console.log(`  → Checking npm installation`);
-      const npmProc = runCmd({
-        cmd: ["npm", "--version"],
-        stdout: "piped",
-        stderr: "null",
-      });
-      const npmOutput = await npmProc.output();
-      npmProc.close();
-      if (npmOutput.length === 0) {
+      try {
+        const npmVersionText = await runCommandAndGetOutput(["npm", "--version"]);
+        console.log(`  ✅ npm is installed: v${npmVersionText}`);
+      } catch (_error) {
         console.error(
           `  ❌ npm not found. Please install Node.js and npm: https://nodejs.org/`,
         );
         return false;
       }
-      console.log(`  ✅ npm is installed`);
 
       // Check npm login status
       try {
         console.log(`  → Checking npm login status`);
-        const whoamiProc = runCmd({
-          cmd: ["npm", "whoami"],
-          stdout: "piped",
-          stderr: "null",
-        });
-        const whoamiOutput = await whoamiProc.output();
-        whoamiProc.close();
-        if (whoamiOutput.length === 0) {
-          console.warn(
-            `  ⚠️ Not logged in to npm. Please run 'npm login' first.`,
-          );
+        try {
+          const whoamiText = await runCommandAndGetOutput(["npm", "whoami"]);
+          if (whoamiText) {
+            console.log(`  ✅ Logged in to npm as: ${whoamiText}`);
+          } else {
+            console.warn(`  ⚠️ Not logged in to npm. Please run 'npm login' first.`);
+            return false;
+          }
+        } catch (_error) {
+          console.warn(`  ⚠️ npm login check failed. Please run 'npm login' before publishing.`);
           return false;
         }
-        console.log(
-          `  ✅ Logged in to npm as: ${
-            new TextDecoder().decode(whoamiOutput).trim()
-          }`,
-        );
-      } catch (error) {
-        console.warn(
-          `  ⚠️ npm login check failed. Please run 'npm login' before publishing.`,
-        );
+      } catch (_error) {
+        console.warn(`  ⚠️ npm login check failed. Please run 'npm login' before publishing.`);
         return false;
       }
     }
