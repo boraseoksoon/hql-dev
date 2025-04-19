@@ -14,6 +14,7 @@ import {
 } from "./platform/platform.ts";
 import {
   createErrorReport,
+  TranspilerError,
   ValidationError,
 } from "./transpiler/error/errors.ts";
 import { 
@@ -34,8 +35,6 @@ import {
   registerImportMapping,
   createTempDirIfNeeded,
 } from "./common/temp-file-tracker.ts";
-import { CircularDependencyError } from "./imports.ts";
-import { processError, ErrorHandlerOptions, TranspilerError } from "./common/error-pipeline.ts";
 
 // Constants
 const MAX_RETRIES = 3;
@@ -575,9 +574,9 @@ function bundleWithEsbuild(
       const result = await runBuildWithRetry(buildOptions, MAX_RETRIES);
       
       // Post-process the output if needed
-      // if (result.metafile) {
-      //   await postProcessBundleOutput(outputPath);
-      // }
+      if (result.metafile) {
+        await postProcessBundleOutput(outputPath);
+      }
       
       logger.log({ 
         text: `Successfully bundled to ${outputPath}`, 
@@ -884,7 +883,7 @@ async function transpileHqlFile(
 }
 
 /**
- * Simplify handleError for circular dependencies
+ * Unified error handler for transpilation and bundling errors
  */
 function handleError(
   error: unknown, 
@@ -892,81 +891,27 @@ function handleError(
   details: Record<string, any> = {}, 
   options: { verbose?: boolean, skipErrorReporting?: boolean } = {}
 ): never {
-  // For CLI error handling, just throw the error directly if requested
   if (options.skipErrorReporting) {
     throw error;
   }
   
-  // Process through the unified error pipeline
-  const pipelineOptions: ErrorHandlerOptions = {
-    context: `Failed to ${context}`,
-    filePath: details.filePath,
-    source: details.source,
-    verbose: options.verbose,
-    rethrow: false,
-    logErrors: false
-  };
+  const isTranspilerError = error instanceof TranspilerError;
+  const errorMsg = error instanceof Error ? error.message : String(error);
   
-  // Special case for circular dependency errors - use it directly
-  if (error instanceof CircularDependencyError) {
-    // Just rethrow the original error - it already has all the needed info
-    // The circular dependency error formatting is handled by common-errors.ts
-    throw error;
+  if (!isTranspilerError && options.verbose) {
+    const errorReport = createErrorReport(
+      error instanceof Error ? error : new Error(errorMsg),
+      context,
+      details
+    );
+    
+    console.error(`Detailed error report for ${context}:`);
+    console.error(errorReport);
+  } else {
+    logger.error(`${context}: ${errorMsg}`);
   }
   
-  // Process through the pipeline
-  const processedError = processError(error, pipelineOptions);
-  
-  // Create the enhanced error with context
-  const errorMessage = `Failed to ${context}: ${processedError.message}`;
-  const enhancedError = new TranspilerError(errorMessage, details);
-  
-  // Preserve the original stack trace if it exists
-  if (processedError.stack && processedError instanceof Error) {
-    enhancedError.stack = processedError.stack;
-  }
-  
-  throw enhancedError;
-}
-
-// Update getSuggestion helper function with more detailed suggestions
-function getSuggestion(error: Error): string {
-  if (error instanceof CircularDependencyError) {
-    const cycle = error.cycle || [];
-    return `Circular dependencies prevent proper initialization and can cause runtime errors.
-
-How to fix:
-1. Identify the circular dependency path: ${cycle.join(' → ')}
-2. Resolve by:
-   - Move shared code to a separate module
-   - Use dependency injection
-   - Use dynamic imports for lazy loading dependencies
-   - Create interface modules to break dependency cycles`;
-  }
-  
-  // More detailed suggestions for common errors
-  if (error.message.includes("not found") || error.message.includes("does not exist")) {
-    return "Check that the file exists and the path is correct. Verify file permissions and ensure the path is case-sensitive on some operating systems.";
-  }
-  
-  if (error.message.includes("syntax") || error.message.includes("parse")) {
-    return `Check your code for syntax errors such as:
-- Missing or mismatched brackets/parentheses
-- Unclosed string literals
-- Invalid operators or expressions
-- Missing semicolons where required`;
-  }
-  
-  if (error.message.includes("type") || error.message.includes("undefined")) {
-    return `This may be a type error. Check:
-- Variable definitions and typing
-- Function return types
-- Missing imports
-- Undefined variables or properties`;
-  }
-  
-  // Default suggestion
-  return "Verify your code logic, check for typos, and ensure all required dependencies are available.";
+  throw error;
 }
 
 /**
@@ -1080,19 +1025,8 @@ async function cacheTranspiledFile(
  * Transpile HQL content to TypeScript from a path
  * Used by the processHqlImportsInJs function
  */
-export async function transpileHqlInJs(
-  hqlPath: string, 
-  basePath: string, 
-  options: { importStack?: string[] } = {}
-): Promise<string> {
+export async function transpileHqlInJs(hqlPath: string, basePath: string): Promise<string> {
   try {
-    // Check for circular imports
-    const importStack = options.importStack || [];
-    if (importStack.includes(hqlPath)) {
-      const cycle = [...importStack, hqlPath].map((f) => `→ ${f}`).join('\n');
-      throw new Error(`Circular dependency detected:\n${cycle}`);
-    }
-    
     // Read the HQL content
     const hqlContent = await readTextFile(hqlPath);
     
@@ -1100,7 +1034,6 @@ export async function transpileHqlInJs(
     const tsContent = await processHql(hqlContent, {
       baseDir: dirname(hqlPath),
       sourceDir: basePath,
-      importStack: [...importStack, hqlPath], // Pass the import stack to track dependencies
     });
     
     // Process identifiers with hyphens
