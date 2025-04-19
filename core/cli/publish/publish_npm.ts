@@ -1,11 +1,10 @@
-// cli/publish/publish_npm.ts - Improved version
+// cli/publish/publish_npm.ts - Streamlined NPM publishing implementation
 import {
   basename,
   dirname,
   exit,
   getEnv,
   join,
-  mkdir,
   readTextFile,
   resolve,
   runCmd,
@@ -14,62 +13,54 @@ import {
 import { exists } from "jsr:@std/fs@1.0.13";
 import { buildJsModule } from "./build_js_module.ts";
 import { incrementPatch, prompt } from "./utils.ts";
+import { globalLogger as logger } from "../../src/logger.ts";
 
-export async function publishNpm(options: {
+interface PublishNpmOptions {
   what: string;
   name?: string;
   version?: string;
   verbose?: boolean;
-}): Promise<void> {
+  dryRun?: boolean;
+}
+
+export async function publishNpm(options: PublishNpmOptions): Promise<void> {
   console.log("\n📦 Starting NPM package publishing process");
 
+  // Resolve the input path (this should already be resolved to a file by resolveEntryPoint)
   const inputPath = resolve(options.what);
-  console.log(`  → Input path: "${inputPath}"`);
-
-  let baseDir = inputPath;
-  try {
-    const stat = await Deno.stat(inputPath);
-    if (stat.isFile) {
-      baseDir = dirname(inputPath);
-      console.log(`  → Input is a file, using directory: "${baseDir}"`);
-    } else {
-      console.log(`  → Input is a directory: "${baseDir}"`);
-    }
-  } catch (error) {
-    console.error(
-      `\n❌ Error checking input path: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    exit(1);
+  const baseDir = dirname(inputPath);
+  
+  if (options.verbose) {
+    logger.debug(`Using input path: "${inputPath}"`);
+    logger.debug(`Using base directory: "${baseDir}"`);
   }
 
+  // Build the JavaScript module
   console.log(`\n🔨 Building JavaScript module from "${inputPath}"...`);
-  const npmDistDir = await buildJsModule(inputPath);
-  console.log(`\n✅ Module built successfully to: "${npmDistDir}"`);
+  const distDir = await buildJsModule(inputPath, {
+    verbose: options.verbose,
+    dryRun: options.dryRun,
+  });
+  console.log(`\n✅ Module built successfully to: "${distDir}"`);
 
-  console.log(`\n📝 Reading/updating package configuration...`);
-  const pkgJsonPath = join(npmDistDir, "package.json");
-  let pkg: Record<string, any> = {};
+  // Prepare package configuration
+  console.log(`\n📝 Preparing package configuration...`);
+  const pkgJsonPath = join(distDir, "package.json");
+  let pkg: Record<string, unknown> = {};
 
   if (await exists(pkgJsonPath)) {
     try {
-      console.log(`  → Reading existing package.json`);
+      if (options.verbose) logger.debug(`Reading existing package.json`);
       pkg = JSON.parse(await readTextFile(pkgJsonPath));
     } catch (error) {
-      console.warn(
-        `  ⚠️ Could not parse existing package.json: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      console.log(`  → Creating new package.json`);
+      if (options.verbose) {
+        logger.debug(`Error parsing package.json: ${error instanceof Error ? error.message : String(error)}`);
+      }
       pkg = {};
     }
-  } else {
-    console.log(`  → No existing package.json found, creating new one`);
   }
 
-  // Determine package name.
+  // Determine package name
   if (options.name) {
     pkg.name = options.name;
     console.log(`  → Using provided package name: "${pkg.name}"`);
@@ -79,114 +70,71 @@ export async function publishNpm(options: {
       .replace(/[^a-z0-9-]/g, "-")
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "");
-    console.log(`\n  Enter npm package name (default: "${defaultName}"):`);
-    const userName = await prompt("", defaultName);
+    console.log(`  Enter npm package name (default: "${defaultName}"):`);
+    const userName = await prompt(`Enter name:`, defaultName);
     pkg.name = userName || defaultName;
     console.log(`  → Using package name: "${pkg.name}"`);
   } else {
     console.log(`  → Using existing package name: "${pkg.name}"`);
   }
 
-  // Determine package version.
+  // Determine package version
   if (options.version) {
     pkg.version = options.version;
     console.log(`  → Using provided version: ${pkg.version}`);
   } else if (pkg.version) {
-    pkg.version = incrementPatch(pkg.version);
+    pkg.version = incrementPatch(String(pkg.version));
     console.log(`  → Incremented version to: ${pkg.version}`);
   } else {
     const defaultVersion = "0.0.1";
-    const userVer = await prompt(
-      `\n  Enter version (default: "${defaultVersion}"):`,
-      defaultVersion,
-    );
-    pkg.version = userVer || defaultVersion;
+    console.log(`  Enter version (default: "${defaultVersion}"):`);
+    const ver = await prompt(`Enter version:`, defaultVersion);
+    pkg.version = ver || defaultVersion;
     console.log(`  → Using version: ${pkg.version}`);
   }
 
   // Set standard package.json fields
   pkg.description = pkg.description || `HQL module: ${pkg.name}`;
   pkg.module = pkg.module || "./esm/index.js";
+  pkg.main = pkg.main || "./esm/index.js"; // Also set main for CommonJS compatibility
   pkg.types = pkg.types || "./types/index.d.ts";
   pkg.files = pkg.files || ["esm", "types", "README.md"];
-
+  pkg.type = "module"; // Ensure ESM format
+  
+  // Add other useful fields if missing
+  if (!pkg.author) {
+    pkg.author = getEnv("USER") || getEnv("USERNAME") || "HQL User";
+  }
+  
+  if (!pkg.license) {
+    pkg.license = "MIT";
+  }
+  
+  // Write package.json
   await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
-  console.log(
-    `  → Updated package.json with name=${pkg.name} version=${pkg.version}`,
-  );
+  console.log(`  → Updated package.json with name=${pkg.name} version=${pkg.version}`);
 
-  // Create or use existing README
-  const readmePath = join(npmDistDir, "README.md");
-  if (!(await exists(readmePath))) {
-    console.log(`  → Creating default README.md`);
-    await writeTextFile(
-      readmePath,
-      `# ${pkg.name}\n\nAuto-generated README for the HQL module.\n`,
-    );
-  } else {
-    console.log(`  → Using existing README.md`);
+  // Handle dry run
+  if (options.dryRun) {
+    console.log(`\n🔍 Dry run mode enabled - package would be published to npm`);
+    console.log(`  → Package would be viewable at: https://www.npmjs.com/package/${pkg.name}`);
+    return;
   }
 
-  // Ensure directory structure exists
-  console.log(`\n📂 Verifying package directory structure...`);
-  const esmDir = join(npmDistDir, "esm");
-  const typesDir = join(npmDistDir, "types");
-
-  await mkdir(esmDir, { recursive: true });
-  console.log(`  → Verified ESM directory: "${esmDir}"`);
-
-  await mkdir(typesDir, { recursive: true });
-  console.log(`  → Verified types directory: "${typesDir}"`);
-
-  // Copy files or create default ones if missing
-  try {
-    console.log(`\n📄 Setting up package files...`);
-    const esmFile = join(baseDir, ".build", "esm.js");
-    if (await exists(esmFile)) {
-      console.log(`  → Reading ESM file from build directory`);
-      const esmContent = await readTextFile(esmFile);
-      await writeTextFile(join(esmDir, "index.js"), esmContent);
-      console.log(`  → Copied ESM file to package`);
-    } else {
-      console.log(`  → Creating stub ESM file`);
-      await writeTextFile(
-        join(esmDir, "index.js"),
-        `export default { name: "${pkg.name}" };\n`,
-      );
-    }
-
-    console.log(`  → Creating TypeScript definition file`);
-    await writeTextFile(
-      join(typesDir, "index.d.ts"),
-      `declare const _default: any;\nexport default _default;\n`,
-    );
-  } catch (error) {
-    console.error(
-      `\n❌ Error setting up package files: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    exit(1);
-  }
-
+  // Actually publish to npm
   console.log(`\n🚀 Publishing package ${pkg.name}@${pkg.version} to npm...`);
-  const dryRun = getEnv("DRY_RUN_PUBLISH");
-
-  const publishCmd = dryRun
-    ? ["npm", "publish", "--dry-run", "--access", "public", "--force"]
-    : ["npm", "publish", "--access", "public", "--force"];
+  const publishCmd = ["npm", "publish", "--access", "public"];
 
   console.log(`  → Running: ${publishCmd.join(" ")}`);
 
-  const proc = runCmd({
+  const process = runCmd({
     cmd: publishCmd,
-    cwd: npmDistDir,
+    cwd: distDir,
     stdout: "inherit",
     stderr: "inherit",
   });
 
-  const status = await proc.status();
-  proc.close();
+  const status = await process.status;
 
   if (!status.success) {
     console.error(`\n❌ npm publish failed with exit code ${status.code}.`);

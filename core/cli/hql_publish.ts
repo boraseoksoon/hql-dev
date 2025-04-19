@@ -51,12 +51,19 @@ async function main() {
   try {
     await publish(args);
   } catch (error) {
-    // Enhanced error reporting
-    const enhancedError = report(error, { 
-      filePath: "publish.ts", 
+    // Use our specialized publish error reporting
+    const { reportPublishError } = await import("./publish/publish_errors.ts");
+    const enhancedError = reportPublishError(error, { 
+      filePath: "publish.ts",
+      phase: "cli-entry",
       useColors: true 
     });
-    console.error("\n❌ Publishing failed:", enhancedError.message);
+    
+    // Avoid duplicate error messages
+    if (!(typeof (error as any).message === 'string' && (error as Error).message.includes("Publishing failed"))) {
+      console.error("\n❌ Publishing failed:", enhancedError.message);
+    }
+    
     exit(1);
   }
 }
