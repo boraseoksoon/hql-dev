@@ -17,7 +17,7 @@
 ;; Value equality
 (if (= heading Direction.west)
   (print "Heading west!")
-  (print "Not heading west"))
+  (prit "Not heading west"))
 
 ;; Pattern matching with cond
 (cond
@@ -127,7 +127,7 @@
 )
 
 ;; With raw values
-(enum StatusCode: Int
+(enum StatusCode: In
   (case ok 200)
   (case notFound 404)
   (case serverError 500)

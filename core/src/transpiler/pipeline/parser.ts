@@ -57,6 +57,10 @@ const TOKEN_PATTERNS = {
 export function parse(input: string, filePath: string = ""): SExp[] {
   // No hardcoded filenames - use the path as provided
   const tokens = tokenize(input, filePath);
+  
+  // Validate token balance before parsing to detect missing opening parentheses
+  validateTokenBalance(tokens, input, filePath);
+  
   return parseTokens(tokens, input, filePath);
 }
 
@@ -139,11 +143,30 @@ function parseExpression(state: ParserState): SExp {
 function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
   switch (token.type) {
     case TokenType.LeftParen: return parseList(state);
-    case TokenType.RightParen: throw new ParseError("Unexpected ')'", token.position, state.input);
+    case TokenType.RightParen: {
+      const lineContext = getLineContext(state.input, token.position.line);
+      throw new ParseError(
+        `Unexpected ')' - Check for a missing opening '(' in previous lines.\nContext: ${lineContext}`, 
+        token.position, 
+        state.input
+      ); 
+    }
     case TokenType.LeftBracket: return parseVector(state);
-    case TokenType.RightBracket: throw new ParseError("Unexpected ']'", token.position, state.input);
+    case TokenType.RightBracket: 
+      // Improved error message for unexpected closing bracket
+      throw new ParseError(
+        `Unexpected ']' - Check for a missing opening '[' in previous lines.`, 
+        token.position, 
+        state.input
+      );
     case TokenType.LeftBrace: return parseMap(state);
-    case TokenType.RightBrace: throw new ParseError("Unexpected '}'", token.position, state.input);
+    case TokenType.RightBrace: 
+      // Improved error message for unexpected closing brace
+      throw new ParseError(
+        `Unexpected '}' - Check for a missing opening '{' in previous lines.`, 
+        token.position, 
+        state.input
+      );
     case TokenType.HashLeftBracket: return parseSet(state);
     case TokenType.Quote: return createList(createSymbol("quote"), parseExpression(state));
     case TokenType.Backtick: return createList(createSymbol("quasiquote"), parseExpression(state));
@@ -411,4 +434,221 @@ function parseSet(state: ParserState): SList {
   return elements.length === 0
     ? createList(createSymbol("empty-set"))
     : createList(createSymbol("hash-set"), ...elements);
+}
+
+/**
+ * Validate the balance of parentheses, brackets, and braces in the token stream
+ * This helps catch missing opening delimiters before actual parsing
+ */
+function validateTokenBalance(tokens: Token[], input: string, filePath: string): void {
+  const bracketStack: { type: TokenType, token: Token }[] = [];
+  
+  // Define bracket pairs using a Map instead of Record for enum keys
+  const bracketPairs = new Map<TokenType, TokenType>([
+    [TokenType.LeftParen, TokenType.RightParen],
+    [TokenType.LeftBracket, TokenType.RightBracket],
+    [TokenType.LeftBrace, TokenType.RightBrace]
+  ]);
+  
+  const closingToOpening = new Map<TokenType, TokenType>([
+    [TokenType.RightParen, TokenType.LeftParen],
+    [TokenType.RightBracket, TokenType.LeftBracket],
+    [TokenType.RightBrace, TokenType.LeftBrace]
+  ]);
+  
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    
+    // If it's an opening bracket, push to stack
+    if (token.type === TokenType.LeftParen || 
+        token.type === TokenType.LeftBracket || 
+        token.type === TokenType.LeftBrace) {
+      bracketStack.push({ type: token.type, token });
+    }
+    // If it's a closing bracket, check if it matches the last opening bracket
+    else if (token.type === TokenType.RightParen || 
+             token.type === TokenType.RightBracket || 
+             token.type === TokenType.RightBrace) {
+      
+      if (bracketStack.length === 0) {
+        // No matching opening bracket - throw detailed error
+        const bracketChar = token.type === TokenType.RightParen ? ")" : 
+                          token.type === TokenType.RightBracket ? "]" : "}";
+        const expectedOpening = token.type === TokenType.RightParen ? "(" : 
+                              token.type === TokenType.RightBracket ? "[" : "{";
+        
+        // Get line context for better error reporting
+        const lineContext = getLineContext(input, token.position.line);
+        
+        // Look for missing opening bracket location
+        const missingOpeningLocation = findLikelyMissingOpeningLocation(input, token, tokens, i);
+        if (missingOpeningLocation) {
+          throw new ParseError(
+            `Missing opening '${expectedOpening}' before '${missingOpeningLocation.context}'. Check for a missing opening parenthesis.`, 
+            missingOpeningLocation.position,
+            input
+          );
+        } else {
+          throw new ParseError(
+            `Missing opening '${expectedOpening}' for this closing '${bracketChar}'. Check previous lines for balanced parentheses.\nContext: ${lineContext}`, 
+            token.position, 
+            input
+          );
+        }
+      }
+      
+      const lastOpening = bracketStack.pop();
+      if (lastOpening && closingToOpening.get(token.type) !== lastOpening.type) {
+        // Mismatched bracket types
+        const openChar = lastOpening.type === TokenType.LeftParen ? "(" : 
+                       lastOpening.type === TokenType.LeftBracket ? "[" : "{";
+        const closeChar = token.type === TokenType.RightParen ? ")" : 
+                        token.type === TokenType.RightBracket ? "]" : "}";
+        
+        throw new ParseError(
+          `Mismatched brackets: '${openChar}' is closed by '${closeChar}'`, 
+          token.position, 
+          input
+        );
+      }
+    }
+  }
+  
+  // Check for unclosed opening brackets
+  if (bracketStack.length > 0) {
+    const lastUnclosed = bracketStack[bracketStack.length - 1];
+    const openChar = lastUnclosed.type === TokenType.LeftParen ? "(" : 
+                   lastUnclosed.type === TokenType.LeftBracket ? "[" : "{";
+    
+    throw new ParseError(
+      `Unclosed '${openChar}' at line ${lastUnclosed.token.position.line}`, 
+      lastUnclosed.token.position, 
+      input
+    );
+  }
+}
+
+/**
+ * Attempts to find where a missing opening bracket is likely needed
+ * This uses structural analysis rather than hardcoded keywords
+ */
+function findLikelyMissingOpeningLocation(input: string, closingToken: Token, tokens: Token[], closingTokenIndex: number): { position: SourcePosition, context: string } | null {
+  const lines = input.split('\n');
+  
+  // First, check for common structural patterns indicating a missing opening parenthesis
+  // This approach involves analyzing token sequences and indentation patterns
+  
+  // Look for lines that start a new indented block but don't have an opening parenthesis
+  const lineNumber = closingToken.position.line;
+  let indentationLevel = -1;
+  let lastSymbolLine = -1;
+  let lastSymbolValue = "";
+  let lastSymbolColumn = -1;
+  
+  // Scan backwards from the closing token to find potential structural issues
+  for (let lineIndex = lineNumber - 1; lineIndex >= 0; lineIndex--) {
+    const line = lines[lineIndex].trimRight();
+    if (line.trim().length === 0 || line.trim().startsWith(";")) continue; // Skip comments and empty lines
+    
+    // Calculate indentation level for this line
+    const currentIndent = line.length - line.trimLeft().length;
+    
+    // If this is the first line we're checking, establish the expected indentation
+    if (indentationLevel === -1) {
+      indentationLevel = currentIndent;
+    }
+    
+    // Look for a line that has a symbol at the start (potential function call or expression)
+    // but doesn't have an opening parenthesis
+    if (!line.trimLeft().startsWith("(") && !line.includes("(")) {
+      // This line has text but no parenthesis - potential error location
+      const symbolMatch = line.trim().match(/^([^\s\(\)\[\]\{\}"'`,;]+)/);
+      if (symbolMatch) {
+        lastSymbolLine = lineIndex;
+        lastSymbolValue = symbolMatch[1];
+        lastSymbolColumn = line.indexOf(symbolMatch[1]) + 1; // 1-based columns
+        
+        // Check if next non-empty line is indented (suggesting this is a missing opening paren)
+        let nextLineIndex = lineIndex + 1;
+        while (nextLineIndex < lines.length) {
+          const nextLine = lines[nextLineIndex].trimRight();
+          if (nextLine.trim().length === 0 || nextLine.trim().startsWith(";")) {
+            nextLineIndex++;
+            continue;
+          }
+          
+          const nextIndent = nextLine.length - nextLine.trimLeft().length;
+          if (nextIndent > currentIndent) {
+            // Found a pattern: symbol followed by indented block without opening parenthesis
+            return {
+              position: {
+                line: lastSymbolLine + 1, // 1-based line numbers
+                column: lastSymbolColumn,
+                offset: 0, // We don't need the exact offset for this error
+                filePath: closingToken.position.filePath
+              },
+              context: lastSymbolValue
+            };
+          }
+          break;
+        }
+      }
+    }
+    
+    // Look for a break in indentation pattern (outdent) that might indicate
+    // a different structural level where an opening parenthesis is missing
+    if (currentIndent < indentationLevel) {
+      // Check if this line has a standalone symbol
+      const symbolOnlyMatch = line.trim().match(/^([^\s\(\)\[\]\{\}"'`,;]+)\s*$/);
+      if (symbolOnlyMatch) {
+        return {
+          position: {
+            line: lineIndex + 1, // 1-based line numbers
+            column: line.indexOf(symbolOnlyMatch[1]) + 1,
+            offset: 0,
+            filePath: closingToken.position.filePath
+          },
+          context: symbolOnlyMatch[1]
+        };
+      }
+    }
+  }
+  
+  // If we didn't find structural issues, check token sequence patterns
+  // Look for symbol tokens that are followed by token patterns suggesting
+  // they should have been wrapped in parentheses
+  if (closingTokenIndex > 0) {
+    for (let i = closingTokenIndex - 1; i >= 0; i--) {
+      const token = tokens[i];
+      
+      // Check if this is a symbol followed by tokens that suggest it should have been wrapped in parens
+      if (token.type === TokenType.Symbol) {
+        // Look at the sequence that follows this symbol
+        const tokenSequence = tokens.slice(i + 1, Math.min(i + 5, closingTokenIndex));
+        
+        // If there are multiple expressions following this symbol, it might need parens
+        if (tokenSequence.length > 1 && 
+            tokenSequence.some(t => t.type === TokenType.LeftParen)) {
+          return {
+            position: token.position,
+            context: token.value
+          };
+        }
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Get line context for better error messages
+ */
+function getLineContext(input: string, lineNumber: number): string {
+  if (!input) return "";
+  
+  const lines = input.split('\n');
+  if (lineNumber <= 0 || lineNumber > lines.length) return "";
+  
+  return lines[lineNumber - 1].trim();
 }

@@ -281,8 +281,24 @@ export class ParseError extends HQLError {
     const msg = this.message.toLowerCase();
     
     // Provide specific suggestions based on common error patterns
-    if (msg.includes("unclosed") || msg.includes("missing") && msg.includes("closing")) {
+    if (msg.includes("unclosed") || (msg.includes("missing") && msg.includes("closing"))) {
       return "Did you forget a closing parenthesis ')' or bracket ']' or brace '}'?";
+    }
+    
+    if (msg.includes("missing opening")) {
+      return "You have an extra closing delimiter without a matching opening one. Check the code structure around this location.";
+    }
+    
+    if (msg.includes("unexpected ')'")) {
+      return "Check for missing opening parenthesis '(' earlier in the code.";
+    }
+    
+    if (msg.includes("unexpected ']'")) {
+      return "Check for missing opening bracket '[' earlier in the code.";
+    }
+    
+    if (msg.includes("unexpected '}'")) {
+      return "Check for missing opening brace '{' earlier in the code.";
     }
     
     if (msg.includes("unexpected token") || msg.includes("unexpected ')'")) {
@@ -312,6 +328,11 @@ export class ParseError extends HQLError {
     // Look for specific character mentions
     if (msg.includes("expected") && msg.includes("but got")) {
       return "The syntax expected a different token or symbol than what was provided. Check the syntax requirements.";
+    }
+    
+    // Mismatched bracket types
+    if (msg.includes("mismatched brackets")) {
+      return "You have mixed different types of brackets. Make sure each opening delimiter is closed with the matching type.";
     }
     
     // Default suggestion
@@ -697,7 +718,9 @@ export function enhanceError(
     msg.includes("unclosed") ||
     msg.includes("unterminated") ||
     msg.includes("unexpected end of input") ||
-    msg.includes("expected") && (msg.includes("but got") || msg.includes("found"))
+    msg.includes("missing opening") ||
+    msg.includes("mismatched brackets") ||
+    (msg.includes("expected") && (msg.includes("but got") || msg.includes("found")))
   ) {
     if (sourceLocation.line && sourceLocation.column) {
       // Create a ParseError with improved message and context
@@ -710,6 +733,11 @@ export function enhanceError(
         enhancedMessage = `Unexpected end of input at line ${sourceLocation.line}. Check for missing closing delimiters.`;
       } else if (msg.includes("unexpected token")) {
         enhancedMessage = `Syntax error at line ${sourceLocation.line}: ${errorObj.message}`;
+      } else if (msg.includes("unexpected ')'") || msg.includes("unexpected ']'") || msg.includes("unexpected '}'")) {
+        enhancedMessage = `${errorObj.message} at line ${sourceLocation.line}. This usually indicates a missing opening delimiter earlier in the code.`;
+      } else if (msg.includes("missing opening")) {
+        // Already has a good error message, just add line information
+        enhancedMessage = `${errorObj.message} at line ${sourceLocation.line}`;
       }
       
       const parseErr = new ParseError(enhancedMessage, {
