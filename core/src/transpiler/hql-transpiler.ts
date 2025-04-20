@@ -126,15 +126,47 @@ function parseWithHandling(source: string, logger: Logger) {
     return sexps;
   } catch (error: unknown) {
     if (error instanceof ParseError) {
-      // Enhance the parse error with source context
-      throw parseError(error, { source, useColors: true });
+      // Enhance the parse error with source context and ensure we preserve the file path
+      // The critical issue is that we need to preserve the currentFile (user's HQL file)
+      const originalFilePath = globalEnv?.getCurrentFile() || "unknown";
+      
+      // Use the ErrorPipeline.enhanceError with the correct file path to ensure it's preserved
+      throw ErrorPipeline.enhanceError(error, { 
+        source, 
+        filePath: originalFilePath,
+        // Preserve line and column from the original error
+        line: error.position?.line,
+        column: error.position?.column
+      });
     }
     
     if (error instanceof Error) {
-      throw new ParseError(`Failed to parse HQL source: ${error.message}`, { line: 1, column: 1, offset: 0 }, source);
+      // Create a new ParseError with the correct file path
+      const originalFilePath = globalEnv?.getCurrentFile() || "unknown";
+      throw new ParseError(
+        `Failed to parse HQL source: ${error.message}`, 
+        { 
+          line: 1, 
+          column: 1, 
+          offset: 0, 
+          filePath: originalFilePath 
+        }, 
+        source
+      );
     }
     
-    throw new ParseError(`Failed to parse HQL source: ${String(error)}`, { line: 1, column: 1, offset: 0 }, source);
+    // For non-Error objects
+    const originalFilePath = globalEnv?.getCurrentFile() || "unknown";
+    throw new ParseError(
+      `Failed to parse HQL source: ${String(error)}`, 
+      { 
+        line: 1, 
+        column: 1, 
+        offset: 0, 
+        filePath: originalFilePath 
+      }, 
+      source
+    );
   }
 }
 
@@ -196,31 +228,46 @@ function handleProcessError(
   options: ProcessOptions,
   logger: Logger,
 ): never {
+  // The most important thing is to focus ONLY on HQL file errors
+  const hqlFilePath = options.baseDir || globalEnv?.getCurrentFile() || "unknown";
+  
   if (error instanceof Error) {
-    // Mark Parse errors as already reported so we don't get duplicates
-    if (error instanceof ParseError) {
-      // The ParseError will be handled by the outer error handler
-      // with better formatting at the CLI level
-      throw error;
+    // Parse errors already have most of the info we need - just ensure the file path is correct
+    if (error instanceof ParseError && error.position) {
+      // Always override the file path to be the HQL file, never an internal implementation file
+      const enhancedError = ErrorPipeline.enhanceError(error, {
+        filePath: hqlFilePath,  // Force HQL file path
+        source: ErrorPipeline.getSourceFile(hqlFilePath),
+        // Keep original position info except for the file path
+        line: error.position?.line,
+        column: error.position?.column
+      });
+      
+      if (enhancedError instanceof ErrorPipeline.HQLError) {
+        enhancedError.reported = true;
+      }
+      
+      throw enhancedError;
     }
     
-    // For other errors, use the error pipeline
-    const enhancedError = ErrorPipeline.enhanceError(error, {
-      filePath: options.baseDir,
-      source: options.baseDir ? ErrorPipeline.getSourceFile(options.baseDir) : undefined
+    // For all other errors, pretend they happened in the HQL file
+    const errorMsg = `Error processing HQL: ${error.message}`;
+    throw new ErrorPipeline.ParseError(errorMsg, {
+      filePath: hqlFilePath,
+      line: 1,
+      column: 1,
+      source: ErrorPipeline.getSourceFile(hqlFilePath)
     });
-    
-    // Mark the error as already reported to prevent duplicate error messages
-    if (enhancedError instanceof ErrorPipeline.HQLError) {
-      enhancedError.reported = true;
-    }
-    
-    throw enhancedError;
   }
   
   // For non-Error objects
   logger.error(`Unknown error: ${String(error)}`);
-  throw error instanceof Error ? error : new Error(String(error));
+  throw new ErrorPipeline.ParseError(`Unknown error processing HQL: ${String(error)}`, {
+    filePath: hqlFilePath,
+    line: 1,
+    column: 1,
+    source: ErrorPipeline.getSourceFile(hqlFilePath)
+  });
 }
 
 export async function loadSystemMacros(env: Environment, options: ProcessOptions): Promise<void> {
