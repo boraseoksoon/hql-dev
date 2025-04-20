@@ -30,25 +30,26 @@ async function timed<T>(
 }
 
 /**
- * Print help information
+ * Display CLI usage
  */
 function printHelp(): void {
-  console.error("HQL Transpiler");
-  console.error("\nUsage:");
-  console.error("  deno run -A cli/transpile.ts <input.hql> [output.js] [options]");
+  console.error(
+    `Usage: deno run -A cli/transpile.ts <input.hql|input.js> [output.js] [options]`
+  );
   console.error("\nOptions:");
-  console.error("  --verbose          Enable verbose logging");
-  console.error("  --debug            Show detailed error debugging with call stacks and clickable source links");
-  console.error("  --time             Show performance timings");
-  console.error("  --force            Force recompilation even if cache is up-to-date");
-  console.error("  --print            Print the transpiled JavaScript to the console");
-  console.error("  --run              Run the transpiled JavaScript");
-  console.error("  --cache-info       Show information about the cache directory");
-  console.error("  --help, -h         Display this help message");
+  console.error("  --run             Execute the transpiled output");
+  console.error("  --verbose, -v     Enable verbose logging");
+  console.error("  --time            Show timing for each phase");
+  console.error("  --print           Print JS to stdout instead of writing to file");
+  console.error("  --force           Force recompilation even if file hasn't changed");
+  console.error("  --cache-info      Show information about the cache");
+  console.error("  --debug           Show detailed error information and stack traces");
+  console.error("  --help, -h        Show this help message");
   console.error("\nExamples:");
-  console.error("  deno run -A cli/transpile.ts src/example.hql dist/example.js");
-  console.error("  deno run -A cli/transpile.ts src/example.hql --print");
-  console.error("  deno run -A cli/transpile.ts src/example.hql --run");
+  console.error("  deno run -A cli/transpile.ts src/file.hql");
+  console.error("  deno run -A cli/transpile.ts src/file.hql dist/file.js --time");
+  console.error("  deno run -A cli/transpile.ts src/file.hql --print --run");
+  console.error("  deno run -A cli/transpile.ts src/file.hql --force");
   console.error("  deno run -A cli/transpile.ts src/file.hql --debug");
 }
 
@@ -261,9 +262,8 @@ export async function main(): Promise<void> {
   const { inputPath, outputPath } = parsePaths(args);
   const opts = parseCliOptions(args);
   
-  // Handle debug mode - set this up early so all error reporting gets the debug flag
-  const DEBUG_MODE = args.includes("--debug");
-  if (DEBUG_MODE) {
+  // Handle debug mode
+  if (args.includes("--debug")) {
     opts.debug = true;
     ErrorPipeline.setDebugMode(true);
   }
@@ -330,21 +330,14 @@ export async function main(): Promise<void> {
     await cleanup();
   } catch (error) {
     // Handle any errors not caught by transpile
-    
-    // Skip reporting if already reported
-    if (error instanceof ErrorPipeline.HQLError && error.reported) {
-      Deno.exit(1);
+    if (!(error instanceof ErrorPipeline.HQLError && error.reported)) {
+      ErrorPipeline.reportError(error, {
+        filePath: inputPath,
+        verbose: opts.verbose,
+        showCallStack: opts.debug,
+        enhancedDebug: opts.debug
+      });
     }
-    
-    ErrorPipeline.reportError(error, {
-      filePath: inputPath,
-      verbose: opts.verbose,
-      showCallStack: opts.debug,
-      enhancedDebug: opts.debug,
-      // No need to force reporting
-      force: false
-    });
-    
     Deno.exit(1);
   }
 }

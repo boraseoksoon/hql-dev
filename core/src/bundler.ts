@@ -888,47 +888,26 @@ function handleError(
   context: string,
   options: { verbose?: boolean, skipErrorReporting?: boolean } = {}
 ): never {
-  if (options.skipErrorReporting) {
-    throw error;
-  }
-  
-  logger.error(`Error ${context}: ${error instanceof Error ? error.message : String(error)}`);
-  
-  // Create an enhanced error but only report if not already reported
-  let enhancedError;
-  
-  if (error instanceof ErrorPipeline.HQLError) {
-    enhancedError = error;
-    
-    // Only report if not already reported
-    if (!error.reported) {
-      ErrorPipeline.reportError(error, {
+  if (!options.skipErrorReporting) {
+    // Don't report the error if it's already been reported
+    if (error instanceof ErrorPipeline.HQLError && error.reported) {
+      console.error(`${context} failed, error already reported.`);
+    } else {
+      // Extract file path for better error context if possible
+      let filePath: string | undefined;
+      if (error instanceof Error && error.stack) {
+        filePath = extractFilePathFromStack(error.stack);
+      }
+      
+      // Report through the error pipeline
+      const hqlError = ErrorPipeline.enhanceError(error, { filePath });
+      ErrorPipeline.reportError(hqlError, {
         verbose: options.verbose,
-        showCallStack: true, // Always show call stack for bundler errors
-        enhancedDebug: options.verbose
+        showCallStack: options.verbose
       });
     }
-  } else {
-    // Enhance and report the error
-    enhancedError = ErrorPipeline.enhanceError(error);
-    
-    ErrorPipeline.reportError(enhancedError, {
-      verbose: options.verbose,
-      showCallStack: true, // Always show call stack for bundler errors
-      enhancedDebug: options.verbose
-    });
   }
   
-  // Stop esbuild
-  setTimeout(() => {
-    esbuild.stop();
-  }, 0);
-  
-  // Mark the error as reported before throwing it again
-  enhancedError.reported = true;
-  
-  // Use Deno.exit to stop execution rather than throwing again
-  // This prevents duplicate error reporting in higher-level code
   Deno.exit(1);
 }
 
