@@ -5,14 +5,14 @@
 ;; 1. Simple Enums - no associated values
 ;; --------------------------------------
 (enum Direction
-  (case north
+  (case north)
   (case south)
   (case east)
   (case west)
 )
 
 ;; Simple assignment
-(let heading Direction.north)
+(let heading Direction.north
 
 ;; Value equality
 (if (= heading Direction.west)

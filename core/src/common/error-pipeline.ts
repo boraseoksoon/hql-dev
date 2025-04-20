@@ -503,7 +503,10 @@ function makePathsClickable(text: string): string {
   // Replace file paths with terminal-clickable links
   // Format: file:///path/to/file.ext:line:col
   return text.replace(/([^\s"']+\.[a-zA-Z0-9]{1,5})(?::(\d+)(?::(\d+))?)?/g, (match, file, line, col) => {
-    if (file.startsWith("file://")) return match;
+    // Skip if already a file URL or if the path looks like an enum reference (e.g., Direction.north)
+    if (file.startsWith("file://") || file.match(/^[A-Z][a-zA-Z0-9]*\.[a-zA-Z0-9]+$/)) {
+      return match;
+    }
     
     try {
       // Validate file path before using realPathSync
@@ -517,6 +520,23 @@ function makePathsClickable(text: string): string {
         return `file://${file}${location}`;
       }
       
+      // Try to verify if this is actually a file path, not an enum or other reference
+      let isLikelyFile = false;
+      try {
+        // Check if the file exists on the filesystem 
+        Deno.statSync(file);
+        isLikelyFile = true;
+      } catch {
+        // If it doesn't exist, check if it looks like a file path
+        isLikelyFile = file.includes('/') || file.includes('\\') || 
+                       file.match(/\.(js|ts|hql|json|md|txt)$/i) !== null;
+      }
+      
+      // Only add file:// prefix for likely files
+      if (!isLikelyFile) {
+        return match;
+      }
+      
       const fullPath = Deno.realPathSync(file);
       const location = line ? `:${line}${col ? `:${col}` : ""}` : "";
       return `file://${fullPath}${location}`;
@@ -526,6 +546,16 @@ function makePathsClickable(text: string): string {
       if (!file.startsWith('./') && !file.startsWith('../')) {
         console.debug(`Note: Could not resolve path: ${file}`);
       }
+      
+      // Check additional patterns to avoid marking non-file paths as files
+      if (file.includes('.') && !file.includes('/') && !file.includes('\\')) {
+        // Check if this looks like a module or enum reference (MyModule.someFunction)
+        const parts = file.split('.');
+        if (parts.length === 2 && parts[0][0] === parts[0][0].toUpperCase()) {
+          return match; // Likely an enum or class reference
+        }
+      }
+      
       const location = line ? `:${line}${col ? `:${col}` : ""}` : "";
       return `file://${file}${location}`;
     }

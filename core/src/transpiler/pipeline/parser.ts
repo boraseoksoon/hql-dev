@@ -301,31 +301,40 @@ function parseList(state: ParserState): SList {
   }
   
   if (state.currentPos >= state.tokens.length) {
-    // Get the position of the last token for more accurate error reporting
-    const lastTokenPos = state.tokens.length > 0 
-      ? state.tokens[state.tokens.length - 1].position 
-      : listStartPos;
-    
     // Extract file information from the source if available
     let errorMessage = "Unclosed list";
+    
     if (state.input) {
-      // Count the number of lines to find the actual line number
+      // Get a more accurate column position
+      // First, determine the line where the unclosed list starts
       const lines = state.input.split('\n');
-      const lineCount = lines.length;
+      const lineNumber = listStartPos.line;
+      
+      // Get the line of text where the error occurred
+      const errorLine = lines[lineNumber - 1] || "";
+      
+      // For better error reporting, let's highlight the opening parenthesis or a key element
+      // Ideally we want to focus on the start of the unclosed list
+      const columnNumber = listStartPos.column;
       
       // Add more context to the error message
-      errorMessage = `Unclosed list starting at line ${listStartPos.line}. Check for a missing closing parenthesis ')'`;
+      errorMessage = `Unclosed list starting at line ${lineNumber}. Check for a missing closing parenthesis ')'`;
       
-      // Make sure we include the file path in the error location
+      // Create a more precise error position that points to the problematic open parenthesis
       throw new ParseError(errorMessage, {
-        line: lineCount,
-        column: lines[lineCount - 1]?.length || 0,
-        offset: state.input.length - 1,
+        line: lineNumber,
+        column: columnNumber,
+        offset: listStartPos.offset,
         filePath: state.filePath
       }, state.input);
+    } else {
+      // Fallback to less precise position if input source isn't available
+      const lastTokenPos = state.tokens.length > 0 
+        ? state.tokens[state.tokens.length - 1].position 
+        : listStartPos;
+        
+      throw new ParseError(errorMessage, lastTokenPos, state.input);
     }
-    
-    throw new ParseError(errorMessage, lastTokenPos, state.input);
   }
   
   state.currentPos++;
