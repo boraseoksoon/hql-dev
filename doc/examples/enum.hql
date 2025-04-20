@@ -17,7 +17,7 @@
 ;; Value equality
 (if (= heading Direction.west)
   (print "Heading west!")
-  (prit "Not heading west"))
+  (print "Not heading west"))
 
 ;; Pattern matching with cond
 (cond

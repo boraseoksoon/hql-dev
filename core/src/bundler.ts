@@ -44,13 +44,15 @@ const DEFAULT_EXTERNAL_PATTERNS = ['npm:', 'jsr:', 'node:', 'https://', 'http://
 // Interfaces
 export interface BundleOptions {
   verbose?: boolean;
-  showTiming?: boolean;
+  standalone?: boolean;
   minify?: boolean;
-  drop?: string[];
+  outDir?: string;
   tempDir?: string;
+  keepTemp?: boolean;
+  noBundle?: boolean;
   sourceDir?: string;
-  skipErrorReporting?: boolean;
-  skipErrorHandling?: boolean;
+  cleanup?: boolean;
+  debug?: boolean;
   force?: boolean;
 }
 
@@ -533,13 +535,13 @@ function bundleWithEsbuild(
         outfile: outputPath,
         format: 'esm',
         logLevel: options.verbose ? 'info' : 'silent',
-        minify: options.minify,
+        minify: options.minify !== false,
+        sourcemap: options.debug ? 'inline' : false,
         treeShaking: true,
         platform: 'neutral',
         target: ['es2020'],
         plugins: [bundlePlugin],
         allowOverwrite: true,
-        sourcemap: false,
         metafile: true,
         write: true,
         absWorkingDir: Deno.cwd(),
@@ -1057,7 +1059,6 @@ export async function transpileHqlInJs(hqlPath: string, basePath: string): Promi
         const baseName = parts[0].trim();
         
         if (baseName.includes('-')) {
-          foundHyphen = true;
           const sanitized = sanitizeIdentifier(baseName);
           if (parts.length > 1) {
             return `${sanitized} as ${parts[1].trim()}`;

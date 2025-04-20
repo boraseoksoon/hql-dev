@@ -1,6 +1,6 @@
 // File: src/transformer.ts
 // ------------------------------------------------
-// HQL transformer with inlined utilities (no external modules).
+// HQL transformer with improved source map and error handling support
 // ------------------------------------------------
 
 import { transformToIR } from "./transpiler/pipeline/hql-ast-to-hql-ir.ts";
@@ -21,6 +21,7 @@ import {
   findExternalModuleReferences,
   importSourceRegistry,
 } from "./common/import-utils.ts";
+import { registerSourceMapData } from "./common/error-source-map-registry.ts";
 
 /**
  * Timer helper to measure and log transformation phases.
@@ -53,7 +54,6 @@ class Timer {
 async function getGlobalEnvironment(verbose?: boolean) {
   let env = Environment.getGlobalEnv();
   if (!env) {
-    // initializeGlobalEnv now requires two args; pass undefined for second
     env = await Environment.initializeGlobalEnv({ verbose });
   }
   return env;
@@ -64,7 +64,6 @@ async function getGlobalEnvironment(verbose?: boolean) {
  */
 function processImports(ast: HQLNode[], env: Environment): HQLNode[] {
   const existing = new Map<string, string>(findExistingImports(ast));
-  // now pass env to findExternalModuleReferences
   const refs = findExternalModuleReferences(ast, env);
   const processed = new Set(existing.keys());
   const importNodes: HQLNode[] = [];
@@ -146,6 +145,42 @@ function convertExports(rawAst: any[]): HQLNode[] {
 export interface TransformOptions {
   verbose?: boolean;
   replMode?: boolean;
+  sourceFile?: string;  // Added for source map support
+}
+
+/**
+ * Get the original source content from a file path
+ */
+async function getOriginalSource(filePath: string): Promise<string> {
+  try {
+    if (await Deno.stat(filePath).then(stat => stat.isFile)) {
+      return await Deno.readTextFile(filePath);
+    }
+  } catch (error) {
+    logger.debug(`Failed to read source file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  
+  // Try to find in example directories if direct path fails
+  try {
+    const fileName = filePath.split('/').pop() || '';
+    
+    // Try common example paths
+    for (const dir of ['doc/examples', '../doc/examples', 'examples']) {
+      const testPath = `${dir}/${fileName}`;
+      try {
+        if (await Deno.stat(testPath).then(stat => stat.isFile)) {
+          logger.debug(`Found source file at ${testPath}`);
+          return await Deno.readTextFile(testPath);
+        }
+      } catch {
+        // Continue to next path
+      }
+    }
+  } catch (error) {
+    logger.debug(`Failed to find source file in alternative paths: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  
+  return "";
 }
 
 /**
@@ -180,6 +215,18 @@ export async function transformAST(
     const converted = convertExports(withImports as any);
     timer.phase("AST conversion");
 
+    // Determine source file path - prioritize options.sourceFile if provided
+    const sourceFilePath = options.sourceFile || 
+                          (currentDir.endsWith('.hql') ? currentDir : `${currentDir}/input.hql`);
+    
+    // Fetch original source content for source map generation
+    const originalSource = await getOriginalSource(sourceFilePath);
+    if (originalSource) {
+      logger.debug(`Retrieved original source for ${sourceFilePath}: ${originalSource.length} bytes`);
+    } else {
+      logger.debug(`No original source found for ${sourceFilePath}`);
+    }
+
     // AST -> IR
     let ir;
     try {
@@ -194,11 +241,32 @@ export async function transformAST(
       );
     }
 
-    // IR -> TS code
+    // IR -> TS code (with source map generation)
     let tsCode;
+    let sourceMap;
     try {
-      tsCode = generateTypeScript(ir);
+      const tsResult = await generateTypeScript(ir, {
+        sourceFilePath: sourceFilePath,
+        generateSourceMap: true,
+        inlineSourceMap: true,
+        originalSource: originalSource
+      });
+      
+      tsCode = tsResult.code;
+      sourceMap = tsResult.sourceMap;
       timer.phase("TS code generation");
+      
+      // Register source map data with the error registry for accurate error reporting
+      if (sourceMap) {
+        await registerSourceMapData(
+          sourceFilePath,  // The file path used in error stacks
+          sourceFilePath,  // Original source file path
+          sourceMap,       // Source map content
+          originalSource   // Original source content
+        );
+        
+        logger.debug(`Registered source map for ${sourceFilePath}`);
+      }
     } catch (err) {
       throw new CodeGenError(
         `TS generation failed: ${err instanceof Error ? err.message : String(err)}`,

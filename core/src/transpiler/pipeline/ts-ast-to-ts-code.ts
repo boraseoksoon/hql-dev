@@ -5,12 +5,37 @@ import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { CodeGenError, createErrorReport } from "../error/errors.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { perform } from "../error/index.ts";
+import { addSourceMappings } from "./source-map-utils.ts";
+
+
+/**
+ * The output of TypeScript code generation, including code and optional source map.
+ */
+export interface TypeScriptOutput {
+  code: string;
+  sourceMap?: string;
+}
+
 
 /**
  * Generate TypeScript code from HQL IR using the TypeScript Compiler API.
  * Enhanced with better error handling and diagnostics using perform utility.
  */
-export function generateTypeScript(ir: IR.IRProgram): string {
+/**
+ * Generate TypeScript code from HQL IR using the TypeScript Compiler API.
+ * Enhanced with better error handling, diagnostics, and source map generation.
+ * @param ir - The IR program to convert to TypeScript
+ * @param options - Generation options including source file path and source map generation
+ */
+export async function generateTypeScript(
+  ir: IR.IRProgram,
+  options: {
+    sourceFilePath?: string;
+    generateSourceMap?: boolean;
+    inlineSourceMap?: boolean;
+    originalSource?: string;
+  } = {}
+): Promise<TypeScriptOutput> {
   try {
     logger.debug(
       `Starting TypeScript code generation from IR with ${ir.body.length} nodes`,
@@ -29,7 +54,7 @@ export function generateTypeScript(ir: IR.IRProgram): string {
     logger.debug("Converting HQL IR to TypeScript AST");
     const startTime = performance.now();
 
-    const tsAST = perform(
+    const tsAST = await perform(
       () => convertHqlIRToTypeScript(ir),
       "IR to TS AST conversion",
       CodeGenError,
@@ -56,7 +81,7 @@ export function generateTypeScript(ir: IR.IRProgram): string {
       () => {
         // Create an empty source file for printing
         const resultFile = ts.createSourceFile(
-          "output.ts",
+          options.sourceFilePath || "output.ts",
           "",
           ts.ScriptTarget.Latest,
           false,
@@ -78,7 +103,62 @@ export function generateTypeScript(ir: IR.IRProgram): string {
       }ms with ${code.length} characters`,
     );
 
-    return code;
+    let sourceMap: string | undefined = undefined;
+if (options.generateSourceMap) {
+  try {
+    // Use the SourceMapGenerator from the source-map library
+    const { SourceMapGenerator } = await import("https://esm.sh/source-map@0.7.3");
+    const map = new SourceMapGenerator({
+      file: options.sourceFilePath || "output.ts",
+    });
+    
+    // Use the more robust source map utility to create detailed mappings
+    // This uses the AST structure to create more accurate mappings
+    if (options.originalSource) {
+      map.setSourceContent(options.sourceFilePath || "input.hql", options.originalSource);
+      
+      // Use the addSourceMappings utility function for more accurate mappings
+      // This maps IR nodes to generated TS nodes to maintain position information
+      const sourcePath = options.sourceFilePath || "input.hql";
+      addSourceMappings(
+        map,
+        ir,
+        tsAST,
+        sourcePath,
+        code
+      );
+    } else {
+      // Fallback to simple line mapping if no original source provided
+      const codeLines = code.split("\n");
+      for (let i = 0; i < codeLines.length; i++) {
+        map.addMapping({
+          generated: { line: i + 1, column: 0 },
+          original: { line: i + 1, column: 0 },
+          source: options.sourceFilePath || "input.hql",
+        });
+      }
+    }
+    
+    // Generate the source map JSON string
+    const sourceMapJson = map.toString();
+    
+    // Keep raw JSON for the registry
+    sourceMap = sourceMapJson;
+    
+    // If inline source map requested, append the base64 inlined version to the code
+    if (options.inlineSourceMap) {
+      const base64Map = btoa(sourceMapJson);
+      const inlineComment = `//# sourceMappingURL=data:application/json;base64,${base64Map}`;
+      // Create final code with source map comment
+      const codeWithSourceMap = code + '\n' + inlineComment + '\n';
+      // Return the code with source map included
+      return { code: codeWithSourceMap, sourceMap };
+    }
+  } catch (smError) {
+    logger.error(`Source map generation failed: ${smError instanceof Error ? smError.message : String(smError)}`);
+  }
+}
+return { code, sourceMap };
   } catch (error) {
     // Create a comprehensive error report
     const errorReport = createErrorReport(
@@ -119,8 +199,14 @@ export function generateTypeScript(ir: IR.IRProgram): string {
  * Converts HQL IR directly to the official TypeScript AST.
  * Enhanced with better error handling and diagnostics using perform utility.
  */
-export function convertHqlIRToTypeScript(program: IR.IRProgram): ts.SourceFile {
-  return perform(
+/**
+ * Converts HQL IR directly to the official TypeScript AST.
+ * Enhanced with better error handling and diagnostics using perform utility.
+ * @param program - The IR program to convert
+ * @returns TypeScript SourceFile
+ */
+export async function convertHqlIRToTypeScript(program: IR.IRProgram): Promise<ts.SourceFile> {
+  return await perform(
     () => {
       // Validate program input
       if (!program || program.type !== IR.IRNodeType.Program) {
