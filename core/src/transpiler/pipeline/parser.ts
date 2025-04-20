@@ -43,6 +43,7 @@ interface SourcePosition {
   line: number;
   column: number;
   offset: number;
+  filePath?: string;
 }
 
 const TOKEN_PATTERNS = {
@@ -242,7 +243,7 @@ function parseList(state: ParserState): SList {
           state.input
         );
       }
-    } 
+    }
     // Special handling for function type expressions like (-> [String])
     else if (fnKeywordFound && 
              state.tokens[state.currentPos].type === TokenType.Symbol &&
@@ -297,8 +298,31 @@ function parseList(state: ParserState): SList {
     }
   }
   
-  if (state.currentPos >= state.tokens.length)
-    throw new ParseError("Unclosed list", listStartPos, state.input);
+  if (state.currentPos >= state.tokens.length) {
+    // Get the position of the last token for more accurate error reporting
+    const lastTokenPos = state.tokens.length > 0 
+      ? state.tokens[state.tokens.length - 1].position 
+      : listStartPos;
+    
+    // Extract file information from the source if available
+    let errorMessage = "Unclosed list";
+    if (state.input) {
+      // Count the number of lines to find the actual line number
+      const lines = state.input.split('\n');
+      const lineCount = lines.length;
+      
+      // Add more context to the error message
+      errorMessage = `Unclosed list starting at line ${listStartPos.line}. Check for a missing closing parenthesis ')'`;
+      
+      throw new ParseError(errorMessage, {
+        line: lineCount,
+        column: lines[lineCount - 1]?.length || 0,
+        offset: state.input.length - 1
+      }, state.input);
+    }
+    
+    throw new ParseError(errorMessage, lastTokenPos, state.input);
+  }
   
   state.currentPos++;
   

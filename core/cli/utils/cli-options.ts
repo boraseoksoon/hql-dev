@@ -7,6 +7,7 @@ export interface CliOptions {
   verbose?: boolean;
   showTiming?: boolean;
   force?: boolean;
+  debug?: boolean;
 }
 
 /**
@@ -29,6 +30,7 @@ export function parseCliOptions(args: string[]): CliOptions {
     verbose: args.includes("--verbose") || args.includes("-v"),
     showTiming: args.includes("--time"),
     force: args.includes("--force"),
+    debug: args.includes("--debug"),
   };
 }
 

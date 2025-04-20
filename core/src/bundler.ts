@@ -35,6 +35,7 @@ import {
   registerImportMapping,
   createTempDirIfNeeded,
 } from "./common/temp-file-tracker.ts";
+import { ErrorPipeline, ImportError } from "./common/error-pipeline.ts";
 
 // Constants
 const MAX_RETRIES = 3;
@@ -60,12 +61,18 @@ interface ImportInfo {
 }
 
 // Main API function
-export function transpileCLI(
+export async function transpileCLI(
   inputPath: string,
   outputPath?: string,
-  options: BundleOptions = {},
+  options: {
+    verbose?: boolean;
+    showTiming?: boolean;
+    force?: boolean;
+    skipErrorReporting?: boolean;
+    skipPrimaryErrorReporting?: boolean;
+  } = {}
 ): Promise<string> {
-  return performAsync(async () => {
+  try {
     const startTime = performance.now();
     configureLogger(options);
     await initializeRuntime();
@@ -96,12 +103,32 @@ export function transpileCLI(
       
       return outPath;
     } catch (error) {
-      return handleError(error, `CLI transpilation failed for ${inputPath}`, 
-        { inputPath, outputPath: outPath }, 
-        { verbose: options.verbose, skipErrorReporting: options.skipErrorReporting }
-      );
+      // Allow error to propagate upward without reporting if skipPrimaryErrorReporting is set
+      if (options.skipPrimaryErrorReporting) {
+        throw error;
+      }
+      
+      if (!options.skipErrorReporting) {
+        // Mark the error as reported so it won't be reported again
+        if (error instanceof ErrorPipeline.HQLError) {
+          error.reported = true;
+        }
+        
+        handleError(error, `Processing ${resolvedInputPath}`, options);
+      }
+      throw error;
     }
-  }, options.skipErrorReporting ? undefined : { context: `CLI transpilation failed for ${inputPath}` });
+  } catch (error) {
+    if (!options.skipErrorReporting) {
+      // Mark the error as reported so it won't be reported again
+      if (error instanceof ErrorPipeline.HQLError) {
+        error.reported = true;
+      }
+      
+      handleError(error, `Transpiling ${inputPath}`, options);
+    }
+    throw error;
+  }
 }
 
 export async function processHqlImportsInJs(
@@ -215,49 +242,20 @@ async function processHqlImportsInTs(
   }
 }
 
-// Helper functions
-async function writeOutput(
-  code: string,
-  outputPath: string,
-): Promise<void> {
-  try {
-    const outputDir = dirname(outputPath);
-    await ensureDir(outputDir);
-    
-    // Get file extension for caching
-    const ext = path.extname(outputPath);
-    
-    // Write to cache
-    const cachedPath = await writeToCachedPath(
-      outputPath, 
-      code, 
-      ext,
-      { preserveRelative: true }
-    );
-    
-    logger.debug(`Written output to cache: ${cachedPath}`);
-    
-    // Register for final output
-    registerExplicitOutput(outputPath);
-    
-    if (await exists(outputPath)) {
-      logger.warn(`File '${outputPath}' already exists. Will be overwritten when cache is cleaned up.`);
-    }
-  } catch (error) {
-    throw new TranspilerError(
-      `Failed to write output to '${outputPath}': ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-}
-
 // Main processing function
 function processEntryFile(
   inputPath: string,
   outputPath: string,
   options: BundleOptions = {},
 ): Promise<string> {
+  // Try to read the source file first to have it available for error reporting
+  try {
+    const source = Deno.readTextFileSync(inputPath);
+    ErrorPipeline.registerSourceFile(inputPath, source);
+  } catch (err) {
+    // If we can't read the file, continue - the error will be caught later
+  }
+  
   return performAsync(async () => {
     const resolvedInputPath = resolve(inputPath);
     logger.debug(`Processing entry file: ${resolvedInputPath}`);
@@ -275,7 +273,10 @@ function processEntryFile(
         path.extname(inputPath) || "no extension",
       );
     }
-  }, { context: `Failed to process entry file ${inputPath}` });
+  }, {
+    context: `Failed to process entry file ${inputPath}`,
+    filePath: inputPath
+  });
 }
 
 async function processHqlEntryFile(
@@ -585,10 +586,7 @@ function bundleWithEsbuild(
       
       return outputPath;
     } catch (error) {
-      handleError(error, "Bundling failed", 
-        { entryPath, outputPath, attempts: MAX_RETRIES },
-        { verbose: options.verbose }
-      );
+      handleError(error, "Bundling failed", { verbose: true });
       throw error;
     } finally {
       await cleanupAfterBundling(tempDir, cleanupTemp);
@@ -886,32 +884,41 @@ async function transpileHqlFile(
  * Unified error handler for transpilation and bundling errors
  */
 function handleError(
-  error: unknown, 
+  error: unknown,
   context: string,
-  details: Record<string, any> = {}, 
   options: { verbose?: boolean, skipErrorReporting?: boolean } = {}
 ): never {
-  if (options.skipErrorReporting) {
-    throw error;
+  if (!options.skipErrorReporting) {
+    // Don't report the error if it's already been reported
+    if (error instanceof ErrorPipeline.HQLError && error.reported) {
+      console.error(`${context} failed, error already reported.`);
+    } else {
+      // Extract file path for better error context if possible
+      let filePath: string | undefined;
+      if (error instanceof Error && error.stack) {
+        filePath = extractFilePathFromStack(error.stack);
+      }
+      
+      // Report through the error pipeline
+      const hqlError = ErrorPipeline.enhanceError(error, { filePath });
+      ErrorPipeline.reportError(hqlError, {
+        verbose: options.verbose,
+        showCallStack: options.verbose
+      });
+    }
   }
   
-  const isTranspilerError = error instanceof TranspilerError;
-  const errorMsg = error instanceof Error ? error.message : String(error);
+  Deno.exit(1);
+}
+
+/**
+ * Extract file path from stack trace
+ */
+function extractFilePathFromStack(stack?: string): string | undefined {
+  if (!stack) return undefined;
   
-  if (!isTranspilerError && options.verbose) {
-    const errorReport = createErrorReport(
-      error instanceof Error ? error : new Error(errorMsg),
-      context,
-      details
-    );
-    
-    console.error(`Detailed error report for ${context}:`);
-    console.error(errorReport);
-  } else {
-    logger.error(`${context}: ${errorMsg}`);
-  }
-  
-  throw error;
+  const hqlFileMatch = stack.match(/([^"\s()]+\.hql):/);
+  return hqlFileMatch ? hqlFileMatch[1] : undefined;
 }
 
 /**
@@ -1144,4 +1151,41 @@ function checkForCircularDependency(
   }
   
   return false;
+}
+
+// Helper functions
+async function writeOutput(
+  code: string,
+  outputPath: string,
+): Promise<void> {
+  try {
+    const outputDir = dirname(outputPath);
+    await ensureDir(outputDir);
+    
+    // Get file extension for caching
+    const ext = path.extname(outputPath);
+    
+    // Write to cache
+    const cachedPath = await writeToCachedPath(
+      outputPath, 
+      code, 
+      ext,
+      { preserveRelative: true }
+    );
+    
+    logger.debug(`Written output to cache: ${cachedPath}`);
+    
+    // Register for final output
+    registerExplicitOutput(outputPath);
+    
+    if (await exists(outputPath)) {
+      logger.warn(`File '${outputPath}' already exists. Will be overwritten when cache is cleaned up.`);
+    }
+  } catch (error) {
+    throw new TranspilerError(
+      `Failed to write output to '${outputPath}': ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }

@@ -15,6 +15,7 @@ import {
   CliOptions
 } from "./utils/cli-options.ts";
 import { registerSourceFile, report } from "../src/transpiler/error/errors.ts";
+import { ErrorPipeline } from "../src/common/error-pipeline.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
 import { basename, dirname } from "../src/platform/platform.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
@@ -87,10 +88,10 @@ async function readInputFile(inputPath: string): Promise<string> {
   logger.startTiming("run", "File Reading");
   try {
     const source = await Deno.readTextFile(inputPath);
-    registerSourceFile(inputPath, source);
+    ErrorPipeline.registerSourceFile(inputPath, source);
     return source;
   } catch (e) {
-    console.error(report(e, { filePath: inputPath }));
+    ErrorPipeline.reportError(e, { filePath: inputPath });
     Deno.exit(1);
   } finally {
     logger.endTiming("run", "File Reading");
@@ -136,8 +137,6 @@ async function transpileAndExecute(
     await transpileCLI(inputPath, jsOutputPath, {
       verbose: options.verbose,
       showTiming: options.showTiming,
-      tempDir: runDir,
-      sourceDir: dirname(inputPath),
       skipErrorReporting: false,
       force: true, // Always regenerate to ensure latest code is used
     });
@@ -166,18 +165,25 @@ async function transpileAndExecute(
         logger.debug("Module imported successfully");
       }
     } catch (error) {
-      // Format and report execution errors
-      report(error, {
+      // Use the new error pipeline for execution errors
+      ErrorPipeline.reportError(error, {
         source,
         filePath: inputPath,
+        verbose: options.verbose,
+        showCallStack: options.verbose
       });
     }
   } catch (error) {
-    // Format and report transpilation errors
-    report(error, {
-      source,
-      filePath: inputPath,
-    });
+    // Use the new error pipeline for transpilation errors
+    // Only report if the error hasn't already been reported
+    if (!(error instanceof ErrorPipeline.HQLError && error.reported)) {
+      ErrorPipeline.reportError(error, {
+        source,
+        filePath: inputPath,
+        verbose: options.verbose,
+        showCallStack: options.verbose
+      });
+    }
   } finally {
     logger.debug("Cleaning up temporary files");
     await cleanupAllTempFiles();

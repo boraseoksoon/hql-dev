@@ -1,5 +1,6 @@
 import { runHqlFile } from "./run.ts";
 import { parseCliOptions, CliOptions } from "./utils/cli-options.ts";
+import { ErrorPipeline } from "../src/common/error-pipeline.ts";
 
 // Version information
 const VERSION = "0.1.0";
@@ -22,6 +23,7 @@ OPTIONS:
   --version                 Show version
   --time                    Show performance timing information
   --verbose                 Enable detailed logging
+  --debug                   Show detailed error information and call stacks
   --log <namespaces>        Filter log output to specific namespaces
 
 EXAMPLES:
@@ -108,6 +110,12 @@ async function main() {
   // Parse CLI options
   const cliOptions = parseCliOptions(args);
   
+  // Set debug mode if enabled
+  if (args.includes("--debug")) {
+    cliOptions.debug = true;
+    ErrorPipeline.setDebugMode(true);
+  }
+  
   // Validate command and get target
   const { command, target } = validateCommand(args);
 
@@ -121,7 +129,14 @@ async function main() {
       await executeReplCommand(cliOptions);
     }
   } catch (error) {
-    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    // Use the new error pipeline for better error reporting
+    // Only report if the error hasn't already been reported
+    if (!(error instanceof ErrorPipeline.HQLError && error.reported)) {
+      ErrorPipeline.reportError(error, {
+        verbose: cliOptions.verbose,
+        showCallStack: cliOptions.debug
+      });
+    }
     Deno.exit(1);
   }
 }

@@ -23,6 +23,7 @@ import {
   getSuggestion, 
 } from "./error/index.ts";
 import { globalLogger as logger } from "../logger.ts";
+import { ErrorPipeline } from "../common/error-pipeline.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
@@ -190,30 +191,23 @@ function handleProcessError(
   logger: Logger,
 ): never {
   if (error instanceof Error) {
-    // Format the error with enhanced details
-    const formattedError = formatError(error, { 
+    // Use the new error pipeline
+    const enhancedError = ErrorPipeline.enhanceError(error, {
       filePath: options.baseDir,
-      useColors: true,
-      includeStack: options.verbose 
+      source: options.baseDir ? ErrorPipeline.getSourceFile(options.baseDir) : undefined
     });
     
-    // Log the enhanced error message
-    logger.error(`❌ Error processing HQL: ${formattedError}`);
+    ErrorPipeline.reportError(enhancedError, {
+      verbose: options.verbose,
+      showCallStack: options.verbose
+    });
     
-    // Add suggestion if verbose
-    if (options.verbose) {
-      const suggestion = getSuggestion(error);
-      logger.info(`Suggestion: ${suggestion}`);
-    }
-    
-    // Rethrow the original error
-    throw error;
-  } else {
-    // For non-Error objects, convert to TranspilerError
-    const genericError = new TranspilerError(`Error processing HQL: ${String(error)}`);
-    logger.error(`❌ ${genericError.message}`);
-    throw genericError;
+    throw enhancedError;
   }
+  
+  // For non-Error objects
+  logger.error(`Unknown error: ${String(error)}`);
+  throw error instanceof Error ? error : new Error(String(error));
 }
 
 export async function loadSystemMacros(env: Environment, options: ProcessOptions): Promise<void> {

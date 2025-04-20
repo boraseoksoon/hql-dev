@@ -14,6 +14,7 @@ import { RUNTIME_FUNCTIONS } from "@transpiler/runtime/runtime.ts";
 import { registerSourceFile, withErrorHandling } from "../../core/src/transpiler/error/index.ts";
 import { report } from "@transpiler/error/errors.ts";
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import { ErrorPipeline } from "../../core/src/common/error-pipeline.ts";
 
 import { Logger, globalLogger as logger } from "@core/logger.ts";
 import { formatErrorMessage } from "@core/common/common-utils.ts";
@@ -131,7 +132,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
           throw error;
         }
       },
-      { source: input, filePath: "REPL", context: "REPL parsing" }
+      { source: input, filePath: "REPL" }
     )();
   }
   
@@ -141,7 +142,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
    */
   async evaluate(input: string, options: REPLEvalOptions = {}): Promise<REPLEvalResult> {
     // Register the input for error context
-    registerSourceFile("REPL", input);
+    ErrorPipeline.registerSourceFile("REPL", input);
     
     const log = (message: string) => {
       if (this.logger.isVerbose) this.logger.debug(message);
@@ -198,7 +199,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
       currentTime = performance.now();
       const sexps = await withErrorHandling(
         () => this.parseLine(input),
-        { source: input, filePath: "REPL", context: "REPL parsing" }
+        { source: input, filePath: "REPL" }
       )();
       metrics.parseTimeMs = performance.now() - currentTime;
       log(`Parsed ${sexps.length} expressions`);
@@ -207,7 +208,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
       currentTime = performance.now();
       const transformedSexps = await withErrorHandling(
         () => transformSyntax(sexps, { verbose: options.verbose }),
-        { source: input, filePath: "REPL", context: "REPL syntax transformation" }
+        { source: input, filePath: "REPL" }
       )();
       metrics.syntaxTransformTimeMs = performance.now() - currentTime;
       log(`Transformed to ${transformedSexps.length} expressions`);
@@ -221,7 +222,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
             baseDir: options.baseDir || this.baseDir
           });
         },
-        { source: input, filePath: "REPL", context: "REPL import processing" }
+        { source: input, filePath: "REPL" }
       )();
       metrics.importProcessingTimeMs = performance.now() - currentTime;
       
@@ -231,7 +232,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
         () => expandMacros(transformedSexps, this.replEnv.hqlEnv, {
           verbose: options.verbose,
         }),
-        { source: input, filePath: "REPL", context: "REPL macro expansion" }
+        { source: input, filePath: "REPL" }
       )();
       metrics.macroExpansionTimeMs = performance.now() - currentTime;
       log(`Expanded to ${expandedSexps.length} expressions`);
@@ -240,7 +241,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
       currentTime = performance.now();
       const ast = await withErrorHandling(
         () => convertToHqlAst(expandedSexps, { verbose: options.verbose }),
-        { source: input, filePath: "REPL", context: "REPL AST conversion" }
+        { source: input, filePath: "REPL" }
       )();
       metrics.astConversionTimeMs = performance.now() - currentTime;
       log("AST conversion completed");
@@ -252,7 +253,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
           verbose: options.verbose,
           replMode: true
         }),
-        { source: input, filePath: "REPL", context: "REPL JS transformation" }
+        { source: input, filePath: "REPL" }
       )();
       metrics.codeGenerationTimeMs = performance.now() - currentTime;
       log("JavaScript generation completed");
@@ -265,7 +266,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
       currentTime = performance.now();
       const value = await withErrorHandling(
         () => this.evaluateJs(preparedJs),
-        { source: preparedJs, filePath: "REPL JS", context: "REPL JS evaluation" }
+        { source: preparedJs, filePath: "REPL JS" }
       )();
       metrics.evaluationTimeMs = performance.now() - currentTime;
       log("Evaluation completed");
@@ -289,15 +290,29 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
       this.replEnv.hqlEnv.setCurrentFile(null);
       log(`Evaluation error: ${formatErrorMessage(error)}`);
       
-      if (error instanceof Error) {
-        // Use the common error reporting mechanism
-        const enhancedError = report(error, { 
-          source: input, 
-          filePath: "REPL" 
-        });
-        throw enhancedError;
-      }
-      throw error;
+      // Use the new error pipeline
+      const enhancedError = ErrorPipeline.enhanceError(error, {
+        source: input,
+        filePath: "REPL"
+      });
+      
+      // Report the error with appropriate verbosity
+      ErrorPipeline.reportError(enhancedError, {
+        verbose: options.verbose,
+        makePathsClickable: true,
+        showCallStack: options.verbose
+      });
+      
+      // Convert the error to a standard result
+      return {
+        value: `Error: ${enhancedError.message}`,
+        jsCode: `// Error: ${enhancedError.message}`,
+        parsedExpressions: [],
+        expandedExpressions: [],
+        executionTimeMs: performance.now() - startTime
+      };
+    } finally {
+      // ... existing code ...
     }
   }
 
