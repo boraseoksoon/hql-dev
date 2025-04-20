@@ -201,7 +201,12 @@ export async function runHqlFile(
   filename: string, options: CliOptions = {}
 ): Promise<void> {
   applyCliOptions(options);
-  const args = [filename, ...(options.verbose ? ["--verbose"] : []), ...(options.showTiming ? ["--time"] : [])];
+  const args = [
+    filename, 
+    ...(options.verbose ? ["--verbose"] : []), 
+    ...(options.showTiming ? ["--time"] : []),
+    ...(options.debug ? ["--debug"] : [])
+  ];
   await withTemporaryDenoArgs(args, async () => { await run(); });
 }
 
@@ -248,8 +253,9 @@ export async function run(args: string[] = Deno.args): Promise<number> {
   if (args.includes("--debug")) {
     const { setDebugMode } = await import("../src/common/error-pipeline.ts");
     setDebugMode(true);
+    // This ensures all debug flags are set consistently
     cliOptions.debug = true;
-    console.log("Debug mode enabled - showing extended error information");
+    cliOptions.verbose = true;
   }
 
   const { inputPath, exprDir } = await getInputPath(positional[0]);

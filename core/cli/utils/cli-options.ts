@@ -39,10 +39,22 @@ export function parseCliOptions(args: string[]): CliOptions {
  */
 export function applyCliOptions(options: CliOptions): void {
   // Set verbose logging
-  if (options.verbose) {
+  if (options.verbose || options.debug) {
     globalLogger.setEnabled(true);
     Deno.env.set("HQL_DEBUG", "1");
     globalLogger.debug("Verbose logging enabled");
+  }
+  
+  // Set debug mode
+  if (options.debug) {
+    // Import and use ErrorPipeline.setDebugMode
+    import("../../src/common/error-pipeline.ts").then(({ setDebugMode }) => {
+      setDebugMode(true);
+      globalLogger.debug("Debug mode enabled - showing extended error information");
+    }).catch(() => {
+      // Fallback if import fails
+      globalLogger.debug("Failed to set debug mode - error pipeline not available");
+    });
   }
   
   // Set timing options

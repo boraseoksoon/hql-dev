@@ -111,7 +111,30 @@ export class HQLError extends Error {
     super(message);
     this.name = options.errorType || "HQLError";
     this.errorType = options.errorType || "HQLError";
-    this.sourceLocation = options.sourceLocation || {};
+    
+    // Normalize source location to ensure consistent error reporting
+    const srcLocation = options.sourceLocation || {};
+    
+    // Fix line number if needed - off-by-one errors are common in parsers
+    // Often parser errors show line as the start of the expression, not where the error actually is
+    if (srcLocation.line && srcLocation.source) {
+      const lines = srcLocation.source.split('\n');
+      // If line is potentially incorrect (e.g., missing parenthesis usually shows up at line+1)
+      if (message.includes("Missing closing parenthesis") && 
+          srcLocation.line < lines.length) {
+        // For missing parenthesis, the actual error is typically at the end of the block
+        // So use the current line or the next line, whichever has more content
+        const currentLineContent = lines[srcLocation.line - 1] || '';
+        const nextLineContent = lines[srcLocation.line] || '';
+        
+        // If next line has more content suggesting it's part of the expression, use it
+        if (nextLineContent.trim().length > currentLineContent.trim().length) {
+          srcLocation.line += 1;
+        }
+      }
+    }
+    
+    this.sourceLocation = srcLocation;
     this.originalError = options.originalError;
     
     // Try to load source and context
@@ -243,84 +266,46 @@ export class ParseError extends HQLError {
       originalError?: Error;
     }
   ) {
+    // Extract the full file path if only a directory was provided
+    let filePath = options.filePath;
+    if (filePath && !filePath.includes('.') && options.source) {
+      // Try to extract actual filename from the source or other context
+      // This helps with cases where directory path is provided instead of file path
+      const originalError = options.originalError;
+      if (originalError && (originalError as any).filePath && (originalError as any).filePath.includes('.')) {
+        filePath = (originalError as any).filePath;
+      }
+    }
+    
     super(message, {
       errorType: "Parse Error",
       sourceLocation: {
         line: options.line,
         column: options.column,
-        filePath: options.filePath,
+        filePath,
         source: options.source,
       },
       originalError: options.originalError,
     });
   }
-  
+
   public override getSuggestion(): string {
-    const message = this.message.toLowerCase();
+    const msg = this.message.toLowerCase();
     
-    // Handle export statement errors
-    if (message.includes("missing closing parenthesis in export statement") ||
-        (message.includes("export") && message.includes("missing closing parenthesis"))) {
-      return "Add a closing parenthesis ')' to the end of your export statement.";
+    if (msg.includes("unexpected end of input") || msg.includes("missing closing")) {
+      return "Check for unclosed parentheses (), brackets [], or braces {}.";
     }
     
-    // Check if it's an export-related error from the error message
-    if (message.includes("export") && message.includes("missing closing parenthesis")) {
-      return "Add a closing parenthesis ')' to the end of your export statement.";
+    if (msg.includes("unexpected token")) {
+      return "Check syntax around this location. You might have an extra or misplaced character.";
     }
     
-    // Check if it's an import-related error from the error message
-    if (message.includes("import") && message.includes("missing closing parenthesis")) {
-      return "Add a closing parenthesis ')' to the end of your import statement.";
+    // Add specific suggestions for enum syntax errors
+    if (msg.includes("enum") && msg.includes("parenthesis")) {
+      return "Ensure your enum declaration has matching parentheses. Format: (enum NAME (VALUE1 VALUE2 ...))";
     }
     
-    // Provide more specific suggestions based on error message
-    if (message.includes("unclosed list")) {
-      // Check if we can identify context from the source code
-      if (this.sourceLocation.source && this.sourceLocation.line) {
-        const lines = this.sourceLocation.source.split('\n');
-        const lineIndex = this.sourceLocation.line - 1;
-        
-        if (lineIndex >= 0 && lineIndex < lines.length) {
-          const currentLine = lines[lineIndex];
-          
-          // Check if it's an export statement
-          if (currentLine.trim().startsWith('(export')) {
-            return "Add a closing parenthesis ')' to the end of your export statement.";
-          }
-          
-          // Check if it's an import statement
-          if (currentLine.trim().startsWith('(import')) {
-            return "Add a closing parenthesis ')' to the end of your import statement.";
-          }
-          
-          // Check if it's a function declaration
-          if (currentLine.trim().startsWith('(fn') || currentLine.trim().startsWith('(defn')) {
-            return "Add a closing parenthesis ')' to complete your function declaration.";
-          }
-        }
-      }
-      
-      return "Check for missing closing parenthesis ')' in your code.";
-    } else if (message.includes("unclosed vector")) {
-      return "Check for missing closing bracket ']' in your code.";
-    } else if (message.includes("unclosed map")) {
-      return "Check for missing closing brace '}' in your code.";
-    } else if (message.includes("unclosed set")) {
-      return "Check for missing closing bracket ']' after '#' in your set literal.";
-    } else if (message.includes("unexpected ')'")) {
-      return "There is an extra closing parenthesis ')' that doesn't match with an opening one.";
-    } else if (message.includes("unexpected ']'")) {
-      return "There is an extra closing bracket ']' that doesn't match with an opening one.";
-    } else if (message.includes("unexpected '}'")) {
-      return "There is an extra closing brace '}' that doesn't match with an opening one.";
-    } else if (message.includes("expected ':'")) {
-      return "In map literals, each key must be followed by a colon and a value.";
-    } else if (message.includes("unterminated string")) {
-      return "Check for a missing closing quote in your string.";
-    }
-    
-    return "Check your HQL syntax. Look for mismatched brackets, unclosed strings, or invalid expressions.";
+    return "Check syntax around this location.";
   }
 }
 
@@ -580,36 +565,70 @@ export function enhanceError(
   if (error instanceof HQLError) {
     const hqlError = error;
     
-    // Merge source locations, preferring the provided options
+    // Merge source locations, preserving the most specific location
+    // Only override existing values if the new ones are more specific
     const sourceLocation: SourceLocation = {
       ...hqlError.sourceLocation,
-      filePath: options.filePath || hqlError.sourceLocation.filePath,
-      line: options.line || hqlError.sourceLocation.line,
-      column: options.column || hqlError.sourceLocation.column,
-      source: options.source || hqlError.sourceLocation.source,
     };
     
-    // Create a new instance with the merged options
-    const enhanced = new HQLError(hqlError.message, {
-      errorType: hqlError.errorType,
-      sourceLocation,
-      originalError: hqlError.originalError,
-    });
+    // Only update filePath if it's missing OR provided option has extension and current one doesn't
+    if (!sourceLocation.filePath || 
+        (options.filePath && 
+         options.filePath.includes('.') && 
+         !sourceLocation.filePath.includes('.'))) {
+      sourceLocation.filePath = options.filePath;
+    }
     
-    // Preserve reported flag
-    enhanced.reported = hqlError.reported;
-    enhanced.contextLines = hqlError.contextLines;
+    // Only update line if it's not set or the new value looks more specific
+    if (options.line !== undefined && 
+        (sourceLocation.line === undefined || 
+         // If filePath was updated, we should also update line/column
+         sourceLocation.filePath === options.filePath)) {
+      sourceLocation.line = options.line;
+    }
     
-    return enhanced;
+    // Only update column if it's not set or we updated the line
+    if (options.column !== undefined && 
+        (sourceLocation.column === undefined || 
+         sourceLocation.line === options.line)) {
+      sourceLocation.column = options.column;
+    }
+    
+    // Only override source if it's not already set
+    if (!sourceLocation.source && options.source) {
+      sourceLocation.source = options.source;
+    }
+    
+    // Create a new instance with the merged options if location changed
+    if (JSON.stringify(sourceLocation) !== JSON.stringify(hqlError.sourceLocation)) {
+      const enhanced = new HQLError(hqlError.message, {
+        errorType: hqlError.errorType,
+        sourceLocation,
+        originalError: hqlError.originalError || (hqlError === error ? undefined : error as Error),
+      });
+      
+      // Preserve reported flag and context lines
+      enhanced.reported = hqlError.reported;
+      enhanced.contextLines = hqlError.contextLines;
+      
+      return enhanced;
+    }
+    
+    return hqlError;
   }
   
   // Convert non-Error objects to Error
   const errorObj = error instanceof Error ? error : new Error(String(error));
   
   // Extract source location info from stack trace if not provided
+  const extractedLocation = extractLocationFromError(errorObj);
+  
+  // Merge the extracted location with provided options, preferring provided options
   const sourceLocation: SourceLocation = {
-    ...extractLocationFromError(errorObj),
-    ...options,
+    filePath: options.filePath || extractedLocation.filePath,
+    line: options.line || extractedLocation.line,
+    column: options.column || extractedLocation.column,
+    source: options.source || extractedLocation.source,
   };
   
   // Try to classify the error by examining message patterns
@@ -951,6 +970,22 @@ export function reportError(
   // Skip if already reported and not forced
   if (hqlError.reported && !options.force) {
     return;
+  }
+  
+  // Fix file path if it's incorrectly showing directory instead of file
+  // This addresses the "doc/examples:7:12" vs "enum.hql:8" issue
+  if (hqlError.sourceLocation.filePath) {
+    // If the filePath doesn't have an extension but we can extract it from source or context info
+    if (!hqlError.sourceLocation.filePath.includes('.') && options.source) {
+      // Try to extract full file path from original location
+      const originalError = hqlError.originalError;
+      if (originalError && (originalError as any).sourceLocation?.filePath) {
+        const originalPath = (originalError as any).sourceLocation.filePath;
+        if (originalPath.includes('.')) {
+          hqlError.sourceLocation.filePath = originalPath;
+        }
+      }
+    }
   }
   
   // Mark as reported to prevent duplicate reporting
