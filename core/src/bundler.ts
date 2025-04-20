@@ -886,7 +886,7 @@ async function transpileHqlFile(
 function handleError(
   error: unknown,
   context: string,
-  options: { verbose?: boolean, skipErrorReporting?: boolean, debug?: boolean } = {}
+  options: { verbose?: boolean, skipErrorReporting?: boolean } = {}
 ): never {
   if (!options.skipErrorReporting) {
     // Don't report the error if it's already been reported
@@ -895,33 +895,15 @@ function handleError(
     } else {
       // Extract file path for better error context if possible
       let filePath: string | undefined;
-      let line: number | undefined;
-      let column: number | undefined;
-      
-      if (error instanceof Error) {
-        // Try to extract location info from error message for parse errors
-        const parseErrorMatch = error.message.match(/([^:\s]+\.hql):(\d+):(\d+)/);
-        if (parseErrorMatch) {
-          filePath = parseErrorMatch[1];
-          line = parseInt(parseErrorMatch[2], 10);
-          column = parseInt(parseErrorMatch[3], 10);
-        } else if (error.stack) {
-          filePath = extractFilePathFromStack(error.stack);
-        }
+      if (error instanceof Error && error.stack) {
+        filePath = extractFilePathFromStack(error.stack);
       }
       
       // Report through the error pipeline
-      const hqlError = ErrorPipeline.enhanceError(error, { 
-        filePath,
-        line, 
-        column
-      });
-      
+      const hqlError = ErrorPipeline.enhanceError(error, { filePath });
       ErrorPipeline.reportError(hqlError, {
-        verbose: options.verbose || options.debug,
-        showCallStack: options.debug,
-        enhancedDebug: options.debug,
-        makePathsClickable: true
+        verbose: options.verbose,
+        showCallStack: options.verbose
       });
     }
   }

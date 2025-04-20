@@ -87,12 +87,12 @@ function formatContextLines(lines: string[], errorLineIndex: number, useColors: 
 }
 
 export class BaseParseError extends BaseError {
-  public position: { line: number; column: number; offset: number };
+  public position: { line: number; column: number; offset: number; filePath?: string };
   public source?: string;
 
   constructor(
     message: string,
-    position: { line: number; column: number; offset: number },
+    position: { line: number; column: number; offset: number; filePath?: string },
     source?: string,
   ) {
     super(message);
@@ -105,9 +105,19 @@ export class BaseParseError extends BaseError {
   public override formatMessage(useColors: boolean = true): string {
     const c = createColorConfig(useColors);
     
+    // Start with a basic error message
     let result = useColors 
       ? c.red(c.bold(`Parse Error: ${this.message} at line ${this.position.line}, column ${this.position.column}`))
       : `Parse Error: ${this.message} at line ${this.position.line}, column ${this.position.column}`;
+    
+    // Add file path if available
+    if (this.position.filePath) {
+      // Format with proper location - use the path as provided
+      result = useColors
+        ? c.red(c.bold(`Parse Error: ${this.message}`)) + 
+          `\n${c.cyan("Location:")} ${this.position.filePath}:${this.position.line}:${this.position.column}`
+        : `Parse Error: ${this.message}\nLocation: ${this.position.filePath}:${this.position.line}:${this.position.column}`;
+    }
     
     if (this.source) {
       const lines = this.source.split('\n');

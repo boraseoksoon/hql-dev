@@ -64,6 +64,12 @@ export async function processHql(
   registerSourceFile(sourceFilePath, source);
 
   try {
+    // Initialize environment first to set current file
+    if (options.showTiming) logger.startTiming("hql-process", "Environment setup");
+    const env = await getGlobalEnv(options);
+    if (options.baseDir) env.setCurrentFile(options.baseDir);
+    if (options.showTiming) logger.endTiming("hql-process", "Environment setup");
+    
     // Process all stages with proper error handling
     if (options.showTiming) logger.startTiming("hql-process", "Parsing");
     const sexps = parseWithHandling(source, logger);
@@ -72,11 +78,6 @@ export async function processHql(
     if (options.showTiming) logger.startTiming("hql-process", "Syntax transform");
     const canonicalSexps = transformWithHandling(sexps, options.verbose, logger);
     if (options.showTiming) logger.endTiming("hql-process", "Syntax transform");
-    
-    if (options.showTiming) logger.startTiming("hql-process", "Environment setup");
-    const env = await getGlobalEnv(options);
-    if (options.baseDir) env.setCurrentFile(options.baseDir);
-    if (options.showTiming) logger.endTiming("hql-process", "Environment setup");
     
     if (options.showTiming) logger.startTiming("hql-process", "Import processing");
     await processImportsWithHandling(canonicalSexps, env, options);
@@ -115,8 +116,13 @@ export async function processHql(
 
 function parseWithHandling(source: string, logger: Logger) {
   try {
-    const sexps = parse(source);
-    logger.debug(`Parsed ${sexps.length} S-expressions`);
+    // Get the file path from the current environment
+    const env = globalEnv;
+    const currentFile = env?.getCurrentFile() || "unknown";
+    
+    // Pass the file path to the parser
+    const sexps = parse(source, currentFile);
+    logger.debug(`Parsed ${sexps.length} S-expressions from ${currentFile}`);
     return sexps;
   } catch (error: unknown) {
     if (error instanceof ParseError) {
@@ -191,16 +197,23 @@ function handleProcessError(
   logger: Logger,
 ): never {
   if (error instanceof Error) {
-    // Use the new error pipeline
+    // Mark Parse errors as already reported so we don't get duplicates
+    if (error instanceof ParseError) {
+      // The ParseError will be handled by the outer error handler
+      // with better formatting at the CLI level
+      throw error;
+    }
+    
+    // For other errors, use the error pipeline
     const enhancedError = ErrorPipeline.enhanceError(error, {
       filePath: options.baseDir,
       source: options.baseDir ? ErrorPipeline.getSourceFile(options.baseDir) : undefined
     });
     
-    ErrorPipeline.reportError(enhancedError, {
-      verbose: options.verbose,
-      showCallStack: options.verbose
-    });
+    // Mark the error as already reported to prevent duplicate error messages
+    if (enhancedError instanceof ErrorPipeline.HQLError) {
+      enhancedError.reported = true;
+    }
     
     throw enhancedError;
   }

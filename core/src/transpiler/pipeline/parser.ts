@@ -43,7 +43,7 @@ interface SourcePosition {
   line: number;
   column: number;
   offset: number;
-  filePath?: string;
+  filePath: string;
 }
 
 const TOKEN_PATTERNS = {
@@ -54,16 +54,17 @@ const TOKEN_PATTERNS = {
   SYMBOL: /^[^\s\(\)\[\]\{\}"'`,;]+/,
 };
 
-export function parse(input: string): SExp[] {
-  const tokens = tokenize(input);
-  return parseTokens(tokens, input);
+export function parse(input: string, filePath: string = ""): SExp[] {
+  // No hardcoded filenames - use the path as provided
+  const tokens = tokenize(input, filePath);
+  return parseTokens(tokens, input, filePath);
 }
 
-function tokenize(input: string): Token[] {
+function tokenize(input: string, filePath: string): Token[] {
   const tokens: Token[] = [];
   let remaining = input, line = 1, column = 1, offset = 0;
   while (remaining.length > 0) {
-    const token = matchNextToken(remaining, line, column, offset);
+    const token = matchNextToken(remaining, line, column, offset, filePath);
     if (token.type === TokenType.Comment || token.type === TokenType.Whitespace) {
       updatePositionInfo(token.value, token.position);
     } else {
@@ -108,8 +109,8 @@ function updatePositionInfo(value: string, position: SourcePosition): void {
   }
 }
 
-function parseTokens(tokens: Token[], input: string): SExp[] {
-  const state: ParserState = { tokens, currentPos: 0, input };
+function parseTokens(tokens: Token[], input: string, filePath: string): SExp[] {
+  const state: ParserState = { tokens, currentPos: 0, input, filePath };
   const nodes: SExp[] = [];
   while (state.currentPos < state.tokens.length) {
     nodes.push(parseExpression(state));
@@ -121,13 +122,14 @@ interface ParserState {
   tokens: Token[];
   currentPos: number;
   input: string;
+  filePath: string;
 }
 
 function parseExpression(state: ParserState): SExp {
   if (state.currentPos >= state.tokens.length) {
     const lastPos = state.tokens.length > 0
       ? state.tokens[state.tokens.length - 1].position
-      : { line: 1, column: 1, offset: 0 };
+      : { line: 1, column: 1, offset: 0, filePath: state.filePath };
     throw new ParseError("Unexpected end of input", lastPos, state.input);
   }
   const token = state.tokens[state.currentPos++];
@@ -212,135 +214,130 @@ function parseList(state: ParserState): SList {
     fnKeywordFound = true;
   }
   
-  try {
-    while (
-      state.currentPos < state.tokens.length &&
-      state.tokens[state.currentPos].type !== TokenType.RightParen
-    ) {
-      // Special handling for enum syntax with separate colon
-      if (isEnum && elements.length === 2 && 
-          state.tokens[state.currentPos].type === TokenType.Colon) {
+  while (
+    state.currentPos < state.tokens.length &&
+    state.tokens[state.currentPos].type !== TokenType.RightParen
+  ) {
+    // Special handling for enum syntax with separate colon
+    if (isEnum && elements.length === 2 && 
+        state.tokens[state.currentPos].type === TokenType.Colon) {
+      
+      // Skip the colon token
+      state.currentPos++;
+      
+      // Ensure we have a type after the colon
+      if (state.currentPos < state.tokens.length && 
+          state.tokens[state.currentPos].type === TokenType.Symbol) {
         
-        // Skip the colon token
+        // Get the enum name (already parsed) and the type
+        const enumNameSym = elements[1] as SSymbol;
+        const typeName = state.tokens[state.currentPos].value;
+        
+        // Replace the enum name with combined enum name and type
+        elements[1] = createSymbol(`${enumNameSym.name}:${typeName}`);
+        
+        // Skip the type token since we've incorporated it
         state.currentPos++;
+      } else {
+        throw new ParseError(
+          "Expected type name after colon in enum declaration", 
+          state.tokens[state.currentPos - 1].position, 
+          state.input
+        );
+      }
+    }
+    // Special handling for function type expressions like (-> [String])
+    else if (fnKeywordFound && 
+             state.tokens[state.currentPos].type === TokenType.Symbol &&
+             state.tokens[state.currentPos].value === "->") {
+
+      // Add the arrow symbol
+      elements.push(parseExpression(state));
+      
+      // Check if the next token is a left bracket (array type)
+      if (state.currentPos < state.tokens.length && 
+          state.tokens[state.currentPos].type === TokenType.LeftBracket) {
         
-        // Ensure we have a type after the colon
-        if (state.currentPos < state.tokens.length && 
-            state.tokens[state.currentPos].type === TokenType.Symbol) {
-          
-          // Get the enum name (already parsed) and the type
-          const enumNameSym = elements[1] as SSymbol;
-          const typeName = state.tokens[state.currentPos].value;
-          
-          // Replace the enum name with combined enum name and type
-          elements[1] = createSymbol(`${enumNameSym.name}:${typeName}`);
-          
-          // Skip the type token since we've incorporated it
-          state.currentPos++;
-        } else {
+        // This is an array type notation - preserve it directly
+        const arrayTypeStartToken = state.tokens[state.currentPos];
+        state.currentPos++; // Skip the left bracket
+        
+        // We expect exactly one element (the type) followed by a right bracket
+        if (state.currentPos >= state.tokens.length) {
           throw new ParseError(
-            "Expected type name after colon in enum declaration", 
-            state.tokens[state.currentPos - 1].position, 
+            "Unclosed array type notation", 
+            arrayTypeStartToken.position, 
             state.input
           );
         }
-      }
-      // Special handling for function type expressions like (-> [String])
-      else if (fnKeywordFound && 
-               state.tokens[state.currentPos].type === TokenType.Symbol &&
-               state.tokens[state.currentPos].value === "->") {
-
-        // Add the arrow symbol
-        elements.push(parseExpression(state));
         
-        // Check if the next token is a left bracket (array type)
-        if (state.currentPos < state.tokens.length && 
-            state.tokens[state.currentPos].type === TokenType.LeftBracket) {
-          
-          // This is an array type notation - preserve it directly
-          const arrayTypeStartToken = state.tokens[state.currentPos];
-          state.currentPos++; // Skip the left bracket
-          
-          // We expect exactly one element (the type) followed by a right bracket
-          if (state.currentPos >= state.tokens.length) {
-            throw new ParseError(
-              "Unclosed array type notation", 
-              arrayTypeStartToken.position, 
-              state.input
-            );
-          }
-          
-          // Parse the inner type
-          const innerType = parseExpression(state);
-          
-          // Expect a closing bracket
-          if (state.currentPos >= state.tokens.length || 
-              state.tokens[state.currentPos].type !== TokenType.RightBracket) {
-            throw new ParseError(
-              "Missing closing bracket in array type notation", 
-              arrayTypeStartToken.position, 
-              state.input
-            );
-          }
-          
-          // Skip the right bracket
-          state.currentPos++;
-          
-          // Add the array type as a list with one element (the inner type)
-          elements.push(createList(innerType));
-        } else {
-          // Regular type, just parse it normally
-          elements.push(parseExpression(state));
+        // Parse the inner type
+        const innerType = parseExpression(state);
+        
+        // Expect a closing bracket
+        if (state.currentPos >= state.tokens.length || 
+            state.tokens[state.currentPos].type !== TokenType.RightBracket) {
+          throw new ParseError(
+            "Missing closing bracket in array type notation", 
+            arrayTypeStartToken.position, 
+            state.input
+          );
         }
-      }
-      // Normal element parsing
-      else {
+        
+        // Skip the right bracket
+        state.currentPos++;
+        
+        // Add the array type as a list with one element (the inner type)
+        elements.push(createList(innerType));
+      } else {
+        // Regular type, just parse it normally
         elements.push(parseExpression(state));
       }
     }
-    
-    // Consume the closing paren
-    if (state.currentPos < state.tokens.length) {
-      state.currentPos++;
-    } else {
-      // Special handling for enum declarations missing closing parenthesis
-      if (isEnum) {
-        throw new ParseError(
-          "Missing closing parenthesis in enum declaration",
-          // Use the position of the last token for better error location
-          elements.length > 0 
-            ? (elements[elements.length - 1] as any).position || listStartPos 
-            : listStartPos,
-          state.input
-        );
-      } else {
-        throw new ParseError("Unexpected end of input", listStartPos, state.input);
-      }
+    // Normal element parsing
+    else {
+      elements.push(parseExpression(state));
     }
-    
-    return createList(...elements);
-  } catch (error) {
-    // Enhance parse errors for enum declarations
-    if (isEnum && error instanceof ParseError) {
-      if (error.message.includes("Unexpected end of input")) {
-        // More specific error message for enums
-        const errorPosition = error.position || listStartPos;
-        throw new ParseError(
-          "Missing closing parenthesis in enum declaration",
-          errorPosition,
-          state.input
-        );
-      }
-    }
-    throw error;
   }
+  
+  if (state.currentPos >= state.tokens.length) {
+    // Get the position of the last token for more accurate error reporting
+    const lastTokenPos = state.tokens.length > 0 
+      ? state.tokens[state.tokens.length - 1].position 
+      : listStartPos;
+    
+    // Extract file information from the source if available
+    let errorMessage = "Unclosed list";
+    if (state.input) {
+      // Count the number of lines to find the actual line number
+      const lines = state.input.split('\n');
+      const lineCount = lines.length;
+      
+      // Add more context to the error message
+      errorMessage = `Unclosed list starting at line ${listStartPos.line}. Check for a missing closing parenthesis ')'`;
+      
+      // Make sure we include the file path in the error location
+      throw new ParseError(errorMessage, {
+        line: lineCount,
+        column: lines[lineCount - 1]?.length || 0,
+        offset: state.input.length - 1,
+        filePath: state.filePath
+      }, state.input);
+    }
+    
+    throw new ParseError(errorMessage, lastTokenPos, state.input);
+  }
+  
+  state.currentPos++;
+  
+  return createList(...elements);
 }
 
 /**
  * Match the next token from the input
  */
-function matchNextToken(input: string, line: number, column: number, offset: number): Token {
-  const position: SourcePosition = { line, column, offset };
+function matchNextToken(input: string, line: number, column: number, offset: number, filePath: string): Token {
+  const position: SourcePosition = { line, column, offset, filePath };
   
   // Define patterns to match
   let match;

@@ -67,7 +67,7 @@ export class TranspilerError extends CommonError.TranspilerError {
 export class ParseError extends CommonError.ParseError {
   constructor(
     message: string,
-    position: { line: number; column: number; offset: number },
+    position: { line: number; column: number; offset: number; filePath?: string },
     source?: string,
     useColors: boolean = true
   ) {
