@@ -248,54 +248,17 @@ function parseList(state: ParserState): SList {
     }
     // Special handling for function type expressions like (-> [String])
     else if (fnKeywordFound && 
-             state.tokens[state.currentPos].type === TokenType.Symbol &&
+             elements.length > 0 && 
+             state.currentPos < state.tokens.length && 
+             state.tokens[state.currentPos].type === TokenType.Symbol && 
              state.tokens[state.currentPos].value === "->") {
-
-      // Add the arrow symbol
-      elements.push(parseExpression(state));
+      // Skip the -> token
+      state.currentPos++;
       
-      // Check if the next token is a left bracket (array type)
-      if (state.currentPos < state.tokens.length && 
-          state.tokens[state.currentPos].type === TokenType.LeftBracket) {
-        
-        // This is an array type notation - preserve it directly
-        const arrayTypeStartToken = state.tokens[state.currentPos];
-        state.currentPos++; // Skip the left bracket
-        
-        // We expect exactly one element (the type) followed by a right bracket
-        if (state.currentPos >= state.tokens.length) {
-          throw new ParseError(
-            "Unclosed array type notation", 
-            arrayTypeStartToken.position, 
-            state.input
-          );
-        }
-        
-        // Parse the inner type
-        const innerType = parseExpression(state);
-        
-        // Expect a closing bracket
-        if (state.currentPos >= state.tokens.length || 
-            state.tokens[state.currentPos].type !== TokenType.RightBracket) {
-          throw new ParseError(
-            "Missing closing bracket in array type notation", 
-            arrayTypeStartToken.position, 
-            state.input
-          );
-        }
-        
-        // Skip the right bracket
-        state.currentPos++;
-        
-        // Add the array type as a list with one element (the inner type)
-        elements.push(createList(innerType));
-      } else {
-        // Regular type, just parse it normally
-        elements.push(parseExpression(state));
-      }
-    }
-    // Normal element parsing
-    else {
+      // Parse the return type (which follows the arrow)
+      elements.push(createSymbol("->"));
+      elements.push(parseExpression(state));
+    } else {
       elements.push(parseExpression(state));
     }
   }
@@ -313,18 +276,19 @@ function parseList(state: ParserState): SList {
       // Get the line of text where the error occurred
       const errorLine = lines[lineNumber - 1] || "";
       
-      // For better error reporting, let's highlight the opening parenthesis or a key element
-      // Ideally we want to focus on the start of the unclosed list
-      const columnNumber = listStartPos.column;
+      // For better error reporting, identify the full expression that is unclosed
+      // Point to the end of the line where the closing parenthesis should be
+      const lastColumn = errorLine.length;
       
       // Add more context to the error message
       errorMessage = `Unclosed list starting at line ${lineNumber}. Check for a missing closing parenthesis ')'`;
       
-      // Create a more precise error position that points to the problematic open parenthesis
+      // Create a precise error position that points to the end of the line
+      // where the closing parenthesis is likely missing
       throw new ParseError(errorMessage, {
         line: lineNumber,
-        column: columnNumber,
-        offset: listStartPos.offset,
+        column: lastColumn, // Point to the end of the line
+        offset: listStartPos.offset + errorLine.length,
         filePath: state.filePath
       }, state.input);
     } else {

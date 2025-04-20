@@ -186,7 +186,7 @@ export class HQLError extends Error {
   }
 
   /**
-   * Extracts context lines from source around the error line
+   * Extracts context lines around the error position
    */
   private extractContextLines(source: string, errorLine: number): void {
     const lines = source.split('\n');
@@ -215,11 +215,26 @@ export class HQLError extends Error {
     }
     
     // Add error line
-    this.contextLines.push(`${errorLine} │ ${lines[lineIndex]}`);
+    const currentLine = lines[lineIndex];
+    this.contextLines.push(`${errorLine} │ ${currentLine}`);
     
     // Add pointer line at column position
     if (this.sourceLocation.column && this.sourceLocation.column > 0) {
-      const pointerIndent = " ".repeat(this.sourceLocation.column - 1);
+      let column = this.sourceLocation.column;
+      
+      // For unclosed list errors, adjust the column to point to the end of the line
+      if (this.message.toLowerCase().includes("unclosed list")) {
+        // Point to the end of the line for unclosed list errors
+        // But if the line ends with whitespace, point to the last non-whitespace character
+        const trimmedLine = currentLine.trimEnd();
+        if (trimmedLine.length < currentLine.length) {
+          column = trimmedLine.length + 1;
+        } else {
+          column = currentLine.length + 1;
+        }
+      }
+      
+      const pointerIndent = " ".repeat(column - 1);
       this.contextLines.push(`  │ ${pointerIndent}^`);
     }
     

@@ -12,7 +12,7 @@
 )
 
 ;; Simple assignment
-(let heading Direction.north
+(let heading Direction.north)
 
 ;; Value equality
 (if (= heading Direction.west)
