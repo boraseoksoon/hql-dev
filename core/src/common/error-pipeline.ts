@@ -21,6 +21,8 @@ export interface ErrorConfig {
   showCallStack: boolean;
   /** Whether to show verbose details about errors */
   verbose: boolean;
+  /** Whether to show enhanced HQL-specific debugging info */
+  enhancedDebug?: boolean;
 }
 
 export const DEFAULT_ERROR_CONFIG: ErrorConfig = {
@@ -28,7 +30,98 @@ export const DEFAULT_ERROR_CONFIG: ErrorConfig = {
   makePathsClickable: true,
   showCallStack: false,
   verbose: false,
+  enhancedDebug: false,
 };
+
+// ----- Debug Mode Configuration -----
+
+/**
+ * Global debug mode flag - when enabled:
+ * - Shows detailed error messages with full call stacks
+ * - Includes enhanced debugging information
+ * - Shows more verbose output
+ */
+export let debugMode = false;
+
+/**
+ * Enable or disable debug mode globally for all error handling
+ */
+export function setDebugMode(enabled: boolean): void {
+  console.log(`Debug mode ${enabled ? 'enabled' : 'disabled'} - showing extended error information`); 
+  debugMode = enabled;
+  
+  // When debug mode is enabled, set up Deno-specific error handling improvements
+  if (enabled && typeof Deno !== 'undefined') {
+    // Configure Deno for better debugging experience
+    try {
+      // Enable source maps for better error locations
+      // @ts-ignore: Using Deno-specific API
+      if (Deno.setRuntimeOptions) {
+        // @ts-ignore: Using Deno-specific API
+        Deno.setRuntimeOptions({
+          sourceMaps: true,
+          showColors: true
+        });
+      }
+      
+      // Listen for uncaught errors to format them nicely
+      // @ts-ignore: Using Deno-specific API
+      if (Deno.core && Deno.core.setUncaughtExceptionCallback) {
+        // @ts-ignore: Using Deno-specific API
+        Deno.core.setUncaughtExceptionCallback((error: Error) => {
+          // Format the error using our pipeline and print it
+          reportError(error, {
+            showCallStack: true,
+            verbose: true,
+            enhancedDebug: true,
+            makePathsClickable: true,
+            useColors: true
+          });
+          return true; // Signal we handled the error
+        });
+      }
+      
+      // Set up a more detailed error formatter
+      // This helps translate low-level Deno errors into more readable formats
+      // Use explicit type check to avoid TS errors
+      const denoAny = Deno as any;
+      if (denoAny.formatError && typeof denoAny.formatError === 'function') {
+        const originalFormatError = denoAny.formatError;
+        denoAny.formatError = (error: Error) => {
+          try {
+            // Try our formatter first
+            const formatted = formatError(error, {
+              showCallStack: true,
+              verbose: true,
+              enhancedDebug: true,
+              makePathsClickable: true,
+              useColors: true
+            });
+            return formatted;
+          } catch (e) {
+            // Fall back to Deno's formatter if ours fails
+            return originalFormatError(error);
+          }
+        };
+      }
+    } catch (e) {
+      // Ignore if not available - these are experimental APIs
+      console.log("Note: Some advanced Deno debugging features are not available in this version");
+    }
+  }
+}
+
+/**
+ * Get default error config with current debug settings applied
+ */
+export function getDefaultErrorConfig(): ErrorConfig {
+  return {
+    ...DEFAULT_ERROR_CONFIG,
+    showCallStack: debugMode,
+    verbose: debugMode,
+    enhancedDebug: debugMode,
+  };
+}
 
 // ----- Color Formatting -----
 
@@ -254,6 +347,12 @@ export class ParseError extends HQLError {
   
   public override getSuggestion(): string {
     const message = this.message.toLowerCase();
+    
+    // Handle export statement errors
+    if (message.includes("missing closing parenthesis in export statement") ||
+        (message.includes("export") && message.includes("missing closing parenthesis"))) {
+      return "Add a closing parenthesis ')' to the end of your export statement.";
+    }
     
     // Check if it's an export-related error from the error message
     if (message.includes("export") && message.includes("missing closing parenthesis")) {
@@ -491,36 +590,50 @@ export class RuntimeError extends HQLError {
  * Make file paths in error messages clickable
  */
 function makePathsClickable(text: string): string {
-  // Replace file paths with terminal-clickable links
-  // Format: file:///path/to/file.ext:line:col
-  return text.replace(/([^\s"']+\.[a-zA-Z0-9]{1,5})(?::(\d+)(?::(\d+))?)?/g, (match, file, line, col) => {
-    if (file.startsWith("file://")) return match;
-    
-    try {
-      // Validate file path before using realPathSync
-      if (!file || typeof file !== 'string' || file.includes('(') || file.includes(')')) {
-        return match; // Return original match if path is invalid
+  // Process stack trace lines differently to ensure they're clickable
+  const lines = text.split('\n');
+  const processedLines = lines.map(line => {
+    // Check if this is a stack trace line
+    const stackMatch = line.match(/^\s+\d+\.\s+.*\((.*):(\d+):(\d+)\)$/);
+    if (stackMatch) {
+      const [_, file, line, col] = stackMatch;
+      // Make it a clickable link using the full file path
+      try {
+        return line.replace(`(${file}:${line}:${col})`, `(file://${file}:${line}:${col})`);
+      } catch (e) {
+        return line;
       }
+    }
+    
+    // Otherwise apply the general path clickable logic
+    return line.replace(/([^\s"']+\.[a-zA-Z0-9]{1,5})(?::(\d+)(?::(\d+))?)?/g, (match, file, line, col) => {
+      if (file.startsWith("file://")) return match;
       
-      // For import paths that are relative, don't try to resolve them since they might not exist yet
-      if (file.startsWith('./') || file.startsWith('../')) {
+      try {
+        // Validate file path before using realPathSync
+        if (!file || typeof file !== 'string' || file.includes('(') || file.includes(')')) {
+          return match; // Return original match if path is invalid
+        }
+        
+        // For import paths that are relative, don't try to resolve them since they might not exist yet
+        if (file.startsWith('./') || file.startsWith('../')) {
+          const location = line ? `:${line}${col ? `:${col}` : ""}` : "";
+          return `file://${file}${location}`;
+        }
+        
+        const fullPath = Deno.realPathSync(file);
+        const location = line ? `:${line}${col ? `:${col}` : ""}` : "";
+        return `file://${fullPath}${location}`;
+      } catch (err) {
+        // Don't log warning messages for non-existent paths when making paths clickable
+        // These are often false positives from code snippets, examples, etc.
         const location = line ? `:${line}${col ? `:${col}` : ""}` : "";
         return `file://${file}${location}`;
       }
-      
-      const fullPath = Deno.realPathSync(file);
-      const location = line ? `:${line}${col ? `:${col}` : ""}` : "";
-      return `file://${fullPath}${location}`;
-    } catch (err) {
-      // If realPathSync fails, keep the original path but still make it clickable
-      // But don't log a warning for common import paths
-      if (!file.startsWith('./') && !file.startsWith('../')) {
-        console.debug(`Note: Could not resolve path: ${file}`);
-      }
-      const location = line ? `:${line}${col ? `:${col}` : ""}` : "";
-      return `file://${file}${location}`;
-    }
+    });
   });
+  
+  return processedLines.join('\n');
 }
 
 /**
@@ -551,6 +664,404 @@ function formatContextLines(
     
     result += "\n";
   });
+  
+  return result;
+}
+
+/**
+ * Extract the most useful debugging information from an error
+ */
+function extractUsefulDebugInfo(error: HQLError): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  
+  // Include essential error information
+  if (error.originalError) {
+    // Original error type
+    if (error.originalError.name && error.originalError.name !== 'Error' && error.originalError.name !== error.name) {
+      result['Original Error Type'] = error.originalError.name;
+    }
+    
+    // Include any custom properties from the original error that might be useful
+    const customProps = extractCustomErrorProperties(error.originalError);
+    if (Object.keys(customProps).length > 0) {
+      // Remove verbose source if present
+      if (customProps.source && typeof customProps.source === 'string') {
+        delete customProps.source;
+      }
+      
+      // Format position data for better readability
+      if (customProps.position && typeof customProps.position === 'object') {
+        const pos = customProps.position as any;
+        if (pos.line && pos.column) {
+          result['Position'] = `Line ${pos.line}, Column ${pos.column}`;
+          delete customProps.position;
+        }
+      }
+      
+      // Format node type and location for better readability
+      if (customProps.node && typeof customProps.node === 'object') {
+        try {
+          const node = customProps.node as any;
+          if (node.type) {
+            result['Node Type'] = node.type;
+          }
+          if (node.loc) {
+            result['Node Location'] = `${node.loc.start?.line || '?'}:${node.loc.start?.column || '?'} - ${node.loc.end?.line || '?'}:${node.loc.end?.column || '?'}`;
+          }
+          delete customProps.node;
+        } catch (e) {
+          // Ignore errors extracting node info
+        }
+      }
+      
+      // Keep specific compiler information
+      if (customProps.compilationPhase) {
+        result['Compilation Phase'] = customProps.compilationPhase;
+        delete customProps.compilationPhase;
+      }
+      
+      if (customProps.hqlLine && customProps.hqlColumn) {
+        result['HQL Location'] = `Line ${customProps.hqlLine}, Column ${customProps.hqlColumn}`;
+        delete customProps.hqlLine;
+        delete customProps.hqlColumn;
+      }
+      
+      if (Object.keys(customProps).length > 0) {
+        // Only include the remaining properties if we have any left
+        result['Error Details'] = customProps;
+      }
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Extract custom properties from an error that might be useful for debugging
+ */
+function extractCustomErrorProperties(error: Error): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const standardProps = ['name', 'message', 'stack', 'reported'];
+  
+  // Extract custom properties not in the standard list
+  for (const prop of Object.getOwnPropertyNames(error)) {
+    if (!standardProps.includes(prop) && prop !== '__proto__') {
+      const value = (error as any)[prop];
+      
+      // Skip functions and complex objects
+      if (typeof value !== 'function' && 
+          (typeof value !== 'object' || value === null || Array.isArray(value) || 
+           Object.getPrototypeOf(value) === Object.prototype)) {
+        result[prop] = value;
+      }
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Format an error for display
+ */
+export function formatError(
+  error: Error | HQLError,
+  config: ErrorConfig = DEFAULT_ERROR_CONFIG
+): string {
+  // Enhance the error if it's not already an HQLError
+  const hqlError = error instanceof HQLError 
+    ? error 
+    : enhanceError(error);
+  
+  const c = createColorConfig(config.useColors);
+  
+  // Start with the error header
+  let result = "";
+  
+  // Create a concise header with error type and message
+  const errorPrefix = config.useColors 
+    ? c.bold(c.red(`${hqlError.errorType}:`)) 
+    : `${hqlError.errorType}:`;
+  
+  // Main error message
+  result += `${errorPrefix} ${hqlError.message}`;
+  
+  // Add location info
+  const { filePath, line, column } = hqlError.sourceLocation;
+  if (filePath) {
+    const location = line 
+      ? `${filePath}:${line}${column ? `:${column}` : ""}` 
+      : filePath;
+    
+    result += `\n${config.useColors ? c.gray("Location:") : "Location:"} ${location}`;
+  }
+  
+  // Add context (source code)
+  if (hqlError.contextLines.length > 0) {
+    result += `\n\n${formatContextLines(hqlError.contextLines, config)}`;
+  }
+  
+  // Add suggestion
+  const suggestion = typeof hqlError.getSuggestion === 'function' 
+    ? hqlError.getSuggestion()
+    : hqlError.getSuggestion;
+  if (suggestion) {
+    result += `\n${config.useColors ? c.cyan("Suggestion:") : "Suggestion:"} ${suggestion}`;
+  }
+  
+  // Enhanced debug information - only show if explicitly requested and in a more user-friendly format
+  if (config.enhancedDebug) {
+    // In debug mode, only show the most useful information
+    const debugInfo = extractUsefulDebugInfo(hqlError);
+    
+    if (Object.keys(debugInfo).length > 0) {
+      result += `\n\n${config.useColors ? c.bold(c.blue("Debug Information:")) : "Debug Information:"}`;
+      
+      // Format debug info in a more readable way
+      for (const [key, value] of Object.entries(debugInfo)) {
+        if (typeof value === 'string') {
+          result += `\n• ${config.useColors ? c.green(key) : key}: ${value}`;
+        } else if (value !== null && typeof value === 'object') {
+          result += `\n• ${config.useColors ? c.green(key) : key}: ${JSON.stringify(value, null, 2).replace(/\n/g, '\n  ')}`;
+        }
+      }
+    }
+    
+    // ALWAYS add call stack in debug mode (make this unconditional)
+    const formattedStack = formatBeautifulCallStack(hqlError, config.useColors);
+    if (formattedStack) {
+      result += `\n\n${config.useColors ? c.bold(c.blue("Call Stack:")) : "Call Stack:"}`;
+      result += `\n${formattedStack}`;
+    }
+    
+    // Add Deno-specific error information if available
+    if (typeof Deno !== 'undefined') {
+      const denoInfo = extractDenoSpecificInfo(hqlError);
+      if (Object.keys(denoInfo).length > 0) {
+        result += `\n\n${config.useColors ? c.bold(c.blue("Deno Error Details:")) : "Deno Error Details:"}`;
+        
+        // Format Deno-specific info
+        for (const [key, value] of Object.entries(denoInfo)) {
+          if (typeof value === 'string') {
+            result += `\n• ${config.useColors ? c.green(key) : key}: ${value}`;
+          } else if (Array.isArray(value)) {
+            result += `\n• ${config.useColors ? c.green(key) : key}:`;
+            value.forEach((item, i) => {
+              result += `\n  ${i+1}. ${JSON.stringify(item)}`;
+            });
+          } else if (value !== null && typeof value === 'object') {
+            result += `\n• ${config.useColors ? c.green(key) : key}: ${JSON.stringify(value, null, 2).replace(/\n/g, '\n  ')}`;
+          }
+        }
+      }
+    }
+  }
+  
+  // Make paths clickable if requested
+  if (config.makePathsClickable) {
+    result = makePathsClickable(result);
+  }
+  
+  return result;
+}
+
+/**
+ * Extract Deno-specific error information
+ */
+function extractDenoSpecificInfo(error: HQLError): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const originalError = error.originalError || error;
+  
+  try {
+    // Try to get resource info if available
+    if (typeof Deno !== 'undefined') {
+      // Check for Deno error properties
+      if ('code' in (originalError as any)) {
+        result['Error Code'] = (originalError as any).code;
+      }
+      
+      // Get source map info if available
+      // @ts-ignore: Using Deno-specific APIs
+      if (Deno.core && Deno.core.getSourceMapData) {
+        try {
+          // @ts-ignore: Using Deno-specific APIs
+          const sourceMapData = Deno.core.getSourceMapData(originalError);
+          if (sourceMapData) {
+            if (sourceMapData.sourcePath) {
+              result['Original Source'] = sourceMapData.sourcePath;
+            }
+            if (sourceMapData.line) {
+              result['Source Line'] = sourceMapData.line;
+            }
+            if (sourceMapData.column) {
+              result['Source Column'] = sourceMapData.column;
+            }
+          }
+        } catch (e) {
+          // Ignore errors accessing source map data
+        }
+      }
+      
+      // Try to get error cause chain
+      const causes: string[] = [];
+      let currentCause = (originalError as any).cause;
+      while (currentCause) {
+        causes.push(typeof currentCause === 'string' 
+          ? currentCause 
+          : `${currentCause.name || 'Error'}: ${currentCause.message}`);
+        currentCause = currentCause.cause;
+      }
+      
+      if (causes.length > 0) {
+        result['Error Causes'] = causes;
+      }
+      
+      // Try to access resource information
+      if ('rid' in (originalError as any)) {
+        const rid = (originalError as any).rid;
+        try {
+          // @ts-ignore: Using Deno-specific APIs
+          if (Deno.resources && typeof rid === 'number') {
+            // @ts-ignore: Using Deno-specific APIs
+            const resources = Deno.resources();
+            if (resources[rid]) {
+              result['Resource'] = `${resources[rid]} (ID: ${rid})`;
+            }
+          }
+        } catch (e) {
+          // Ignore errors accessing resource info
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore any errors trying to extract Deno info
+  }
+  
+  return result;
+}
+
+/**
+ * Create a beautifully formatted call stack with clickable links
+ */
+function formatBeautifulCallStack(error: HQLError, useColors: boolean): string {
+  // Use the original stack if available, otherwise use the current stack
+  const stackToFormat = error.originalError?.stack || error.stack;
+  if (!stackToFormat) return '';
+  
+  const c = createColorConfig(useColors);
+  
+  // Split stack by lines and filter out noise
+  const stackLines = stackToFormat.split('\n')
+    // First, filter out the first line if it contains the error message (which we display separately)
+    .filter((line, index) => {
+      if (index === 0 && line.includes(error.message)) return false;
+      return true;
+    })
+    // Then filter out noise
+    .filter(line => {
+      return !line.includes('node_modules/') && 
+             !line.includes('internal/') &&
+             !line.includes('<anonymous>') &&
+             !line.includes('deno:internal');
+    })
+    .slice(0, 15); // Limit to first 15 lines to avoid overwhelming the user
+  
+  if (stackLines.length === 0) {
+    // If no stack lines remain after filtering, return some of the original stack
+    return "No detailed stack trace available. Original stack trace:\n" +
+           stackToFormat.split('\n').slice(0, 5).map(line => `  ${line}`).join('\n');
+  }
+  
+  // Format each stack line to be clickable and visually appealing
+  return stackLines.map((line, index) => {
+    // Try to extract file, line, and column information using various formats
+    const match = line.match(/at\s+(.*)\s+\((.*):(\d+):(\d+)\)/) || 
+                  line.match(/at\s+(.*):(\d+):(\d+)/) ||
+                  line.match(/at\s+(.*)/);
+    
+    if (!match) return useColors ? c.gray(`  ${line}`) : `  ${line}`;
+    
+    // Extract components based on the regex match format
+    let callSite, file, lineNum, colNum;
+    
+    if (match[2] && match[3] && match[4]) {
+      // Format: at functionName (file:line:column)
+      callSite = match[1];
+      file = match[2];
+      lineNum = match[3];
+      colNum = match[4];
+    } else if (match[1] && match[2] && match[3]) {
+      // Format: at file:line:column
+      callSite = '';
+      file = match[1];
+      lineNum = match[2];
+      colNum = match[3];
+    } else {
+      // Just a function name without location
+      callSite = match[1];
+      file = '';
+      lineNum = '';
+      colNum = '';
+    }
+    
+    // Make file locations clickable but show clean paths
+    let formattedLine;
+    if (file && lineNum && colNum) {
+      // Show only the filename, not the full path, for cleaner output
+      const fileName = file.split('/').pop() || file;
+      
+      // Special case for HQL files to highlight them
+      const isHqlFile = file.endsWith('.hql');
+      
+      formattedLine = useColors
+        ? `  ${index + 1}. ${c.cyan(callSite || '')} `
+          + `(${isHqlFile ? c.bold(c.yellow(fileName)) : c.yellow(fileName)}:${c.green(lineNum)}:${c.green(colNum)})`
+        : `  ${index + 1}. ${callSite || ''} (${fileName}:${lineNum}:${colNum})`;
+      
+      // Replace the filename in the line with the full path to make it clickable
+      // (We'll make it clickable later with makePathsClickable)
+      formattedLine = formattedLine.replace(fileName, file);
+    } else {
+      // Just a function name without location
+      formattedLine = useColors
+        ? `  ${index + 1}. ${c.cyan(callSite || '')}`
+        : `  ${index + 1}. ${callSite || ''}`;
+    }
+    
+    return formattedLine;
+  }).join('\n');
+}
+
+/**
+ * Extract HQL-specific error information from transpiler errors
+ * This helps translate cryptic JS errors into more meaningful HQL errors
+ */
+function extractHqlErrorInfo(error: Error): Record<string, any> {
+  const result: Record<string, any> = {};
+  
+  // Look for HQL AST nodes in error
+  if ('node' in (error as any)) {
+    const node = (error as any).node;
+    if (node && typeof node === 'object') {
+      if (node.type) {
+        result.nodeType = node.type;
+      }
+      if (node.loc) {
+        result.location = node.loc;
+      }
+    }
+  }
+  
+  // Check for HQL-specific error properties
+  const hqlProperties = [
+    'syntaxError', 'parseError', 'semanticError', 'compilationPhase',
+    'hqlSource', 'hqlLine', 'hqlColumn', 'macroName', 'importPath'
+  ];
+  
+  for (const prop of hqlProperties) {
+    if (prop in (error as any)) {
+      result[prop] = (error as any)[prop];
+    }
+  }
   
   return result;
 }
@@ -606,13 +1117,17 @@ export function enhanceError(
   // Try to classify the error by examining message patterns
   const msg = errorObj.message.toLowerCase();
   
+  // Attempt to extract HQL-specific info
+  const hqlInfo = extractHqlErrorInfo(errorObj);
+  
   // Parse errors with better context
   if (
     msg.includes("parse error") || 
     msg.includes("syntax error") || 
     msg.includes("unexpected token") ||
     msg.includes("unclosed") ||
-    msg.includes("unterminated")
+    msg.includes("unterminated") ||
+    'syntaxError' in hqlInfo
   ) {
     if (sourceLocation.line && sourceLocation.column) {
       // Read the source code line if available to provide better context
@@ -678,11 +1193,12 @@ export function enhanceError(
     msg.includes("require") ||
     msg.includes("module not found") ||
     msg.includes("cannot find module") ||
-    msg.includes("failed to resolve")
+    msg.includes("failed to resolve") ||
+    'importPath' in hqlInfo
   ) {
     // Try to extract the import path
     const importMatch = errorObj.message.match(/['"]([^'"]+)['"]/);
-    const importPath = importMatch ? importMatch[1] : "unknown";
+    const importPath = hqlInfo.importPath || (importMatch ? importMatch[1] : "unknown");
     
     return new ImportError(errorObj.message, importPath, {
       filePath: sourceLocation.filePath,
@@ -699,9 +1215,40 @@ export function enhanceError(
     msg.includes("expected") ||
     msg.includes("got") ||
     msg.includes("invalid") ||
-    msg.includes("not assignable")
+    msg.includes("not assignable") ||
+    'semanticError' in hqlInfo
   ) {
     return new ValidationError(errorObj.message, "type validation", {
+      filePath: sourceLocation.filePath,
+      line: sourceLocation.line,
+      column: sourceLocation.column,
+      source: sourceLocation.source,
+      originalError: errorObj,
+    });
+  }
+  
+  // Macro errors
+  if (
+    msg.includes("macro") ||
+    'macroName' in hqlInfo
+  ) {
+    const macroName = hqlInfo.macroName || "unknown";
+    return new MacroError(errorObj.message, macroName, {
+      filePath: sourceLocation.filePath,
+      line: sourceLocation.line,
+      column: sourceLocation.column,
+      source: sourceLocation.source,
+      originalError: errorObj,
+    });
+  }
+  
+  // Transform errors
+  if (
+    msg.includes("transform") ||
+    'compilationPhase' in hqlInfo
+  ) {
+    const phase = hqlInfo.compilationPhase || "unknown";
+    return new TransformError(errorObj.message, phase, {
       filePath: sourceLocation.filePath,
       line: sourceLocation.line,
       column: sourceLocation.column,
@@ -791,78 +1338,17 @@ function extractLocationFromError(error: Error): SourceLocation {
 }
 
 /**
- * Format an error for display
+ * Global registry to track reported errors by message and location
+ * This helps prevent duplicated error messages across different components
  */
-export function formatError(
-  error: Error | HQLError,
-  config: ErrorConfig = DEFAULT_ERROR_CONFIG
-): string {
-  // Enhance the error if it's not already an HQLError
-  const hqlError = error instanceof HQLError 
-    ? error 
-    : enhanceError(error);
-  
-  const c = createColorConfig(config.useColors);
-  
-  // Start with the error header
-  let result = "";
-  
-  // Create a concise header with error type and message
-  const errorPrefix = config.useColors 
-    ? c.bold(c.red(`${hqlError.errorType}:`)) 
-    : `${hqlError.errorType}:`;
-  
-  // Main error message
-  result += `${errorPrefix} ${hqlError.message}`;
-  
-  // Add location info
-  const { filePath, line, column } = hqlError.sourceLocation;
-  if (filePath) {
-    const location = line 
-      ? `${filePath}:${line}${column ? `:${column}` : ""}` 
-      : filePath;
-    
-    result += `\n${config.useColors ? c.gray("Location:") : "Location:"} ${location}`;
-  }
-  
-  // Add context (source code)
-  if (hqlError.contextLines.length > 0) {
-    result += `\n\n${formatContextLines(hqlError.contextLines, config)}`;
-  }
-  
-  // Add suggestion
-  const suggestion = hqlError.getSuggestion();
-  if (suggestion) {
-    result += `\n${config.useColors ? c.cyan("Suggestion:") : "Suggestion:"} ${suggestion}`;
-  }
-  
-  // Add original error information in debug mode
-  if (config.verbose && hqlError.originalError && hqlError.originalError !== error) {
-    result += `\n\n${config.useColors ? c.gray("Original error:") : "Original error:"} ${hqlError.originalError.message}`;
-  }
-  
-  // Add stack trace in debug mode
-  if (config.showCallStack) {
-    if (hqlError.stack) {
-      const stackLines = hqlError.stack.split('\n').slice(1); // Skip the first line which is the error message
-      if (stackLines.length > 0) {
-        result += `\n\n${config.useColors ? c.gray("Stack trace:") : "Stack trace:"}\n${stackLines.join('\n')}`;
-      }
-    }
-    
-    // Add original error stack if different and in debug mode
-    if (hqlError.originalError && hqlError.originalError.stack && hqlError.originalError.stack !== hqlError.stack) {
-      const originalStackLines = hqlError.originalError.stack.split('\n');
-      result += `\n\n${config.useColors ? c.gray("Original error stack:") : "Original error stack:"}\n${originalStackLines.join('\n')}`;
-    }
-  }
-  
-  // Make paths clickable if requested
-  if (config.makePathsClickable) {
-    result = makePathsClickable(result);
-  }
-  
-  return result;
+const reportedErrorRegistry = new Set<string>();
+
+/**
+ * Generate a unique key for an error based on its message and location
+ */
+function getErrorKey(error: HQLError): string {
+  const { filePath, line, column } = error.sourceLocation;
+  return `${error.errorType}:${error.message}:${filePath || ''}:${line || ''}:${column || ''}`;
 }
 
 /**
@@ -879,32 +1365,51 @@ export function reportError(
     useColors?: boolean;
     makePathsClickable?: boolean;
     showCallStack?: boolean;
+    enhancedDebug?: boolean;
     force?: boolean; // Force reporting even if already reported
   } = {}
 ): void {
+  // Apply debug mode to options if not explicitly set
+  const withDebugApplied = {
+    ...options,
+    verbose: options.verbose ?? debugMode,
+    showCallStack: options.showCallStack ?? debugMode,
+    enhancedDebug: options.enhancedDebug ?? debugMode,
+  };
+  
   // Create config from options
   const config: ErrorConfig = {
-    useColors: options.useColors ?? DEFAULT_ERROR_CONFIG.useColors,
-    makePathsClickable: options.makePathsClickable ?? DEFAULT_ERROR_CONFIG.makePathsClickable,
-    showCallStack: options.showCallStack ?? options.verbose ?? DEFAULT_ERROR_CONFIG.showCallStack,
-    verbose: options.verbose ?? DEFAULT_ERROR_CONFIG.verbose,
+    useColors: withDebugApplied.useColors ?? DEFAULT_ERROR_CONFIG.useColors,
+    makePathsClickable: withDebugApplied.makePathsClickable ?? DEFAULT_ERROR_CONFIG.makePathsClickable,
+    showCallStack: withDebugApplied.showCallStack ?? withDebugApplied.verbose ?? DEFAULT_ERROR_CONFIG.showCallStack,
+    verbose: withDebugApplied.verbose ?? DEFAULT_ERROR_CONFIG.verbose,
+    enhancedDebug: withDebugApplied.enhancedDebug ?? DEFAULT_ERROR_CONFIG.enhancedDebug,
   };
   
   // Enhance and format the error
   const hqlError = enhanceError(error, {
-    filePath: options.filePath,
-    line: options.line,
-    column: options.column,
-    source: options.source,
+    filePath: withDebugApplied.filePath,
+    line: withDebugApplied.line,
+    column: withDebugApplied.column,
+    source: withDebugApplied.source,
   });
   
-  // Skip if already reported and not forced
-  if (hqlError.reported && !options.force) {
+  // Generate a unique key for this error
+  const errorKey = getErrorKey(hqlError);
+  
+  // Skip if already reported globally and not forced
+  if (reportedErrorRegistry.has(errorKey) && !withDebugApplied.force) {
+    return;
+  }
+  
+  // Skip if marked as reported internally and not forced
+  if (hqlError.reported && !withDebugApplied.force) {
     return;
   }
   
   // Mark as reported to prevent duplicate reporting
   hqlError.reported = true;
+  reportedErrorRegistry.add(errorKey);
   
   const formatted = formatError(hqlError, config);
   
@@ -956,23 +1461,6 @@ export function withErrorHandling<T, Args extends any[]>(
 }
 
 // ----- Utility Functions -----
-
-/**
- * Add a debug flag to control verbosity
- */
-export let debugMode = false;
-
-export function setDebugMode(enabled: boolean): void {
-  debugMode = enabled;
-}
-
-export function getDefaultErrorConfig(): ErrorConfig {
-  return {
-    ...DEFAULT_ERROR_CONFIG,
-    showCallStack: debugMode,
-    verbose: debugMode,
-  };
-}
 
 /**
  * Export a unified API for error handling

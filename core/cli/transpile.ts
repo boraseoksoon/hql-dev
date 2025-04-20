@@ -30,26 +30,25 @@ async function timed<T>(
 }
 
 /**
- * Display CLI usage
+ * Print help information
  */
 function printHelp(): void {
-  console.error(
-    `Usage: deno run -A cli/transpile.ts <input.hql|input.js> [output.js] [options]`
-  );
+  console.error("HQL Transpiler");
+  console.error("\nUsage:");
+  console.error("  deno run -A cli/transpile.ts <input.hql> [output.js] [options]");
   console.error("\nOptions:");
-  console.error("  --run             Execute the transpiled output");
-  console.error("  --verbose, -v     Enable verbose logging");
-  console.error("  --time            Show timing for each phase");
-  console.error("  --print           Print JS to stdout instead of writing to file");
-  console.error("  --force           Force recompilation even if file hasn't changed");
-  console.error("  --cache-info      Show information about the cache");
-  console.error("  --debug           Show detailed error information and stack traces");
-  console.error("  --help, -h        Show this help message");
+  console.error("  --verbose          Enable verbose logging");
+  console.error("  --debug            Show detailed error debugging with call stacks and clickable source links");
+  console.error("  --time             Show performance timings");
+  console.error("  --force            Force recompilation even if cache is up-to-date");
+  console.error("  --print            Print the transpiled JavaScript to the console");
+  console.error("  --run              Run the transpiled JavaScript");
+  console.error("  --cache-info       Show information about the cache directory");
+  console.error("  --help, -h         Display this help message");
   console.error("\nExamples:");
-  console.error("  deno run -A cli/transpile.ts src/file.hql");
-  console.error("  deno run -A cli/transpile.ts src/file.hql dist/file.js --time");
-  console.error("  deno run -A cli/transpile.ts src/file.hql --print --run");
-  console.error("  deno run -A cli/transpile.ts src/file.hql --force");
+  console.error("  deno run -A cli/transpile.ts src/example.hql dist/example.js");
+  console.error("  deno run -A cli/transpile.ts src/example.hql --print");
+  console.error("  deno run -A cli/transpile.ts src/example.hql --run");
   console.error("  deno run -A cli/transpile.ts src/file.hql --debug");
 }
 
@@ -152,10 +151,16 @@ function transpile(
               }
             );
             
+            // Add a custom suggestion directly (using function replacement)
+            exportError.getSuggestion = function() {
+              return "Add a closing parenthesis ')' to the end of your export statement.";
+            };
+            
             // Report through error pipeline
             ErrorPipeline.reportError(exportError, {
               verbose: opts.verbose,
-              showCallStack: opts.debug
+              showCallStack: opts.debug,
+              enhancedDebug: opts.debug
             });
             
             // Mark the original error as reported
@@ -177,7 +182,8 @@ function transpile(
       
       ErrorPipeline.reportError(hqlError, {
         verbose: opts.verbose,
-        showCallStack: opts.debug
+        showCallStack: opts.debug,
+        enhancedDebug: opts.debug
       });
       
       Deno.exit(1);
@@ -255,8 +261,9 @@ export async function main(): Promise<void> {
   const { inputPath, outputPath } = parsePaths(args);
   const opts = parseCliOptions(args);
   
-  // Handle debug mode
-  if (args.includes("--debug")) {
+  // Handle debug mode - set this up early so all error reporting gets the debug flag
+  const DEBUG_MODE = args.includes("--debug");
+  if (DEBUG_MODE) {
     opts.debug = true;
     ErrorPipeline.setDebugMode(true);
   }
@@ -280,21 +287,29 @@ export async function main(): Promise<void> {
       const lines = source.split('\n');
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].trim().startsWith('(export') && !lines[i].includes(')')) {
-          // Custom formatted error message for clarity
-          console.error("Parse Error: Missing closing parenthesis in export statement");
-          console.error(`Location: file://${Deno.realPathSync(inputPath)}:${i + 1}:${lines[i].indexOf('export') + 1}`);
-          console.error("");
-          console.error(`${i} │ ${lines[i-1] || ''}`);
-          console.error(`${i+1} │ ${lines[i]}`);
-          console.error(`  │ ${' '.repeat(lines[i].indexOf('export'))}^`);
-          console.error(`${i+2} │ ${lines[i+1] || ''}`);
-          console.error("");
-          console.error("Suggestion: Add a closing parenthesis ')' to the end of your export statement.");
+          // Create a custom ParseError for export statements
+          const exportError = new ErrorPipeline.ParseError(
+            "Missing closing parenthesis in export statement",
+            {
+              line: i + 1,
+              column: lines[i].indexOf('export') + 1,
+              filePath: inputPath,
+              source
+            }
+          );
           
-          if (opts.debug) {
-            console.error("\nStack trace:");
-            console.error(new Error().stack);
-          }
+          // Add a custom suggestion directly (using function replacement)
+          exportError.getSuggestion = function() {
+            return "Add a closing parenthesis ')' to the end of your export statement.";
+          };
+          
+          // Report through the error pipeline with enhanced debug
+          ErrorPipeline.reportError(exportError, {
+            verbose: opts.verbose,
+            showCallStack: opts.debug,
+            makePathsClickable: true,
+            enhancedDebug: opts.debug
+          });
           
           Deno.exit(1);
         }
@@ -315,13 +330,21 @@ export async function main(): Promise<void> {
     await cleanup();
   } catch (error) {
     // Handle any errors not caught by transpile
-    if (!(error instanceof ErrorPipeline.HQLError && error.reported)) {
-      ErrorPipeline.reportError(error, {
-        filePath: inputPath,
-        verbose: opts.verbose,
-        showCallStack: opts.debug
-      });
+    
+    // Skip reporting if already reported
+    if (error instanceof ErrorPipeline.HQLError && error.reported) {
+      Deno.exit(1);
     }
+    
+    ErrorPipeline.reportError(error, {
+      filePath: inputPath,
+      verbose: opts.verbose,
+      showCallStack: opts.debug,
+      enhancedDebug: opts.debug,
+      // No need to force reporting
+      force: false
+    });
+    
     Deno.exit(1);
   }
 }

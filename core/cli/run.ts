@@ -14,11 +14,10 @@ import {
   applyCliOptions,
   CliOptions
 } from "./utils/cli-options.ts";
-import { registerSourceFile, report } from "../src/transpiler/error/errors.ts";
-import { ErrorPipeline } from "../src/common/error-pipeline.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
 import { basename, dirname } from "../src/platform/platform.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
+import * as ErrorPipeline from "../src/common/error-pipeline.ts";
 
 /**
  * Show help flags
@@ -35,6 +34,7 @@ function printHelp(): void {
   console.error("       deno run -A cli/run.ts '<expression>' [options]");
   console.error("\nOptions:");
   console.error("  --verbose             Enable verbose logging and enhanced error formatting");
+  console.error("  --debug               Show detailed error debugging with call stacks and clickable source links");
   console.error("  --time                Show performance timing information");
   console.error("  --log <namespaces>    Filter logging to specified namespaces");
   console.error("  --print               Print final JS output without executing");
@@ -169,21 +169,36 @@ async function transpileAndExecute(
       ErrorPipeline.reportError(error, {
         source,
         filePath: inputPath,
-        verbose: options.verbose,
-        showCallStack: options.verbose
+        verbose: options.verbose || options.debug,
+        showCallStack: options.debug,
+        makePathsClickable: true,
+        enhancedDebug: options.debug,
+        // Ensure runtime errors are always reported even if another error was already reported
+        force: true 
       });
+      
+      // Exit immediately to prevent duplicate error reporting
+      Deno.exit(1);
     }
   } catch (error) {
-    // Use the new error pipeline for transpilation errors
-    // Only report if the error hasn't already been reported
-    if (!(error instanceof ErrorPipeline.HQLError && error.reported)) {
-      ErrorPipeline.reportError(error, {
-        source,
-        filePath: inputPath,
-        verbose: options.verbose,
-        showCallStack: options.verbose
-      });
+    // If the error is already reported, don't report it again
+    if (error instanceof ErrorPipeline.HQLError && error.reported) {
+      // Just exit without reporting
+      Deno.exit(1);
     }
+    
+    // Use the new error pipeline for transpilation errors
+    ErrorPipeline.reportError(error, {
+      source,
+      filePath: inputPath,
+      verbose: options.verbose || options.debug,
+      showCallStack: options.debug,
+      makePathsClickable: true,
+      enhancedDebug: options.debug
+    });
+    
+    // Exit immediately
+    Deno.exit(1);
   } finally {
     logger.debug("Cleaning up temporary files");
     await cleanupAllTempFiles();
@@ -217,45 +232,81 @@ export async function transpileHqlFile(
  * Main entry point for the HQL CLI
  */
 export async function run(args: string[] = Deno.args): Promise<number> {
-  // Initialize the runtime first
-  await initializeRuntime();
-  
-  if (shouldShowHelp(args)) {
-    printHelp();
-    return 0;
-  }
-
-  // Handle log namespaces directly
-  const namespaces = parseLogNamespaces(args);
-  if (namespaces.length) {
-    Logger.allowedNamespaces = namespaces;
-    console.log(`Logging restricted to namespaces: ${namespaces.join(", ")}`);
-  }
-
-  const positional = parseNonOptionArgs(args);
-  if (!positional.length) {
-    printHelp();
-    return 1;
-  }
-  const cliOptions = parseCliOptions(args);
-  applyCliOptions(cliOptions);
-
-  const { inputPath, exprDir } = await getInputPath(positional[0]);
-  logger.startTiming("run", "Total Processing");
-
-  const runDir = await createTempDir("run");
-  logger.log({ text: `Created temporary directory: ${runDir}`, namespace: "cli" });
-
-  const source = await readInputFile(inputPath);
   try {
-    await transpileAndExecute(args, cliOptions, inputPath, source, runDir);
-  } catch (error) {
-    console.error(report(error, { filePath: inputPath, source }));
+    // Initialize the runtime first
+    await initializeRuntime();
+    
+    if (shouldShowHelp(args)) {
+      printHelp();
+      return 0;
+    }
+
+    // Handle log namespaces directly
+    const namespaces = parseLogNamespaces(args);
+    if (namespaces.length) {
+      Logger.allowedNamespaces = namespaces;
+      console.log(`Logging restricted to namespaces: ${namespaces.join(", ")}`);
+    }
+
+    const positional = parseNonOptionArgs(args);
+    if (!positional.length) {
+      printHelp();
+      return 1;
+    }
+    const cliOptions = parseCliOptions(args);
+    applyCliOptions(cliOptions);
+
+    // Handle debug mode - set this up early so all error reporting gets the debug flag
+    const DEBUG_MODE = args.includes("--debug");
+    if (DEBUG_MODE) {
+      ErrorPipeline.setDebugMode(true);
+      cliOptions.debug = true;
+    }
+
+    const { inputPath, exprDir } = await getInputPath(positional[0]);
+    logger.startTiming("run", "Total Processing");
+
+    const runDir = await createTempDir("run");
+    logger.log({ text: `Created temporary directory: ${runDir}`, namespace: "cli" });
+
+    const source = await readInputFile(inputPath);
+    try {
+      await transpileAndExecute(args, cliOptions, inputPath, source, runDir);
+    } catch (error: unknown) {
+      // Check if error is already reported
+      if (error instanceof ErrorPipeline.HQLError && error.reported) {
+        // Just exit without reporting again
+        return 1;
+      }
+      
+      // Use the consolidated error pipeline for all errors
+      ErrorPipeline.reportError(error, {
+        source,
+        filePath: inputPath,
+        verbose: cliOptions.verbose || cliOptions.debug,
+        showCallStack: cliOptions.debug,
+        makePathsClickable: true
+      });
+      return 1;
+    } finally {
+      await cleanupAllTempFiles();
+    }
+    return 0;
+  } catch (error: unknown) {
+    // Check if error is already reported
+    if (error instanceof ErrorPipeline.HQLError && error.reported) {
+      // Just exit without reporting again  
+      return 1;
+    }
+    
+    // Catch-all error handler - ensure all errors go through the pipeline
+    ErrorPipeline.reportError(error, {
+      verbose: args.includes("--verbose") || args.includes("--debug"),
+      showCallStack: args.includes("--debug"),
+      makePathsClickable: true
+    });
     return 1;
-  } finally {
-    await cleanupAllTempFiles();
   }
-  return 0;
 }
 
 if (import.meta.main) {

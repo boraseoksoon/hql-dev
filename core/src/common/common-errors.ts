@@ -1,3 +1,13 @@
+/**
+ * @file common-errors.ts
+ * 
+ * @deprecated This module is deprecated. Please use the consolidated error pipeline 
+ * from '../common/error-pipeline.ts' instead.
+ * 
+ * All functionality has been migrated to the new error pipeline for improved error
+ * handling, consistent reporting, and better debug support.
+ */
+
 // CommonError.ts - Centralized error handling utilities
 
 /**

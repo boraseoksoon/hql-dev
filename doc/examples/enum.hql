@@ -5,7 +5,7 @@
 ;; 1. Simple Enums - no associated values
 ;; --------------------------------------
 (enum Direction
-  (case north)
+  (case north
   (case south)
   (case east)
   (case west)
