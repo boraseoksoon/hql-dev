@@ -3,9 +3,8 @@
 
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
-import { ValidationError, TransformError } from "../error/errors.ts";
+import { ValidationError, TransformError, perform } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { perform } from "../error/errors.ts";
 
 /**
  * Process elements in a vector, handling vector keyword and commas

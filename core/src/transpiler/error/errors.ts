@@ -5,4 +5,4 @@
  * This file only re-exports error types and utilities from the canonical error pipeline.
  */
 
-export * from '../../common/error-pipeline.ts';
+// Deprecated: Use '../../common/error-pipeline.ts' directly for all error classes and utilities.

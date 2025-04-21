@@ -3,9 +3,8 @@
 
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
-import { ValidationError, TransformError } from "../error/errors.ts";
+import { ValidationError, TransformError, perform } from "../../common/error-pipeline.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
-import { perform } from "../error/errors.ts";
 
 /**
  * Transform a 'let' expression (immutable binding).

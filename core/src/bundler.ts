@@ -1,7 +1,7 @@
 import * as esbuild from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
-import { performAsync } from "./transpiler/error/errors.ts";
+import { performAsync } from "./common/error-pipeline.ts";
 import { formatErrorMessage } from "./common/error-pipeline.ts";
 import {
   isHqlFile,
@@ -23,7 +23,7 @@ import {
 import {
   TranspilerError,
   ValidationError,
-} from "./transpiler/error/errors.ts";
+} from "./common/error-pipeline.ts";
 import { 
   createTempDir, 
   getCachedPath,

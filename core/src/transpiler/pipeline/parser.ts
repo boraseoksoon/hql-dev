@@ -9,7 +9,7 @@ import {
   SList,
   SSymbol
 } from "../../s-exp/types.ts";
-import { ParseError } from "../error/errors.ts";
+import { ParseError } from "../../common/error-pipeline.ts";
 
 enum TokenType {
   LeftParen,

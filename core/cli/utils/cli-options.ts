@@ -22,35 +22,11 @@ export function setupConsoleLogging(args: string[]): void {
   }
 }
 
-/**
- * Parse common CLI flags for logging and timing options
- */
-export function parseCliOptions(args: string[]): CliOptions {
-  return {
-    verbose: args.includes("--verbose") || args.includes("-v"),
-    showTiming: args.includes("--time"),
-    force: args.includes("--force"),
-    debug: args.includes("--debug"),
-  };
-}
+// Re-export from shared CLI utils
+export { parseCliOptions } from "../../src/common/cli-utils.ts";
 
-/**
- * Apply CLI options to the global logger
- */
-export function applyCliOptions(options: CliOptions): void {
-  // Set verbose logging
-  if (options.verbose) {
-    globalLogger.setEnabled(true);
-    Deno.env.set("HQL_DEBUG", "1");
-    globalLogger.debug("Verbose logging enabled");
-  }
-  
-  // Set timing options
-  globalLogger.setTimingOptions({ showTiming: options.showTiming });
-  if (options.showTiming) {
-    globalLogger.debug("Performance timing enabled");
-  }
-}
+// Re-export from shared CLI utils
+export { applyCliOptions } from "../../src/common/cli-utils.ts";
 
 /**
  * Extract log namespace settings from CLI args

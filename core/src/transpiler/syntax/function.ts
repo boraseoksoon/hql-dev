@@ -3,13 +3,12 @@
 import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, HQLNode } from "../type/hql_ast.ts";
-import { ValidationError, TransformError } from "../error/errors.ts";
+import { TransformError, ValidationError, perform } from "../../common/error-pipeline.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { registerPureFunction, verifyFunctionPurity } from "../fx/purity.ts";
 import { isValidType } from "../fx/purity.ts";
 import { execute, convertIdentifier, convertBlockStatement, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
-import { perform } from "../error/errors.ts";
 import { transformNode } from "../pipeline/hql-ast-to-hql-ir.ts";
 
 const fnFunctionRegistry = new Map<string, IR.IRFnFunctionDeclaration>();

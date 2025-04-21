@@ -3,12 +3,8 @@
 
 import {
   TranspilerError,
-  ImportError,
-  ValidationError,
-  report,
   createErrorReport,
-  formatError
-} from "../../src/transpiler/error/errors.ts";
+} from "../../src/common/error-pipeline.ts";
 
 /**
  * Error thrown during the publishing process
@@ -159,12 +155,12 @@ export function createPublishErrorReport(
 ): string {
   // When we get a PublishError, just use it directly
   if (error instanceof PublishError) {
-    return formatError(error);
+    return ErrorPipeline.formatError(error);
   }
   
   // Otherwise create a new PublishError
   const publishError = PublishError.fromError(error, options);
-  return formatError(publishError);
+  return ErrorPipeline.formatError(publishError);
 }
 
 /**
@@ -185,7 +181,7 @@ export function reportPublishError(
     : PublishError.fromError(error, options);
     
   // Print the error to the console
-  console.error(formatError(publishError));
+  console.error(ErrorPipeline.formatError(publishError));
   
   // Return the error for potential re-throwing
   return publishError;

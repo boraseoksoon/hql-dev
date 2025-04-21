@@ -5,7 +5,7 @@ import {
   MacroError,
   TranspilerError,
   ValidationError,
-} from "./transpiler/error/errors.ts";
+} from "./common/error-pipeline.ts";
 import { LRUCache } from "./common/lru-cache.ts";
 import { globalLogger as logger } from "./logger.ts";
 

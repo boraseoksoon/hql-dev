@@ -4,11 +4,10 @@
 import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
-import { ValidationError, TransformError } from "../error/errors.ts";
+import { ValidationError, TransformError, perform } from "../../common/error-pipeline.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { perform } from "../error/errors.ts";
-import { execute,  } from "../pipeline/hql-ir-to-ts-ast.ts";
+import { execute  } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { convertIRNode, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
 
 export function convertCallExpression(node: IR.IRCallExpression): ts.CallExpression {

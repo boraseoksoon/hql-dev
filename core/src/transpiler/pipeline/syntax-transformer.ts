@@ -13,8 +13,7 @@ import {
 } from "../../s-exp/types.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { Logger } from "../../logger.ts";
-import { TransformError } from "../error/errors.ts";
-import { perform } from "../error/errors.ts";
+import { TransformError, perform } from "../../common/error-pipeline.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 
 /**

@@ -1,6 +1,6 @@
 // Core transpiler API entry point
 import { processHql } from "./hql-transpiler.ts";
-import { TranspilerError } from "./error/errors.ts";
+import { TranspilerError } from "../common/error-pipeline.ts";
 import { ErrorPipeline } from "../common/error-pipeline.ts";
 
 export interface TranspileOptions {
@@ -65,4 +65,4 @@ export async function transpile(
 }
 
 export { processHql } from "./hql-transpiler.ts";
-export { registerSourceFile } from "./error/errors.ts"; 
+export { registerSourceFile } from "../common/error-pipeline.ts"; 

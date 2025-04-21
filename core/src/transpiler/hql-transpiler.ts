@@ -15,13 +15,10 @@ import {
   ParseError,
   TransformError,
   TranspilerError,
-  parseError
-} from "./error/errors.ts";
+} from "../common/error-pipeline.ts";
 import { 
   registerSourceFile, 
-  formatError, 
-  getSuggestion, 
-} from "./error/errors.ts";
+} from "../common/error-pipeline.ts";
 import { globalLogger as logger } from "../logger.ts";
 import { ErrorPipeline } from "../common/error-pipeline.ts";
 

@@ -31,39 +31,9 @@ import {
   isTypeScriptFile
 } from "./common/import-utils.ts";
 import { wrapError, formatErrorMessage } from "./common/error-pipeline.ts";
-import { perform } from "./transpiler/error/errors.ts";
+import { perform } from "./common/error-pipeline.ts";
 
-// Define missing error classes
-class MacroError extends Error {
-  constructor(message: string, public macroName: string, public filePath?: string) {
-    super(message);
-    this.name = "MacroError";
-  }
-}
-
-class ImportError extends Error {
-  constructor(
-    message: string, 
-    public modulePath: string, 
-    public importingFile?: string,
-    public cause?: Error
-  ) {
-    super(message);
-    this.name = "ImportError";
-  }
-}
-
-class ValidationError extends Error {
-  constructor(
-    message: string,
-    public context: string,
-    public expected: string,
-    public actual: string
-  ) {
-    super(message);
-    this.name = "ValidationError";
-  }
-}
+import { MacroError, ImportError } from "./common/error-pipeline.ts";
 
 export interface ImportProcessorOptions {
   verbose?: boolean;

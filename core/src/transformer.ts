@@ -14,7 +14,7 @@ import {
   CodeGenError,
   TransformError,
   TranspilerError,
-} from "./transpiler/error/errors.ts";
+} from "./common/error-pipeline.ts";
 import {
   extractImportInfo,
   findExistingImports,

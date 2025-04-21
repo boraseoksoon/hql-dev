@@ -12,7 +12,7 @@ import {
   applyCliOptions,
   CliOptions
 } from "./utils/cli-options.ts";
-import { report } from "../src/transpiler/error/errors.ts";
+import { report } from "../src/common/error-pipeline.ts";
 import { ErrorPipeline } from "../src/common/error-pipeline.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
 import { basename } from "../src/platform/platform.ts";
