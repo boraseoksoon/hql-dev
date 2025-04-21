@@ -145,7 +145,11 @@ function convertExports(rawAst: any[]): HQLNode[] {
 export interface TransformOptions {
   verbose?: boolean;
   replMode?: boolean;
-  sourceFile?: string;  // Added for source map support
+  sourceFile?: string; // Added for source map support
+  generateSourceMap?: boolean; // Add this field
+  sourceFilePath?: string; // Add this field
+  originalSource?: string; // Add this field
+  baseDir?: string; // Add this field
 }
 
 /**
@@ -183,6 +187,12 @@ async function getOriginalSource(filePath: string): Promise<string> {
   return "";
 }
 
+interface TransformResult {
+  code: string;
+  sourceMap?: string;
+}
+
+
 /**
  * Transforms HQL AST nodes through all pipeline phases and outputs TS code.
  */
@@ -190,7 +200,7 @@ export async function transformAST(
   astNodes: HQLNode[],
   currentDir: string,
   options: TransformOptions = {}
-): Promise<string> {
+): Promise<TransformResult> {
   const timer = new Timer(logger);
   try {
     logger.debug(`Starting transformation: ${astNodes.length} nodes`);

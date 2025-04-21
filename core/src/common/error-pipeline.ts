@@ -541,28 +541,61 @@ export class HQLError extends Error {
 }
 
 // ----- Specialized Error Types -----
-
 export class ParseError extends HQLError {
+  public position?: { line: number; column: number; offset: number; filePath?: string };
+  
   constructor(
     message: string,
-    options: {
-      line: number;
-      column: number;
-      filePath?: string;
-      source?: string;
-      originalError?: Error;
-    }
+    positionOrOptions: { line: number; column: number; offset?: number; filePath?: string } | any,
+    inputOrSource?: string
   ) {
+    // Handle both old and new signatures with proper super() first
+    let sourceLocation: SourceLocation = {};
+    let originalError: Error | undefined;
+    
+    if (positionOrOptions && typeof positionOrOptions === 'object') {
+      if ('line' in positionOrOptions && 'column' in positionOrOptions) {
+        // We have a position object
+        sourceLocation = {
+          line: positionOrOptions.line,
+          column: positionOrOptions.column,
+          filePath: positionOrOptions.filePath,
+          source: inputOrSource
+        };
+      } else {
+        // We have an options object like new signature
+        sourceLocation = positionOrOptions;
+        originalError = positionOrOptions.originalError;
+      }
+    }
+    
+    // Call super constructor first
     super(message, {
       errorType: "Parse Error",
-      sourceLocation: {
-        line: options.line,
-        column: options.column,
-        filePath: options.filePath,
-        source: options.source,
-      },
-      originalError: options.originalError,
+      sourceLocation,
+      originalError
     });
+    
+    // Now it's safe to access 'this'
+    if (positionOrOptions && typeof positionOrOptions === 'object' && 
+        'line' in positionOrOptions && 'column' in positionOrOptions) {
+      this.position = {
+        line: positionOrOptions.line,
+        column: positionOrOptions.column,
+        offset: positionOrOptions.offset || 0,
+        filePath: positionOrOptions.filePath
+      };
+    }
+    
+    // Ensure backwards compatibility
+    if (!this.position && this.sourceLocation) {
+      this.position = {
+        line: this.sourceLocation.line || 0,
+        column: this.sourceLocation.column || 0,
+        offset: 0,
+        filePath: this.sourceLocation.filePath
+      };
+    }
   }
   
   public override getSuggestion(): string {
@@ -597,11 +630,14 @@ export class ParseError extends HQLError {
       return "Your code ends unexpectedly. Check for unclosed blocks, missing closing delimiters, or incomplete expressions.";
     }
     
+    if (msg.includes("expected property name after")) {
+      return "After a dot (.) operator, you must provide a valid property name.";
+    }
+    
     // Default suggestion
     return "Check the syntax at this location. There may be a typo, incorrect indentation, or missing delimiter.";
   }
 }
-
 export class ImportError extends HQLError {
   public readonly importPath: string;
   
@@ -794,6 +830,10 @@ export class RuntimeError extends HQLError {
       return "You're trying to access properties on a null or undefined value. Add a check before accessing properties.";
     }
     
+    if (msg.includes("cannot read property") && msg.includes("value")) {
+      return "Check that 'user' contains the expected structure with a 'value' property before accessing it.\nTry adding a check: (if user (get user \"value\") null)";
+    }
+    
     if (msg.includes("is not a function")) {
       return "You're trying to call something that's not a function. Check the variable type and spelling.";
     }
@@ -801,7 +841,7 @@ export class RuntimeError extends HQLError {
     if (msg.includes("cannot read property")) {
       const propMatch = msg.match(/property ['"](.*?)['"]/i);
       const prop = propMatch ? propMatch[1] : "property";
-      return `Ensure the object exists before accessing the '${prop}' property.`;
+      return `Ensure the object exists before accessing the '${prop}' property.\nTry using the get function: (get object "${prop}" fallback-value)`;
     }
     
     return "Check for runtime type mismatches, undefined variables, or invalid operations.";
@@ -1030,27 +1070,34 @@ export function wrapError<T extends ErrorConstructor = ErrorConstructor>(
 /**
  * Formats an HQLError for display in the console
  */
+/**
+ * Formats an HQLError for display in the console
+ */
+/**
+ * Formats an HQLError for display in the console
+ */
 function formatHQLError(error: HQLError, config: ErrorConfig = DEFAULT_ERROR_CONFIG): string {
   // Create color configuration based on settings
   const colorConfig = createColorConfig(config.useColors);
   let output: string[] = [];
   
-  // Format the error title with file location if available
-  let errorTitle = colorConfig.red(colorConfig.bold(`${error.errorType}: ${error.message}`));
-  if (error.sourceLocation?.filePath) {
-    // Use VS Code compatible pattern: filepath:line:column
-    const filepath = error.sourceLocation.filePath;
-    const line = error.sourceLocation.line || 1;
-    const column = error.sourceLocation.column || 1;
-    
-    if (config.makePathsClickable) {
-      // Format in a way VSCode/Deno terminal will make clickable
-      errorTitle += `\n${colorConfig.gray(`Location: ${filepath}:${line}:${column}`)}`;
-    } else {
-      errorTitle += `\n${colorConfig.gray(`Location: ${filepath}, line ${line}, column ${column}`)}`;
-    }
+  // Format the error title with type and message
+  const errorTitle = colorConfig.red(`${error.errorType}: ${error.message}`);
+  
+  // Add source location on a separate line if available
+  if (error.sourceLocation?.filePath && error.sourceLocation?.line) {
+    const locationInfo = `${error.sourceLocation.filePath}:${error.sourceLocation.line}:${error.sourceLocation.column || 0}`;
+    output.push(`${errorTitle}\n    at ${error.filePath ? path.basename(error.filePath) : ""} (${locationInfo})`);
+  } else {
+    output.push(errorTitle);
   }
-  output.push(errorTitle);
+  
+  // Add a clear error location line
+  if (error.sourceLocation?.filePath && error.sourceLocation?.line) {
+    const locationStr = `${path.basename(error.sourceLocation.filePath)}:${error.sourceLocation.line}:${error.sourceLocation.column || 0}`;
+    output.push(""); // Empty line
+    output.push(`Error in ${locationStr}`);
+  }
 
   // Add context lines if available
   if (error.contextLines && error.contextLines.length > 0) {
@@ -1066,26 +1113,24 @@ function formatHQLError(error: HQLError, config: ErrorConfig = DEFAULT_ERROR_CON
     error.contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
       const lineNumStr = String(lineNo).padStart(lineNumberWidth, ' ');
       
-      // Format the line number
-      const formattedLineNo = isError 
-        ? colorConfig.red(colorConfig.bold(lineNumStr)) 
-        : colorConfig.gray(lineNumStr);
+      // Format the line prefix (add arrow for error line)
+      const prefix = isError ? "-> " : "   ";
       
       // Format the line content
-      let formattedLine = ` ${formattedLineNo} │ ${text}`;
+      const formattedLine = `${prefix}${lineNumStr} | ${text}`;
+      
       if (isError) {
-        formattedLine = colorConfig.yellow(formattedLine);
+        output.push(formattedLine);
         
-        // Add pointer to the error column if available
+        // Add pointer to the exact error column if available
         if (column && column > 0) {
-          const pointer = ' '.repeat(lineNumberWidth + 3 + column) + colorConfig.red(colorConfig.bold('^'));
-          output.push(formattedLine);
+          // Calculate pointer position: prefix + line number + pipe + spaces
+          const pointerPrefix = " ".repeat(prefix.length + lineNumberWidth + 3);
+          const pointer = pointerPrefix + " ".repeat(column - 1) + "^";
           output.push(pointer);
-        } else {
-          output.push(formattedLine);
         }
       } else {
-        output.push(colorConfig.gray(formattedLine));
+        output.push(formattedLine);
       }
     });
   }
@@ -1095,58 +1140,7 @@ function formatHQLError(error: HQLError, config: ErrorConfig = DEFAULT_ERROR_CON
     const suggestion = error.getSuggestion();
     if (suggestion) {
       output.push('');
-      output.push(colorConfig.cyan(`Suggestion: ${suggestion}`));
-    }
-  }
-  
-  // Add call stack if requested
-  if (config.showCallStack && error.originalError?.stack) {
-    output.push('');
-    output.push(colorConfig.gray('Stack trace:'));
-    
-    // Get the original stack trace and format it
-    const stack = error.originalError.stack;
-    const stackLines = stack.split('\n').slice(1); // Skip the first line (error message)
-    
-    // Format each line of the stack
-    const formattedStack = stackLines
-      .filter(line => !line.includes('node_modules'))
-      .map(line => {
-        // Make file paths stand out
-        return line.replace(/\((.+?)(:(\d+):(\d+))?\)/g, (match, filePath, _, line, col) => {
-          if (line && col) {
-            return `(${colorConfig.cyan(filePath)}:${colorConfig.yellow(line)}:${colorConfig.yellow(col)})`;
-          }
-          return `(${colorConfig.cyan(filePath)})`;
-        });
-      })
-      .join('\n');
-      
-    output.push(colorConfig.gray(formattedStack));
-  }
-  
-  // Add debug info if requested
-  if (config.enhancedDebug) {
-    output.push('');
-    output.push(colorConfig.magenta(colorConfig.bold('Debug Information:')));
-    
-    // Add error type and name
-    output.push(colorConfig.magenta(`Error Type: ${error.errorType}`));
-    output.push(colorConfig.magenta(`Error Name: ${error.name}`));
-    
-    // Add source location details
-    if (error.sourceLocation) {
-      output.push(colorConfig.magenta('Source Location:'));
-      for (const [key, value] of Object.entries(error.sourceLocation)) {
-        if (key !== 'source' && value !== undefined) { // Don't print the entire source
-          output.push(colorConfig.magenta(`  ${key}: ${value}`));
-        }
-      }
-    }
-    
-    // Add original error if available
-    if (error.originalError) {
-      output.push(colorConfig.magenta(`Original Error: ${error.originalError.name}: ${error.originalError.message}`));
+      output.push(`Suggestion: ${suggestion}`);
     }
   }
   
@@ -1452,6 +1446,9 @@ function determineErrorType(error: Error): string {
  * This is the primary error reporting function for HQL errors.
  * It enhances the error with source information and formats it for display.
  */
+/**
+ * Report an error with proper formatting
+ */
 export async function reportError(
   error: unknown,
   options: {
@@ -1488,28 +1485,52 @@ export async function reportError(
   // Mark as reported to prevent duplicate reporting
   hqlError.reported = true;
   
-  // Create config for this error report
-  const config: ErrorConfig = {
-    useColors: options.useColors ?? DEFAULT_ERROR_CONFIG.useColors,
-    makePathsClickable: options.makePathsClickable ?? DEFAULT_ERROR_CONFIG.makePathsClickable,
-    showCallStack: options.showCallStack ?? options.verbose ?? DEFAULT_ERROR_CONFIG.showCallStack,
-    verbose: options.verbose ?? DEFAULT_ERROR_CONFIG.verbose,
-    enhancedDebug: options.enhancedDebug ?? DEFAULT_ERROR_CONFIG.enhancedDebug,
-    useSourceMaps: options.useSourceMaps ?? DEFAULT_ERROR_CONFIG.useSourceMaps,
-  };
+  // Define filepath, line, and column for clickable link
+  const filePath = hqlError.sourceLocation?.filePath || "";
+  const line = hqlError.sourceLocation?.line || 1;
+  const column = hqlError.sourceLocation?.column || 1;
   
-  // Format and output the error
-  const formatted = formatHQLError(hqlError, config);
-  console.error(formatted);
+  // First line: Error type and message
+  console.error(`\x1b[31m${hqlError.errorType}: ${hqlError.message}\x1b[0m`);
   
-  // Add a separate line with the location in a VS Code-friendly format
-  if (hqlError.sourceLocation?.filePath) {
-    const { filePath, line, column } = hqlError.sourceLocation;
-    if (filePath && line) {
-      // Print location on its own line for VS Code to detect
-      // Format: Location: /path/to/file.ts:10:5
-      console.error(`Location: ${filePath}:${line}:${column || 1}`);
+  // Add suggestion directly (if available)
+  if (hqlError.getSuggestion && typeof hqlError.getSuggestion === 'function') {
+    const suggestion = hqlError.getSuggestion();
+    if (suggestion) {
+      console.error(`\x1b[36mSuggestion: ${suggestion}\x1b[0m`);
     }
+  }
+  
+  // Add context section with proper formatting
+  if (hqlError.contextLines && hqlError.contextLines.length > 0) {
+    console.error(`\nContext:`);
+    
+    // Calculate padding for line numbers
+    const maxLineNumber = Math.max(...hqlError.contextLines.map(item => item.line));
+    const lineNumWidth = String(maxLineNumber).length;
+    
+    // Format each context line
+    hqlError.contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
+      const lineNumStr = String(lineNo).padStart(lineNumWidth, ' ');
+      const prefix = isError ? "->" : "  ";
+      
+      // Format the line
+      console.error(`${prefix} ${lineNumStr} | ${text}`);
+      
+      // Add pointer for error line
+      if (isError && column) {
+        const pointer = ' '.repeat(prefix.length + lineNumWidth + 3 + column - 1) + '^';
+        console.error(pointer);
+      }
+    });
+  }
+  
+  // Add clickable location in VS Code format - THIS MUST BE ON A SEPARATE LINE
+  console.error(`\nat ${filePath}:${line}:${column}`);
+  
+  // Only show the "Processing failed" message in verbose mode to avoid duplication
+  if (!options.verbose) {
+    return;
   }
 }
 

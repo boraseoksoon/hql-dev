@@ -1,11 +1,10 @@
 // src/transpiler/ts-ast-to-ts-code.ts - Refactored with perform and performAsync utilities
+import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
-import { CodeGenError, createErrorReport, perform } from "../../common/error-pipeline.ts";
+import { CodeGenError, perform } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { addSourceMappings } from "./source-map-utils.ts";
-
 
 /**
  * The output of TypeScript code generation, including code and optional source map.
@@ -26,6 +25,7 @@ export interface TypeScriptOutput {
  * @param ir - The IR program to convert to TypeScript
  * @param options - Generation options including source file path and source map generation
  */
+// In ts-ast-to-ts-code.ts - Where JavaScript code is generated from TypeScript AST
 export async function generateTypeScript(
   ir: IR.IRProgram,
   options: {
@@ -40,32 +40,10 @@ export async function generateTypeScript(
       `Starting TypeScript code generation from IR with ${ir.body.length} nodes`,
     );
 
-    // Validate the IR input
-    if (!ir || !ir.body) {
-      throw new CodeGenError(
-        "Invalid IR program input: missing or invalid IR structure",
-        "IR validation",
-        ir,
-      );
-    }
-
-    // Convert HQL IR directly to official TS AST
-    logger.debug("Converting HQL IR to TypeScript AST");
-    const startTime = performance.now();
-
-    const tsAST = await perform(
-      () => convertHqlIRToTypeScript(ir),
-      "IR to TS AST conversion",
-      CodeGenError,
-      [ir],
-    );
-
-    const conversionTime = performance.now() - startTime;
-    logger.debug(
-      `IR to TS AST conversion completed in ${conversionTime.toFixed(2)}ms`,
-    );
-
-    // Create a printer with formatting options
+    // Convert HQL IR to TypeScript AST
+    const tsAST = await convertHqlIRToTypeScript(ir);
+    
+    // Create printer
     const printer = ts.createPrinter({
       newLine: ts.NewLineKind.LineFeed,
       removeComments: false,
@@ -73,125 +51,126 @@ export async function generateTypeScript(
       noEmitHelpers: true,
     });
 
-    logger.debug("Printing TypeScript AST to code string");
-    const printStartTime = performance.now();
-
-    const code = perform(
-      () => {
-        // Create an empty source file for printing
-        const resultFile = ts.createSourceFile(
-          options.sourceFilePath || "output.ts",
-          "",
-          ts.ScriptTarget.Latest,
-          false,
-        );
-
-        // Generate the code
-        return printer.printNode(ts.EmitHint.Unspecified, tsAST, resultFile);
-      },
-      "TS AST printing",
-      CodeGenError,
-      [tsAST],
+    // Create an empty source file for printing
+    const resultFile = ts.createSourceFile(
+      options.sourceFilePath || "output.ts",
+      "",
+      ts.ScriptTarget.Latest,
+      false,
     );
 
-    const printTime = performance.now() - printStartTime;
+    // Generate the code
+    const code = printer.printNode(ts.EmitHint.Unspecified, tsAST, resultFile);
     
-    logger.debug(
-      `TS AST printing completed in ${
-        printTime.toFixed(2)
-      }ms with ${code.length} characters`,
-    );
-
+    // Generate source map if requested
     let sourceMap: string | undefined = undefined;
-if (options.generateSourceMap) {
-  try {
-    // Use the SourceMapGenerator from the source-map library
-    const { SourceMapGenerator } = await import("https://esm.sh/source-map@0.7.3");
-    const map = new SourceMapGenerator({
-      file: options.sourceFilePath || "output.ts",
-    });
     
-    // Use the more robust source map utility to create detailed mappings
-    // This uses the AST structure to create more accurate mappings
-    if (options.originalSource) {
-      map.setSourceContent(options.sourceFilePath || "output.ts", options.originalSource);
-      
-      // Use the addSourceMappings utility function for more accurate mappings
-      // This maps IR nodes to generated TS nodes to maintain position information
-      const sourcePath = options.sourceFilePath || "output.ts";
-      addSourceMappings(
-        map,
-        ir,
-        tsAST,
-        sourcePath,
-        code
-      );
-    } else {
-      // Fallback to simple line mapping if no original source provided
-      const codeLines = code.split("\n");
-      for (let i = 0; i < codeLines.length; i++) {
-        map.addMapping({
-          generated: { line: i + 1, column: 0 },
-          original: { line: i + 1, column: 0 },
-          source: options.sourceFilePath || "output.ts",
+    if (options.generateSourceMap) {
+      try {
+        // Use the SourceMapGenerator from the source-map library
+        const { SourceMapGenerator } = await import("npm:source-map@0.7.3");
+        const map = new SourceMapGenerator({
+          file: options.sourceFilePath ? path.basename(options.sourceFilePath) + ".js" : "output.js",
+          sourceRoot: ""
         });
+        
+        if (options.originalSource && options.sourceFilePath) {
+          // Store the original HQL source
+          map.setSourceContent(options.sourceFilePath, options.originalSource);
+          
+          // Create mappings for each line
+          const lines = code.split('\n');
+          const originalLines = options.originalSource.split('\n');
+          
+          // Map each line of generated code to the original source
+          // This is a simple mapping - for better accuracy, we would need to analyze the AST
+          for (let i = 0; i < lines.length; i++) {
+            const originalLine = Math.min(i, originalLines.length - 1);
+            
+            map.addMapping({
+              generated: { line: i + 1, column: 0 },
+              original: { line: originalLine + 1, column: 0 },
+              source: options.sourceFilePath
+            });
+            
+            // For lines with significant tokens, add more detailed mappings
+            const tokens = extractSignificantTokens(lines[i]);
+            for (const token of tokens) {
+              // Try to find this token in the original source
+              const found = findTokenInOriginalSource(token, options.originalSource);
+              if (found) {
+                map.addMapping({
+                  generated: { line: i + 1, column: token.index },
+                  original: { line: found.line, column: found.column },
+                  source: options.sourceFilePath,
+                  name: token.text
+                });
+              }
+            }
+          }
+        }
+        
+        // Generate the source map
+        sourceMap = map.toString();
+        
+        // If inline source map is requested
+        if (options.inlineSourceMap && sourceMap) {
+          const base64Map = btoa(sourceMap);
+          const inlineComment = `//# sourceMappingURL=data:application/json;base64,${base64Map}`;
+          return { 
+            code: code + '\n' + inlineComment + '\n',
+            sourceMap
+          };
+        }
+      } catch (smError) {
+        logger.error(`Source map generation failed: ${smError instanceof Error ? smError.message : String(smError)}`);
       }
     }
     
-    // Generate the source map JSON string
-    const sourceMapJson = map.toString();
-    
-    // Keep raw JSON for the registry
-    sourceMap = sourceMapJson;
-    
-    // If inline source map requested, append the base64 inlined version to the code
-    if (options.inlineSourceMap) {
-      const base64Map = btoa(sourceMapJson);
-      const inlineComment = `//# sourceMappingURL=data:application/json;base64,${base64Map}`;
-      // Create final code with source map comment
-      const codeWithSourceMap = code + '\n' + inlineComment + '\n';
-      // Return the code with source map included
-      return { code: codeWithSourceMap, sourceMap };
-    }
-  } catch (smError) {
-    logger.error(`Source map generation failed: ${smError instanceof Error ? smError.message : String(smError)}`);
+    return { code, sourceMap };
+  } catch (error) {
+    // Error handling...
+    throw new CodeGenError(`Failed to generate code: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
-return { code, sourceMap };
-  } catch (error) {
-    // Create a comprehensive error report
-    const errorReport = createErrorReport(
-      error instanceof Error ? error : new Error(String(error)),
-      "TypeScript code generation",
-      {
-        irNodeCount: ir?.body?.length || 0,
-        irType: ir?.type ? IR.IRNodeType[ir.type] : "unknown",
-      },
-    );
 
-    // Log the error report for detailed diagnostics
-    logger.error(
-      `Failed to generate TypeScript code: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    if (Deno.env.get("HQL_DEBUG") === "1") {
-      console.error(errorReport);
-    }
-
-    // Re-throw CodeGenError, otherwise wrap in CodeGenError
-    if (error instanceof CodeGenError) {
-      throw error;
-    } else {
-      throw new CodeGenError(
-        `Failed to generate TypeScript code: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        "TypeScript code generation",
-        ir,
-      );
+// Helper function to extract significant tokens from a line
+function extractSignificantTokens(line: string): { text: string, index: number }[] {
+  const tokens: { text: string, index: number }[] = [];
+  
+  // Match identifiers, function calls, property access, etc.
+  const patterns = [
+    /\b[a-zA-Z_][a-zA-Z0-9_]*\b/g,      // Identifiers
+    /\b[a-zA-Z_][a-zA-Z0-9_]*\(/g,      // Function calls
+    /\.[a-zA-Z_][a-zA-Z0-9_]*/g,        // Property access
+  ];
+  
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(line)) !== null) {
+      tokens.push({
+        text: match[0],
+        index: match.index
+      });
     }
   }
+  
+  return tokens;
+}
+
+// Helper function to find a token in the original source
+function findTokenInOriginalSource(token: { text: string, index: number }, source: string): { line: number, column: number } | null {
+  if (!source) return null;
+  
+  const lines = source.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const index = lines[i].indexOf(token.text);
+    if (index !== -1) {
+      return { line: i + 1, column: index };
+    }
+  }
+  
+  return null;
 }
 
 /**
