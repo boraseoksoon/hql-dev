@@ -102,7 +102,7 @@
     
     (if (js-call payment "is" "creditCard")
       (print "Processing credit card " 
-             (get (get payment "values") "number") 
+             (get (get payment "values") "number")
              " expiring " 
              (get (get payment "values") "expiry"))
       
@@ -201,7 +201,7 @@
 
 ;; Test file for unclosed parenthesis errors
 
-(enum Direction :Symbol 
+(enum Direction2
   (case north)
   (case south)
   (case east)

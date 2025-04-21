@@ -1,7 +1,6 @@
 import * as esbuild from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
-import { performAsync } from "./common/error-pipeline.ts";
 import { formatErrorMessage } from "./common/error-pipeline.ts";
 import {
   isHqlFile,
@@ -70,7 +69,6 @@ export async function transpileCLI(
     verbose?: boolean;
     showTiming?: boolean;
     force?: boolean;
-    skipErrorReporting?: boolean;
     skipPrimaryErrorReporting?: boolean;
   } = {}
 ): Promise<string> {
@@ -78,10 +76,6 @@ export async function transpileCLI(
     const startTime = performance.now();
     configureLogger(options);
     await initializeRuntime();
-    
-    if (!options.skipErrorReporting) {
-      logger.log({ text: `Processing entry: ${inputPath}`, namespace: "cli" });
-    }
     
     const resolvedInputPath = resolve(inputPath);
     const outPath = determineOutputPath(resolvedInputPath, outputPath);
@@ -110,25 +104,9 @@ export async function transpileCLI(
         throw error;
       }
       
-      if (!options.skipErrorReporting) {
-        // Mark the error as reported so it won't be reported again
-        if (error instanceof ErrorPipeline.HQLError) {
-          error.reported = true;
-        }
-        
-        handleError(error, `Processing ${resolvedInputPath}`, options);
-      }
       throw error;
     }
   } catch (error) {
-    if (!options.skipErrorReporting) {
-      // Mark the error as reported so it won't be reported again
-      if (error instanceof ErrorPipeline.HQLError) {
-        error.reported = true;
-      }
-      
-      handleError(error, `Transpiling ${inputPath}`, options);
-    }
     throw error;
   }
 }
@@ -170,7 +148,7 @@ async function processHqlImports(
     if (!resolvedHqlPath) {
       throw new Error(`Could not resolve import: ${importInfo.path} from ${filePath}`);
     }
-
+    
     // Transpile HQL to TypeScript if needed
     if (await needsRegeneration(resolvedHqlPath, ".ts") || options.force) {
       logger.debug(`Transpiling HQL import: ${resolvedHqlPath}`);
@@ -250,35 +228,27 @@ function processEntryFile(
   outputPath: string,
   options: BundleOptions = {},
 ): Promise<string> {
-  // Try to read the source file first to have it available for error reporting
-  try {
-    const source = Deno.readTextFileSync(inputPath);
-    ErrorPipeline.registerSourceFile(inputPath, source);
-  } catch (err) {
-    // If we can't read the file, continue - the error will be caught later
-  }
+  const source = Deno.readTextFileSync(inputPath);
+  ErrorPipeline.registerSourceFile(inputPath, source);
   
-  return performAsync(async () => {
+  try {
     const resolvedInputPath = resolve(inputPath);
     logger.debug(`Processing entry file: ${resolvedInputPath}`);
     logger.debug(`Output path: ${outputPath}`);
     
     if (isHqlFile(resolvedInputPath)) {
-      return await processHqlEntryFile(resolvedInputPath, outputPath, options);
+      return processHqlEntryFile(resolvedInputPath, outputPath, options);
     } else if (isJsFile(resolvedInputPath) || isTypeScriptFile(resolvedInputPath)) {
-      return await processJsOrTsEntryFile(resolvedInputPath, outputPath, options);
+      return processJsOrTsEntryFile(resolvedInputPath, outputPath, options);
     } else {
       throw new ValidationError(
         `Unsupported file type: ${inputPath} (expected .hql, .js, or .ts)`,
         "file type validation",
-        ".hql, .js, or .ts",
-        path.extname(inputPath) || "no extension",
       );
     }
-  }, {
-    context: `Failed to process entry file ${inputPath}`,
-    filePath: inputPath
-  });
+  } catch (error) {
+    throw error;
+  }
 }
 
 async function processHqlEntryFile(
@@ -301,6 +271,7 @@ async function processHqlEntryFile(
     verbose: options.verbose,
     tempDir,
     sourceDir: options.sourceDir || dirname(resolvedInputPath),
+    currentFile: resolvedInputPath
   });
   
   // Process nested HQL imports if present
@@ -507,93 +478,91 @@ function createUnifiedBundlePlugin(options: {
 /**
  * Bundle the entry file and dependencies into a single JavaScript file
  */
-function bundleWithEsbuild(
+async function bundleWithEsbuild(
   entryPath: string,
   outputPath: string,
   options: BundleOptions = {},
 ): Promise<string> {
-  return performAsync(async () => {
-    logger.log({ text: `Bundling ${entryPath} to ${outputPath}`, namespace: "bundler" });
+  
+  logger.log({ text: `Bundling ${entryPath} to ${outputPath}`, namespace: "bundler" });
     
-    // Create temp directory if needed
-    const tempDirResult = await createTempDirIfNeeded(options, "hql_bundle_", logger);
-    const tempDir = tempDirResult.tempDir;
-    const cleanupTemp = tempDirResult.created;
+  // Create temp directory if needed
+  const tempDirResult = await createTempDirIfNeeded(options, "hql_bundle_", logger);
+  const tempDir = tempDirResult.tempDir;
+  const cleanupTemp = tempDirResult.created;
+  
+  try {
+    // Create unified plugin for all bundling operations
+    const bundlePlugin = createUnifiedBundlePlugin({
+      verbose: options.verbose,
+      tempDir,
+      sourceDir: options.sourceDir || dirname(entryPath),
+      externalPatterns: DEFAULT_EXTERNAL_PATTERNS,
+    });
     
-    try {
-      // Create unified plugin for all bundling operations
-      const bundlePlugin = createUnifiedBundlePlugin({
-        verbose: options.verbose,
-        tempDir,
-        sourceDir: options.sourceDir || dirname(entryPath),
-        externalPatterns: DEFAULT_EXTERNAL_PATTERNS,
-      });
-      
-      // Define build options
-      const buildOptions = {
-        entryPoints: [entryPath],
-        bundle: true,
-        outfile: outputPath,
-        format: 'esm',
-        logLevel: options.verbose ? 'info' : 'silent',
-        minify: options.minify !== false,
-        sourcemap: options.debug ? 'inline' : false,
-        treeShaking: true,
-        platform: 'neutral',
-        target: ['es2020'],
-        plugins: [bundlePlugin],
-        allowOverwrite: true,
-        metafile: true,
-        write: true,
-        absWorkingDir: Deno.cwd(),
-        nodePaths: [Deno.cwd(), dirname(entryPath)],
-        // Configure TypeScript and other loaders
-        loader: {
-          '.ts': 'ts',
-          '.js': 'js',
-          '.hql': 'ts'
-        },
-        // Enable TypeScript processing
-        tsconfig: JSON.stringify({
-          compilerOptions: {
-            target: "es2020",
-            module: "esnext",
-            moduleResolution: "node",
-            esModuleInterop: true,
-            allowSyntheticDefaultImports: true,
-            resolveJsonModule: true,
-            isolatedModules: true,
-            strict: false,
-            skipLibCheck: true,
-            allowJs: true,
-            forceConsistentCasingInFileNames: true,
-            importsNotUsedAsValues: "preserve",
-          }
-        })
-      };
-      
-      // Run the build
-      logger.log({ text: `Starting bundling: ${entryPath}`, namespace: "bundler" });
-      const result = await runBuildWithRetry(buildOptions, MAX_RETRIES);
-      
-      // Post-process the output if needed
-      if (result.metafile) {
-        await postProcessBundleOutput(outputPath);
-      }
-      
-      logger.log({ 
-        text: `Successfully bundled to ${outputPath}`, 
-        namespace: "bundler" 
-      });
-      
-      return outputPath;
-    } catch (error) {
-      handleError(error, "Bundling failed", { verbose: true });
-      throw error;
-    } finally {
-      await cleanupAfterBundling(tempDir, cleanupTemp);
+    // Define build options
+    const buildOptions = {
+      entryPoints: [entryPath],
+      bundle: true,
+      outfile: outputPath,
+      format: 'esm',
+      logLevel: options.verbose ? 'info' : 'silent',
+      minify: options.minify !== false,
+      sourcemap: options.debug ? 'inline' : false,
+      treeShaking: true,
+      platform: 'neutral',
+      target: ['es2020'],
+      plugins: [bundlePlugin],
+      allowOverwrite: true,
+      metafile: true,
+      write: true,
+      absWorkingDir: Deno.cwd(),
+      nodePaths: [Deno.cwd(), dirname(entryPath)],
+      // Configure TypeScript and other loaders
+      loader: {
+        '.ts': 'ts',
+        '.js': 'js',
+        '.hql': 'ts'
+      },
+      // Enable TypeScript processing
+      tsconfig: JSON.stringify({
+        compilerOptions: {
+          target: "es2020",
+          module: "esnext",
+          moduleResolution: "node",
+          esModuleInterop: true,
+          allowSyntheticDefaultImports: true,
+          resolveJsonModule: true,
+          isolatedModules: true,
+          strict: false,
+          skipLibCheck: true,
+          allowJs: true,
+          forceConsistentCasingInFileNames: true,
+          importsNotUsedAsValues: "preserve",
+        }
+      })
+    };
+    
+    // Run the build
+    logger.log({ text: `Starting bundling: ${entryPath}`, namespace: "bundler" });
+    const result = await runBuildWithRetry(buildOptions, MAX_RETRIES);
+    
+    // Post-process the output if needed
+    if (result.metafile) {
+      await postProcessBundleOutput(outputPath);
     }
-  }, { context: `Bundling failed for ${entryPath}` });
+    
+    logger.log({ 
+      text: `Successfully bundled to ${outputPath}`, 
+      namespace: "bundler" 
+    });
+    
+    return outputPath;
+  } catch (error) {
+    throw error;
+  } finally {
+    await cleanupAfterBundling(tempDir, cleanupTemp);
+  }
 }
 
 /**
@@ -698,8 +667,6 @@ function logCompletionMessage(
   startTime: number,
   endTime: number
 ): void {
-  if (options.skipErrorReporting) return;
-  
   logger.log({
     text: `Successfully processed output to ${outPath} in ${
       (endTime - startTime).toFixed(2)
@@ -872,10 +839,6 @@ export async function transpileHqlFile(
     // Read the HQL file
     const hqlContent = await Deno.readTextFile(hqlFilePath);
 
-    // Perform a quick pre-validation check for balanced brackets before attempting full transpilation
-    preCheckBalancedParentheses(hqlContent, hqlFilePath);
-
-    // Log the HQL path being transpiled
     if (verbose) {
       logger.debug(`Transpiling HQL file: ${hqlFilePath}`);
     }
@@ -900,149 +863,6 @@ export async function transpileHqlFile(
       error instanceof Error ? error.message : String(error)
     }`);
   }
-}
-
-/**
- * Fast pre-check for balanced parentheses to catch syntax errors early
- */
-function preCheckBalancedParentheses(code: string, filePath: string): void {
-  // Basic stack-based approach to check for balanced delimiters
-  const stack: { char: string, line: number, col: number }[] = [];
-  let line = 1;
-  let col = 0;
-  let inString = false;
-  let inComment = false;
-  let escaped = false;
-  
-  for (let i = 0; i < code.length; i++) {
-    const char = code[i];
-    col++;
-    
-    // Track newlines
-    if (char === '\n') {
-      line++;
-      col = 0;
-      inComment = false; // End single-line comments at newlines
-      continue;
-    }
-    
-    // Skip comments
-    if (inComment) {
-      continue;
-    }
-    
-    // Handle comment starts
-    if (!inString && char === ';') {
-      inComment = true;
-      continue;
-    }
-    
-    // Handle string literals
-    if (char === '"' && !escaped) {
-      inString = !inString;
-      if (inString) {
-        // Track opening quotes for better error reporting
-        stack.push({ char: '"', line, col });
-      } else {
-        // Find and remove matching quote
-        let foundQuote = false;
-        for (let j = stack.length - 1; j >= 0; j--) {
-          if (stack[j].char === '"') {
-            stack.splice(j, 1);
-            foundQuote = true;
-            break;
-          }
-        }
-        if (!foundQuote) {
-          // This shouldn't happen with properly balanced strings
-          console.warn(`Warning: Unmatched closing quote at ${line}:${col}`);
-        }
-      }
-      continue;
-    }
-    
-    // Track escape character in strings
-    if (inString) {
-      escaped = (char === '\\' && !escaped);
-      continue;
-    }
-    
-    // Handle bracket balance
-    if (char === '(' || char === '[' || char === '{') {
-      stack.push({ char, line, col });
-    } else if (char === ')' || char === ']' || char === '}') {
-      if (stack.length === 0) {
-        // Closing bracket without opening
-        const bracketType = char === ')' ? 'parenthesis' : (char === ']' ? 'bracket' : 'brace');
-        throw new Error(`Syntax Error: Extra closing ${bracketType} '${char}' at line ${line}, column ${col}`);
-      }
-      
-      const last = stack.pop()!;
-      const matching = (last.char === '(' && char === ')') || 
-                       (last.char === '[' && char === ']') || 
-                       (last.char === '{' && char === '}');
-                       
-      if (!matching) {
-        const openBracket = last.char;
-        const expectedClose = openBracket === '(' ? ')' : (openBracket === '[' ? ']' : '}');
-        throw new Error(
-          `Syntax Error: Mismatched brackets at line ${line}, column ${col}. '${openBracket}' at line ${last.line}, column ${last.col} was closed with '${char}', expected '${expectedClose}'`
-        );
-      }
-    }
-  }
-  
-  // Check for unclosed delimiters
-  if (stack.length > 0) {
-    const last = stack[stack.length - 1];
-    if (last.char === '"') {
-      throw new Error(`Syntax Error: Unclosed string literal starting at line ${last.line}, column ${last.col}`);
-    } else {
-      const bracketType = last.char === '(' ? 'parenthesis' : (last.char === '[' ? 'bracket' : 'brace');
-      throw new Error(`Syntax Error: Unclosed ${bracketType} '${last.char}' at line ${last.line}, column ${last.col}`);
-    }
-  }
-}
-
-/**
- * Unified error handler for transpilation and bundling errors
- */
-function handleError(
-  error: unknown,
-  context: string,
-  options: { verbose?: boolean, skipErrorReporting?: boolean } = {}
-): never {
-  if (!options.skipErrorReporting) {
-    // Don't report the error if it's already been reported
-    if (error instanceof ErrorPipeline.HQLError && error.reported) {
-      console.error(`${context} failed, error already reported.`);
-    } else {
-      // Extract file path for better error context if possible
-      let filePath: string | undefined;
-      if (error instanceof Error && error.stack) {
-        filePath = extractFilePathFromStack(error.stack);
-      }
-      
-      // Report through the error pipeline
-      const hqlError = ErrorPipeline.enhanceError(error, { filePath });
-      ErrorPipeline.reportError(hqlError, {
-        verbose: options.verbose,
-        showCallStack: options.verbose
-      });
-    }
-  }
-  
-  Deno.exit(1);
-}
-
-/**
- * Extract file path from stack trace
- */
-function extractFilePathFromStack(stack?: string): string | undefined {
-  if (!stack) return undefined;
-  
-  const hqlFileMatch = stack.match(/([^"\s()]+\.hql):/);
-  return hqlFileMatch ? hqlFileMatch[1] : undefined;
 }
 
 /**

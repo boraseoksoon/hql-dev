@@ -55,10 +55,8 @@ const TOKEN_PATTERNS = {
 };
 
 export function parse(input: string, filePath: string = ""): SExp[] {
-  // No hardcoded filenames - use the path as provided
   const tokens = tokenize(input, filePath);
   
-  // Validate token balance before parsing to detect missing opening parentheses
   validateTokenBalance(tokens, input, filePath);
   
   return parseTokens(tokens, input, filePath);
@@ -476,23 +474,13 @@ function parseSet(state: ParserState): SList {
  */
 function validateTokenBalance(tokens: Token[], input: string, filePath: string): void {
   const bracketStack: { type: TokenType, token: Token }[] = [];
-  
-  // Define bracket pairs using a Map instead of Record for enum keys
-  const bracketPairs = new Map<TokenType, TokenType>([
-    [TokenType.LeftParen, TokenType.RightParen],
-    [TokenType.LeftBracket, TokenType.RightBracket],
-    [TokenType.LeftBrace, TokenType.RightBrace]
-  ]);
-  
+
   const closingToOpening = new Map<TokenType, TokenType>([
     [TokenType.RightParen, TokenType.LeftParen],
     [TokenType.RightBracket, TokenType.LeftBracket],
     [TokenType.RightBrace, TokenType.LeftBrace]
   ]);
-  
-  // Track incomplete expressions - but don't overeagerly detect let expressions
-  let lastExprStart: Token | null = null;
-  
+
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     
@@ -501,7 +489,6 @@ function validateTokenBalance(tokens: Token[], input: string, filePath: string):
         token.type === TokenType.LeftBracket || 
         token.type === TokenType.LeftBrace) {
       bracketStack.push({ type: token.type, token });
-      lastExprStart = token;
     }
     // If it's a closing bracket, check if it matches the last opening bracket
     else if (token.type === TokenType.RightParen || 
@@ -560,7 +547,6 @@ function validateTokenBalance(tokens: Token[], input: string, filePath: string):
     
     // Get the line of text for better context
     const unclosedLine = lastUnclosed.token.position.line;
-    const unclosedLineContent = input.split('\n')[unclosedLine - 1];
     
     // Extract surrounding code context with proper codeblock highlighting
     const lines = input.split('\n');

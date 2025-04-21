@@ -120,9 +120,6 @@ async function transpileAndExecute(
   runDir: string,
 ): Promise<void> {
   try {
-    // Start timing if requested
-    const tStart = performance.now();
-    
     // Configure logger based on verbose flag
     if (options.verbose) {
       logger.setEnabled(true);
@@ -135,7 +132,6 @@ async function transpileAndExecute(
     await transpileCLI(inputPath, jsOutputPath, {
       verbose: options.verbose,
       showTiming: options.showTiming,
-      skipErrorReporting: false,
       force: true, // Always regenerate to ensure latest code is used
     });
     
@@ -257,14 +253,10 @@ export async function run(args: string[] = Deno.args): Promise<number> {
   logger.log({ text: `Created temporary directory: ${runDir}`, namespace: "cli" });
 
   const source = await readInputFile(inputPath);
-  try {
-    await transpileAndExecute(args, cliOptions, inputPath, source, runDir);
-  } catch (error) {
-    console.error(report(error, { filePath: inputPath, source }));
-    return 1;
-  } finally {
-    await cleanupAllTempFiles();
-  }
+
+  await transpileAndExecute(args, cliOptions, inputPath, source, runDir);
+  await cleanupAllTempFiles();
+
   return 0;
 }
 

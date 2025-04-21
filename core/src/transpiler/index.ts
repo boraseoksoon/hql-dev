@@ -46,8 +46,7 @@ export async function transpile(
       showTiming: options.showTiming,
       baseDir: options.baseDir,
       sourceDir: options.sourceDir,
-      tempDir: options.tempDir,
-      skipErrorHandling: true // We'll handle errors here
+      tempDir: options.tempDir
     });
     
     return { code };

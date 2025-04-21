@@ -2,7 +2,7 @@
 import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
-import { CodeGenError, createErrorReport, perform } from "../../common/error-pipeline.ts";
+import { CodeGenError, perform } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { addSourceMappings } from "./source-map-utils.ts";
 

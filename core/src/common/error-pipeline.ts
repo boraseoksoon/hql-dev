@@ -16,32 +16,6 @@ import { globalLogger } from "../logger.ts";
 // Direct access to logger
 const logger = globalLogger;
 
-// ----- Error Configuration -----
-
-export interface ErrorConfig {
-  /** Whether to use colors in error output */
-  useColors: boolean;
-  /** Whether to make file paths clickable (terminal-dependent) */
-  makePathsClickable: boolean;
-  /** Whether to show full call stack (debug mode) */
-  showCallStack: boolean;
-  /** Whether to show verbose details about errors */
-  verbose: boolean;
-  /** Whether to show enhanced HQL-specific debugging info */
-  enhancedDebug?: boolean;
-  /** Whether to use source maps for error location mapping */
-  useSourceMaps?: boolean;
-}
-
-export const DEFAULT_ERROR_CONFIG: ErrorConfig = {
-  useColors: true,
-  makePathsClickable: true,
-  showCallStack: false,
-  verbose: false,
-  enhancedDebug: false,
-  useSourceMaps: true,
-};
-
 // ----- Color Formatting -----
 
 export type ColorFn = (s: string) => string;
@@ -58,31 +32,18 @@ export interface ColorConfig {
   magenta: ColorFn;
 }
 
-export function createColorConfig(useColors: boolean): ColorConfig {
-  const identity = (s: string) => s;
-  return useColors
-    ? {
-        red: (s: string) => `\x1b[31m${s}\x1b[0m`,
-        yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
-        gray: (s: string) => `\x1b[90m${s}\x1b[0m`,
-        cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
-        bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
-        green: (s: string) => `\x1b[32m${s}\x1b[0m`,
-        blue: (s: string) => `\x1b[34m${s}\x1b[0m`,
-        white: (s: string) => `\x1b[37m${s}\x1b[0m`,
-        magenta: (s: string) => `\x1b[35m${s}\x1b[0m`,
-      }
-    : {
-        red: identity,
-        yellow: identity,
-        gray: identity,
-        cyan: identity,
-        bold: identity,
-        green: identity,
-        blue: identity,
-        white: identity,
-        magenta: identity,
-      };
+export function createColorConfig(): ColorConfig {
+  return {
+    red: (s: string) => `\x1b[31m${s}\x1b[0m`,
+    yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
+    gray: (s: string) => `\x1b[90m${s}\x1b[0m`,
+    cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
+    bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
+    green: (s: string) => `\x1b[32m${s}\x1b[0m`,
+    blue: (s: string) => `\x1b[34m${s}\x1b[0m`,
+    white: (s: string) => `\x1b[37m${s}\x1b[0m`,
+    magenta: (s: string) => `\x1b[35m${s}\x1b[0m`,
+  };
 }
 
 // ----- Source Registry -----
@@ -309,98 +270,6 @@ export enum ErrorType {
   RUNTIME = "Runtime Error",
   CODEGEN = "Code Generation Error",
   TRANSPILER = "Transpiler Error", // Legacy type
-}
-
-// ----- Base Error Class -----
-
-/**
- * Create a structured error report for diagnostics/logging.
- * @param error The error object (Error or HQLError)
- * @param context A string describing the context in which the error occurred
- * @param metadata Additional data to include in the error report
- * @param options Configuration options for error reporting
- */
-export async function report(
-  error: unknown,
-  context: string,
-  metadata: Record<string, unknown> = {},
-  options: {
-    filePath?: string;
-    line?: number;
-    column?: number;
-    source?: string;
-    verbose?: boolean;
-    showCallStack?: boolean;
-    makePathsClickable?: boolean;
-    enhancedDebug?: boolean;
-    force?: boolean;
-    useSourceMaps?: boolean;
-  } = {}
-): Promise<void> {
-  // Create a source location object from the options
-  const sourceLocation = new SourceLocationInfo({
-    filePath: options.filePath,
-    line: options.line,
-    column: options.column,
-    source: options.source
-  });
-  
-  // Wrap error in HQLError if needed, but preserve original
-  const enhancedError = error instanceof HQLError
-    ? error
-    : new HQLError(String(error), { sourceLocation });
-  
-  // Add context if provided
-  if (context) {
-    enhancedError.message = `${context}: ${enhancedError.message}`;
-  }
-  
-  // Combine with metadata if provided
-  if (Object.keys(metadata).length > 0) {
-    if (!enhancedError.metadata) {
-      enhancedError.metadata = {};
-    }
-    Object.assign(enhancedError.metadata, metadata);
-  }
-  
-  // Forward to standard error reporting
-  await reportError(enhancedError, options);
-}
-
-export function createErrorReport(
-  error: Error,
-  context: string,
-  metadata: Record<string, unknown> = {}
-): Record<string, unknown> {
-  // Basic error properties
-  const report: Record<string, unknown> = {
-    message: error.message,
-    name: error.name,
-    context,
-    timestamp: new Date().toISOString(),
-  };
-  
-  // Add stack trace if available
-  if (error.stack) {
-    report.stack = error.stack;
-  }
-  
-  // Add source location for HQL errors
-  if (error instanceof HQLError && error.sourceLocation) {
-    report.location = {
-      filePath: error.sourceLocation.filePath,
-      line: error.sourceLocation.line,
-      column: error.sourceLocation.column,
-      formattedLocation: error.sourceLocation.toString()
-    };
-  }
-  
-  // Add metadata if provided
-  if (Object.keys(metadata).length > 0) {
-    report.metadata = metadata;
-  }
-  
-  return report;
 }
 
 // ----- HQL Error Class -----
@@ -1030,9 +899,9 @@ export function wrapError<T extends ErrorConstructor = ErrorConstructor>(
 /**
  * Formats an HQLError for display in the console
  */
-function formatHQLError(error: HQLError, config: ErrorConfig = DEFAULT_ERROR_CONFIG): string {
-  // Create color configuration based on settings
-  const colorConfig = createColorConfig(config.useColors);
+function formatHQLError(error: HQLError): string {
+  // Create color configuration
+  const colorConfig = createColorConfig();
   let output: string[] = [];
   
   // Format the error title with file location if available
@@ -1043,12 +912,8 @@ function formatHQLError(error: HQLError, config: ErrorConfig = DEFAULT_ERROR_CON
     const line = error.sourceLocation.line || 1;
     const column = error.sourceLocation.column || 1;
     
-    if (config.makePathsClickable) {
-      // Format in a way VSCode/Deno terminal will make clickable
-      errorTitle += `\n${colorConfig.gray(`Location: ${filepath}:${line}:${column}`)}`;
-    } else {
-      errorTitle += `\n${colorConfig.gray(`Location: ${filepath}, line ${line}, column ${column}`)}`;
-    }
+    // Format in a way VSCode/Deno terminal will make clickable
+    errorTitle += `\n${colorConfig.gray(`Location: ${filepath}:${line}:${column}`)}`;
   }
   output.push(errorTitle);
 
@@ -1099,8 +964,8 @@ function formatHQLError(error: HQLError, config: ErrorConfig = DEFAULT_ERROR_CON
     }
   }
   
-  // Add call stack if requested
-  if (config.showCallStack && error.originalError?.stack) {
+  // Always show call stack
+  if (error.originalError?.stack) {
     output.push('');
     output.push(colorConfig.gray('Stack trace:'));
     
@@ -1125,29 +990,27 @@ function formatHQLError(error: HQLError, config: ErrorConfig = DEFAULT_ERROR_CON
     output.push(colorConfig.gray(formattedStack));
   }
   
-  // Add debug info if requested
-  if (config.enhancedDebug) {
-    output.push('');
-    output.push(colorConfig.magenta(colorConfig.bold('Debug Information:')));
-    
-    // Add error type and name
-    output.push(colorConfig.magenta(`Error Type: ${error.errorType}`));
-    output.push(colorConfig.magenta(`Error Name: ${error.name}`));
-    
-    // Add source location details
-    if (error.sourceLocation) {
-      output.push(colorConfig.magenta('Source Location:'));
-      for (const [key, value] of Object.entries(error.sourceLocation)) {
-        if (key !== 'source' && value !== undefined) { // Don't print the entire source
-          output.push(colorConfig.magenta(`  ${key}: ${value}`));
-        }
+  // Always add detailed debug info
+  output.push('');
+  output.push(colorConfig.magenta(colorConfig.bold('Debug Information:')));
+  
+  // Add error type and name
+  output.push(colorConfig.magenta(`Error Type: ${error.errorType}`));
+  output.push(colorConfig.magenta(`Error Name: ${error.name}`));
+  
+  // Add source location details
+  if (error.sourceLocation) {
+    output.push(colorConfig.magenta('Source Location:'));
+    for (const [key, value] of Object.entries(error.sourceLocation)) {
+      if (key !== 'source' && value !== undefined) { // Don't print the entire source
+        output.push(colorConfig.magenta(`  ${key}: ${value}`));
       }
     }
-    
-    // Add original error if available
-    if (error.originalError) {
-      output.push(colorConfig.magenta(`Original Error: ${error.originalError.name}: ${error.originalError.message}`));
-    }
+  }
+  
+  // Add original error if available
+  if (error.originalError) {
+    output.push(colorConfig.magenta(`Original Error: ${error.originalError.name}: ${error.originalError.message}`));
   }
   
   return output.join('\n');
@@ -1161,25 +1024,6 @@ export class TranspilerError extends HQLError {
 }
 
 // ----- Error Pipeline Functions -----
-
-/**
- * Add a debug flag to control verbosity
- */
-export let debugMode = false;
-
-export function setDebugMode(enabled: boolean): void {
-  debugMode = enabled;
-}
-
-export function getDefaultErrorConfig(): ErrorConfig {
-  return {
-    ...DEFAULT_ERROR_CONFIG,
-    showCallStack: debugMode,
-    verbose: debugMode,
-    enhancedDebug: debugMode,
-    useSourceMaps: true,
-  };
-}
 
 /**
  * Extract location information from an error's message and stack
@@ -1236,338 +1080,30 @@ function extractLocationFromError(error: Error): SourceLocation {
 }
 
 /**
- * Enhance any error into an HQLError with source context
+ * Report an error with proper formatting - consolidated function
  */
-export function enhanceError(
-  error: unknown,
-  options: {
-    filePath?: string;
-    line?: number;
-    column?: number;
-    source?: string;
-  } = {}
-): HQLError {
-  // If it's already an HQLError, just update its source location if needed
-  if (error instanceof HQLError) {
-    const hqlError = error;
-    
-    // Merge source locations, preferring the provided options
-    const sourceLocation: SourceLocation = {
-      ...hqlError.sourceLocation,
-      filePath: options.filePath || hqlError.sourceLocation.filePath,
-      line: options.line || hqlError.sourceLocation.line,
-      column: options.column || hqlError.sourceLocation.column,
-      source: options.source || hqlError.sourceLocation.source,
-    };
-    
-    // Create a new instance with the merged options
-    const enhanced = new HQLError(hqlError.message, {
-      errorType: hqlError.errorType,
-      sourceLocation,
-      originalError: hqlError.originalError,
-    });
-    
-    // Preserve reported flag
-    enhanced.reported = hqlError.reported;
-    enhanced.contextLines = hqlError.contextLines;
-    
-    return enhanced;
-  }
+export async function reportError(error: unknown): Promise<void> {
+  // console.log("error : ", error);
   
-  // Convert non-Error objects to Error
-  const errorObj = error instanceof Error ? error : new Error(String(error));
-  
-  // Extract location from error message or stack trace
-  let sourceLocation = extractLocationFromError(errorObj);
-  
-  // Merge extracted locations with provided options, prioritizing provided options
-  sourceLocation = {
-    ...sourceLocation,
-    filePath: options.filePath || sourceLocation.filePath,
-    line: options.line || sourceLocation.line,
-    column: options.column || sourceLocation.column,
-    source: options.source || sourceLocation.source,
-  };
-  
-  // Ensure we have the source code if we have a file path but no source yet
-  if (sourceLocation.filePath && !sourceLocation.source) {
-    try {
-      const registeredSource = getSourceFile(sourceLocation.filePath);
-      if (registeredSource) {
-        sourceLocation.source = registeredSource;
-      } else {
-        // Try to read directly from the file system if not in registry
-        try {
-          sourceLocation.source = Deno.readTextFileSync(sourceLocation.filePath);
-          // Register for future use
-          registerSourceFile(sourceLocation.filePath, sourceLocation.source);
-        } catch {
-          // Can't read file, continue without source
-        }
-      }
-    } catch {
-      // Failed to get source, continue without it
-    }
-  }
-
-  // Determine the most appropriate error type and create the appropriate HQLError
-  return createAppropriateErrorType(errorObj, sourceLocation);
-}
-
-/**
- * Create the most appropriate error type based on the error message and context
- */
-function createAppropriateErrorType(
-  error: Error, 
-  sourceLocation: SourceLocation
-): HQLError {
-  const msg = error.message.toLowerCase();
-  
-  // Parse errors (syntax errors)
-  if (
-    msg.includes("parse error") || 
-    msg.includes("syntax error") || 
-    msg.includes("unexpected token") ||
-    msg.includes("unclosed") ||
-    msg.includes("unterminated") ||
-    msg.includes("unexpected end of input") ||
-    msg.includes("missing opening") ||
-    msg.includes("mismatched brackets") ||
-    (msg.includes("expected") && (msg.includes("but got") || msg.includes("found")))
-  ) {
-    if (sourceLocation.line && sourceLocation.column) {
-      return new ParseError(error.message, {
-        line: sourceLocation.line,
-        column: sourceLocation.column,
-        filePath: sourceLocation.filePath,
-        source: sourceLocation.source,
-        originalError: error,
-      });
-    }
-  }
-  
-  // Import errors
-  if (msg.includes("import") || msg.includes("cannot find module") || msg.includes("module not found")) {
-    // Extract import path from error message
-    const importPathMatch = msg.match(/['"]([^'"]+)['"]/);
-    const importPath = importPathMatch ? importPathMatch[1] : "unknown";
-    
-    return new ImportError(`Error importing module: ${error.message}`, importPath, {
-      filePath: sourceLocation.filePath,
-      line: sourceLocation.line,
-      column: sourceLocation.column,
-      source: sourceLocation.source,
-      originalError: error,
-    });
-  }
-  
-  // Type errors and validation errors
-  if (msg.includes("type") || msg.includes("expected") || msg.includes("invalid") || msg.includes("not a")) {
-    // Extract expected vs actual type information if available
-    const typeMatch = msg.match(/expected ([^,]+), got ([^.]+)/i);
-    const expectedType = typeMatch ? typeMatch[1] : undefined;
-    const actualType = typeMatch ? typeMatch[2] : undefined;
-    
-    return new ValidationError(error.message, "type checking", {
-      expectedType,
-      actualType,
-      filePath: sourceLocation.filePath,
-      line: sourceLocation.line,
-      column: sourceLocation.column,
-      source: sourceLocation.source,
-      originalError: error,
-    });
-  }
-  
-  // Runtime errors
-  if (
-    msg.includes("cannot read") || 
-    msg.includes("is not defined") || 
-    msg.includes("is not a function") || 
-    msg.includes("null") || 
-    msg.includes("undefined") ||
-    msg.includes("runtime")
-  ) {
-    return new RuntimeError(error.message, {
-      filePath: sourceLocation.filePath,
-      line: sourceLocation.line,
-      column: sourceLocation.column,
-      source: sourceLocation.source,
-      originalError: error,
-    });
-  }
-  
-  // Transform errors
-  if (msg.includes("transform") || msg.includes("ast") || msg.includes("ir")) {
-    const phase = msg.includes("ast") ? "AST transformation" : 
-                  msg.includes("ir") ? "IR generation" : "transformation";
-    
-    return new TransformError(error.message, phase, {
-      filePath: sourceLocation.filePath,
-      line: sourceLocation.line,
-      column: sourceLocation.column,
-      source: sourceLocation.source,
-      originalError: error,
-    });
-  }
-  
-  // Code generation errors
-  if (msg.includes("code gen") || msg.includes("generation") || msg.includes("typescript")) {
-    return new CodeGenError(error.message, {
-      filePath: sourceLocation.filePath,
-      line: sourceLocation.line,
-      column: sourceLocation.column,
-      source: sourceLocation.source,
-      originalError: error,
-    });
-  }
-  
-  // Fall back to general HQLError with source info
-  return new HQLError(error.message, {
-    errorType: determineErrorType(error),
-    sourceLocation,
-    originalError: error,
-  });
-}
-
-// Helper to determine a more specific error type when possible
-function determineErrorType(error: Error): string {
-  const msg = error.message.toLowerCase();
-  
-  if (msg.includes("syntax") || msg.includes("parse")) return "Syntax Error";
-  if (msg.includes("type") || msg.includes("expected")) return "Type Error";
-  if (msg.includes("import") || msg.includes("cannot find module")) return "Import Error";
-  if (msg.includes("runtime")) return "Runtime Error";
-  if (msg.includes("transform")) return "Transform Error";
-  
-  return "Error"; // Generic fallback
-}
-
-/**
- * Report an error with proper formatting
- */
-/**
- * Report an error with proper formatting
- * 
- * This is the primary error reporting function for HQL errors.
- * It enhances the error with source information and formats it for display.
- */
-export async function reportError(
-  error: unknown,
-  options: {
-    filePath?: string;
-    line?: number;
-    column?: number;
-    source?: string;
-    verbose?: boolean;
-    showCallStack?: boolean;
-    makePathsClickable?: boolean;
-    enhancedDebug?: boolean;
-    force?: boolean;
-    useSourceMaps?: boolean;
-  } = {}
-): Promise<void> {
-  // Apply source map transformation if needed
-  if (options.useSourceMaps !== false && error instanceof Error && error.stack) {
+  // Apply source map transformation
+  if (error instanceof Error && error.stack) {
     error = await transformErrorStack(error);
   }
   
   // Convert to HQLError if needed
-  const hqlError = error instanceof HQLError ? error : enhanceError(error, {
-    filePath: options.filePath,
-    line: options.line,
-    column: options.column,
-    source: options.source
-  });
+  const hqlError = error instanceof HQLError ? error : new HQLError(error instanceof Error ? error.message : String(error));
   
   // Prevent double-reporting the same error
-  if (hqlError.reported && !options.force) {
+  if (hqlError.reported) {
     return;
   }
   
   // Mark as reported to prevent duplicate reporting
   hqlError.reported = true;
   
-  // Create config for this error report
-  const config: ErrorConfig = {
-    useColors: options.useColors ?? DEFAULT_ERROR_CONFIG.useColors,
-    makePathsClickable: options.makePathsClickable ?? DEFAULT_ERROR_CONFIG.makePathsClickable,
-    showCallStack: options.showCallStack ?? options.verbose ?? DEFAULT_ERROR_CONFIG.showCallStack,
-    verbose: options.verbose ?? DEFAULT_ERROR_CONFIG.verbose,
-    enhancedDebug: options.enhancedDebug ?? DEFAULT_ERROR_CONFIG.enhancedDebug,
-    useSourceMaps: options.useSourceMaps ?? DEFAULT_ERROR_CONFIG.useSourceMaps,
-  };
-  
   // Format and output the error
-  const formatted = formatHQLError(hqlError, config);
+  const formatted = formatHQLError(hqlError);
   console.error(formatted);
-  
-  // Add a separate line with the location in a VS Code-friendly format
-  if (hqlError.sourceLocation?.filePath) {
-    const { filePath, line, column } = hqlError.sourceLocation;
-    if (filePath && line) {
-      // Print location on its own line for VS Code to detect
-      // Format: Location: /path/to/file.ts:10:5
-      console.error(`Location: ${filePath}:${line}:${column || 1}`);
-    }
-  }
-}
-
-/**
- * Wrap a function with error handling
- */
-export function withErrorHandling<T, Args extends any[]>(
-  fn: (...args: Args) => Promise<T> | T,
-  options: {
-    filePath?: string;
-    source?: string;
-    context?: string;
-    rethrow?: boolean;
-    onError?: (error: HQLError) => Promise<void> | void;
-    useSourceMaps?: boolean;
-  } = {}
-): (...args: Args) => Promise<T> {
-  return async (...args: Args): Promise<T> => {
-    try {
-      return await fn(...args);
-    } catch (error: unknown) {
-      // Enhance error with source context
-      const hqlError = error instanceof HQLError ? error : enhanceError(error, {
-        filePath: options.filePath,
-        source: options.source,
-      });
-      
-      // Add context information if provided
-      if (options.context) {
-        hqlError.message = `${options.context}: ${hqlError.message}`;
-      }
-      
-      // Apply source map transformation if needed
-      if (options.useSourceMaps !== false && error instanceof Error && error.stack) {
-        await transformErrorStack(error);
-      }
-      
-      // Call error handler if provided
-      if (options.onError) {
-        const result = options.onError(hqlError);
-        if (result instanceof Promise) {
-          await result;
-        }
-      } else {
-        // Default error reporting
-        await reportError(hqlError, {
-          useSourceMaps: options.useSourceMaps
-        });
-      }
-      
-      // Rethrow by default unless explicitly set to false
-      if (options.rethrow !== false) {
-        throw hqlError;
-      }
-      
-      return undefined as unknown as T;
-    }
-  };
 }
 
 /**
@@ -1584,84 +1120,7 @@ export function perform<T>(
   try {
     return fn();
   } catch (error) {
-    // If error is already of the expected type, just return it
-    if (errorType && error instanceof errorType) {
-      throw error;
-    }
-
-    // Prepare the message with context
-    const msg = context
-      ? `${context}: ${error instanceof Error ? error.message : String(error)}`
-      : error instanceof Error
-        ? error.message
-        : String(error);
-
-    // If an error type is specified, create a new error of that type
-    if (errorType) {
-      if (sourceContext) {
-        throw new errorType(msg, {
-          ...sourceContext,
-          ...(Array.isArray(errorArgs) && errorArgs.length > 0 ? errorArgs[0] : {})
-        });
-      } else {
-        throw new errorType(msg, ...(errorArgs || []));
-      }
-    }
-
-    // Otherwise, use a generic HQLError with source context if available
-    if (sourceContext) {
-      throw new HQLError(msg, { sourceLocation: sourceContext });
-    } else {
-      throw new HQLError(msg);
-    }
-  }
-}
-
-/**
- * Perform an async operation with error handling
- */
-export async function performAsync<T>(
-  fn: () => Promise<T>,
-  options: {
-    context?: string;
-    filePath?: string;
-    source?: string;
-    line?: number;
-    column?: number;
-    errorType?: new (message: string, ...args: any[]) => HQLError;
-    errorArgs?: any[];
-  } = {}
-): Promise<T> {
-  try {
-    return await fn();
-  } catch (error) {
-    // Build context object for error reporting
-    const sourceLocation: SourceLocation = {
-      filePath: options.filePath,
-      line: options.line,
-      column: options.column,
-      source: options.source
-    };
-    
-    // If error is already of the expected type, just enhance it
-    if (options.errorType && error instanceof options.errorType) {
-      throw error;
-    }
-
-    // Prepare the message with context
-    const msg = options.context
-      ? `${options.context}: ${error instanceof Error ? error.message : String(error)}`
-      : error instanceof Error
-        ? error.message
-        : String(error);
-
-    // If an error type is specified, create a new error of that type
-    if (options.errorType) {
-      throw new options.errorType(msg, ...(options.errorArgs || []));
-    }
-
-    // Create a better error with source context
-    throw new HQLError(msg, { sourceLocation });
+    throw error;
   }
 }
 
@@ -1669,20 +1128,8 @@ export async function performAsync<T>(
  * Export a unified API for error handling
  */
 export const ErrorPipeline = {
-  // Configuration
-  setDebugMode,
-  getDefaultErrorConfig,
-  
-  // Core functionality
-  enhanceError,
-  formatHQLError,
   reportError,
-  report,              // New structured reporting API
-  createErrorReport,   // Create structured error data
-  withErrorHandling,
   perform,
-  performAsync,
-  
   // Source map utilities
   registerSourceMap,
   mapToOriginalPosition,
@@ -1697,14 +1144,14 @@ export const ErrorPipeline = {
   TransformError,
   RuntimeError,
   CodeGenError,
-  ErrorType,           // New enum for error types
+  ErrorType,
   
   // Source registry
   registerSourceFile,
   getSourceFile,
   
   // Source location utilities
-  SourceLocationInfo,  // New location helper class
+  SourceLocationInfo,
 };
 
 export default ErrorPipeline;

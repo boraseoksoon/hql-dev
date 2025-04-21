@@ -9,6 +9,7 @@ import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
 import { transformSyntax } from "./pipeline/syntax-transformer.ts";
 import { getSystemMacroPaths } from "../s-exp/system-macros.ts";
+import { SExp } from "../s-exp/types.ts";
 import {
   ImportError,
   MacroError,
@@ -21,6 +22,7 @@ import {
 } from "../common/error-pipeline.ts";
 import { globalLogger as logger } from "../logger.ts";
 import { ErrorPipeline } from "../common/error-pipeline.ts";
+import { reportError } from "../common/error-pipeline.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
@@ -32,7 +34,7 @@ interface ProcessOptions {
   baseDir?: string;
   sourceDir?: string;
   tempDir?: string;
-  skipErrorHandling?: boolean;
+  currentFile?: string;
 }
 
 /**
@@ -56,7 +58,7 @@ export async function processHql(
 
   const sourceFilename = path.basename(options.baseDir || "unknown");
   const sourceFilePath = options.baseDir || "unknown";
-  
+
   // Register source for error enhancement
   registerSourceFile(sourceFilePath, source);
 
@@ -66,22 +68,30 @@ export async function processHql(
     const env = await getGlobalEnv(options);
     if (options.baseDir) env.setCurrentFile(options.baseDir);
     if (options.showTiming) logger.endTiming("hql-process", "Environment setup");
-    
-    // Process all stages with proper error handling
-    
-    // IMPORTANT: Parse stage must complete successfully before proceeding
-    // Syntax errors are fatal and should prevent further processing
+
     if (options.showTiming) logger.startTiming("hql-process", "Parsing");
-    let sexps;
+
+    let sexps: SExp[] = [];
     try {
-      sexps = parseWithHandling(source, logger);
+      sexps = parse(source, options.currentFile);
+      logger.debug(`Parsed ${sexps.length} S-expressions`);
       if (options.showTiming) logger.endTiming("hql-process", "Parsing");
-    } catch (parseError) {
-      // Special case for parse errors - propagate them with the correct file info
-      throw handleProcessError(parseError, {
-        ...options,
-        baseDir: sourceFilePath // Ensure the correct file path is used
-      }, logger);
+    } catch (error) {
+      reportError(error);
+      
+      // if (error instanceof ParseError) {
+      //   // console.log(error)
+      //   // reportError(error);
+
+      //   // const exactErrorLine = error.contextLines.filter(line => line.isError)?.[0]
+      //   // console.log(exactErrorLine)
+      //   // throw new ErrorPipeline.ParseError(error.message, {
+      //   //   filePath: options.currentFile,
+      //   //   line: exactErrorLine?.line || error.line || 1,
+      //   //   column: exactErrorLine?.column || error.column || 1,
+      //   //   source: source
+      //   // });
+      // }
     }
     
     // Only proceed with later stages if parsing succeeded
@@ -114,36 +124,16 @@ export async function processHql(
     
     return jsCode;
   } catch (error) {
-    if (options.skipErrorHandling) {
-      // Rethrow without additional handling
-      throw error;
-    }
-    
-    // Handle the error with enhanced details
-    return handleProcessError(error, options, logger);
-  }
-}
-
-function parseWithHandling(source: string, logger: Logger): any[] {
-  try {
-    // Use the enhanced error reporting to provide better suggestions
-    const result = parse(source);
-    logger.debug(`Parsed ${result.length} S-expressions`);
-    return result;
-  } catch (error: unknown) {
-    // Make sure parse errors are always displayed clearly
     if (error instanceof Error) {
-      console.error("\nParse Error: " + (error.message || "Unknown parsing error"));
-      if (error instanceof ParseError && error.position) {
-        const lineInfo = `at line ${error.position.line}, column ${error.position.column}`;
-        console.error(lineInfo);
-      }
-    } else {
-      console.error("\nUnknown Parse Error: " + String(error));
+      const hqlFilePath = options.baseDir || globalEnv?.getCurrentFile() || "unknown";
+      const errorMsg = `Error processing HQL: ${error.message}`;
+      throw new ErrorPipeline.ParseError(errorMsg, {
+        filePath: hqlFilePath,
+        line: 1,
+        column: 1,
+        source: ErrorPipeline.getSourceFile(hqlFilePath)
+      });
     }
-    
-    // Continue throwing for the rest of the pipeline
-    throw error;
   }
 }
 
@@ -198,53 +188,6 @@ function expandWithHandling(sexps: any[], env: Environment, options: ProcessOpti
     
     throw new MacroError(`Failed to expand macros: ${String(error)}`, "", options.baseDir, undefined);
   }
-}
-
-function handleProcessError(
-  error: unknown,
-  options: ProcessOptions,
-  logger: Logger,
-): never {
-  // The most important thing is to focus ONLY on HQL file errors
-  const hqlFilePath = options.baseDir || globalEnv?.getCurrentFile() || "unknown";
-  
-  if (error instanceof Error) {
-    // Parse errors already have most of the info we need - just ensure the file path is correct
-    if (error instanceof ParseError && error.position) {
-      // Always override the file path to be the HQL file, never an internal implementation file
-      const enhancedError = ErrorPipeline.enhanceError(error, {
-        filePath: hqlFilePath,  // Force HQL file path
-        source: ErrorPipeline.getSourceFile(hqlFilePath),
-        // Keep original position info except for the file path
-        line: error.position?.line,
-        column: error.position?.column
-      });
-      
-      if (enhancedError instanceof ErrorPipeline.HQLError) {
-        enhancedError.reported = true;
-      }
-      
-      throw enhancedError;
-    }
-    
-    // For all other errors, pretend they happened in the HQL file
-    const errorMsg = `Error processing HQL: ${error.message}`;
-    throw new ErrorPipeline.ParseError(errorMsg, {
-      filePath: hqlFilePath,
-      line: 1,
-      column: 1,
-      source: ErrorPipeline.getSourceFile(hqlFilePath)
-    });
-  }
-  
-  // For non-Error objects
-  logger.error(`Unknown error: ${String(error)}`);
-  throw new ErrorPipeline.ParseError(`Unknown error processing HQL: ${String(error)}`, {
-    filePath: hqlFilePath,
-    line: 1,
-    column: 1,
-    source: ErrorPipeline.getSourceFile(hqlFilePath)
-  });
 }
 
 export async function loadSystemMacros(env: Environment, options: ProcessOptions): Promise<void> {

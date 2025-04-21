@@ -129,8 +129,6 @@ async function main() {
       await executeReplCommand(cliOptions);
     }
   } catch (error) {
-    // Use the new error pipeline for better error reporting
-    // Only report if the error hasn't already been reported
     if (!(error instanceof ErrorPipeline.HQLError && error.reported)) {
       ErrorPipeline.reportError(error, {
         verbose: cliOptions.verbose,

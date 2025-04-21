@@ -95,7 +95,6 @@ function transpile(
   opts: CliOptions
 ): Promise<string> {
   return timed("transpile", "Compile", async () => {
-    // Set up cache-aware compilation
     const resolvedInputPath = resolve(inputPath);
     
     // Register output file if provided
@@ -103,90 +102,20 @@ function transpile(
       registerExplicitOutput(outputPath);
     }
     
-    // Load source for better error reporting
-    let source = '';
     try {
-      source = await Deno.readTextFile(resolvedInputPath);
+      // Load source for better error reporting
+      const source = await Deno.readTextFile(resolvedInputPath);
       ErrorPipeline.registerSourceFile(resolvedInputPath, source);
-    } catch (err) {
-      // If we can't read the file, report and exit immediately
-      ErrorPipeline.reportError(err, { filePath: inputPath });
-      Deno.exit(1);
-    }
-    
-    try {
+      
       // Use direct execution rather than error pipeline to control error handling ourselves
       return await transpileCLI(resolvedInputPath, outputPath, {
         verbose: opts.verbose,
         showTiming: opts.showTiming,
-        skipErrorReporting: true, // We handle errors here
-        skipPrimaryErrorReporting: true, // Skip the primary error report in transpileCLI
+        skipPrimaryErrorReporting: true,
         force: opts.force
       });
     } catch (error) {
-      // Check if this is an enhanced error that has already been reported
-      if (error instanceof ErrorPipeline.HQLError && error.reported) {
-        // Just exit without further reporting
-        Deno.exit(1);
-      }
-      
-      // Create a new error object for unclosed list errors in export statements
-      if (error instanceof Error && 
-          error.message.toLowerCase().includes("unclosed list") &&
-          source) {
-        
-        // Check for export-specific unclosed list errors
-        const lines = source.split('\n');
-        
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].trim().startsWith('(export') && !lines[i].includes(')')) {
-            // Use our error pipeline instead of custom console messages
-            const exportError = new ErrorPipeline.ParseError(
-              "Missing closing parenthesis in export statement",
-              {
-                line: i + 1,
-                column: lines[i].indexOf('export') + 1,
-                filePath: inputPath,
-                source,
-                originalError: error
-              }
-            );
-            
-            // Add a custom suggestion directly (using function replacement)
-            exportError.getSuggestion = function() {
-              return "Add a closing parenthesis ')' to the end of your export statement.";
-            };
-            
-            // Report through error pipeline
-            ErrorPipeline.reportError(exportError, {
-              verbose: opts.verbose,
-              showCallStack: opts.debug,
-              enhancedDebug: opts.debug
-            });
-            
-            // Mark the original error as reported
-            if (error instanceof ErrorPipeline.HQLError) {
-              error.reported = true;
-            }
-            
-            // Don't continue with further error reporting
-            Deno.exit(1);
-          }
-        }
-      }
-      
-      // For all other errors, use the standard error pipeline
-      const hqlError = ErrorPipeline.enhanceError(error, {
-        filePath: inputPath,
-        source
-      });
-      
-      ErrorPipeline.reportError(hqlError, {
-        verbose: opts.verbose,
-        showCallStack: opts.debug,
-        enhancedDebug: opts.debug
-      });
-      
+      ErrorPipeline.reportError(error);
       Deno.exit(1);
     }
   });
@@ -201,7 +130,7 @@ function printJS(bundledPath: string): Promise<void> {
       const content = await Deno.readTextFile(bundledPath);
       console.log(content);
     } catch (err) {
-      ErrorPipeline.reportError(err, { filePath: bundledPath });
+      ErrorPipeline.reportError(err);
       Deno.exit(1);
     }
   });
