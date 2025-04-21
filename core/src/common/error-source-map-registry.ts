@@ -76,9 +76,6 @@ export function getSourceContent(filePath: string): string | undefined {
 /**
  * Map a position in generated code to the original source position
  */
-/**
- * Map a position in generated code to the original source position
- */
 export function mapToOriginalPosition(
   generatedPath: string,
   generatedLine: number,
@@ -89,32 +86,23 @@ export function mapToOriginalPosition(
     // First check if we have a source map for this file
     const sourceMap = sourceMapRegistry.get(generatedPath);
     if (sourceMap && sourceMap.mappings) {
+      // Use source map to find the original position
       try {
+        // This would require a full source map consumer library
+        // For now, we'll use our approximation-based approach
+        
         // Get the original path for this generated path
         const originalPath = pathMappings.get(generatedPath);
         if (!originalPath) {
           return null;
         }
         
-        // If we have a proper source map consumer, use it
-        if (typeof sourceMap.originalPositionFor === 'function') {
-          const position = sourceMap.originalPositionFor({
-            line: generatedLine,
-            column: generatedColumn
-          });
-          
-          if (position.source && position.line !== null) {
-            return {
-              source: position.source,
-              line: position.line,
-              column: position.column || 0
-            };
-          }
-        }
-        
-        // If we have an error message, try to find the precise location
+        // If we have an error message and it contains a useful term, try to find it
         if (errorMessage) {
+          // Extract terms from the error message that would be useful to search for
           const terms = extractSearchTermsFromError(errorMessage);
+          
+          // Try to find each term in the source
           for (const term of terms) {
             const position = findTermInSource(originalPath, term);
             if (position) {
@@ -127,7 +115,8 @@ export function mapToOriginalPosition(
           }
         }
         
-        // Fallback: Approximate mapping based on line numbers
+        // Fallback: use line number approximation
+        // This is an oversimplification but better than nothing
         return {
           source: originalPath,
           line: generatedLine,
@@ -138,7 +127,7 @@ export function mapToOriginalPosition(
       }
     }
     
-    // If we don't have a source map but do have path mapping, return an approximation
+    // If we don't have a source map but we do have path mapping, return an approximation
     const originalPath = pathMappings.get(generatedPath);
     if (originalPath) {
       return {
@@ -256,32 +245,33 @@ export function findTermInSource(
  * Transform an error stack to use original HQL source locations
  * This uses source maps and direct term search for improved accuracy
  */
-// In error-source-map-registry.ts
 export async function transformErrorStack(error: Error): Promise<Error> {
   if (!error.stack) {
     return error;
   }
   
   try {
-    // Process each line of the stack trace
+    // Parse the stack trace
     const lines = error.stack.split('\n');
     const transformedLines = [];
-    let firstLineTransformed = false;
     
-    // Keep the first line (error message)
+    // Keep the error message line
     transformedLines.push(lines[0]);
     
-    // Process stack frames
+    // Process each stack frame
+    let foundHqlPosition = false;
+    
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
-      const frameMatch = line.match(/at\s+(?:(.+?)\s+\()?(.+?):(\d+):(\d+)(?:\))?/);
       
+      // Look for position information in the stack frame
+      const frameMatch = line.match(/at\s+(.+?)\s+\(?(.+):(\d+):(\d+)\)?/);
       if (frameMatch) {
-        const [_, functionName, filePath, lineStr, columnStr] = frameMatch;
+        const [, functionName, filePath, lineStr, columnStr] = frameMatch;
         const lineNum = parseInt(lineStr, 10);
         const columnNum = parseInt(columnStr, 10);
         
-        // Check if this is a generated file we have mapping for
+        // Check if this is a generated file that we have source mapping for
         const originalPosition = mapToOriginalPosition(
           filePath,
           lineNum,
@@ -290,40 +280,54 @@ export async function transformErrorStack(error: Error): Promise<Error> {
         );
         
         if (originalPosition && originalPosition.source.endsWith('.hql')) {
-          // Found a mapping to HQL file
-          const mappedLine = functionName ?
-            `    at ${functionName} (${originalPosition.source}:${originalPosition.line}:${originalPosition.column})` :
-            `    at ${originalPosition.source}:${originalPosition.line}:${originalPosition.column}`;
-          
-          transformedLines.push(mappedLine);
-          
-          // Update error properties for the first mapped location
-          if (!firstLineTransformed) {
-            if (error instanceof Error) {
-              (error as any).line = originalPosition.line;
-              (error as any).column = originalPosition.column;
-              (error as any).filePath = originalPosition.source;
-            }
-            firstLineTransformed = true;
-          }
+          // We found a mapping to an HQL file
+          transformedLines.push(
+            `    at ${functionName || 'Object.execute'} (${originalPosition.source}:${originalPosition.line}:${originalPosition.column})`
+          );
+          foundHqlPosition = true;
         } else {
-          // No mapping, keep the original line
+          // No mapping found, keep the original line
           transformedLines.push(line);
         }
       } else {
-        // Not a stack frame with location, keep it
+        // Line doesn't contain position info, keep it as is
         transformedLines.push(line);
+      }
+    }
+    
+    // If we couldn't find an HQL position but we have an error message,
+    // try to locate the error directly in HQL files
+    if (!foundHqlPosition && error.message) {
+      const terms = extractSearchTermsFromError(error.message);
+      
+      // Search all registered HQL files for these terms
+      for (const [filePath, _] of sourceContentRegistry.entries()) {
+        if (filePath.endsWith('.hql')) {
+          for (const term of terms) {
+            const position = findTermInSource(filePath, term);
+            if (position) {
+              // Insert a new line at the beginning of the stack with the HQL position
+              transformedLines.splice(
+                1, 0,
+                `    at Object.execute (${filePath}:${position.line}:${position.column})`
+              );
+              foundHqlPosition = true;
+              break;
+            }
+          }
+          if (foundHqlPosition) break;
+        }
       }
     }
     
     // Create a new error with the transformed stack
     const transformedError = new Error(error.message);
-    Object.assign(transformedError, error); // Copy all properties
     transformedError.stack = transformedLines.join('\n');
+    transformedError.name = error.name;
     
     return transformedError;
-  } catch (error) {
-    logger.error(`Error transforming stack trace: ${error instanceof Error ? error.message : String(error)}`);
+  } catch (transformError) {
+    logger.error(`Error transforming stack trace: ${transformError instanceof Error ? transformError.message : String(transformError)}`);
     return error;
   }
 }
