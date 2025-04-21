@@ -115,11 +115,11 @@ if (options.generateSourceMap) {
     // Use the more robust source map utility to create detailed mappings
     // This uses the AST structure to create more accurate mappings
     if (options.originalSource) {
-      map.setSourceContent(options.sourceFilePath || "input.hql", options.originalSource);
+      map.setSourceContent(options.sourceFilePath || "output.ts", options.originalSource);
       
       // Use the addSourceMappings utility function for more accurate mappings
       // This maps IR nodes to generated TS nodes to maintain position information
-      const sourcePath = options.sourceFilePath || "input.hql";
+      const sourcePath = options.sourceFilePath || "output.ts";
       addSourceMappings(
         map,
         ir,
@@ -134,7 +134,7 @@ if (options.generateSourceMap) {
         map.addMapping({
           generated: { line: i + 1, column: 0 },
           original: { line: i + 1, column: 0 },
-          source: options.sourceFilePath || "input.hql",
+          source: options.sourceFilePath || "output.ts",
         });
       }
     }

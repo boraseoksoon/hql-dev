@@ -57,7 +57,7 @@ export async function processHql(
     logger.startTiming("hql-process", "Total");
   }
 
-  const sourceFilename = options.baseDir ? path.basename(options.baseDir) : "unknown";
+  const sourceFilename = path.basename(options.baseDir || "unknown");
   const sourceFilePath = options.baseDir || "unknown";
   
   // Register source for error enhancement
@@ -71,10 +71,23 @@ export async function processHql(
     if (options.showTiming) logger.endTiming("hql-process", "Environment setup");
     
     // Process all stages with proper error handling
-    if (options.showTiming) logger.startTiming("hql-process", "Parsing");
-    const sexps = parseWithHandling(source, logger);
-    if (options.showTiming) logger.endTiming("hql-process", "Parsing");
     
+    // IMPORTANT: Parse stage must complete successfully before proceeding
+    // Syntax errors are fatal and should prevent further processing
+    if (options.showTiming) logger.startTiming("hql-process", "Parsing");
+    let sexps;
+    try {
+      sexps = parseWithHandling(source, logger);
+      if (options.showTiming) logger.endTiming("hql-process", "Parsing");
+    } catch (parseError) {
+      // Special case for parse errors - propagate them with the correct file info
+      throw handleProcessError(parseError, {
+        ...options,
+        baseDir: sourceFilePath // Ensure the correct file path is used
+      }, logger);
+    }
+    
+    // Only proceed with later stages if parsing succeeded
     if (options.showTiming) logger.startTiming("hql-process", "Syntax transform");
     const canonicalSexps = transformWithHandling(sexps, options.verbose, logger);
     if (options.showTiming) logger.endTiming("hql-process", "Syntax transform");
@@ -114,59 +127,26 @@ export async function processHql(
   }
 }
 
-function parseWithHandling(source: string, logger: Logger) {
+function parseWithHandling(source: string, logger: Logger): any[] {
   try {
-    // Get the file path from the current environment
-    const env = globalEnv;
-    const currentFile = env?.getCurrentFile() || "unknown";
-    
-    // Pass the file path to the parser
-    const sexps = parse(source, currentFile);
-    logger.debug(`Parsed ${sexps.length} S-expressions from ${currentFile}`);
-    return sexps;
+    // Use the enhanced error reporting to provide better suggestions
+    const result = parse(source);
+    logger.debug(`Parsed ${result.length} S-expressions`);
+    return result;
   } catch (error: unknown) {
-    if (error instanceof ParseError) {
-      // Enhance the parse error with source context and ensure we preserve the file path
-      // The critical issue is that we need to preserve the currentFile (user's HQL file)
-      const originalFilePath = globalEnv?.getCurrentFile() || "unknown";
-      
-      // Use the ErrorPipeline.enhanceError with the correct file path to ensure it's preserved
-      throw ErrorPipeline.enhanceError(error, { 
-        source, 
-        filePath: originalFilePath,
-        // Preserve line and column from the original error
-        line: error.position?.line,
-        column: error.position?.column
-      });
-    }
-    
+    // Make sure parse errors are always displayed clearly
     if (error instanceof Error) {
-      // Create a new ParseError with the correct file path
-      const originalFilePath = globalEnv?.getCurrentFile() || "unknown";
-      throw new ParseError(
-        `Failed to parse HQL source: ${error.message}`, 
-        { 
-          line: 1, 
-          column: 1, 
-          offset: 0, 
-          filePath: originalFilePath 
-        }, 
-        source
-      );
+      console.error("\nParse Error: " + (error.message || "Unknown parsing error"));
+      if (error instanceof ParseError && error.position) {
+        const lineInfo = `at line ${error.position.line}, column ${error.position.column}`;
+        console.error(lineInfo);
+      }
+    } else {
+      console.error("\nUnknown Parse Error: " + String(error));
     }
     
-    // For non-Error objects
-    const originalFilePath = globalEnv?.getCurrentFile() || "unknown";
-    throw new ParseError(
-      `Failed to parse HQL source: ${String(error)}`, 
-      { 
-        line: 1, 
-        column: 1, 
-        offset: 0, 
-        filePath: originalFilePath 
-      }, 
-      source
-    );
+    // Continue throwing for the rest of the pipeline
+    throw error;
   }
 }
 

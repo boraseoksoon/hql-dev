@@ -216,8 +216,7 @@ export async function transformAST(
     timer.phase("AST conversion");
 
     // Determine source file path - prioritize options.sourceFile if provided
-    const sourceFilePath = options.sourceFile || 
-                          (currentDir.endsWith('.hql') ? currentDir : `${currentDir}/input.hql`);
+    const sourceFilePath = options.sourceFile || currentDir;
     
     // Fetch original source content for source map generation
     const originalSource = await getOriginalSource(sourceFilePath);

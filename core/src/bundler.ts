@@ -35,6 +35,7 @@ import {
   createTempDirIfNeeded,
 } from "./common/temp-file-tracker.ts";
 import { ErrorPipeline } from "./common/error-pipeline.ts";
+import { transpile, TranspileOptions } from './transpiler/index.ts';
 
 // Constants
 const MAX_RETRIES = 3;
@@ -862,22 +863,144 @@ async function resolveHqlImport(
 /**
  * Transpile an HQL file to TypeScript
  */
-async function transpileHqlFile(
-  filePath: string,
-  sourceDir: string | undefined,
-  verbose: boolean | undefined,
+export async function transpileHqlFile(
+  hqlFilePath: string,
+  sourceDir: string = "",
+  verbose: boolean = false,
 ): Promise<string> {
   try {
-    const source = await readFile(filePath);
-    return processHql(source, {
-      baseDir: dirname(filePath),
+    // Read the HQL file
+    const hqlContent = await Deno.readTextFile(hqlFilePath);
+
+    // Perform a quick pre-validation check for balanced brackets before attempting full transpilation
+    preCheckBalancedParentheses(hqlContent, hqlFilePath);
+
+    // Log the HQL path being transpiled
+    if (verbose) {
+      logger.debug(`Transpiling HQL file: ${hqlFilePath}`);
+    }
+
+    // Set up options
+    const options: TranspileOptions = {
       verbose,
-      sourceDir,
-    });
+      baseDir: dirname(hqlFilePath),
+      filePath: hqlFilePath,  // Use filePath instead of sourceFile
+    };
+    
+    if (sourceDir) {
+      options.sourceDir = sourceDir;
+    }
+
+    // Pass source file explicitly to ensure accurate location
+    const result = await transpile(hqlContent, options);
+
+    return result.code;
   } catch (error) {
-    throw new TranspilerError(
-      `Transpiling HQL file ${filePath}: ${formatErrorMessage(error)}`,
-    );
+    throw new Error(`Error transpiling HQL for JS import ${hqlFilePath}: ${
+      error instanceof Error ? error.message : String(error)
+    }`);
+  }
+}
+
+/**
+ * Fast pre-check for balanced parentheses to catch syntax errors early
+ */
+function preCheckBalancedParentheses(code: string, filePath: string): void {
+  // Basic stack-based approach to check for balanced delimiters
+  const stack: { char: string, line: number, col: number }[] = [];
+  let line = 1;
+  let col = 0;
+  let inString = false;
+  let inComment = false;
+  let escaped = false;
+  
+  for (let i = 0; i < code.length; i++) {
+    const char = code[i];
+    col++;
+    
+    // Track newlines
+    if (char === '\n') {
+      line++;
+      col = 0;
+      inComment = false; // End single-line comments at newlines
+      continue;
+    }
+    
+    // Skip comments
+    if (inComment) {
+      continue;
+    }
+    
+    // Handle comment starts
+    if (!inString && char === ';') {
+      inComment = true;
+      continue;
+    }
+    
+    // Handle string literals
+    if (char === '"' && !escaped) {
+      inString = !inString;
+      if (inString) {
+        // Track opening quotes for better error reporting
+        stack.push({ char: '"', line, col });
+      } else {
+        // Find and remove matching quote
+        let foundQuote = false;
+        for (let j = stack.length - 1; j >= 0; j--) {
+          if (stack[j].char === '"') {
+            stack.splice(j, 1);
+            foundQuote = true;
+            break;
+          }
+        }
+        if (!foundQuote) {
+          // This shouldn't happen with properly balanced strings
+          console.warn(`Warning: Unmatched closing quote at ${line}:${col}`);
+        }
+      }
+      continue;
+    }
+    
+    // Track escape character in strings
+    if (inString) {
+      escaped = (char === '\\' && !escaped);
+      continue;
+    }
+    
+    // Handle bracket balance
+    if (char === '(' || char === '[' || char === '{') {
+      stack.push({ char, line, col });
+    } else if (char === ')' || char === ']' || char === '}') {
+      if (stack.length === 0) {
+        // Closing bracket without opening
+        const bracketType = char === ')' ? 'parenthesis' : (char === ']' ? 'bracket' : 'brace');
+        throw new Error(`Syntax Error: Extra closing ${bracketType} '${char}' at line ${line}, column ${col}`);
+      }
+      
+      const last = stack.pop()!;
+      const matching = (last.char === '(' && char === ')') || 
+                       (last.char === '[' && char === ']') || 
+                       (last.char === '{' && char === '}');
+                       
+      if (!matching) {
+        const openBracket = last.char;
+        const expectedClose = openBracket === '(' ? ')' : (openBracket === '[' ? ']' : '}');
+        throw new Error(
+          `Syntax Error: Mismatched brackets at line ${line}, column ${col}. '${openBracket}' at line ${last.line}, column ${last.col} was closed with '${char}', expected '${expectedClose}'`
+        );
+      }
+    }
+  }
+  
+  // Check for unclosed delimiters
+  if (stack.length > 0) {
+    const last = stack[stack.length - 1];
+    if (last.char === '"') {
+      throw new Error(`Syntax Error: Unclosed string literal starting at line ${last.line}, column ${last.col}`);
+    } else {
+      const bracketType = last.char === '(' ? 'parenthesis' : (last.char === '[' ? 'bracket' : 'brace');
+      throw new Error(`Syntax Error: Unclosed ${bracketType} '${last.char}' at line ${last.line}, column ${last.col}`);
+    }
   }
 }
 

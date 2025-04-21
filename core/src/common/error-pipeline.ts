@@ -8,8 +8,16 @@
  * 4. Easy extensibility for new error types
  */
 
+import * as colors from "./colors.ts";
 import { basename } from "https://deno.land/std@0.170.0/path/mod.ts";
-import { transformErrorStack, mapToOriginalPosition } from "./error-source-map-registry.ts";
+import { transformErrorStack as sourceMapTransform, mapToOriginalPosition } from "./error-source-map-registry.ts";
+import { globalLogger } from "../logger.ts";
+import { withErrorHandling as commonWithErrorHandling } from "./common-errors.ts";
+import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import { SourceMapConsumer } from "npm:source-map@0.7.3";
+
+// Use the logger directly  
+const logger = globalLogger;
 
 // ----- Error Configuration -----
 
@@ -49,6 +57,7 @@ export interface ColorConfig {
   bold: ColorFn;
   green: ColorFn;
   blue: ColorFn;
+  white: ColorFn;
 }
 
 export function createColorConfig(useColors: boolean): ColorConfig {
@@ -62,6 +71,7 @@ export function createColorConfig(useColors: boolean): ColorConfig {
         bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
         green: (s: string) => `\x1b[32m${s}\x1b[0m`,
         blue: (s: string) => `\x1b[34m${s}\x1b[0m`,
+        white: (s: string) => `\x1b[37m${s}\x1b[0m`,
       }
     : {
         red: identity,
@@ -71,6 +81,7 @@ export function createColorConfig(useColors: boolean): ColorConfig {
         bold: identity,
         green: identity,
         blue: identity,
+        white: identity,
       };
 }
 
@@ -101,7 +112,7 @@ export class HQLError extends Error {
   public readonly errorType: string;
   public sourceLocation: SourceLocation; // Made mutable to allow source map updates
   public readonly originalError?: Error;
-  public contextLines: string[] = [];
+  public contextLines: { line: number; content: string; isError: boolean }[] = [];
   public reported: boolean = false;
 
   constructor(
@@ -200,59 +211,35 @@ export class HQLError extends Error {
     if (errorLine <= 0 || errorLine > lines.length) {
       // Line number out of range, show first few lines
       this.contextLines = lines.slice(0, Math.min(3, lines.length))
-        .map((line, i) => `${i + 1} | ${line}`);
+        .map((content, i) => ({
+          line: i + 1,
+          content,
+          isError: false
+        }));
       
       if (errorLine > 0) {
-        this.contextLines.push(`Note: Reported line ${errorLine} exceeds file length ${lines.length}`);
+        this.contextLines.push({
+          line: errorLine,
+          content: `Note: Reported line ${errorLine} exceeds file length ${lines.length}`,
+          isError: true
+        });
       }
       return;
     }
     
     // Calculate range for context (usually 1-2 lines before and after)
     const lineIndex = errorLine - 1;
-    const contextSize = 2; // Show 2 lines before and after by default for better context
-    const startLine = Math.max(0, lineIndex - contextSize);
-    const endLine = Math.min(lines.length - 1, lineIndex + contextSize);
+    const startLine = Math.max(0, lineIndex - 2);
+    const endLine = Math.min(lines.length - 1, lineIndex + 2);
     
-    // Add lines before error
-    for (let i = startLine; i < lineIndex; i++) {
-      this.contextLines.push(`${i + 1}| ${lines[i]}`);
-    }
-    
-    // Add error line
-    const currentLine = lines[lineIndex];
-    this.contextLines.push(`${errorLine}| ${currentLine}`);
-    
-    // Add pointer line at column position
-    if (this.sourceLocation.column && this.sourceLocation.column > 0) {
-      let column = this.sourceLocation.column;
-      
-      // For unclosed list errors, adjust the column to point to the end of the line
-      if (this.message.toLowerCase().includes("unclosed list") || 
-          this.message.toLowerCase().includes("missing") && 
-          this.message.toLowerCase().includes("closing")) {
-        // Point to the end of the line for unclosed list errors
-        // But if the line ends with whitespace, point to the last non-whitespace character
-        const trimmedLine = currentLine.trimEnd();
-        if (trimmedLine.length < currentLine.length) {
-          column = trimmedLine.length + 1;
-        } else {
-          column = currentLine.length + 1;
-        }
-      }
-      
-      // Calculate pointer pad length (considering line number display)
-      const lineNumLength = String(errorLine).length;
-      const pointerPad = " ".repeat(lineNumLength + 2); // +2 for the "| " separator
-      const pointerIndent = " ".repeat(column);
-      
-      // Add the pointer with "Error occurs here" label
-      this.contextLines.push(`${pointerPad}${pointerIndent}^ Error occurs here`);
-    }
-    
-    // Add lines after error
-    for (let i = lineIndex + 1; i <= endLine; i++) {
-      this.contextLines.push(`${i + 1}| ${lines[i]}`);
+    // Extract the relevant lines with metadata
+    this.contextLines = [];
+    for (let i = startLine; i <= endLine; i++) {
+      this.contextLines.push({
+        line: i + 1,
+        content: lines[i],
+        isError: i === lineIndex
+      });
     }
   }
 }
@@ -518,123 +505,94 @@ export class RuntimeError extends HQLError {
 // ----- Error Pipeline Functions -----
 
 /**
- * Make file paths in error messages clickable
+ * Formats an HQLError for display in the console
  */
-function makePathsClickable(text: string): string {
-  // First pass: Format file paths with line and column numbers into a standardized clickable format
-  // This regex looks for paths in formats like:
-  // - filename.ext:line:col
-  // - /path/to/file.ext:line
-  // - ./relative/path.ext:line:col
-  const formatted = text.replace(/([^\s"']+\.[a-zA-Z0-9]{1,5})(?::(\d+)(?::(\d+))?)?/g, (match, file, line, col) => {
-    // Skip if already a file URL or if the path looks like an enum reference (e.g., Direction.north)
-    if (match.startsWith("file://") || file.match(/^[A-Z][a-zA-Z0-9]*\.[a-zA-Z0-9]+$/)) {
-      return match;
-    }
-    
-    try {
-      // Validate file path before processing
-      if (!file || typeof file !== 'string' || file.includes('(') || file.includes(')')) {
-        return match; // Return original match if path is invalid
-      }
-      
-      // Skip module imports, enum references, and other non-filepath patterns
-      if (file.includes('.') && !file.includes('/') && !file.includes('\\')) {
-        // Check if this looks like a module or enum reference (MyModule.someFunction)
-        const parts = file.split('.');
-        if (parts.length === 2 && (
-            // Skip if first part is capitalized (likely a class/enum)
-            parts[0][0] === parts[0][0].toUpperCase() ||
-            // Skip common module patterns
-            ['module', 'exports', 'default', 'window', 'global'].includes(parts[0])
-          )) {
-          return match; // Likely an enum or class reference
-        }
-      }
-      
-      // For relative paths, keep them as-is but add proper file:// format
-      if (file.startsWith('./') || file.startsWith('../')) {
-        const location = line ? `:${line}${col ? `:${col}` : ""}` : "";
-        return file + location;  // Return without file:// protocol for better IDE integration
-      }
-      
-      // Check if this is likely a file path
-      let isLikelyFile = false;
-      let fullPath = file;
-      
-      try {
-        // Check if the file exists and resolve its full path if possible
-        const stat = Deno.statSync(file);
-        if (stat.isFile) {
-          isLikelyFile = true;
-          try {
-            fullPath = Deno.realPathSync(file);
-          } catch {
-            // If realpath fails, keep the original path
-            fullPath = file;
-          }
-        }
-      } catch {
-        // If stat fails, check if it looks like a file path
-        isLikelyFile = file.includes('/') || file.includes('\\') || 
-                       file.match(/\.(js|ts|hql|json|md|txt)$/i) !== null;
-        fullPath = file;
-      }
-      
-      // Format the path in the IDE-clickable format (without file:// protocol for better compatibility)
-      if (isLikelyFile) {
-        const location = line ? `:${line}${col ? `:${col}` : ""}` : "";
-        return fullPath + location;
-      }
-      
-      return match;
-    } catch (err) {
-      // If any error occurs, keep the original match
-      return match;
-    }
-  });
+export function formatHQLError(error: HQLError, config: ErrorConfig = DEFAULT_ERROR_CONFIG): string {
+  // Create color configuration based on settings
+  const colorConfig = createColorConfig(config.useColors);
+  let output: string[] = [];
   
-  return formatted;
+  // Format the error title with file location if available
+  let errorTitle = colorConfig.red(colorConfig.bold(`Error: ${error.message}`));
+  if (error.sourceLocation?.filePath) {
+    // Use VS Code compatible pattern: filepath:line:column (no makePathsClickable needed)
+    // VS Code will automatically detect this pattern and make it clickable
+    const location = `${error.sourceLocation.filePath}:${error.sourceLocation.line || 1}:${error.sourceLocation.column || 1}`;
+    errorTitle += `\n${colorConfig.gray(`Location: ${location}`)}`;
+  }
+  output.push(errorTitle);
+
+  // Add context lines if available
+  if (error.contextLines && error.contextLines.length > 0) {
+    output.push(''); // Empty line before context
+    
+    // Extract line numbers and identify error line
+    const contextLinesArray = Array.from(error.contextLines);
+    const errorLineItem = contextLinesArray.find(item => item.isError);
+    const errorLineNumber = errorLineItem?.line || 1;
+    const maxDigits = Math.max(...contextLinesArray.map(item => String(item.line).length));
+    
+    // Format each context line
+    contextLinesArray.forEach(({line: lineNo, content: text, isError}) => {
+      const lineNumStr = String(lineNo).padStart(maxDigits, ' ');
+      
+      // Format the line number
+      const formattedLineNo = isError 
+        ? colorConfig.red(colorConfig.bold(lineNumStr)) 
+        : colorConfig.gray(lineNumStr);
+      
+      // Format the line content
+      let formattedLine = ` ${formattedLineNo} │ ${text}`;
+      if (isError) {
+        formattedLine = colorConfig.red(formattedLine);
+        
+        // Add pointer to the error column if available
+        if (error.sourceLocation?.column && error.sourceLocation.column > 0) {
+          const pointer = ' '.repeat(maxDigits + 3 + error.sourceLocation.column) + colorConfig.red(colorConfig.bold('^'));
+          output.push(formattedLine);
+          output.push(pointer);
+        } else {
+          output.push(formattedLine);
+        }
+      } else {
+        output.push(formattedLine);
+      }
+    });
+  }
+  
+  // Add suggestion if available
+  if (error.getSuggestion && typeof error.getSuggestion === 'function') {
+    const suggestion = error.getSuggestion();
+    if (suggestion) {
+      output.push('');
+      output.push(colorConfig.cyan(`Suggestion: ${suggestion}`));
+    }
+  }
+  
+  // Add call stack if requested
+  if (config.showCallStack && error.originalError instanceof Error && error.originalError.stack) {
+    output.push('');
+    output.push(colorConfig.gray('Stack trace:'));
+    
+    // Get the original stack trace
+    const stack = error.originalError.stack;
+    output.push(colorConfig.gray(stack.split('\n').slice(1).join('\n')));
+  }
+  
+  return output.join('\n');
 }
 
 /**
- * Format context lines with proper coloring
+ * Makes file paths clickable in terminals that support hyperlinks
  */
-function formatContextLines(
-  lines: string[],
-  config: ErrorConfig
-): string {
-  if (!lines.length) return "";
+export function makePathsClickable(fileLocation: string): string {
+  // For VS Code and Cursor, we'll just return the file location directly
+  // VS Code has built-in pattern recognition for file paths with line:column format
   
-  const c = createColorConfig(config.useColors);
-  let result = "";
+  // This approach relies on the IDE's ability to recognize patterns like:
+  // /path/to/file.js:10:5 or file.js:10:5
   
-  lines.forEach((line, i) => {
-    // Check if this is the error pointer line (has a caret ^)
-    const isPointerLine = line.includes("^");
-    
-    // Check if this is the error line (the line before the pointer)
-    const isErrorLine = i > 0 && i+1 < lines.length && lines[i+1].includes("^");
-    
-    // Apply appropriate formatting based on line type
-    if (isPointerLine) {
-      // Make the pointer line stand out with bold red
-      const formattedLine = config.useColors ? c.bold(c.red(line)) : line;
-      result += `${formattedLine}\n`;
-    } 
-    else if (isErrorLine) {
-      // Highlight the error line in yellow
-      const formattedLine = config.useColors ? c.yellow(line) : line;
-      result += `${formattedLine}\n`;
-    } 
-    else {
-      // Regular context line in gray
-      const formattedLine = config.useColors ? c.gray(line) : line;
-      result += `${formattedLine}\n`;
-    }
-  });
-  
-  return result.trimEnd(); // Remove any trailing newline
+  return fileLocation;
 }
 
 /**
@@ -916,114 +874,33 @@ function extractLocationFromError(error: Error): SourceLocation {
 }
 
 /**
- * Format an error for display
+ * Transform an error stack using source maps if available
  */
-export async function formatError(
-  error: Error | HQLError,
-  config: ErrorConfig = DEFAULT_ERROR_CONFIG
-): Promise<string> {
-  // Enhance the error if it's not already an HQLError
-  let hqlError = error instanceof HQLError 
-    ? error 
-    : enhanceError(error);
-    
-  // Apply source map transformations if enabled
-  if (config.useSourceMaps && error instanceof Error && error.stack) {
-    try {
-      // Transform the error stack using source maps
-      const transformedError = await transformErrorStack(error);
-      
-      // If the error was transformed successfully, update hqlError
-      if (transformedError !== error) {
-        // Extract source location from the transformed stack
-        const stackMatch = transformedError.stack?.match(/at\s+(.+?)\s+\(?(.+?):(\d+):(\d+)\)?/);
-        if (stackMatch) {
-          const [, , filePath, line, column] = stackMatch;
-          
-          // Look for HQL files in the stack
-          if (filePath.endsWith('.hql')) {
-            // Try to map to original position using source maps
-            const original = mapToOriginalPosition(
-              filePath,
-              parseInt(line, 10),
-              parseInt(column, 10),
-              error.message  // Pass the error message to help find exact error position
-            );
-            
-            // Only update if we got a valid mapping
-            if (original) {
-              hqlError.sourceLocation = {
-                filePath: original.source,
-                line: original.line,
-                column: original.column,
-                source: hqlError.sourceLocation.source || getSourceFile(original.source)
-              };
-              
-              // Re-extract context with updated position
-              hqlError.extractSourceAndContext();
-            }
-          }
-        }
+function transformErrorStack(error: Error, useSourceMaps: boolean = true): Error {
+  if (!useSourceMaps) return error;
+  
+  try {
+    // Use the source map transformation function if it exists
+    if (sourceMapTransform && typeof sourceMapTransform === 'function') {
+      const transformed = sourceMapTransform(error);
+      // Handle case where the transform returns a Promise
+      if (transformed instanceof Promise) {
+        // Can't do async handling here, so we'll return the original error
+        logger.debug("Source map transformation returned a Promise, can't use async result");
+        return error;
       }
-    } catch (transformError) {
-      // If transformation fails, continue with the original error
-      console.debug(`Error transforming stack: ${transformError instanceof Error ? transformError.message : String(transformError)}`);
+      return transformed;
     }
+  } catch (e) {
+    // Silently fail if source map transformation fails
+    logger.debug(`Error transforming stack trace: ${e}`);
   }
   
-  const c = createColorConfig(config.useColors);
-  
-  // Create a concise error header with clear type and location
-  let result = "";
-  
-  // Format the location in a clickable way at the start of the message
-  const { filePath, line, column } = hqlError.sourceLocation;
-  
-  // Create the header with error type and location
-  const errorTypeText = c.bold(c.red(`${hqlError.errorType}`));
-  
-  if (filePath) {
-    const locationText = line 
-      ? `${filePath}:${line}${column ? `:${column}` : ""}` 
-      : filePath;
-    
-    result += `${errorTypeText} in ${locationText}`;
-  } else {
-    result += errorTypeText;
-  }
-  
-  // Add the main error message
-  result += `\n  ${hqlError.message}`;
-  
-  // Add context (source code) with clear indication of error location
-  if (hqlError.contextLines.length > 0) {
-    result += `\n\nContext:\n${formatContextLines(hqlError.contextLines, config)}`;
-  }
-  
-  // Add suggestion with clear heading
-  const suggestion = typeof hqlError.getSuggestion === 'function' 
-    ? hqlError.getSuggestion()
-    : hqlError.getSuggestion;
-  
-  if (suggestion) {
-    result += `\nSuggestion: ${suggestion}`;
-  }
-  
-  // Add clickable paths notice if appropriate
-  if (config.makePathsClickable && filePath && line) {
-    result += `\nIn supported environments, ${filePath}:${line}${column ? `:${column}` : ""} will be clickable.`;
-  }
-  
-  // Make paths clickable if requested
-  if (config.makePathsClickable) {
-    result = makePathsClickable(result);
-  }
-  
-  return result;
+  return error;
 }
 
 /**
- * Report an error to the console
+ * Report an error with proper formatting
  */
 export function reportError(
   error: unknown,
@@ -1035,140 +912,47 @@ export function reportError(
     force?: boolean;
     useSourceMaps?: boolean;
   } = {}
-): Promise<void> {
-  // Force hiding of internal details unless explicitly required in debug mode
-  const isDebugMode = debugMode;
+): void {
+  // Apply source map transformation if needed
+  if (options.useSourceMaps !== false && error instanceof Error) {
+    error = transformErrorStack(error, options.useSourceMaps);
+  }
   
-  // Create configuration based on options and defaults
-  const config: ErrorConfig = {
-    ...getDefaultErrorConfig(),
-    showCallStack: isDebugMode,
-    verbose: isDebugMode,
-    enhancedDebug: isDebugMode,
-    useSourceMaps: options.useSourceMaps ?? true,
-  };
-  
-  // Enhance and format the error
-  let hqlError = enhanceError(error, {
+  // Convert to HQLError if needed
+  const hqlError = error instanceof HQLError ? error : enhanceError(error, {
     filePath: options.filePath,
     line: options.line,
     column: options.column,
-    source: options.source,
+    source: options.source
   });
   
-  // Skip if already reported and not forced
+  // Prevent double-reporting the same error
   if (hqlError.reported && !options.force) {
-    return Promise.resolve();
+    return;
   }
   
   // Mark as reported to prevent duplicate reporting
   hqlError.reported = true;
   
-  // ONLY show HQL file errors - never internal implementation errors
-  if (hqlError.sourceLocation.filePath && 
-      !hqlError.sourceLocation.filePath.endsWith('.hql') && 
-      !hqlError.sourceLocation.filePath.includes('enum.hql') && 
-      !isDebugMode) {
-    
-    // Try to find an HQL file in the stack trace if this is not an HQL file error
-    if (hqlError.originalError && hqlError.originalError.stack) {
-      const hqlMatch = hqlError.originalError.stack.match(/([^"\s()]+\.hql):(\d+)(?::(\d+))?/);
-      if (hqlMatch) {
-        // Replace the source location with HQL file info
-        hqlError = enhanceError(hqlError, {
-          filePath: hqlMatch[1],
-          line: hqlMatch[2] ? parseInt(hqlMatch[2], 10) : undefined,
-          column: hqlMatch[3] ? parseInt(hqlMatch[3], 10) : undefined,
-          // Don't override the source if we already have it
-          source: hqlError.sourceLocation.source
-        });
-      } else {
-        // Simplify the error for non-HQL files in non-debug mode
-        console.error(`Error in your HQL code: ${hqlError.message}`);
-        const suggestion = hqlError.getSuggestion();
-        if (suggestion) {
-          console.error(`Suggestion: ${suggestion}`);
-        }
-        console.error("For more details, run with --debug flag.");
-        return Promise.resolve();
-      }
-    } else {
-      // Simplify the error for non-HQL files in non-debug mode
-      console.error(`Error in your HQL code: ${hqlError.message}`);
-      const suggestion = hqlError.getSuggestion();
-      if (suggestion) {
-        console.error(`Suggestion: ${suggestion}`);
-      }
-      console.error("For more details, run with --debug flag.");
-      return Promise.resolve();
-    }
+  // Get config with proper source map setting
+  const config = getDefaultErrorConfig();
+  if (options.useSourceMaps !== undefined) {
+    config.useSourceMaps = options.useSourceMaps;
   }
   
-  formatError(hqlError, config).then(formatted => {
-    // Output to console
-    console.error(formatted);
-    
-    // If we're in debug mode, also show the original error stack
-    if (isDebugMode && error instanceof Error && error.stack) {
-      console.debug("Original error stack:");
-      console.debug(error.stack);
-    }
-  }).catch(formatError => {
-    // Fallback if async formatting fails
-    console.error(`Error in your HQL code: ${hqlError.message}`);
-    console.error(`Failed to format error details: ${formatError instanceof Error ? formatError.message : String(formatError)}`);
-  });
+  // Format and output the error
+  const formatted = formatHQLError(hqlError, config);
+  console.error(formatted);
   
-  return Promise.resolve();
-}
-
-/**
- * Wrap a function with error handling
- */
-export function withErrorHandling<T, Args extends any[]>(
-  fn: (...args: Args) => Promise<T> | T,
-  options: {
-    filePath?: string;
-    source?: string;
-    rethrow?: boolean;
-    onError?: (error: HQLError) => Promise<void> | void;
-    useSourceMaps?: boolean;
-  } = {}
-): (...args: Args) => Promise<T> {
-  return async (...args: Args): Promise<T> => {
-    try {
-      return await fn(...args);
-    } catch (error: unknown) {
-      // Enhance error with source context
-      const hqlError = enhanceError(error, {
-        filePath: options.filePath,
-        source: options.source,
-      });
-      
-      // Call error handler if provided
-      if (options.onError) {
-        // Only call if not already reported
-        if (!hqlError.reported) {
-          const result = options.onError(hqlError);
-          if (result instanceof Promise) {
-            await result;
-          }
-        }
-      } else {
-        // Default error reporting
-        await reportError(hqlError, {
-          useSourceMaps: options.useSourceMaps
-        });
-      }
-      
-      // Rethrow by default unless explicitly set to false
-      if (options.rethrow !== false) {
-        throw hqlError;
-      }
-      
-      return undefined as unknown as T;
+  // Add a separate line with the location in a VS Code-friendly format
+  if (hqlError.sourceLocation?.filePath) {
+    const { filePath, line, column } = hqlError.sourceLocation;
+    if (filePath && line) {
+      // Print location on its own line for VS Code to detect
+      // Format: Location: /path/to/file.ts:10:5
+      console.error(`Location: ${filePath}:${line}:${column || 1}`);
     }
-  };
+  }
 }
 
 // ----- Utility Functions -----
@@ -1193,6 +977,60 @@ export function getDefaultErrorConfig(): ErrorConfig {
 }
 
 /**
+ * Wrap a function with error handling, enhanced with source maps
+ */
+export function withErrorHandling<T, Args extends any[]>(
+  fn: (...args: Args) => Promise<T> | T,
+  options: {
+    filePath?: string;
+    source?: string;
+    rethrow?: boolean;
+    onError?: (error: HQLError) => Promise<void> | void;
+    useSourceMaps?: boolean;
+  } = {}
+): (...args: Args) => Promise<T> {
+  return async (...args: Args): Promise<T> => {
+    try {
+      return await fn(...args);
+    } catch (error: unknown) {
+      // Transform error stack using source maps if needed
+      if (options.useSourceMaps !== false && error instanceof Error) {
+        error = transformErrorStack(error, options.useSourceMaps);
+      }
+      
+      // Enhance error with source context
+      const hqlError = error instanceof HQLError ? error : enhanceError(error, {
+        filePath: options.filePath,
+        source: options.source,
+      });
+      
+      // Call error handler if provided
+      if (options.onError) {
+        // Only call if not already reported
+        if (!hqlError.reported) {
+          const result = options.onError(hqlError);
+          if (result instanceof Promise) {
+            await result;
+          }
+        }
+      } else {
+        // Default error reporting
+        reportError(hqlError, {
+          useSourceMaps: options.useSourceMaps
+        });
+      }
+      
+      // Rethrow by default unless explicitly set to false
+      if (options.rethrow !== false) {
+        throw hqlError;
+      }
+      
+      return undefined as unknown as T;
+    }
+  };
+}
+
+/**
  * Export a unified API for error handling
  */
 export const ErrorPipeline = {
@@ -1202,7 +1040,7 @@ export const ErrorPipeline = {
   
   // Core functionality
   enhanceError,
-  formatError,
+  formatHQLError,
   reportError,
   withErrorHandling,
   

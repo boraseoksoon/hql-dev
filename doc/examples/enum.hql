@@ -4,7 +4,7 @@
 ;; --------------------------------------
 ;; 1. Simple Enums - no associated values
 ;; --------------------------------------
-(enum Direction
+(enum Direction :Symbol 
   (case north)
   (case south)
   (case east)
@@ -25,7 +25,7 @@
   ((= heading Direction.south) (print "Going south"))
   ((= heading Direction.east) (print "Going east"))
   ((= heading Direction.west) (print "Going west"))
-  (else (print "Unknown direction")))
+)
 
 ;; ------------------------------
 ;; 2. Enums with Raw Values
@@ -198,3 +198,18 @@
 ;; Return the status to test
 (print status)
 (print mac-result3)
+
+;; Test file for unclosed parenthesis errors
+
+(enum Direction :Symbol 
+  (case north)
+  (case south)
+  (case east)
+  (case west)
+)
+
+;; Missing closing parenthesis below - deliberate syntax error
+(let x 10
+
+;; This code should not execute
+(print "Value is" x)

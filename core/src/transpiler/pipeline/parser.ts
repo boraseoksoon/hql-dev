@@ -1,4 +1,4 @@
-// src/transpiler/pipeline/parser.ts - Clean implementation focused on chain method invocation
+// src/transpiler/pipeline/parser.ts - Comprehensive implementation with enhanced error detection and reporting
 
 import {
   createList,
@@ -237,6 +237,11 @@ function parseList(state: ParserState): SList {
     fnKeywordFound = true;
   }
   
+  // Track list starting line and current line to detect missing closing parentheses
+  // across multiple lines
+  const listStartLine = listStartPos.line;
+  let currentLine = listStartLine;
+  
   while (
     state.currentPos < state.tokens.length &&
     state.tokens[state.currentPos].type !== TokenType.RightParen
@@ -269,6 +274,29 @@ function parseList(state: ParserState): SList {
         );
       }
     }
+    
+    // Special handling for named parameters in function calls
+    else if (elements.length >= 1 && 
+             state.currentPos < state.tokens.length &&
+             state.tokens[state.currentPos].type === TokenType.Symbol && 
+             state.tokens[state.currentPos].value.endsWith(":")) {
+      
+      // Create a parameter name symbol (with the colon)
+      elements.push(createSymbol(state.tokens[state.currentPos].value));
+      state.currentPos++;
+      
+      // Parse the expression that follows the parameter name
+      if (state.currentPos < state.tokens.length) {
+        elements.push(parseExpression(state));
+      } else {
+        throw new ParseError(
+          `Expected value after parameter name '${state.tokens[state.currentPos-1].value}'`, 
+          state.tokens[state.currentPos-1].position,
+          state.input
+        );
+      }
+    }
+    
     // Special handling for function type expressions like (-> [String])
     else if (fnKeywordFound && 
              elements.length > 0 && 
@@ -283,6 +311,12 @@ function parseList(state: ParserState): SList {
       elements.push(parseExpression(state));
     } else {
       elements.push(parseExpression(state));
+    }
+    
+    // Update the current line tracking without triggering unnecessary errors
+    if (state.currentPos < state.tokens.length) {
+      const currentToken = state.tokens[state.currentPos];
+      currentLine = currentToken.position.line;
     }
   }
   
@@ -456,6 +490,9 @@ function validateTokenBalance(tokens: Token[], input: string, filePath: string):
     [TokenType.RightBrace, TokenType.LeftBrace]
   ]);
   
+  // Track incomplete expressions - but don't overeagerly detect let expressions
+  let lastExprStart: Token | null = null;
+  
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     
@@ -464,6 +501,7 @@ function validateTokenBalance(tokens: Token[], input: string, filePath: string):
         token.type === TokenType.LeftBracket || 
         token.type === TokenType.LeftBrace) {
       bracketStack.push({ type: token.type, token });
+      lastExprStart = token;
     }
     // If it's a closing bracket, check if it matches the last opening bracket
     else if (token.type === TokenType.RightParen || 
@@ -520,8 +558,28 @@ function validateTokenBalance(tokens: Token[], input: string, filePath: string):
     const openChar = lastUnclosed.type === TokenType.LeftParen ? "(" : 
                    lastUnclosed.type === TokenType.LeftBracket ? "[" : "{";
     
+    // Get the line of text for better context
+    const unclosedLine = lastUnclosed.token.position.line;
+    const unclosedLineContent = input.split('\n')[unclosedLine - 1];
+    
+    // Extract surrounding code context with proper codeblock highlighting
+    const lines = input.split('\n');
+    const startLine = Math.max(1, unclosedLine - 2);
+    const endLine = Math.min(lines.length, unclosedLine + 2);
+    let contextLines = '';
+    
+    for (let i = startLine; i <= endLine; i++) {
+      if (i === unclosedLine) {
+        // Highlight the unclosed bracket line
+        contextLines += `→ ${lines[i-1]}\n`;
+      } else if (lines[i-1].trim()) { 
+        // Only include non-empty lines
+        contextLines += `  ${lines[i-1]}\n`;
+      }
+    }
+    
     throw new ParseError(
-      `Unclosed '${openChar}' at line ${lastUnclosed.token.position.line}`, 
+      `Unclosed '${openChar}' at line ${unclosedLine}. Missing closing delimiter.\nContext:\n${contextLines}`, 
       lastUnclosed.token.position, 
       input
     );
