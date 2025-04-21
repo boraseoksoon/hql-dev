@@ -21,7 +21,7 @@ import {
   registerSourceFile, 
   formatError, 
   getSuggestion, 
-} from "./error/index.ts";
+} from "./error/errors.ts";
 import { globalLogger as logger } from "../logger.ts";
 import { ErrorPipeline } from "../common/error-pipeline.ts";
 

@@ -7,7 +7,7 @@ import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../type/hql_ast.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { TransformError, ValidationError } from "../error/errors.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { perform } from "../error/index.ts";
+import { perform } from "../error/errors.ts";
 import { macroCache } from "../../s-exp/macro.ts";
 import { transformStandardFunctionCall, processFunctionBody, transformNamedArgumentCall, handleFxFunctionCall } from "../syntax/function.ts";
 import {

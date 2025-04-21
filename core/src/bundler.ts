@@ -1,10 +1,18 @@
 import * as esbuild from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { processHql } from "./transpiler/hql-transpiler.ts";
-import { performAsync } from "./transpiler/error/index.ts";
-import { formatErrorMessage } from "./common/common-utils.ts";
-import { globalLogger as logger } from "./logger.ts";
+import { performAsync } from "./transpiler/error/errors.ts";
+import { formatErrorMessage } from "./common/error-pipeline.ts";
+import {
+  isHqlFile,
+  isJsFile,
+  isTypeScriptFile,
+  sanitizeIdentifier,
+  readFile,
+  findActualFilePath
+} from "./common/utils.ts";
 import { initializeRuntime } from "./common/runtime-initializer.ts";
+import { globalLogger as logger } from "./logger.ts";
 import {
   dirname,
   ensureDir,
@@ -16,14 +24,6 @@ import {
   TranspilerError,
   ValidationError,
 } from "./transpiler/error/errors.ts";
-import { 
-  isHqlFile, 
-  isJsFile, 
-  isTypeScriptFile, 
-  sanitizeIdentifier,
-  readFile,
-  findActualFilePath
-} from "./common/utils.ts";
 import { 
   createTempDir, 
   getCachedPath,

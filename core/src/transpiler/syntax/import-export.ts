@@ -8,7 +8,7 @@ import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { perform } from "../error/index.ts";
+import { perform } from "../error/errors.ts";
 import { Environment } from "../../environment.ts";
 import { isUserLevelMacro } from "../../s-exp/macro.ts";
 import { processVectorElements } from "./data-structure.ts";

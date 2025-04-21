@@ -9,7 +9,7 @@ import {
 import { publishNpm } from "./publish_npm.ts";
 import { publishJSR } from "./publish_jsr.ts";
 import { checkEnvironment } from "./publish_common.ts";
-import { report } from "../../src/common/common-errors.ts";
+import { report } from "../../src/common/error-pipeline.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
 
 export interface PublishOptions {

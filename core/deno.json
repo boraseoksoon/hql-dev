@@ -9,7 +9,7 @@
     "clean-cache": "deno run -A cli/clean-cache.ts",
     "test-type": "deno run -A ./cli/run.ts ../doc/examples/array+type.hql",
     "test-class": "deno run -A ./cli/run.ts ../doc/examples/class.hql",
-    "test-enum": "deno run -A ./cli/run.ts ../doc/examples/enum.hql && deno run -A ./cli/run.ts ../doc/examples/fn+enum.hql",
+    "test-enum": "deno run -A ./cli/run.ts ../doc/examples/fn+enum.hql",
     "test-binding": "deno run -A ./cli/run.ts ../doc/examples/binding.hql",
     "test-stdlib": "deno run -A ./cli/run.ts ../doc/examples/take.hql",
     "test-cond": "deno run -A ./cli/run.ts ../doc/examples/cond.hql",

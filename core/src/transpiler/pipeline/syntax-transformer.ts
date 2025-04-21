@@ -14,7 +14,7 @@ import {
 import { globalLogger as logger } from "../../logger.ts";
 import { Logger } from "../../logger.ts";
 import { TransformError } from "../error/errors.ts";
-import { perform } from "../error/index.ts";
+import { perform } from "../error/errors.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 
 /**

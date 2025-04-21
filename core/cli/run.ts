@@ -3,8 +3,6 @@
 import { transpileCLI } from "../src/bundler.ts";
 import { resolve } from "../src/platform/platform.ts";
 import {
-  clearCache,
-  registerExplicitOutput,
   createTempDir,
   cleanupAllTempFiles
 } from "../src/common/temp-file-tracker.ts";
@@ -14,10 +12,10 @@ import {
   applyCliOptions,
   CliOptions
 } from "./utils/cli-options.ts";
-import { registerSourceFile, report } from "../src/transpiler/error/errors.ts";
+import { report } from "../src/transpiler/error/errors.ts";
 import { ErrorPipeline } from "../src/common/error-pipeline.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
-import { basename, dirname } from "../src/platform/platform.ts";
+import { basename } from "../src/platform/platform.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
 
 /**

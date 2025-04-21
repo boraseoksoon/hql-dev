@@ -4,7 +4,7 @@
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError } from "../error/errors.ts";
-import { perform } from "../error/index.ts";
+import { perform } from "../error/errors.ts";
 
 /**
  * Transform a quoted expression.

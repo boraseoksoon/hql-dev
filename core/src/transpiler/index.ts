@@ -65,4 +65,4 @@ export async function transpile(
 }
 
 export { processHql } from "./hql-transpiler.ts";
-export { registerSourceFile } from "./error/index.ts"; 
+export { registerSourceFile } from "./error/errors.ts"; 

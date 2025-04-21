@@ -20,7 +20,7 @@ import { MacroFn } from "../environment.ts";
 import { MacroError, TransformError } from "../transpiler/error/errors.ts";
 import { gensym } from "../gensym.ts";
 import { LRUCache } from "../common/lru-cache.ts";
-import { perform } from "../transpiler/error/index.ts";
+import { perform } from "../transpiler/error/errors.ts";
 import { globalLogger as logger } from "../logger.ts";
 
 // Constants and caches

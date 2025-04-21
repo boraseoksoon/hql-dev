@@ -30,8 +30,8 @@ import {
   isJsFile,
   isTypeScriptFile
 } from "./common/import-utils.ts";
-import { wrapError, formatErrorMessage } from "./common/common-utils.ts";
-import { perform } from "./transpiler/error/index.ts";
+import { wrapError, formatErrorMessage } from "./common/error-pipeline.ts";
+import { perform } from "./transpiler/error/errors.ts";
 
 // Define missing error classes
 class MacroError extends Error {

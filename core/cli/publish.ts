@@ -4,7 +4,7 @@
 import { publish } from "./publish/index.ts";
 import { parseArgs } from "jsr:@std/cli@1.0.13/parse-args";
 import { exit } from "@platform/platform.ts";
-import { report } from "@core/common/common-errors.ts";
+import { report } from "@core/common/error-pipeline.ts";
 
 function showHelp() {
   console.log(`
