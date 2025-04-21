@@ -1,7 +1,7 @@
 /**
  * error-pipeline.ts
  * 
- * A consolidated error handling pipeline for HQL that provides:
+ * A unified error handling pipeline for HQL that provides:
  * 1. Standardized error collection, processing, and reporting
  * 2. Error messages with file path, line, and column information
  * 3. Separation of core error info and debug details
@@ -87,60 +87,89 @@ export function createColorConfig(useColors: boolean): ColorConfig {
 
 // ----- Source Registry -----
 
-// Store source content by file path
-const sourceRegistry = new Map<string, string>();
+// Centralized registry for source code content, source maps, and path mappings
+class SourceRegistry {
+  private sources = new Map<string, string>();
+  private sourceMaps = new Map<string, Record<string, unknown>>();
+  private pathMap = new Map<string, string>();
 
-// Store source maps
-const sourceMapRegistry = new Map<string, any>();
+  /** Register source file for error reporting */
+  registerSource(filePath: string, source: string): void {
+    this.sources.set(filePath, source);
+    logger.debug(`Registered source file: ${filePath} (${source.length} bytes)`);
+  }
 
-// Map of generated paths to original paths
-const pathMappings = new Map<string, string>();
+  /** Get source content for error reporting */
+  getSource(filePath: string): string | undefined {
+    return this.sources.get(filePath);
+  }
 
-/**
- * Register source file for error reporting
- */
-export function registerSourceFile(filePath: string, source: string): void {
-  sourceRegistry.set(filePath, source);
-  logger.debug(`Registered source file: ${filePath} (${source.length} bytes)`);
-}
-
-/**
- * Get source content for error reporting
- */
-export function getSourceFile(filePath: string): string | undefined {
-  return sourceRegistry.get(filePath);
-}
-
-/**
- * Register a source map with the registry
- */
-export function registerSourceMap(
-  generatedPath: string,
-  originalPath: string,
-  sourceMapContent: string | object,
-  originalSource?: string
-): void {
-  try {
-    // Store the path mapping
-    pathMappings.set(generatedPath, originalPath);
+  /** Load source file if not already in registry */
+  loadSourceIfNeeded(filePath: string): string | undefined {
+    let source = this.getSource(filePath);
     
-    // Parse and store the source map
-    const sourceMap = typeof sourceMapContent === 'string' 
-      ? JSON.parse(sourceMapContent) 
-      : sourceMapContent;
-      
-    sourceMapRegistry.set(generatedPath, sourceMap);
-    
-    // Register source content if available
-    if (originalSource) {
-      registerSourceFile(originalPath, originalSource);
+    // Try to load the file if it's not in the registry
+    if (!source && filePath && typeof Deno !== 'undefined') {
+      try {
+        source = Deno.readTextFileSync(filePath);
+        this.registerSource(filePath, source);
+      } catch {
+        // Failed to read file, return undefined
+      }
     }
     
-    logger.debug(`Registered source map: ${generatedPath} -> ${originalPath}`);
-  } catch (error) {
-    logger.error(`Failed to register source map: ${error instanceof Error ? error.message : String(error)}`);
+    return source;
+  }
+
+  /** Register a source map with the registry */
+  registerSourceMap(
+    generatedPath: string,
+    originalPath: string,
+    sourceMapContent: string | object,
+    originalSource?: string
+  ): void {
+    try {
+      // Store the path mapping
+      this.pathMap.set(generatedPath, originalPath);
+      
+      // Parse and store the source map
+      const sourceMap = typeof sourceMapContent === 'string' 
+        ? JSON.parse(sourceMapContent) 
+        : sourceMapContent;
+        
+      this.sourceMaps.set(generatedPath, sourceMap);
+      
+      // Register source content if available
+      if (originalSource) {
+        this.registerSource(originalPath, originalSource);
+      }
+      
+      logger.debug(`Registered source map: ${generatedPath} -> ${originalPath}`);
+    } catch (error) {
+      logger.warn(`Failed to register source map: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** Get the original path for a generated path */
+  getOriginalPath(generatedPath: string): string | undefined {
+    return this.pathMap.get(generatedPath);
+  }
+
+  /** Get source map for a generated path */
+  getSourceMap(generatedPath: string): Record<string, unknown> | undefined {
+    return this.sourceMaps.get(generatedPath);
+  }
+
+  /** Clear all registries */
+  clear(): void {
+    this.sources.clear();
+    this.sourceMaps.clear();
+    this.pathMap.clear();
   }
 }
+
+// Global source registry instance
+const registry = new SourceRegistry();
 
 // ----- Source Location -----
 
@@ -151,16 +180,150 @@ export interface SourceLocation {
   source?: string;
 }
 
+/**
+ * Source location with utility methods for error reporting
+ */
+export class SourceLocationInfo implements SourceLocation {
+  public filePath?: string;
+  public line?: number;
+  public column?: number;
+  public source?: string;
+  
+  constructor(options: SourceLocation = {}) {
+    this.filePath = options.filePath;
+    this.line = options.line;
+    this.column = options.column;
+    this.source = options.source;
+  }
+  
+  /**
+   * Loads source content if available
+   */
+  loadSource(): string | undefined {
+    if (this.source) return this.source;
+    if (!this.filePath) return undefined;
+    
+    this.source = registry.loadSourceIfNeeded(this.filePath);
+    return this.source;
+  }
+  
+  /**
+   * Returns a formatted location string (file:line:column)
+   */
+  toString(): string {
+    if (!this.filePath) return "<unknown location>";
+    
+    const lineInfo = this.line ? `:${this.line}` : "";
+    const colInfo = this.line && this.column ? `:${this.column}` : "";
+    
+    return `${this.filePath}${lineInfo}${colInfo}`;
+  }
+  
+  /**
+   * Creates a copy of this location
+   */
+  clone(): SourceLocationInfo {
+    return new SourceLocationInfo(this);
+  }
+  
+  /**
+   * Extracts context lines from the source around the error position
+   */
+  extractContextLines(contextLineCount = 2): Array<{ line: number; content: string; isError: boolean; column?: number }> {
+    const source = this.loadSource();
+    if (!source || !this.line) return [];
+    
+    const errorLine = this.line;
+    const errorColumn = this.column;
+    const lines = source.split('\n');
+    
+    // Check if line number is in range
+    if (errorLine <= 0 || errorLine > lines.length) {
+      // Line number out of range, show first few lines
+      return lines.slice(0, Math.min(3, lines.length))
+        .map((content, i) => ({
+          line: i + 1,
+          content,
+          isError: false
+        }));
+    }
+    
+    // Extract context lines around the error
+    const startLine = Math.max(1, errorLine - contextLineCount);
+    const endLine = Math.min(lines.length, errorLine + contextLineCount);
+    
+    const contextLines = [];
+    for (let i = startLine; i <= endLine; i++) {
+      contextLines.push({
+        line: i,
+        content: lines[i - 1],
+        isError: i === errorLine,
+        column: i === errorLine ? errorColumn : undefined
+      });
+    }
+    
+    return contextLines;
+  }
+}
+
+// ----- Legacy API Compatibility -----
+
+/**
+ * Register source file for error reporting (legacy API)
+ */
+export function registerSourceFile(filePath: string, source: string): void {
+  registry.registerSource(filePath, source);
+}
+
+/**
+ * Get source content for error reporting (legacy API)
+ */
+export function getSourceFile(filePath: string): string | undefined {
+  return registry.getSource(filePath);
+}
+
+/**
+ * Register a source map with the registry (legacy API)
+ */
+export function registerSourceMap(
+  generatedPath: string,
+  originalPath: string,
+  sourceMapContent: string | object,
+  originalSource?: string
+): void {
+  registry.registerSourceMap(generatedPath, originalPath, sourceMapContent, originalSource);
+}
+
+// ----- Error Types -----
+
+/**
+ * Enumeration of supported error types for better type safety
+ */
+export enum ErrorType {
+  GENERIC = "Error",
+  PARSE = "Parse Error",
+  IMPORT = "Import Error",
+  VALIDATION = "Validation Error",
+  MACRO = "Macro Error",
+  TRANSFORM = "Transform Error",
+  RUNTIME = "Runtime Error",
+  CODEGEN = "Code Generation Error",
+  TRANSPILER = "Transpiler Error", // Legacy type
+}
+
 // ----- Base Error Class -----
 
 /**
  * Create a structured error report for diagnostics/logging.
  * @param error The error object (Error or HQLError)
  * @param context A string describing the context in which the error occurred
- * @param metadata Optional additional metadata to include in the report
+ * @param metadata Additional data to include in the error report
+ * @param options Configuration options for error reporting
  */
 export async function report(
   error: unknown,
+  context: string,
+  metadata: Record<string, unknown> = {},
   options: {
     filePath?: string;
     line?: number;
@@ -174,8 +337,34 @@ export async function report(
     useSourceMaps?: boolean;
   } = {}
 ): Promise<void> {
-  // Legacy alias for reportError
-  return reportError(error, options);
+  // Create a source location object from the options
+  const sourceLocation = new SourceLocationInfo({
+    filePath: options.filePath,
+    line: options.line,
+    column: options.column,
+    source: options.source
+  });
+  
+  // Wrap error in HQLError if needed, but preserve original
+  const enhancedError = error instanceof HQLError
+    ? error
+    : new HQLError(String(error), { sourceLocation });
+  
+  // Add context if provided
+  if (context) {
+    enhancedError.message = `${context}: ${enhancedError.message}`;
+  }
+  
+  // Combine with metadata if provided
+  if (Object.keys(metadata).length > 0) {
+    if (!enhancedError.metadata) {
+      enhancedError.metadata = {};
+    }
+    Object.assign(enhancedError.metadata, metadata);
+  }
+  
+  // Forward to standard error reporting
+  await reportError(enhancedError, options);
 }
 
 export function createErrorReport(
@@ -183,64 +372,123 @@ export function createErrorReport(
   context: string,
   metadata: Record<string, unknown> = {}
 ): Record<string, unknown> {
+  // Basic error properties
   const report: Record<string, unknown> = {
-    name: error.name,
     message: error.message,
-    stack: error.stack,
+    name: error.name,
     context,
-    ...metadata,
+    timestamp: new Date().toISOString(),
   };
-  // If the error is an HQLError, add more context
-  if (typeof (error as any).sourceLocation === 'object') {
-    report.sourceLocation = (error as any).sourceLocation;
+  
+  // Add stack trace if available
+  if (error.stack) {
+    report.stack = error.stack;
   }
-  if (typeof (error as any).errorType === 'string') {
-    report.errorType = (error as any).errorType;
-  }
-  if (typeof (error as any).originalError === 'object' && (error as any).originalError !== error) {
-    report.originalError = {
-      name: (error as any).originalError.name,
-      message: (error as any).originalError.message,
-      stack: (error as any).originalError.stack,
+  
+  // Add source location for HQL errors
+  if (error instanceof HQLError && error.sourceLocation) {
+    report.location = {
+      filePath: error.sourceLocation.filePath,
+      line: error.sourceLocation.line,
+      column: error.sourceLocation.column,
+      formattedLocation: error.sourceLocation.toString()
     };
   }
+  
+  // Add metadata if provided
+  if (Object.keys(metadata).length > 0) {
+    report.metadata = metadata;
+  }
+  
   return report;
 }
 
-// ... rest of the error pipeline code ...
-
-// Place TranspilerError after HQLError definition
+// ----- HQL Error Class -----
 
 /**
- * Transitional: TranspilerError for backward compatibility
- * This is an alias for HQLError, used to avoid breaking legacy imports.
+ * Base error class for all HQL-related errors
+ * Provides source location tracking, context extraction, and common error utilities
  */
-
 export class HQLError extends Error {
+  /** Type of error, used for categorization and helpful error messages */
   public readonly errorType: string;
-  public sourceLocation: SourceLocation; // Made mutable to allow source map updates
+  
+  /** Location information for this error */
+  public sourceLocation: SourceLocationInfo;
+  
+  /** The original error that caused this HQL error, if any */
   public readonly originalError?: Error;
+  
+  /** Context lines around the error location */
   public contextLines: { line: number; content: string; isError: boolean; column?: number }[] = [];
-  public reported: boolean = false;
+  
+  /** Line number where the error occurred */
+  public line: number | undefined;
+  
+  /** Column number where the error occurred */
+  public column: number | undefined;
+  
+  /** Path to the file where the error occurred */
+  public filePath: string | undefined;
+  
+  /** Source code content */
+  public source: string | undefined;
+  
+  /** Alias for filePath to match TypeScript error format */
+  public filename: string | undefined;
+  
+  /** Whether this error has been reported already (prevents duplicate reporting) */
+  public reported = false;
+  
+  /** Additional metadata associated with this error */
+  public metadata: Record<string, unknown> = {};
 
+  /**
+   * Create a new HQL Error
+   * @param message The error message
+   * @param options Configuration options
+   */
   constructor(
     message: string,
     options: {
-      errorType?: string;
+      errorType?: string | ErrorType;
       sourceLocation?: SourceLocation;
       originalError?: Error;
     } = {}
   ) {
     super(message);
-    this.name = options.errorType || "HQLError";
-    this.errorType = options.errorType || "HQLError";
-    this.sourceLocation = options.sourceLocation || {};
+    this.name = "HQLError";
+    
+    // Normalize error type (accept string or ErrorType enum)
+    this.errorType = typeof options.errorType === 'string' 
+      ? options.errorType 
+      : options.errorType || ErrorType.GENERIC;
+    
+    // Create a SourceLocationInfo from the provided location
+    this.sourceLocation = options.sourceLocation instanceof SourceLocationInfo
+      ? options.sourceLocation
+      : new SourceLocationInfo(options.sourceLocation || {});
+    
     this.originalError = options.originalError;
+
+    // Copy source location props to top level for easier access
+    this.filePath = this.sourceLocation.filePath;
+    this.line = this.sourceLocation.line;
+    this.column = this.sourceLocation.column;
+    this.source = this.sourceLocation.source;
     
-    // Try to load source and context
-    this.extractSourceAndContext();
-    
-    Object.setPrototypeOf(this, new.target.prototype);
+    // Match TypeScript error format
+    this.filename = this.filePath;
+
+    // Extract source code context lines if we have location info
+    if (this.line || this.filePath) {
+      this.extractSourceAndContext();
+    }
+
+    // Capture stack trace
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, this.constructor);
+    }
   }
 
   /**
@@ -261,13 +509,14 @@ export class HQLError extends Error {
    * Returns a helpful suggestion for fixing the error
    */
   public getSuggestion(): string {
-    return "Check your code for syntax errors or incorrect types.";
+    // Provide a default suggestion based on the error type
+    return "Check the documentation for more information.";
   }
   
   /**
    * Check if this error relates to a circular dependency
    */
-  protected isCircularDependencyError(): boolean {
+  public isCircularDependencyError(): boolean {
     const msg = this.message.toLowerCase();
     return msg.includes("circular") && 
            (msg.includes("dependency") || msg.includes("reference") || msg.includes("import"));
@@ -278,77 +527,15 @@ export class HQLError extends Error {
    * Made public to allow updates after source map resolution
    */
   public extractSourceAndContext(): void {
-    const { filePath, line, column, source: existingSource } = this.sourceLocation;
-    
     // Skip if we already have all the context we need
     if (this.contextLines.length > 0) return;
     
-    // Try to load source if we have a file path but no source
-    let source = existingSource;
-    if (filePath && !source) {
-      try {
-        source = getSourceFile(filePath);
-        
-        // Fallback to reading file directly if not in registry
-        if (!source && typeof Deno !== 'undefined') {
-          try {
-            source = Deno.readTextFileSync(filePath);
-            registerSourceFile(filePath, source);
-          } catch {
-            // Can't read file, continue without source
-          }
-        }
-      } catch {
-        // Failed to get source, continue without it
-      }
-    }
+    // Load source content if available
+    const source = this.sourceLocation.loadSource();
     
     // If we have source and line, extract context lines
-    if (source && line) {
-      this.extractContextLines(source, line, column);
-    }
-  }
-
-  /**
-   * Extracts context lines around the error position
-   */
-  private extractContextLines(source: string, errorLine: number, errorColumn?: number): void {
-    const lines = source.split('\n');
-    
-    // Check if line number is in range
-    if (errorLine <= 0 || errorLine > lines.length) {
-      // Line number out of range, show first few lines
-      this.contextLines = lines.slice(0, Math.min(3, lines.length))
-        .map((content, i) => ({
-          line: i + 1,
-          content,
-          isError: false
-        }));
-      
-      if (errorLine > 0) {
-        this.contextLines.push({
-          line: errorLine,
-          content: `Note: Reported line ${errorLine} exceeds file length ${lines.length}`,
-          isError: true
-        });
-      }
-      return;
-    }
-    
-    // Calculate range for context (usually 2 lines before and after)
-    const lineIndex = errorLine - 1;
-    const startLine = Math.max(0, lineIndex - 2);
-    const endLine = Math.min(lines.length - 1, lineIndex + 2);
-    
-    // Extract the relevant lines with metadata
-    this.contextLines = [];
-    for (let i = startLine; i <= endLine; i++) {
-      this.contextLines.push({
-        line: i + 1,
-        content: lines[i],
-        isError: i === lineIndex,
-        column: i === lineIndex ? errorColumn : undefined
-      });
+    if (source && this.sourceLocation.line) {
+      this.contextLines = this.sourceLocation.extractContextLines();
     }
   }
 }
@@ -670,7 +857,7 @@ export async function mapToOriginalPosition(
 ): Promise<{ source: string; line: number; column: number } | null> {
   try {
     // Check if we have a source map for this file
-    const sourceMap = sourceMapRegistry.get(generatedPath);
+    const sourceMap = registry.getSourceMap(generatedPath);
     if (!sourceMap) {
       return null;
     }
@@ -701,7 +888,7 @@ export async function mapToOriginalPosition(
   }
   
   // If we don't have a source map but we do have path mapping, return an approximation
-  const originalPath = pathMappings.get(generatedPath);
+  const originalPath = registry.getOriginalPath(generatedPath);
   if (originalPath) {
     return {
       source: originalPath,
@@ -714,63 +901,77 @@ export async function mapToOriginalPosition(
 }
 
 /**
- * Transform an error stack using source maps
+ * Transform an error stack using source maps to point to original source locations
  */
 export async function transformErrorStack(error: Error): Promise<Error> {
-  if (!error.stack) {
-    return error;
-  }
+  // Only transform if stack is available
+  if (!error.stack) return error;
   
-  try {
-    // Parse the stack trace
-    const lines = error.stack.split('\n');
-    const transformedLines = [];
+  const stackLines = error.stack.split('\n');
+  const transformedLines = [];
+  
+  // Process each line of the stack trace
+  for (const line of stackLines) {
+    // Look for filename, line and column in stack trace
+    // Format: at functionName (/path/to/file.js:line:column)
+    const match = line.match(/at\s+(.+?)\s+\(?([^:]+):(\d+):(\d+)\)?/);
     
-    // Keep the error message line
-    transformedLines.push(lines[0]);
-    
-    // Process each stack frame
-    let foundHqlPosition = false;
-    
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
+    if (match) {
+      const [, fnName, filePath, lineStr, colStr] = match;
+      const lineNum = parseInt(lineStr, 10);
+      const colNum = parseInt(colStr, 10);
       
-      // Look for position information in the stack frame
-      const frameMatch = line.match(/at\s+(.+?)\s+\(?(.+):(\d+):(\d+)\)?/);
-      if (frameMatch) {
-        const [, functionName, filePath, lineStr, columnStr] = frameMatch;
-        const lineNum = parseInt(lineStr, 10);
-        const columnNum = parseInt(columnStr, 10);
-        
-        // Check if this is a generated file that we have source mapping for
-        const originalPosition = await mapToOriginalPosition(filePath, lineNum, columnNum);
-        
-        if (originalPosition && originalPosition.source.endsWith('.hql')) {
-          // We found a mapping to an HQL file
-          transformedLines.push(
-            `    at ${functionName || 'Object.execute'} (${originalPosition.source}:${originalPosition.line}:${originalPosition.column})`
-          );
-          foundHqlPosition = true;
-        } else {
-          // No mapping found, keep the original line
-          transformedLines.push(line);
-        }
+      // Try to map to original source position
+      const originalPos = await mapToOriginalPosition(filePath, lineNum, colNum);
+      
+      if (originalPos) {
+        // Replace with original source position
+        const mappedLine = `at ${fnName} (${originalPos.source}:${originalPos.line}:${originalPos.column})`;
+        transformedLines.push(mappedLine);
       } else {
-        // Line doesn't contain position info, keep it as is
+        // Keep original line if mapping fails
         transformedLines.push(line);
       }
+    } else {
+      // Line doesn't contain file info, keep as is
+      transformedLines.push(line);
     }
-    
-    // Create a new error with the transformed stack
-    const transformedError = new Error(error.message);
-    transformedError.stack = transformedLines.join('\n');
-    transformedError.name = error.name;
-    
-    return transformedError;
-  } catch (transformError) {
-    logger.error(`Error transforming stack trace: ${transformError instanceof Error ? transformError.message : String(transformError)}`);
-    return error;
   }
+  
+  // Replace stack with transformed stack
+  error.stack = transformedLines.join('\n');
+  
+  // If error is HQLError, try to update source location
+  if (error instanceof HQLError && error.sourceLocation?.filePath) {
+    const { filePath, line, column } = error.sourceLocation;
+    
+    if (filePath && line && column) {
+      const originalPos = await mapToOriginalPosition(filePath, line, column);
+      
+      if (originalPos) {
+        // Update error's source location with original position
+        const newLocation = new SourceLocationInfo({
+          filePath: originalPos.source,
+          line: originalPos.line,
+          column: originalPos.column,
+          source: error.sourceLocation.source
+        });
+        
+        error.sourceLocation = newLocation;
+        
+        // Also update the top-level properties
+        error.filePath = newLocation.filePath;
+        error.line = newLocation.line;
+        error.column = newLocation.column;
+        error.filename = newLocation.filePath;
+        
+        // Reload source context with new location
+        error.extractSourceAndContext();
+      }
+    }
+  }
+  
+  return error;
 }
 
 // ----- Error Formatting -----
@@ -829,7 +1030,7 @@ export function wrapError<T extends ErrorConstructor = ErrorConstructor>(
 /**
  * Formats an HQLError for display in the console
  */
-export function formatHQLError(error: HQLError, config: ErrorConfig = DEFAULT_ERROR_CONFIG): string {
+function formatHQLError(error: HQLError, config: ErrorConfig = DEFAULT_ERROR_CONFIG): string {
   // Create color configuration based on settings
   const colorConfig = createColorConfig(config.useColors);
   let output: string[] = [];
@@ -1245,6 +1446,12 @@ function determineErrorType(error: Error): string {
 /**
  * Report an error with proper formatting
  */
+/**
+ * Report an error with proper formatting
+ * 
+ * This is the primary error reporting function for HQL errors.
+ * It enhances the error with source information and formats it for display.
+ */
 export async function reportError(
   error: unknown,
   options: {
@@ -1370,8 +1577,8 @@ export function withErrorHandling<T, Args extends any[]>(
 export function perform<T>(
   fn: () => T,
   context?: string,
-  errorType?: new (message: string, ...args: any[]) => HQLError,
-  errorArgs?: any[],
+  errorType?: new (message: string, ...args: unknown[]) => HQLError,
+  errorArgs?: unknown[],
   sourceContext?: SourceLocation
 ): T {
   try {
@@ -1470,6 +1677,8 @@ export const ErrorPipeline = {
   enhanceError,
   formatHQLError,
   reportError,
+  report,              // New structured reporting API
+  createErrorReport,   // Create structured error data
   withErrorHandling,
   perform,
   performAsync,
@@ -1488,10 +1697,14 @@ export const ErrorPipeline = {
   TransformError,
   RuntimeError,
   CodeGenError,
+  ErrorType,           // New enum for error types
   
   // Source registry
   registerSourceFile,
   getSourceFile,
+  
+  // Source location utilities
+  SourceLocationInfo,  // New location helper class
 };
 
 export default ErrorPipeline;
