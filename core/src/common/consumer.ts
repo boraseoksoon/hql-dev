@@ -38,9 +38,11 @@ export async function mapStackTraceToHql(error: Error, bundlePath: string): Prom
   if (!error.stack) return "";
 
   const sourceMap = await extractInlineSourceMap(bundlePath);
-  if (!sourceMap) return error.stack;
-
-  console.log('[mapStackTraceToHql/DEBUG] sourceMap.sources:', sourceMap.sources);
+  if (!sourceMap) {
+    console.log('[mapStackTraceToHql/DEBUG] No source map found for bundle:', bundlePath);
+    return error.stack;
+  }
+  console.log('[mapStackTraceToHql/DEBUG] Parsed sourceMap:', JSON.stringify(sourceMap, null, 2));
   if (sourceMap.sourcesContent) {
     console.log('[mapStackTraceToHql/DEBUG] sourceMap.sourcesContent:', sourceMap.sourcesContent.map((c: string, i: number) => `[${i}] ${c.slice(0, 60)}...`));
   }
@@ -53,6 +55,7 @@ export async function mapStackTraceToHql(error: Error, bundlePath: string): Prom
   const frameRegex = /^\s*at\s+(?:(.*?)\s+\()?(.+?):(\d+):(\d+)\)?$/;
 
   for (const line of error.stack.split('\n')) {
+    console.log('[mapStackTraceToHql/DEBUG] Processing stack line:', line);
     const m = line.match(frameRegex);
     if (m) {
       const fnName = m[1] || '';
@@ -61,12 +64,6 @@ export async function mapStackTraceToHql(error: Error, bundlePath: string): Prom
       const colNum = Number(m[4]);
       console.log('[mapStackTraceToHql/DEBUG] Mapping JS frame:', { fnName, filePath, lineNum, colNum });
 
-      // Hardcoded mapping for testing
-      if (lineNum === 118 && colNum === 1) {
-        console.log('[mapStackTraceToHql/DEBUG] *** HARD CODED TEST: Forcing mapping to enum.hql:215:1');
-        remapped.push(`at ../../../doc/examples/enum.hql:215:1`);
-        continue;
-      }
       // Try mapping at the reported column, fallback by decrementing if no source
       let orig = consumer.originalPositionFor({ line: lineNum, column: colNum });
       console.log('[mapStackTraceToHql/DEBUG] Mapping result:', orig);
@@ -82,14 +79,18 @@ export async function mapStackTraceToHql(error: Error, bundlePath: string): Prom
         // Normalize and relativize the source path
         let src = normalize(orig.source);
         src = relative(cwd, src) || src;
-
+        console.log('[mapStackTraceToHql/DEBUG] Final mapped source:', src, 'line:', orig.line, 'col:', orig.column);
         const location = `${src}:${orig.line}:${orig.column ?? 0}`;
         remapped.push(fnName
           ? `at ${fnName} (${location})`
           : `at ${location}`
         );
         continue;
+      } else {
+        console.log('[mapStackTraceToHql/DEBUG] No mapping found for frame:', { fnName, filePath, lineNum, colNum });
       }
+    } else {
+      console.log('[mapStackTraceToHql/DEBUG] Stack line did not match frame regex:', line);
     }
 
     // If not matched or no mapping, keep original line

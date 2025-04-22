@@ -209,6 +209,10 @@ export async function transformAST(
 
     timer.breakdown();
 
+    // if (sourceMap !== undefined) {
+    //   console.log("in transformAST sourceMap : " , sourceMap);
+    // }
+    
     return { code: finalCode, sourceMap };
   } catch (error) {
     throw new TransformError(

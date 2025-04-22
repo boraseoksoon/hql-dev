@@ -5,8 +5,57 @@ import {
   isJsFile as isJs, 
   isHqlFile as isHql 
 } from "./import-utils.ts";
+import * as path from "https://deno.land/std@0.203.0/path/mod.ts";
 
 const REMOTE_PATH_PREFIXES = new Set(["npm:", "jsr:", "http:", "https:"]);
+
+/**
+ * Resolve a source path to an absolute, real file path.
+ * Handles:
+ *   - file URLs
+ *   - pseudo-rooted paths ("/foo/bar" relative to project root)
+ *   - relative paths
+ *   - absolute paths
+ *   - existence checks & fallback
+ * @param inputPath The path to resolve (may be relative, pseudo-rooted, file URL, or absolute)
+ * @param projectRoot The root directory of the project (for pseudo-rooted paths)
+ * @returns The resolved absolute file path
+ */
+export async function resolveSourcePath(inputPath: string, projectRoot: string): Promise<string> {
+  let resolved = inputPath;
+
+  // Convert file URLs to paths
+  if (resolved.startsWith("file://")) {
+    resolved = path.fromFileUrl(resolved);
+  }
+
+  // Handle pseudo-rooted paths ("/foo/bar" but not a real absolute file)
+  if (resolved.startsWith("/") && !(await exists(resolved))) {
+    resolved = path.resolve(projectRoot, resolved.replace(/^\/+/g, ""));
+  }
+
+  // Handle relative paths
+  if (!path.isAbsolute(resolved)) {
+    resolved = path.resolve(projectRoot, resolved);
+  }
+
+  // Final existence check
+  if (!(await exists(resolved))) {
+    throw new Error(`Resolved path does not exist: ${resolved}`);
+  }
+
+  return resolved;
+}
+
+// Helper: check file existence
+async function exists(filePath: string): Promise<boolean> {
+  try {
+    await Deno.stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Sanitize a string to be a valid JavaScript identifier

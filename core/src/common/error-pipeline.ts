@@ -58,7 +58,7 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
   const errorType = error.errorType || "Error";
   const message = error.message || "An unknown error occurred";
   output.push(`${colors.red(colors.bold(`${errorType}:`))} ${message}`);
-  
+
   // Display code context with line numbers and column pointer
   // if (error.contextLines?.length > 0) {
   //   const maxLineNumber = Math.max(...error.contextLines.map(item => item.line));
@@ -98,37 +98,18 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
     // DEBUG: Log the file path before resolution
     console.log('[formatHQLError] filePath before resolution:', filepath);
 
-    // Always resolve to absolute path if not already
+    // Use universal resolver for robust path normalization
     const projectRoot = path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../../');
-    if (!filepath.startsWith("/") && !filepath.match(/^([a-zA-Z]:\\|file:\/\/)/)) {
-      console.log('[formatHQLError] projectRoot:', projectRoot);
-      filepath = path.resolve(projectRoot, filepath.replace(/^\/+/, ""));
-      console.log('[formatHQLError] resolved relative filepath to absolute:', filepath);
-    } else if (filepath.startsWith("file://")) {
-      filepath = path.fromFileUrl(filepath);
-      console.log('[formatHQLError] converted file URL to path:', filepath);
-    } else if (filepath.startsWith("/")) {
-      // Check if this is a pseudo-rooted path (not real absolute)
-      try {
-        // Await file existence check (now allowed as function is async)
-        const exists = typeof Deno !== 'undefined' && await Deno.stat(filepath).then(() => true, () => false);
-        console.log('[formatHQLError] existence check for', filepath, ':', exists);
-        if (!exists) {
-          // Treat as project-root relative
-          filepath = path.resolve(projectRoot, filepath.replace(/^\/+/, ""));
-          console.log('[formatHQLError] pseudo-rooted path resolved to:', filepath);
-        } else {
-          console.log('[formatHQLError] filePath is a real absolute and exists:', filepath);
-        }
-      } catch (e) {
-        console.log('[formatHQLError] Error during existence check:', e);
-      }
-    } else {
-      console.log('[formatHQLError] filePath is already absolute:', filepath);
+    try {
+      const resolved = await (await import("./utils.ts")).resolveSourcePath(filepath, projectRoot);
+      console.log('[formatHQLError] [DEBUG] Path input:', filepath);
+      console.log('[formatHQLError] [DEBUG] Project root:', projectRoot);
+      console.log('[formatHQLError] [DEBUG] Resolved path:', resolved);
+      filepath = resolved;
+    } catch (e) {
+      console.log('[formatHQLError] Could not resolve source path:', filepath, e);
+      // fallback: keep filepath as-is (may fail to extract context)
     }
-
-    // DEBUG: Log the file path after resolution
-    console.log('[formatHQLError] filePath after resolution:', filepath);
 
     // --- CONTEXT LINES FROM FILE ---
     try {
@@ -201,8 +182,11 @@ export async function reportError(error: unknown, isDebug = false): Promise<void
   const bundlePath = getCurrentBundlePath();
   console.log("[reportError] bundlePath:", bundlePath);
   
+  console.log("[reportError] Caller stack:\n", new Error().stack);
   if (error instanceof Error) {
     console.log("[reportError] Error stack (pre-remap):", error.stack);
+    console.log("[reportError] Error full stack (pre-remap):", JSON.stringify(error));
+    console.log("[reportError] Error (pre-remap):", error);
   }
 
   // Apply source map transformation if possible

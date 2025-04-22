@@ -90,24 +90,38 @@ export async function transpileCLI(
       // Process entry file
       if (options.showTiming) logger.startTiming("transpile-cli", "Process Entry");
       const { tsOutputPath, sourceMap } = await processEntryFile(resolvedInputPath, outPath, bundleOptions);
+      // console.log("[TRACE] After processEntryFile: tsOutputPath=", tsOutputPath);
+      // if (sourceMap) {
+      //   try {
+      //     const parsedMap = JSON.parse(sourceMap);
+      //     console.log("[TRACE] Source map after processEntryFile:", parsedMap);
+      //   } catch (e) {
+      //     console.log("[TRACE] Could not parse sourceMap after processEntryFile:", e, sourceMap);
+      //   }
+      // } else {
+      //   console.log("[TRACE] No sourceMap after processEntryFile!");
+      // }
       if (options.showTiming) logger.endTiming("transpile-cli", "Process Entry");
       
-      // Write source map if present (redundant safety)
+      // [TRACE] Before writing source map and embedding inline map
       if (sourceMap) {
         await Deno.writeTextFile(tsOutputPath + ".map", sourceMap);
         logger.log({ text: `[SourceMap] Wrote source map to ${tsOutputPath}.map`, namespace: "bundler" });
         // Log the contents of the .map file
-        try {
-          const mapContent = await Deno.readTextFile(tsOutputPath + ".map");
-          const parsedMap = JSON.parse(mapContent);
-          console.log("[POST-WRITE] .map file sources:", parsedMap.sources);
-        } catch (e) {
-          console.log("[POST-WRITE] Could not read or parse .map file:", e);
-        }
+        // try {
+        //   const mapContent = await Deno.readTextFile(tsOutputPath + ".map");
+        //   console.log("[DEBUG][POST-WRITE] Raw .map file content:\n", mapContent);
+        //   const parsedMap = JSON.parse(mapContent);
+        //   console.log("[DEBUG][POST-WRITE] Parsed source map:", parsedMap);
+        //   console.log("[POST-WRITE] .map file sources:", parsedMap.sources);
+        // } catch (e) {
+        //   console.log("[POST-WRITE] Could not read or parse .map file:", e);
+        // }
         // ---- Embed the source map as an inline comment in the .ts file ----
         try {
           // Read the generated TS code
           const tsCode = await Deno.readTextFile(tsOutputPath);
+          console.log("[DEBUG][EMBED] TS code before embedding source map:\n", tsCode);
           // Import base64 encoder
           // Use a polyfill for base64 encoding in Deno (btoa only works for ASCII)
           function base64Encode(str: string): string {
@@ -115,13 +129,14 @@ export async function transpileCLI(
           }
           const inlineMapComment = "\n//# sourceMappingURL=data:application/json;base64," + base64Encode(sourceMap);
           await Deno.writeTextFile(tsOutputPath, tsCode + inlineMapComment);
+          console.log("[DEBUG][EMBED] TS code after embedding source map:\n", tsCode + inlineMapComment);
           console.log("[EMBED] Wrote inline source map to", tsOutputPath);
         } catch (e) {
           console.log("[EMBED] Failed to write inline source map:", e);
         }
       }
 
-      // Before bundling, check the .ts file for an inline map and log the .map file again
+      // [TRACE] After embedding inline source map, check the .ts file for inline map and log the .map file again
       try {
         const tsContent = await Deno.readTextFile(tsOutputPath);
         const tsMatch = tsContent.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
@@ -666,7 +681,7 @@ async function bundleWithEsbuild(
       if (match) {
         const decoded = atob(match[1]);
         const sourceMap = JSON.parse(decoded);
-        console.log("[POST-BUNDLE] Inline source map sources:", sourceMap.sources);
+        // console.log("[POST-BUNDLE] Inline source map sources:", sourceMap.sources);
       } else {
         console.log("[POST-BUNDLE] No inline source map found in bundle.");
       }
