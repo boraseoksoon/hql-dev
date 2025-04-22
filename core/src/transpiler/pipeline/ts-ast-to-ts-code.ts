@@ -4,8 +4,7 @@ import * as IR from "../type/hql_ir.ts";
 import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { CodeGenError, perform } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
-
-
+import { makeSourceMap } from "./sourcemap-generator.ts";
 /**
  * The output of TypeScript code generation, including code and optional source map.
  */
@@ -14,11 +13,6 @@ export interface TypeScriptOutput {
   sourceMap?: string;
 }
 
-
-/**
- * Generate TypeScript code from HQL IR using the TypeScript Compiler API.
- * Enhanced with better error handling and diagnostics using perform utility.
- */
 /**
  * Generate TypeScript code from HQL IR using the TypeScript Compiler API.
  * Enhanced with better error handling, diagnostics, and source map generation.
@@ -27,8 +21,9 @@ export interface TypeScriptOutput {
  */
 export async function generateTypeScript(
   ir: IR.IRProgram,
-  options: { sourceFilePath?: string } = {}
+  options: { sourceFilePath?: string, currentFilePath?: string } = {}
 ): Promise<TypeScriptOutput> {
+  const { currentFilePath } = options;  
   try {
     logger.debug(
       `Starting TypeScript code generation from IR with ${ir.body.length} nodes`,
@@ -47,12 +42,7 @@ export async function generateTypeScript(
     logger.debug("Converting HQL IR to TypeScript AST");
     const startTime = performance.now();
 
-    const tsAST = await perform(
-      () => convertHqlIRToTypeScript(ir),
-      "IR to TS AST conversion",
-      CodeGenError,
-      [ir],
-    );
+    const tsAST = await convertHqlIRToTypeScript(ir)
 
     const conversionTime = performance.now() - startTime;
     logger.debug(
@@ -87,7 +77,16 @@ export async function generateTypeScript(
       }ms with ${code.length} characters`,
     );
 
-    return { code: code, sourceMap: undefined }
+    const isStdlib = currentFilePath && (
+      currentFilePath.includes("/lib/stdlib") ||
+      currentFilePath.includes("/lib/macro")
+    );
+
+    let sourceMap: string | undefined = undefined;
+    if (!isStdlib && isHqlFile(currentFilePath)) {
+      sourceMap = makeSourceMap(code, currentFilePath!);
+    }
+    return { code, sourceMap };
   } catch (error) {
     throw new CodeGenError(
       `Failed to generate TypeScript code: ${
@@ -97,6 +96,11 @@ export async function generateTypeScript(
       ir,
     );
   }
+}
+
+function isHqlFile(filePath?: string): boolean {
+  if (!filePath) return false;
+  return filePath.endsWith('.hql');
 }
 
 /**

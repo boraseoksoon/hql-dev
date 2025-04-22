@@ -493,52 +493,52 @@ export function registerExplicitOutput(outputPath: string): void {
  * Clean up all temporary cache directories
  */
 export async function cleanupAllTempFiles(): Promise<void> {
-  // Remove temp directories
-  for (const dir of tempDirs) {
-    try {
-      await Deno.remove(dir, { recursive: true });
-      logger.debug(`Removed temp directory: ${dir}`);
-    } catch (error) {
-      logger.debug(`Failed to remove temp directory ${dir}: ${error}`);
-    }
-  }
+  // // Remove temp directories
+  // for (const dir of tempDirs) {
+  //   try {
+  //     await Deno.remove(dir, { recursive: true });
+  //     logger.debug(`Removed temp directory: ${dir}`);
+  //   } catch (error) {
+  //     logger.debug(`Failed to remove temp directory ${dir}: ${error}`);
+  //   }
+  // }
   
-  // Copy explicit outputs from cache to their final destination
-  for (const outputPath of explicitOutputs) {
-    for (const sourceMap of outputPathCache.values()) {
-      for (const [ext, cachePath] of sourceMap.entries()) {
-        // Find if this output path matches the target extension
-        if (outputPath.endsWith(ext)) {
-          try {
-            // If cache file exists, copy to explicit output
-            if (await exists(cachePath)) {
-              const content = await readTextFile(cachePath);
+  // // Copy explicit outputs from cache to their final destination
+  // for (const outputPath of explicitOutputs) {
+  //   for (const sourceMap of outputPathCache.values()) {
+  //     for (const [ext, cachePath] of sourceMap.entries()) {
+  //       // Find if this output path matches the target extension
+  //       if (outputPath.endsWith(ext)) {
+  //         try {
+  //           // If cache file exists, copy to explicit output
+  //           if (await exists(cachePath)) {
+  //             const content = await readTextFile(cachePath);
               
-              // IMPORTANT: For user-level files, we need to restore relative paths 
-              // instead of using absolute file:// URLs to cache
-              let outputContent = content;
+  //             // IMPORTANT: For user-level files, we need to restore relative paths 
+  //             // instead of using absolute file:// URLs to cache
+  //             let outputContent = content;
               
-              // Process content to replace absolute cache paths with relative paths
-              if (outputPath.endsWith('.js') || outputPath.endsWith('.ts')) {
-                outputContent = await restoreRelativePaths(content, outputPath, cachePath);
-              }
+  //             // Process content to replace absolute cache paths with relative paths
+  //             if (outputPath.endsWith('.js') || outputPath.endsWith('.ts')) {
+  //               outputContent = await restoreRelativePaths(content, outputPath, cachePath);
+  //             }
               
-              await writeTextFile(outputPath, outputContent);
-              logger.debug(`Copied cached output to explicit path: ${cachePath} -> ${outputPath}`);
-            }
-          } catch (error) {
-            logger.debug(`Failed to copy explicit output ${cachePath} -> ${outputPath}: ${error}`);
-          }
-        }
-      }
-    }
-  }
+  //             await writeTextFile(outputPath, outputContent);
+  //             logger.debug(`Copied cached output to explicit path: ${cachePath} -> ${outputPath}`);
+  //           }
+  //         } catch (error) {
+  //           logger.debug(`Failed to copy explicit output ${cachePath} -> ${outputPath}: ${error}`);
+  //         }
+  //       }
+  //     }
+  //   }
+  // }
   
-  // Clear in-memory trackers
-  tempDirs.clear();
-  explicitOutputs.clear();
+  // // Clear in-memory trackers
+  // tempDirs.clear();
+  // explicitOutputs.clear();
   
-  logger.debug("Cache cleanup complete");
+  // logger.debug("Cache cleanup complete");
 }
 
 /**

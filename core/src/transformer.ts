@@ -25,6 +25,7 @@ export interface TransformOptions {
   verbose?: boolean;
   replMode?: boolean;
   sourceFile?: string;
+  currentFile?: string;
 }
 
 /**
@@ -150,7 +151,7 @@ export async function transformAST(
   astNodes: HQLNode[],
   currentDir: string,
   options: TransformOptions = {}
-): Promise<string> {
+): Promise<{ code: string; sourceMap?: string }> {
   try {
     const timer = new Timer(logger);
     logger.debug(`Starting transformation: ${astNodes.length} nodes`);
@@ -194,17 +195,21 @@ export async function transformAST(
     }
 
     // IR -> TS code (with source map generation)
-    const tsResult = await generateTypeScript(ir, { sourceFilePath: sourceFilePath });
+    const tsResult = await generateTypeScript(ir, { sourceFilePath: sourceFilePath, currentFilePath: options.currentFile });
     
     const tsCode = tsResult.code;
+    const sourceMap = tsResult.sourceMap;
+
     timer.phase("TS code generation");
   
     // Prepend runtime unless in REPL mode
     const finalCode = options.replMode
       ? tsCode
       : `${RUNTIME_FUNCTIONS}\n\n${tsCode}`;
+
     timer.breakdown();
-    return finalCode;
+
+    return { code: finalCode, sourceMap };
   } catch (error) {
     throw new TransformError(
       `Transformation failed: ${error instanceof Error ? error.message : String(error)}`,

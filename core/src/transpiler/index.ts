@@ -15,12 +15,8 @@ export interface TranspileOptions {
 }
 
 export interface TranspileResult {
-  /** The generated JavaScript code */
   code: string;
-  /** Map of imported files and their content */
-  imports?: Record<string, string>;
-  /** Performance timings if enabled */
-  timings?: Record<string, number>;
+  sourceMap?: string;
 }
 
 /**
@@ -30,7 +26,7 @@ export async function transpile(
   source: string,
   options: TranspileOptions = {}
 ): Promise<TranspileResult> {
-  const code = await processHql(source, {
+  const { code, sourceMap } = await processHql(source, {
     verbose: options.verbose,
     showTiming: options.showTiming,
     baseDir: options.baseDir,
@@ -38,7 +34,7 @@ export async function transpile(
     tempDir: options.tempDir
   });
   
-  return { code };
+  return { code, sourceMap };
 }
 
 export { processHql } from "./hql-transpiler.ts";

@@ -12,6 +12,8 @@
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { SourceMapConsumer } from "npm:source-map@0.7.3";
 import { globalLogger } from "../logger.ts";
+import { getCurrentBundlePath } from "./bundle-registry.ts";
+import { mapStackTraceToHql } from "./consumer.ts";
 
 // Direct access to logger
 const logger = globalLogger;
@@ -122,27 +124,52 @@ function formatHQLError(error: HQLError, isDebug = false): string {
 
 /**
  * Main error reporting function
+ * @param error The error to report
+ * @param isDebug Whether to show debug info
+ * @param bundlePath Optional path to the running bundle (for source map remapping)
  */
 export async function reportError(error: unknown, isDebug = false): Promise<void> {
-  // Apply source map transformation
-  if (error instanceof Error && error.stack) {
-    error = await transformErrorStack(error);
+  const bundlePath = getCurrentBundlePath();
+  console.log("[reportError] bundlePath:", bundlePath);
+  // console.log("[reportError] Received error:", error);
+  if (error instanceof Error) {
+    console.log("[reportError] Error stack (pre-remap):", error.stack);
   }
 
-  // Only log raw error object in debug mode
-  if (isDebug) {
-    console.log("error : ", error);
+  // Apply source map transformation if possible
+  if (error instanceof Error && error.stack && bundlePath) {
+    try {
+      // console.log(`[reportError] Attempting to remap stack trace using bundle: ${bundlePath}`);
+      const remapped = await mapStackTraceToHql(error, bundlePath);
+      error.stack = remapped;
+      // console.log("[reportError] Stack trace remapped:", remapped);
+    } catch (e) {
+      // console.log("[reportError] Stack trace remapping failed:", e);
+      // Fallback to original stack if remapping fails
+    }
   }
-  
+
   // Convert to HQLError type if needed
-  const hqlError = error instanceof HQLError ? error : new HQLError(
-    error instanceof Error ? error.message : String(error)
-  );
-  
+  let hqlError: HQLError;
+  if (error instanceof HQLError) {
+    hqlError = error;
+    // console.log("[reportError] Error is already HQLError, stack:", hqlError.stack);
+  } else {
+    hqlError = new HQLError(error instanceof Error ? error.message : String(error));
+    // Preserve stack trace if possible
+    if (error instanceof Error && error.stack) {
+      hqlError.stack = error.stack;
+      // console.log("[reportError] Copied stack trace to HQLError:", hqlError.stack);
+    }
+  }
+
   // Format and display
   const formatted = formatHQLError(hqlError, isDebug);
+  // console.log("[reportError] Final formatted error:", formatted);
   console.error(formatted);
 }
+
+
 
 // ----- Source Registry -----
 

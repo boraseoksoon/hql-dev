@@ -233,7 +233,7 @@ export class REPLEvaluator {
       currentTime = performance.now();
       
       // Direct AST transformation without withErrorHandling wrapper
-      const jsCode = await transformAST(ast, options.baseDir || this.baseDir, {
+      const { code: jsCode, sourceMap } = await transformAST(ast, options.baseDir || this.baseDir, {
         verbose: options.verbose,
         replMode: true
       });

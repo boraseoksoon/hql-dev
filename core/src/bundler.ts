@@ -35,6 +35,7 @@ import {
 } from "./common/temp-file-tracker.ts";
 import { ErrorPipeline } from "./common/error-pipeline.ts";
 import { transpile, TranspileOptions } from './transpiler/index.ts';
+import { setCurrentBundlePath } from "./common/bundle-registry.ts";
 
 // Constants
 const MAX_RETRIES = 3;
@@ -54,6 +55,7 @@ export interface BundleOptions {
   cleanup?: boolean;
   debug?: boolean;
   force?: boolean;
+  sourcemap?: boolean | "inline" | "external";
 }
 
 interface ImportInfo {
@@ -70,6 +72,7 @@ export async function transpileCLI(
     showTiming?: boolean;
     force?: boolean;
     skipPrimaryErrorReporting?: boolean;
+    sourcemap?: boolean | "inline" | "external";
   } = {}
 ): Promise<string> {
   try {
@@ -81,16 +84,29 @@ export async function transpileCLI(
     const outPath = determineOutputPath(resolvedInputPath, outputPath);
     const sourceDir = dirname(resolvedInputPath);
     const bundleOptions = { ...options, sourceDir };
+    if (bundleOptions.sourcemap === undefined) bundleOptions.sourcemap = true;
     
     try {
       // Process entry file
       if (options.showTiming) logger.startTiming("transpile-cli", "Process Entry");
-      const processedPath = await processEntryFile(resolvedInputPath, outPath, bundleOptions);
+      const { tsOutputPath, sourceMap } = await processEntryFile(resolvedInputPath, outPath, bundleOptions);
       if (options.showTiming) logger.endTiming("transpile-cli", "Process Entry");
+      
+      // Write source map if present (redundant safety)
+      if (sourceMap) {
+        await Deno.writeTextFile(tsOutputPath + ".map", sourceMap);
+        logger.log({ text: `[SourceMap] Wrote source map to ${tsOutputPath}.map`, namespace: "bundler" });
+      }
       
       // Bundle the processed file
       if (options.showTiming) logger.startTiming("transpile-cli", "esbuild Bundling");
-      await bundleWithEsbuild(processedPath, outPath, bundleOptions);
+      logger.log({ text: `[Bundler] Forcing esbuild to use inline source maps for the bundle.` , namespace: "bundler" });
+      await bundleWithEsbuild(tsOutputPath, outPath, { ...bundleOptions, sourcemap: "inline" });
+      console.log(`[Bundler] Bundled to ${outPath}`);
+
+      // Register the bundle path globally for error reporting
+      setCurrentBundlePath(outPath);
+
       if (options.showTiming) logger.endTiming("transpile-cli", "esbuild Bundling");
       
       // Log completion
@@ -153,13 +169,14 @@ async function processHqlImports(
     if (await needsRegeneration(resolvedHqlPath, ".ts") || options.force) {
       logger.debug(`Transpiling HQL import: ${resolvedHqlPath}`);
       const hqlSource = await readFile(resolvedHqlPath);
-      const tsCode = await processHql(hqlSource, {
+      const { code: tsCode, sourceMap } = await processHql(hqlSource, {
         baseDir: dirname(resolvedHqlPath),
         verbose: options.verbose,
         tempDir: options.tempDir,
         sourceDir: options.sourceDir || dirname(resolvedHqlPath),
+        currentFile: resolvedHqlPath,
       });
-      
+
       // Cache the transpiled file
       await cacheTranspiledFile(resolvedHqlPath, tsCode, ".ts", { preserveRelative: true });
     }
@@ -223,20 +240,21 @@ async function processHqlImportsInTs(
 }
 
 // Main processing function
-function processEntryFile(
+async function processEntryFile(
   inputPath: string,
   outputPath: string,
   options: BundleOptions = {},
-): Promise<string> {
+): Promise<{ tsOutputPath: string; sourceMap?: string }> {
   try {
     const resolvedInputPath = resolve(inputPath);
     logger.debug(`Processing entry file: ${resolvedInputPath}`);
     logger.debug(`Output path: ${outputPath}`);
     
     if (isHqlFile(resolvedInputPath)) {
-      return processHqlEntryFile(resolvedInputPath, outputPath, options);
+      return await processHqlEntryFile(resolvedInputPath, outputPath, options);
     } else if (isJsFile(resolvedInputPath) || isTypeScriptFile(resolvedInputPath)) {
-      return processJsOrTsEntryFile(resolvedInputPath, outputPath, options);
+      const tsOutputPath = await processJsOrTsEntryFile(resolvedInputPath, outputPath, options);
+      return { tsOutputPath };
     } else {
       throw new ValidationError(
         `Unsupported file type: ${inputPath} (expected .hql, .js, or .ts)`,
@@ -252,7 +270,7 @@ async function processHqlEntryFile(
   resolvedInputPath: string,
   outputPath: string,
   options: BundleOptions,
-): Promise<string> {
+): Promise<{ tsOutputPath: string; sourceMap?: string }> {
   logger.log({ text: `Transpiling HQL entry file: ${resolvedInputPath}`, namespace: "bundler" });
   
   // Create temp directory
@@ -263,14 +281,14 @@ async function processHqlEntryFile(
   logger.log({ text: `Read ${source.length} bytes from ${resolvedInputPath}`, namespace: "bundler" });
   
   // Generate TypeScript code from HQL
-  let tsCode = await processHql(source, {
+  let { code: tsCode, sourceMap } = await processHql(source, {
     baseDir: dirname(resolvedInputPath),
     verbose: options.verbose,
     tempDir,
     sourceDir: options.sourceDir || dirname(resolvedInputPath),
     currentFile: resolvedInputPath
   });
-  
+
   // Process nested HQL imports if present
   if (checkForHqlImports(tsCode)) {
     logger.log({ text: "Detected nested HQL imports in transpiled output. Processing them.", namespace: "bundler" });
@@ -279,14 +297,17 @@ async function processHqlEntryFile(
   
   // Write TypeScript output to cache
   const tsOutputPath = await writeToCachedPath(resolvedInputPath, tsCode, ".ts");
-  
-  // Register the explicit output path
-  if (outputPath) {
-    registerExplicitOutput(outputPath);
+
+  // Write source map if present
+  if (sourceMap) {
+    await Deno.writeTextFile(tsOutputPath + ".map", sourceMap);
+    const sourceMapComment = `\n//# sourceMappingURL=${path.basename(tsOutputPath)}.map`;
+    await Deno.writeTextFile(tsOutputPath, tsCode + sourceMapComment);
+  } else {
   }
-  
-  logger.log({ text: `Entry processed and TypeScript output written to ${tsOutputPath}`, namespace: "bundler" });
-  return tsOutputPath;
+
+
+  return { tsOutputPath, sourceMap };
 }
 
 async function processJsOrTsEntryFile(
@@ -519,6 +540,8 @@ async function bundleWithEsbuild(
         '.js': 'js',
         '.hql': 'ts'
       },
+      // Always force inline source maps for the final bundle
+      sourcemap: "inline",
       // Enable TypeScript processing
       tsconfig: JSON.stringify({
         compilerOptions: {
@@ -540,7 +563,40 @@ async function bundleWithEsbuild(
     
     // Run the build
     logger.log({ text: `Starting bundling: ${entryPath}`, namespace: "bundler" });
+    logger.log({ text: `[Bundler] esbuild buildOptions.sourcemap: ${buildOptions.sourcemap}`, namespace: "bundler" });
     const result = await runBuildWithRetry(buildOptions, MAX_RETRIES);
+
+    // Log source map info if present in output
+    if (result.outputFiles) {
+      for (const file of result.outputFiles) {
+        if (file.path.endsWith('.js.map')) {
+          const mapObj = JSON.parse(new TextDecoder().decode(file.contents));
+          logger.log({ text: `[Bundler] Final bundle source map sources: ${JSON.stringify(mapObj.sources)}`, namespace: "bundler" });
+          if (Array.isArray(mapObj.sources)) {
+            const hasHql = mapObj.sources.some((src: string) => src.endsWith('.hql'));
+            logger.log({ text: `[Bundler] Final bundle source map includes HQL: ${hasHql}`, namespace: "bundler" });
+          }
+        }
+      }
+    }
+    // Additionally, check inline source map in bundle.js
+    try {
+      const bundleContent = await readTextFile(outputPath);
+      const inlineMapMatch = bundleContent.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
+      if (inlineMapMatch) {
+        const mapStr = atob(inlineMapMatch[1]);
+        const mapObj = JSON.parse(mapStr);
+        logger.log({ text: `[Bundler] Inline source map sources: ${JSON.stringify(mapObj.sources)}`, namespace: "bundler" });
+        if (Array.isArray(mapObj.sources)) {
+          const hasHql = mapObj.sources.some((src: string) => src.endsWith('.hql'));
+          logger.log({ text: `[Bundler] Inline source map includes HQL: ${hasHql}`, namespace: "bundler" });
+        }
+      } else {
+        logger.warn({ text: `[Bundler] No inline source map found in bundle`, namespace: "bundler" });
+      }
+    } catch (err) {
+      logger.warn({ text: `[Bundler] Error reading inline source map from bundle: ${err}`, namespace: "bundler" });
+    }
     
     // Post-process the output if needed
     if (result.metafile) {
@@ -973,11 +1029,12 @@ export async function transpileHqlInJs(hqlPath: string, basePath: string): Promi
     const hqlContent = await readTextFile(hqlPath);
     
     // Transpile to TypeScript using the existing processHql function
-    const tsContent = await processHql(hqlContent, {
+    const { code: tsContent, sourceMap } = await processHql(hqlContent, {
       baseDir: dirname(hqlPath),
       sourceDir: basePath,
+      currentFile: hqlPath,
     });
-    
+
     // Process identifiers with hyphens
     let processedContent = tsContent;
     

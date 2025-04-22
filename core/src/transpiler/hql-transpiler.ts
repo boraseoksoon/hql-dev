@@ -39,7 +39,7 @@ interface ProcessOptions {
 export async function processHql(
   source: string,
   options: ProcessOptions = {},
-): Promise<string> {
+): Promise<TranspileResult> {
   logger.debug("Processing HQL source with S-expression layer");
 
   // Configure logger based on options
@@ -90,7 +90,9 @@ export async function processHql(
     if (options.showTiming) logger.endTiming("hql-process", "AST conversion");
     
     if (options.showTiming) logger.startTiming("hql-process", "JS transformation");
-    const jsCode = await transformAST(hqlAst, options.baseDir || Deno.cwd(), { verbose: options.verbose });
+    
+    const { code: jsCode, sourceMap } = await transformAST(hqlAst, options.baseDir || Deno.cwd(), { verbose: options.verbose, currentFile: options.currentFile });
+
     if (options.showTiming) logger.endTiming("hql-process", "JS transformation");
 
     if (options.baseDir) env.setCurrentFile(null);
@@ -100,7 +102,7 @@ export async function processHql(
       logger.logPerformance("hql-process", sourceFilename);
     }
     
-    return jsCode;
+    return { code: jsCode, sourceMap };
   } catch (error) {
     if (error instanceof Error) {
       const hqlFilePath = options.baseDir || globalEnv?.getCurrentFile() || "unknown";
