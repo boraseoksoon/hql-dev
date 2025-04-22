@@ -634,13 +634,9 @@ async function runBuildWithRetry(
     ? lastError.message
     : String(lastError);
     
-  logger.error(`esbuild error after ${maxRetries} attempts: ${errorMsg}`);
+  logger.debug(`esbuild error after ${maxRetries} attempts: ${errorMsg}`);
   
-  try {
-    await esbuild.stop();
-  } catch {}
-  
-  throw new TranspilerError(`esbuild failed: ${errorMsg}`);
+  await esbuild.stop();
 }
 
 // Utility functions

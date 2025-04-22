@@ -22,6 +22,7 @@ import {
   importSourceRegistry,
 } from "./common/import-utils.ts";
 import { registerSourceMapData } from "./common/error-source-map-registry.ts";
+import { HQLError } from "./common/error-pipeline.ts";
 
 /**
  * Timer helper to measure and log transformation phases.
@@ -145,7 +146,8 @@ function convertExports(rawAst: any[]): HQLNode[] {
 export interface TransformOptions {
   verbose?: boolean;
   replMode?: boolean;
-  sourceFile?: string;  // Added for source map support
+  sourceFile?: string;     // Added for source map support
+  generateSourceMap?: boolean; // Added for explicit source map control
 }
 
 /**
@@ -234,9 +236,11 @@ export async function transformAST(
     } catch (err) {
       throw new TransformError(
         `AST to IR failed: ${err instanceof Error ? err.message : String(err)}`,
-        `${converted.length} nodes`,
-        "AST to IR",
-        converted
+        "AST to IR transformation",
+        {
+          filePath: sourceFilePath,
+          source: originalSource
+        }
       );
     }
 
@@ -246,7 +250,7 @@ export async function transformAST(
     try {
       const tsResult = await generateTypeScript(ir, {
         sourceFilePath: sourceFilePath,
-        generateSourceMap: true,
+        generateSourceMap: options.generateSourceMap !== false,
         inlineSourceMap: true,
         originalSource: originalSource
       });
@@ -269,8 +273,10 @@ export async function transformAST(
     } catch (err) {
       throw new CodeGenError(
         `TS generation failed: ${err instanceof Error ? err.message : String(err)}`,
-        "TS generation",
-        ir
+        {
+          filePath: sourceFilePath,
+          source: originalSource
+        }
       );
     }
 
@@ -285,6 +291,16 @@ export async function transformAST(
     if (options.verbose && !(error instanceof TranspilerError)) {
       console.error("Detailed transformer error:", error);
     }
+    
+    // Ensure we've properly enhanced the error with source details if possible
+    if (error instanceof Error && !(error instanceof HQLError)) {
+      // Use the sourceFile from options if present
+      error = enhanceError(error, {
+        filePath: options.sourceFile || currentDir,
+        useSourceMaps: true
+      });
+    }
+    
     throw error;
   }
 }

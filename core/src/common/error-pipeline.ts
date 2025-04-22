@@ -19,31 +19,149 @@ const logger = globalLogger;
 // ----- Color Formatting -----
 
 export type ColorFn = (s: string) => string;
+export const colorConfig = createColorConfig();
 
+// ----- Color Utilities -----
+
+/**
+ * SICP-inspired error formatter for HQL
+ * Uses color scheme inspired by the SICP LISP book (purple, black, red)
+ */
+
+// ----- Color Utilities -----
+/**
+ * SICP-inspired error formatter with accurate error position
+ * Makes sure the caret points to the exact error column
+ */
+
+// ----- SICP-Inspired Color Configuration -----
+/**
+ * Fixed error reporter that properly displays parser error messages
+ */
+
+// ----- SICP-Inspired Color Configuration -----
 export interface ColorConfig {
-  red: ColorFn;
-  yellow: ColorFn;
-  gray: ColorFn;
-  cyan: ColorFn;
-  bold: ColorFn;
-  green: ColorFn;
-  blue: ColorFn;
-  white: ColorFn;
-  magenta: ColorFn;
+  purple: (s: string) => string;
+  red: (s: string) => string;
+  black: (s: string) => string;
+  gray: (s: string) => string;
+  bold: (s: string) => string;
+  white: (s: string) => string;
+  cyan: (s: string) => string;
 }
 
 export function createColorConfig(): ColorConfig {
   return {
+    purple: (s: string) => `\x1b[35m${s}\x1b[0m`,
     red: (s: string) => `\x1b[31m${s}\x1b[0m`,
-    yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
+    black: (s: string) => `\x1b[30m${s}\x1b[0m`,
     gray: (s: string) => `\x1b[90m${s}\x1b[0m`,
-    cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
     bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
-    green: (s: string) => `\x1b[32m${s}\x1b[0m`,
-    blue: (s: string) => `\x1b[34m${s}\x1b[0m`,
     white: (s: string) => `\x1b[37m${s}\x1b[0m`,
-    magenta: (s: string) => `\x1b[35m${s}\x1b[0m`,
+    cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
   };
+}
+
+/**
+ * Format HQL error with proper error message display
+ */
+function formatHQLError(error: HQLError, isDebug = false): string {
+  const colors = createColorConfig();
+  const output: string[] = [];
+  
+  // ALWAYS show the error message at the top - not just in debug mode
+  const errorType = error.errorType || "Error";
+  const message = error.message || "An unknown error occurred";
+  output.push(`${colors.red(colors.bold(`${errorType}:`))} ${message}`);
+  
+  // Display code context with line numbers and column pointer
+  if (error.contextLines?.length > 0) {
+    const maxLineNumber = Math.max(...error.contextLines.map(item => item.line));
+    const lineNumPadding = String(maxLineNumber).length;
+    
+    // Format each context line
+    error.contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
+      const lineNumStr = String(lineNo).padStart(lineNumPadding, ' ');
+      
+      if (isError) {
+        // Error line (purple for SICP style)
+        output.push(` ${colors.purple(lineNumStr)} │ ${text}`);
+        
+        // Add pointer to the opening parenthesis for unclosed parenthesis errors
+        // Use the correct column position from error.column
+        if (column && column > 0) {
+          const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
+          output.push(pointer);
+        }
+      } else {
+        // Context line
+        output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(text)}`);
+      }
+    });
+  }
+  
+  // Add empty line before location
+  output.push('');
+  
+  // Add IDE-friendly location with "Where:" prefix (no question mark as requested)
+  if (error.sourceLocation?.filePath) {
+    const filepath = error.sourceLocation.filePath;
+    const line = error.sourceLocation.line || 1;
+    const column = error.sourceLocation.column || 1;
+    output.push(`${colors.purple(colors.bold("Where:"))} ${colors.white(`${filepath}:${line}:${column}`)}`);
+  }
+  
+  // Add suggestion if available
+  if (error.getSuggestion && typeof error.getSuggestion === 'function') {
+    const suggestion = error.getSuggestion();
+    if (suggestion) {
+      output.push(`${colors.cyan(`Suggestion: ${suggestion}`)}`);
+    }
+  } else if (error.suggestion) {
+    output.push(`${colors.cyan(`Suggestion: ${error.suggestion}`)}`);
+  }
+  
+  // Add stack trace only in debug mode
+  if (isDebug && error.originalError?.stack) {
+    output.push('');
+    output.push(colors.gray('Stack trace:'));
+    
+    const stack = error.originalError.stack;
+    const stackLines = stack.split('\n').slice(1); // Skip error message
+    
+    // Format and filter stack trace
+    stackLines
+      .filter(line => !line.includes('node_modules'))
+      .forEach(line => {
+        output.push(colors.gray(line));
+      });
+  }
+  
+  return output.join('\n');
+}
+
+/**
+ * Main error reporting function
+ */
+export async function reportError(error: unknown, isDebug = false): Promise<void> {
+  // Apply source map transformation
+  if (error instanceof Error && error.stack) {
+    error = await transformErrorStack(error);
+  }
+
+  // Only log raw error object in debug mode
+  if (isDebug) {
+    console.log("error : ", error);
+  }
+  
+  // Convert to HQLError type if needed
+  const hqlError = error instanceof HQLError ? error : new HQLError(
+    error instanceof Error ? error.message : String(error)
+  );
+  
+  // Format and display
+  const formatted = formatHQLError(hqlError, isDebug);
+  console.error(formatted);
 }
 
 // ----- Source Registry -----
@@ -343,9 +461,6 @@ export class HQLError extends Error {
   
   /** Alias for filePath to match TypeScript error format */
   public filename: string | undefined;
-  
-  /** Whether this error has been reported already (prevents duplicate reporting) */
-  public reported = false;
   
   /** Additional metadata associated with this error */
   public metadata: Record<string, unknown> = {};
@@ -960,153 +1075,6 @@ export function wrapError<T extends ErrorConstructor = ErrorConstructor>(
   });
   
   throw wrappedError;
-}
-
-/**
- * Formats an HQLError for display in the console
- */
-function formatHQLError(error: HQLError): string {
-  // Create color configuration
-  const colorConfig = createColorConfig();
-  let output: string[] = [];
-  
-  // Format the error title with file location if available
-  let errorTitle = colorConfig.red(colorConfig.bold(`${error.errorType}: ${error.message}`));
-  if (error.sourceLocation?.filePath) {
-    // Use VS Code compatible pattern: filepath:line:column
-    const filepath = error.sourceLocation.filePath;
-    const line = error.sourceLocation.line || 1;
-    const column = error.sourceLocation.column || 1;
-    
-    // Format in a way VSCode/Deno terminal will make clickable
-    errorTitle += `\n${colorConfig.gray(`Location: ${filepath}:${line}:${column}`)}`;
-  }
-  output.push(errorTitle);
-
-  // Add context lines if available
-  if (error.contextLines && error.contextLines.length > 0) {
-    output.push(''); // Empty line before context
-    
-    // Calculate the width needed for line numbers
-    const maxLineNumber = Math.max(
-      ...error.contextLines.map(item => item.line)
-    );
-    const lineNumberWidth = String(maxLineNumber).length;
-    
-    // Format each context line
-    error.contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
-      const lineNumStr = String(lineNo).padStart(lineNumberWidth, ' ');
-      
-      // Format the line number
-      const formattedLineNo = isError 
-        ? colorConfig.red(colorConfig.bold(lineNumStr)) 
-        : colorConfig.gray(lineNumStr);
-      
-      // Format the line content
-      let formattedLine = ` ${formattedLineNo} │ ${text}`;
-      if (isError) {
-        formattedLine = colorConfig.yellow(formattedLine);
-        
-        // Add pointer to the error column if available
-        if (column && column > 0) {
-          const pointer = ' '.repeat(lineNumberWidth + 3 + column) + colorConfig.red(colorConfig.bold('^'));
-          output.push(formattedLine);
-          output.push(pointer);
-        } else {
-          output.push(formattedLine);
-        }
-      } else {
-        output.push(colorConfig.gray(formattedLine));
-      }
-    });
-  }
-  
-  // Add suggestion if available
-  if (error.getSuggestion && typeof error.getSuggestion === 'function') {
-    const suggestion = error.getSuggestion();
-    if (suggestion) {
-      output.push('');
-      output.push(colorConfig.cyan(`Suggestion: ${suggestion}`));
-    }
-  }
-  
-  // Always show call stack
-  if (error.originalError?.stack) {
-    output.push('');
-    output.push(colorConfig.gray('Stack trace:'));
-    
-    // Get the original stack trace and format it
-    const stack = error.originalError.stack;
-    const stackLines = stack.split('\n').slice(1); // Skip the first line (error message)
-    
-    // Format each line of the stack
-    const formattedStack = stackLines
-      .filter(line => !line.includes('node_modules'))
-      .map(line => {
-        // Make file paths stand out
-        return line.replace(/\((.+?)(:(\d+):(\d+))?\)/g, (match, filePath, _, line, col) => {
-          if (line && col) {
-            return `(${colorConfig.cyan(filePath)}:${colorConfig.yellow(line)}:${colorConfig.yellow(col)})`;
-          }
-          return `(${colorConfig.cyan(filePath)})`;
-        });
-      })
-      .join('\n');
-      
-    output.push(colorConfig.gray(formattedStack));
-  }
-  
-  // Always add detailed debug info
-  output.push('');
-  output.push(colorConfig.magenta(colorConfig.bold('Debug Information:')));
-  
-  // Add error type and name
-  output.push(colorConfig.magenta(`Error Type: ${error.errorType}`));
-  output.push(colorConfig.magenta(`Error Name: ${error.name}`));
-  
-  // Add source location details
-  if (error.sourceLocation) {
-    output.push(colorConfig.magenta('Source Location:'));
-    for (const [key, value] of Object.entries(error.sourceLocation)) {
-      if (key !== 'source' && value !== undefined) { // Don't print the entire source
-        output.push(colorConfig.magenta(`  ${key}: ${value}`));
-      }
-    }
-  }
-  
-  // Add original error if available
-  if (error.originalError) {
-    output.push(colorConfig.magenta(`Original Error: ${error.originalError.name}: ${error.originalError.message}`));
-  }
-  
-  return output.join('\n');
-}
-
-/**
- * Report an error with proper formatting - consolidated function
- */
-export async function reportError(error: unknown): Promise<void> {
-  // console.log("error : ", error);
-  
-  // Apply source map transformation
-  if (error instanceof Error && error.stack) {
-    error = await transformErrorStack(error);
-  }
-  
-  // Convert to HQLError if needed
-  const hqlError = error instanceof HQLError ? error : new HQLError(error instanceof Error ? error.message : String(error));
-  
-  // Prevent double-reporting the same error
-  if (hqlError.reported) {
-    return;
-  }
-  
-  // Mark as reported to prevent duplicate reporting
-  hqlError.reported = true;
-  
-  // Format and output the error
-  const formatted = formatHQLError(hqlError);
-  console.error(formatted);
 }
 
 export function perform<T>(

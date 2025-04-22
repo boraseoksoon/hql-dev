@@ -538,35 +538,39 @@ function validateTokenBalance(tokens: Token[], input: string, filePath: string):
       }
     }
   }
-  
-  // Check for unclosed opening brackets
+
   if (bracketStack.length > 0) {
     const lastUnclosed = bracketStack[bracketStack.length - 1];
     const openChar = lastUnclosed.type === TokenType.LeftParen ? "(" : 
-                   lastUnclosed.type === TokenType.LeftBracket ? "[" : "{";
+                  lastUnclosed.type === TokenType.LeftBracket ? "[" : "{";
     
     // Get the line of text for better context
     const unclosedLine = lastUnclosed.token.position.line;
-    
-    // Extract surrounding code context with proper codeblock highlighting
     const lines = input.split('\n');
+    
+    // Extract surrounding code context
     const startLine = Math.max(1, unclosedLine - 2);
     const endLine = Math.min(lines.length, unclosedLine + 2);
     let contextLines = '';
     
     for (let i = startLine; i <= endLine; i++) {
       if (i === unclosedLine) {
-        // Highlight the unclosed bracket line
         contextLines += `→ ${lines[i-1]}\n`;
       } else if (lines[i-1].trim()) { 
-        // Only include non-empty lines
         contextLines += `  ${lines[i-1]}\n`;
       }
     }
     
+    // Use the exact position of the opening bracket as the error location
+    // This correctly identifies where the problem starts
     throw new ParseError(
-      `Unclosed '${openChar}' at line ${unclosedLine}. Missing closing delimiter.\nContext:\n${contextLines}`, 
-      lastUnclosed.token.position, 
+      `Unclosed '${openChar}' at line ${unclosedLine}. Missing closing delimiter.\n`, 
+      {
+        line: lastUnclosed.token.position.line,
+        column: lastUnclosed.token.position.column,
+        offset: lastUnclosed.token.position.offset,
+        filePath: lastUnclosed.token.position.filePath
+      }, 
       input
     );
   }
