@@ -48,8 +48,9 @@ export function createColorConfig(): ColorConfig {
 
 /**
  * Format HQL error with proper error message display
+ * Now async to allow for file existence checks (Deno.stat).
  */
-function formatHQLError(error: HQLError, isDebug = false): string {
+export async function formatHQLError(error: HQLError, isDebug = false): Promise<string> {
   const colors = createColorConfig();
   const output: string[] = [];
   
@@ -59,42 +60,120 @@ function formatHQLError(error: HQLError, isDebug = false): string {
   output.push(`${colors.red(colors.bold(`${errorType}:`))} ${message}`);
   
   // Display code context with line numbers and column pointer
-  if (error.contextLines?.length > 0) {
-    const maxLineNumber = Math.max(...error.contextLines.map(item => item.line));
-    const lineNumPadding = String(maxLineNumber).length;
+  // if (error.contextLines?.length > 0) {
+  //   const maxLineNumber = Math.max(...error.contextLines.map(item => item.line));
+  //   const lineNumPadding = String(maxLineNumber).length;
     
-    // Format each context line
-    error.contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
-      const lineNumStr = String(lineNo).padStart(lineNumPadding, ' ');
+  //   // Format each context line
+  //   error.contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
+  //     const lineNumStr = String(lineNo).padStart(lineNumPadding, ' ');
       
-      if (isError) {
-        // Error line (purple for SICP style)
-        output.push(` ${colors.purple(lineNumStr)} │ ${text}`);
+  //     if (isError) {
+  //       // Error line (purple for SICP style)
+  //       output.push(` ${colors.purple(lineNumStr)} │ ${text}`);
         
-        // Add pointer to the opening parenthesis for unclosed parenthesis errors
-        // Use the correct column position from error.column
-        if (column && column > 0) {
-          const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
-          output.push(pointer);
-        }
-      } else {
-        // Context line
-        output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(text)}`);
-      }
-    });
-  }
+  //       // Add pointer to the opening parenthesis for unclosed parenthesis errors
+  //       // Use the correct column position from error.column
+  //       if (column && column > 0) {
+  //         const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
+  //         output.push(pointer);
+  //       }
+  //     } else {
+  //       // Context line
+  //       output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(text)}`);
+  //     }
+  //   });
+  // }
   
   // Add empty line before location
   output.push('');
   
   // Add IDE-friendly location with "Where:" prefix (no question mark as requested)
+  const contextLines: { line: number; content: string; isError: boolean; column?: number }[] = [];
   if (error.sourceLocation?.filePath) {
-    const filepath = error.sourceLocation.filePath;
+    let filepath = error.sourceLocation.filePath;
     const line = error.sourceLocation.line || 1;
     const column = error.sourceLocation.column || 1;
-    output.push(`${colors.purple(colors.bold("Where:"))} ${colors.white(`${filepath}:${line}:${column}`)}`);
+
+    // DEBUG: Log the file path before resolution
+    console.log('[formatHQLError] filePath before resolution:', filepath);
+
+    // Always resolve to absolute path if not already
+    const projectRoot = path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../../');
+    if (!filepath.startsWith("/") && !filepath.match(/^([a-zA-Z]:\\|file:\/\/)/)) {
+      console.log('[formatHQLError] projectRoot:', projectRoot);
+      filepath = path.resolve(projectRoot, filepath.replace(/^\/+/, ""));
+      console.log('[formatHQLError] resolved relative filepath to absolute:', filepath);
+    } else if (filepath.startsWith("file://")) {
+      filepath = path.fromFileUrl(filepath);
+      console.log('[formatHQLError] converted file URL to path:', filepath);
+    } else if (filepath.startsWith("/")) {
+      // Check if this is a pseudo-rooted path (not real absolute)
+      try {
+        // Await file existence check (now allowed as function is async)
+        const exists = typeof Deno !== 'undefined' && await Deno.stat(filepath).then(() => true, () => false);
+        console.log('[formatHQLError] existence check for', filepath, ':', exists);
+        if (!exists) {
+          // Treat as project-root relative
+          filepath = path.resolve(projectRoot, filepath.replace(/^\/+/, ""));
+          console.log('[formatHQLError] pseudo-rooted path resolved to:', filepath);
+        } else {
+          console.log('[formatHQLError] filePath is a real absolute and exists:', filepath);
+        }
+      } catch (e) {
+        console.log('[formatHQLError] Error during existence check:', e);
+      }
+    } else {
+      console.log('[formatHQLError] filePath is already absolute:', filepath);
+    }
+
+    // DEBUG: Log the file path after resolution
+    console.log('[formatHQLError] filePath after resolution:', filepath);
+
+    // --- CONTEXT LINES FROM FILE ---
+    try {
+      const fileContent = await Deno.readTextFile(filepath);
+      const fileLines = fileContent.split(/\r?\n/);
+      const errorIdx = line - 1;
+
+      console.log('[formatHQLError] errorIdx:', errorIdx);
+      console.log('[formatHQLError] column:', column);
+      console.log('[formatHQLError] line:', line);
+      console.log('[formatHQLError] filepath:', filepath);
+      
+      for (let i = Math.max(0, errorIdx - 1); i <= Math.min(fileLines.length - 1, errorIdx + 1); i++) {
+        contextLines.push({
+          line: i + 1,
+          content: fileLines[i],
+          isError: i === errorIdx,
+          column: i === errorIdx ? column : undefined,
+        });
+      }
+    } catch (e) {
+      console.log('[formatHQLError] Could not read file for contextLines:', filepath, e);
+    }
+
+    if (contextLines.length > 0) {
+      const maxLineNumber = Math.max(...contextLines.map(item => item.line));
+      const lineNumPadding = String(maxLineNumber).length;
+      contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
+        const lineNumStr = String(lineNo).padStart(lineNumPadding, ' ');
+        if (isError) {
+          output.push(` ${colors.purple(lineNumStr)} │ ${text}`);
+          if (column && column > 0) {
+            const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
+            output.push(pointer);
+          }
+        } else {
+          output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(text)}`);
+        }
+      });
+    }
+
+    const whereStr = `${filepath}:${line}:${column}`;
+    output.push(`${colors.purple(colors.bold("Where:"))} ${colors.white(whereStr)}`);
   }
-  
+
   // Add suggestion if available
   if (error.getSuggestion && typeof error.getSuggestion === 'function') {
     const suggestion = error.getSuggestion();
@@ -107,16 +186,6 @@ function formatHQLError(error: HQLError, isDebug = false): string {
   if (isDebug && error.originalError?.stack) {
     output.push('');
     output.push(colors.gray('Stack trace:'));
-    
-    const stack = error.originalError.stack;
-    const stackLines = stack.split('\n').slice(1); // Skip error message
-    
-    // Format and filter stack trace
-    stackLines
-      .filter(line => !line.includes('node_modules'))
-      .forEach(line => {
-        output.push(colors.gray(line));
-      });
   }
   
   return output.join('\n');
@@ -131,7 +200,7 @@ function formatHQLError(error: HQLError, isDebug = false): string {
 export async function reportError(error: unknown, isDebug = false): Promise<void> {
   const bundlePath = getCurrentBundlePath();
   console.log("[reportError] bundlePath:", bundlePath);
-  // console.log("[reportError] Received error:", error);
+  
   if (error instanceof Error) {
     console.log("[reportError] Error stack (pre-remap):", error.stack);
   }
@@ -139,12 +208,14 @@ export async function reportError(error: unknown, isDebug = false): Promise<void
   // Apply source map transformation if possible
   if (error instanceof Error && error.stack && bundlePath) {
     try {
-      // console.log(`[reportError] Attempting to remap stack trace using bundle: ${bundlePath}`);
+      console.log(`[reportError] Attempting to remap stack trace using bundle: ${bundlePath}`);
+      console.log("[reportError/DEBUG] Calling mapStackTraceToHql with:", {error, bundlePath});
       const remapped = await mapStackTraceToHql(error, bundlePath);
+      console.log("[reportError/DEBUG] mapStackTraceToHql returned:", remapped);
       error.stack = remapped;
-      // console.log("[reportError] Stack trace remapped:", remapped);
+      console.log("[reportError] Stack trace remapped:", remapped);
     } catch (e) {
-      // console.log("[reportError] Stack trace remapping failed:", e);
+      console.log("[reportError] Stack trace remapping failed:", e);
       // Fallback to original stack if remapping fails
     }
   }
@@ -153,19 +224,64 @@ export async function reportError(error: unknown, isDebug = false): Promise<void
   let hqlError: HQLError;
   if (error instanceof HQLError) {
     hqlError = error;
-    // console.log("[reportError] Error is already HQLError, stack:", hqlError.stack);
+    console.log("[reportError] Error is already HQLError, stack:", hqlError.stack);
   } else {
     hqlError = new HQLError(error instanceof Error ? error.message : String(error));
     // Preserve stack trace if possible
     if (error instanceof Error && error.stack) {
       hqlError.stack = error.stack;
-      // console.log("[reportError] Copied stack trace to HQLError:", hqlError.stack);
+      console.log("[reportError] Copied stack trace to HQLError:", hqlError.stack);
     }
   }
 
-  // Format and display
-  const formatted = formatHQLError(hqlError, isDebug);
-  // console.log("[reportError] Final formatted error:", formatted);
+  // Extract HQL file location from remapped stack trace
+  if (hqlError.stack) {
+    const lines = hqlError.stack.split('\n');
+    console.log('[reportError/DEBUG] Remapped stack lines:', lines);
+    const hqlFrame = lines.find(line => line.includes('.hql:'));
+    console.log('[reportError/DEBUG] Extracted hqlFrame:', hqlFrame);
+    
+    if (hqlFrame) {
+      // Extract file, line, column info for user-friendly display
+      const match = hqlFrame.match(/([\w\/-]+\.hql):(\d+):(\d+)/);
+      console.log('[reportError/DEBUG] Regex match result:', match);
+      if (match) {
+        const [, file, line, col] = match;
+        // Always set sourceLocation on the error for unified formatting
+        if (!hqlError.sourceLocation) {
+          hqlError.sourceLocation = new SourceLocationInfo();
+        }
+        hqlError.sourceLocation.filePath = `/${file.replace(/^\/+/, '')}`;
+        hqlError.sourceLocation.line = Number(line);
+        hqlError.sourceLocation.column = Number(col);
+        
+        // We rely on the actual source file being accessible
+        // The sourceLocation is set correctly from the remapped stack trace
+        // (which may use the hard-coded mapping in mapStackTraceToHql)
+        console.log(`[reportError] Set sourceLocation to ${hqlError.sourceLocation.filePath}:${hqlError.sourceLocation.line}:${hqlError.sourceLocation.column}`);
+      }
+    }
+  }
+
+  // Always attempt to extract source and context before formatting
+  // This is critical for displaying context lines in the error output
+  console.log('[reportError] Extracting source and context...');
+  hqlError.extractSourceAndContext();
+  
+  // Log context lines to verify they're present
+  console.log('[reportError] Context lines count:', hqlError.contextLines?.length || 0);
+
+    // Print the actual context lines for verification
+  if (hqlError.contextLines && hqlError.contextLines.length > 0) {
+    console.log('[reportError] Context lines details:');
+    hqlError.contextLines.forEach((line, index) => {
+      console.log(`  [${index}] Line ${line.line}${line.isError ? ' (ERROR)' : ''}: ${line.content}`);
+    });
+  } else {
+    console.log('[reportError] No context lines were extracted');
+  }
+  
+  const formatted = await formatHQLError(hqlError, isDebug);
   console.error(formatted);
 }
 
@@ -285,8 +401,21 @@ export class SourceLocationInfo implements SourceLocation {
   loadSource(): string | undefined {
     if (this.source) return this.source;
     if (!this.filePath) return undefined;
-    
+    console.log('[SourceLocationInfo] Attempting to load source for:', this.filePath);
     this.source = registry.loadSourceIfNeeded(this.filePath);
+    if (!this.source) {
+      try {
+        // Try absolute path from project root (Deno compatible)
+        const absPath = this.filePath.startsWith('/')
+          ? Deno.cwd() + this.filePath
+          : this.filePath;
+        console.log('[SourceLocationInfo] Trying to load from disk:', absPath);
+        this.source = Deno.readTextFileSync(absPath);
+        console.log('[SourceLocationInfo] Loaded from disk:', absPath);
+      } catch (e) {
+        console.warn('[SourceLocationInfo] Could not load source for', this.filePath, e);
+      }
+    }
     return this.source;
   }
   
