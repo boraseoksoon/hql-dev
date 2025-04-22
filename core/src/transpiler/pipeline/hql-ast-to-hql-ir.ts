@@ -5,7 +5,7 @@
 import * as IR from "../type/hql_ir.ts";
 import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../type/hql_ast.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
-import { TransformError, ValidationError, perform } from "../../common/error-pipeline.ts";
+import { TransformError, ValidationError } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { macroCache } from "../../s-exp/macro.ts";
 import { transformStandardFunctionCall, processFunctionBody, transformNamedArgumentCall, handleFxFunctionCall } from "../syntax/function.ts";
@@ -188,7 +188,7 @@ function initializeTransformFactory(): void {
  * Transform a single HQL node to its IR representation.
  */
 export function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
-  return perform(
+  
     () => {
       if (!node) {
         throw new ValidationError(
@@ -363,7 +363,7 @@ function transformBasedOnOperator(list: ListNode, op: string, currentDir: string
   // Handle built-in operations via the transform factory
   const handler = transformFactory.get(op);
   if (handler) {
-    return perform(
+    
       () => handler(list, currentDir),
       `handler for '${op}'`,
       TransformError,
@@ -549,7 +549,7 @@ function createCallExpression(
  * Transform a literal node to its IR representation.
  */
 function transformLiteral(lit: LiteralNode): IR.IRNode {
-  return perform(
+  
     () => {
       const value = lit.value;
       
@@ -586,7 +586,7 @@ function transformLiteral(lit: LiteralNode): IR.IRNode {
  * Transform a symbol node to its IR representation.
  */
 function transformSymbol(sym: SymbolNode): IR.IRNode {
-  return perform(
+  
     () => {
       let name = sym.name;
       let isJS = false;
@@ -623,7 +623,7 @@ function transformSymbol(sym: SymbolNode): IR.IRNode {
  * Transform a nested list (list where first element is also a list).
  */
 function transformNestedList(list: ListNode, currentDir: string): IR.IRNode {
-  return perform(
+  
     () => {
       const innerExpr = transformNode(list.elements[0], currentDir);
       if (!innerExpr) {

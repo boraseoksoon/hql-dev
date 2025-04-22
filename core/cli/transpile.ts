@@ -102,22 +102,17 @@ function transpile(
       registerExplicitOutput(outputPath);
     }
     
-    try {
-      // Load source for better error reporting
-      const source = await Deno.readTextFile(resolvedInputPath);
-      ErrorPipeline.registerSourceFile(resolvedInputPath, source);
-      
-      // Use direct execution rather than error pipeline to control error handling ourselves
-      return await transpileCLI(resolvedInputPath, outputPath, {
-        verbose: opts.verbose,
-        showTiming: opts.showTiming,
-        skipPrimaryErrorReporting: true,
-        force: opts.force
-      });
-    } catch (error) {
-      ErrorPipeline.reportError(error);
-      Deno.exit(1);
-    }
+    // Load source for better error reporting
+    const source = await Deno.readTextFile(resolvedInputPath);
+    ErrorPipeline.registerSourceFile(resolvedInputPath, source);
+    
+    // Use direct execution rather than error pipeline to control error handling ourselves
+    return await transpileCLI(resolvedInputPath, outputPath, {
+      verbose: opts.verbose,
+      showTiming: opts.showTiming,
+      skipPrimaryErrorReporting: true,
+      force: opts.force
+    });
   });
 }
 
@@ -126,13 +121,8 @@ function transpile(
  */
 function printJS(bundledPath: string): Promise<void> {
   return timed("transpile", "Output Read", async () => {
-    try {
-      const content = await Deno.readTextFile(bundledPath);
-      console.log(content);
-    } catch (err) {
-      ErrorPipeline.reportError(err);
-      Deno.exit(1);
-    }
+    const content = await Deno.readTextFile(bundledPath);
+    console.log(content);
   });
 }
 
@@ -146,15 +136,7 @@ function runJS(
 ): Promise<void> {
   console.log(`Running: ${bundledPath}`);
   return timed("transpile", "Execute", async () => {
-    try {
-      await import("file://" + resolve(bundledPath));
-    } catch (err) {
-      ErrorPipeline.reportError(err, { 
-        filePath: inputPath, 
-        source 
-      });
-      Deno.exit(1);
-    }
+    await import("file://" + resolve(bundledPath));
   });
 }
 
@@ -171,79 +153,44 @@ function cleanup(): Promise<void> {
  * Entry point
  */
 export async function main(): Promise<void> {
-  const args = Deno.args;
-
-  if (!args.length || args.includes("--help") || args.includes("-h")) {
-    printHelp();
-    Deno.exit(args.length ? 1 : 0);
-  }
-  
-  // Initialize runtime early - this will prevent redundant initializations later
-  await initializeRuntime();
-  
-  // Handle cache info request
-  if (args.includes("--cache-info")) {
-    await showCacheInfo();
-    return;
-  }
-  
-  // Parse options
-  const { inputPath, outputPath } = parsePaths(args);
-  const opts = parseCliOptions(args);
-  
-  // Handle debug mode
-  if (args.includes("--debug")) {
-    opts.debug = true;
-    ErrorPipeline.setDebugMode(true);
-  }
-  
-  applyCliOptions(opts);
-
-  // Show cache directory in verbose mode
-  if (opts.verbose) {
-    const cacheDir = await getCacheDir();
-    logger.debug(`Using cache directory: ${cacheDir}`);
-  }
-
-  // Load the file and check for common errors before processing
   try {
+    const args = Deno.args;
+
+    if (!args.length || args.includes("--help") || args.includes("-h")) {
+      printHelp();
+      Deno.exit(args.length ? 1 : 0);
+    }
+    
+    // Initialize runtime early - this will prevent redundant initializations later
+    await initializeRuntime();
+    
+    // Handle cache info request
+    if (args.includes("--cache-info")) {
+      await showCacheInfo();
+      return;
+    }
+    
+    // Parse options
+    const { inputPath, outputPath } = parsePaths(args);
+    const opts = parseCliOptions(args);
+    
+    // Handle debug mode
+    if (args.includes("--debug")) {
+      opts.debug = true;
+    }
+    
+    applyCliOptions(opts);
+
+    // Show cache directory in verbose mode
+    if (opts.verbose) {
+      const cacheDir = await getCacheDir();
+      logger.debug(`Using cache directory: ${cacheDir}`);
+    }
+
+    // Load the file and check for common errors before processing
     const resolvedInputPath = resolve(inputPath);
     const source = await Deno.readTextFile(inputPath);
     ErrorPipeline.registerSourceFile(resolvedInputPath, source);
-    
-    // Pre-check for common errors like unclosed export statements
-    if (source) {
-      const lines = source.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].trim().startsWith('(export') && !lines[i].includes(')')) {
-          // Create a custom ParseError for export statements
-          const exportError = new ErrorPipeline.ParseError(
-            "Missing closing parenthesis in export statement",
-            {
-              line: i + 1,
-              column: lines[i].indexOf('export') + 1,
-              filePath: inputPath,
-              source
-            }
-          );
-          
-          // Add a custom suggestion directly (using function replacement)
-          exportError.getSuggestion = function() {
-            return "Add a closing parenthesis ')' to the end of your export statement.";
-          };
-          
-          // Report through the error pipeline with enhanced debug
-          ErrorPipeline.reportError(exportError, {
-            verbose: opts.verbose,
-            showCallStack: opts.debug,
-            makePathsClickable: true,
-            enhancedDebug: opts.debug
-          });
-          
-          Deno.exit(1);
-        }
-      }
-    }
     
     // Proceed with transpilation
     const bundledPath = await transpile(inputPath, outputPath, opts);
@@ -251,26 +198,29 @@ export async function main(): Promise<void> {
     if (args.includes("--print")) {
       await printJS(bundledPath);
     }
+
     if (args.includes("--run")) {
       await runJS(bundledPath, inputPath, source);
     }
 
     logger.logPerformance("transpile", inputPath.split("/").pop()!);
-    await cleanup();
   } catch (error) {
-    // Handle any errors not caught by transpile
-    if (!(error instanceof ErrorPipeline.HQLError && error.reported)) {
-      ErrorPipeline.reportError(error, {
-        filePath: inputPath,
-        verbose: opts.verbose,
-        showCallStack: opts.debug,
-        enhancedDebug: opts.debug
-      });
-    }
+    ErrorPipeline.reportError(error);
     Deno.exit(1);
+  } finally {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      console.error("Error during cleanup:", cleanupError);
+    }
   }
 }
 
 if (import.meta.main) {
-  main();
+  try {
+    main();
+  } catch (error) {
+    ErrorPipeline.reportError(error);
+    Deno.exit(1);
+  }
 }

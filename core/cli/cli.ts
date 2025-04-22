@@ -113,7 +113,6 @@ async function main() {
   // Set debug mode if enabled
   if (args.includes("--debug")) {
     cliOptions.debug = true;
-    ErrorPipeline.setDebugMode(true);
   }
   
   // Validate command and get target
@@ -129,12 +128,7 @@ async function main() {
       await executeReplCommand(cliOptions);
     }
   } catch (error) {
-    if (!(error instanceof ErrorPipeline.HQLError && error.reported)) {
-      ErrorPipeline.reportError(error, {
-        verbose: cliOptions.verbose,
-        showCallStack: cliOptions.debug
-      });
-    }
+    ErrorPipeline.reportError(error);
     Deno.exit(1);
   }
 }

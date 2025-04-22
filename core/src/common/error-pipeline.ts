@@ -714,6 +714,13 @@ export class CodeGenError extends HQLError {
   }
 }
 
+export class TranspilerError extends HQLError {
+  constructor(message: string, options: { [key: string]: unknown } = {}) {
+    super(message, { ...options, errorType: (options as { errorType?: string }).errorType || "TranspilerError" });
+    this.name = "TranspilerError";
+  }
+}
+
 // ----- Source Map Utilities -----
 
 /**
@@ -1016,112 +1023,33 @@ function formatHQLError(error: HQLError): string {
   return output.join('\n');
 }
 
-export class TranspilerError extends HQLError {
-  constructor(message: string, options: { [key: string]: unknown } = {}) {
-    super(message, { ...options, errorType: (options as { errorType?: string }).errorType || "TranspilerError" });
-    this.name = "TranspilerError";
-  }
-}
-
-// ----- Error Pipeline Functions -----
-
-/**
- * Extract location information from an error's message and stack
- */
-function extractLocationFromError(error: Error): SourceLocation {
-  const sourceLocation: SourceLocation = {};
-  
-  // Try to extract from error message first
-  if (error.message) {
-    // Look for common patterns like "at line X" or "line X:Y"
-    const lineMatches = [
-      ...error.message.matchAll(/(?:at|on|in)?\s*line\s+(\d+)(?:[,:]\s*(?:column|col)?\s*(\d+))?/ig),
-      ...error.message.matchAll(/(\d+):(\d+)(?:\s*-\s*\d+:\d+)?/g)
-    ];
-
-    if (lineMatches.length > 0) {
-      const bestMatch = lineMatches[0];
-      sourceLocation.line = parseInt(bestMatch[1], 10);
-      if (bestMatch[2]) {
-        sourceLocation.column = parseInt(bestMatch[2], 10);
-      }
-    }
-    
-    // Look for file paths
-    const filePathMatches = error.message.match(/(?:in|at|from)\s+([^\s:]+\.[a-zA-Z0-9]{1,5})/i);
-    if (filePathMatches) {
-      sourceLocation.filePath = filePathMatches[1];
-    }
-  }
-  
-  // Try to extract from stack trace if no line/column was found
-  if ((!sourceLocation.line || !sourceLocation.column) && error.stack) {
-    const stackLines = error.stack.split('\n');
-    for (const line of stackLines) {
-      // Look for file paths with line/column info in stack traces
-      const match = line.match(/\((.*):(\d+):(\d+)\)/) || line.match(/(.*):(\d+):(\d+)/);
-      if (match) {
-        const [_, filePath, lineNum, colNum] = match;
-        // Skip node_modules, deno internal modules, etc.
-        if (!filePath.includes("node_modules") && 
-            !filePath.includes("deno:") &&
-            !filePath.includes("ext:") &&
-            !filePath.includes("<anonymous>")) {
-          sourceLocation.filePath = sourceLocation.filePath || filePath;
-          sourceLocation.line = sourceLocation.line || parseInt(lineNum, 10);
-          sourceLocation.column = sourceLocation.column || parseInt(colNum, 10);
-          break;
-        }
-      }
-    }
-  }
-  
-  return sourceLocation;
-}
-
 /**
  * Report an error with proper formatting - consolidated function
  */
 export async function reportError(error: unknown): Promise<void> {
+  console.error(Deno.formatError(error));
+  
   // console.log("error : ", error);
   
-  // Apply source map transformation
-  if (error instanceof Error && error.stack) {
-    error = await transformErrorStack(error);
-  }
+  // // Apply source map transformation
+  // if (error instanceof Error && error.stack) {
+  //   error = await transformErrorStack(error);
+  // }
   
-  // Convert to HQLError if needed
-  const hqlError = error instanceof HQLError ? error : new HQLError(error instanceof Error ? error.message : String(error));
+  // // Convert to HQLError if needed
+  // const hqlError = error instanceof HQLError ? error : new HQLError(error instanceof Error ? error.message : String(error));
   
-  // Prevent double-reporting the same error
-  if (hqlError.reported) {
-    return;
-  }
+  // // Prevent double-reporting the same error
+  // if (hqlError.reported) {
+  //   return;
+  // }
   
-  // Mark as reported to prevent duplicate reporting
-  hqlError.reported = true;
+  // // Mark as reported to prevent duplicate reporting
+  // hqlError.reported = true;
   
-  // Format and output the error
-  const formatted = formatHQLError(hqlError);
-  console.error(formatted);
-}
-
-/**
- * Perform an operation with error handling
- * Synchronous version suitable for direct use in code
- */
-export function perform<T>(
-  fn: () => T,
-  context?: string,
-  errorType?: new (message: string, ...args: unknown[]) => HQLError,
-  errorArgs?: unknown[],
-  sourceContext?: SourceLocation
-): T {
-  try {
-    return fn();
-  } catch (error) {
-    throw error;
-  }
+  // // Format and output the error
+  // const formatted = formatHQLError(hqlError);
+  // console.error(formatted);
 }
 
 /**
@@ -1129,8 +1057,6 @@ export function perform<T>(
  */
 export const ErrorPipeline = {
   reportError,
-  perform,
-  // Source map utilities
   registerSourceMap,
   mapToOriginalPosition,
   transformErrorStack,

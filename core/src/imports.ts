@@ -31,8 +31,6 @@ import {
   isTypeScriptFile
 } from "./common/import-utils.ts";
 import { wrapError, formatErrorMessage } from "./common/error-pipeline.ts";
-import { perform } from "./common/error-pipeline.ts";
-
 import { MacroError, ImportError } from "./common/error-pipeline.ts";
 
 export interface ImportProcessorOptions {
@@ -310,7 +308,6 @@ async function processImport(
     throw new MacroError(
       "Invalid import statement format. Expected (import ...)",
       "import",
-      options.currentFile,
     );
   }
 
@@ -326,12 +323,11 @@ async function processImport(
       throw new ImportError(
         `Invalid import statement format: ${JSON.stringify(importExpr)}`,
         "syntax-error",
-        options.currentFile
       );
     }
   } catch (error) {
     const modulePath = getModulePathFromImport(importExpr);
-    wrapError("Processing import", error, modulePath, options.currentFile);
+    wrapError("Processing import", error, modulePath);
   }
 }
 
@@ -371,10 +367,10 @@ async function processNamespaceImport(
 ): Promise<void> {
   try {
     if (!isSymbol(elements[1])) {
-      throw new ImportError("Module name must be a symbol", "namespace import", options.currentFile);
+      throw new ImportError("Module name must be a symbol", "namespace import");
     }
     if (!isLiteral(elements[3]) || typeof elements[3].value !== "string") {
-      throw new ImportError("Module path must be a string literal", "namespace import", options.currentFile);
+      throw new ImportError("Module path must be a string literal", "namespace import");
     }
     
     const moduleName = (elements[1] as SSymbol).name;
@@ -387,7 +383,7 @@ async function processNamespaceImport(
     await loadModule(moduleName, modulePath, resolvedPath, env, options);
   } catch (error) {
     const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
-    wrapError("Processing namespace import", error, modulePath, options.currentFile);
+    wrapError("Processing namespace import", error, modulePath);
   }
 }
 
@@ -402,11 +398,11 @@ async function processVectorBasedImport(
 ): Promise<void> {
   try {
     if (elements[1].type !== "list") {
-      throw new ImportError("Import vector must be a list", "syntax-error", options.currentFile);
+      throw new ImportError("Import vector must be a list", "syntax-error");
     }
     const symbolsVector = elements[1] as SList;
     if (!isLiteral(elements[3]) || typeof elements[3].value !== "string") {
-      throw new ImportError("Module path must be a string literal", "syntax-error", options.currentFile);
+      throw new ImportError("Module path must be a string literal", "syntax-error");
     }
     
     const modulePath = elements[3].value as string;
@@ -428,7 +424,7 @@ async function processVectorBasedImport(
     );
   } catch (error) {
     const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
-    wrapError("Processing vector import", error, modulePath, options.currentFile);
+    wrapError("Processing vector import", error, modulePath);
   }
 }
 
@@ -567,10 +563,10 @@ async function loadModule(
     } else if (isTypeScriptFile(modulePath)) {
       await loadTypeScriptModule(moduleName, modulePath, resolvedPath, env, processedFiles);
     } else {
-      throw new ImportError(`Unsupported import file type: ${modulePath}`, modulePath, options.currentFile);
+      throw new ImportError(`Unsupported import file type: ${modulePath}`, modulePath);
     }
   } catch (error) {
-    wrapError(`Loading module ${moduleName} from ${modulePath}`, error, modulePath, options.currentFile);
+    wrapError(`Loading module ${moduleName} from ${modulePath}`, error, modulePath);
   }
 }
 
@@ -710,9 +706,7 @@ async function loadTypeScriptModule(
   } catch (error) {
     throw new ImportError(
       `Importing TypeScript module ${moduleName}: ${error instanceof Error ? error.message : String(error)}`,
-      modulePath,
-      env.getCurrentFile(),
-      error instanceof Error ? error : undefined
+      modulePath
     );
   }
 }
@@ -754,10 +748,7 @@ async function loadJavaScriptModule(
     logger.debug(`Imported JS module: ${moduleName} from ${finalModuleUrl}`);
   } catch (error) {
     throw new ImportError(
-      `Importing JS module ${moduleName}: ${error instanceof Error ? error.message : String(error)}`,
-      modulePath,
-      env.getCurrentFile(),
-      error instanceof Error ? error : undefined
+      `Importing JS module ${moduleName}: ${error instanceof Error ? error.message : String(error)}`, modulePath
     );
   }
 }
@@ -828,12 +819,11 @@ async function loadNpmModule(
       
       throw new ImportError(
         `Failed to import from all sources (npm, esm.sh, skypack): ${errors}`,
-        modulePath,
-        env.getCurrentFile()
+        modulePath
       );
     }
   } catch (error) {
-    wrapError(`Importing NPM module ${moduleName}`, error, modulePath, env.getCurrentFile());
+    wrapError(`Importing NPM module ${moduleName}`, error, modulePath);
   }
 }
 
@@ -850,7 +840,7 @@ async function loadJsrModule(
     env.importModule(moduleName, module);
     logger.debug(`Imported JSR module: ${moduleName}`);
   } catch (error) {
-    wrapError(`Importing JSR module ${moduleName}`, error, modulePath, env.getCurrentFile());
+    wrapError(`Importing JSR module ${moduleName}`, error, modulePath);
   }
 }
 
@@ -867,7 +857,7 @@ async function loadHttpModule(
     env.importModule(moduleName, module);
     logger.debug(`Imported HTTP module: ${moduleName}`);
   } catch (error) {
-    wrapError(`Importing HTTP module ${moduleName}`, error, modulePath, env.getCurrentFile());
+    wrapError(`Importing HTTP module ${moduleName}`, error, modulePath);
   }
 }
 
