@@ -22,31 +22,11 @@ export function makeSourceMap(
 
   const sourceMap = JSON.parse(sourceMapText!);
 
-  // Find project root by looking for deno.json or .git
-  function findProjectRoot(startPath: string): string {
-    let dir = path.dirname(startPath);
-    while (dir !== path.dirname(dir)) {
-      for (const marker of ["deno.json", ".git"]) {
-        try {
-          const markerPath = path.join(dir, marker);
-          Deno.statSync(markerPath); // Throws if not exists
-          return dir;
-        } catch { /* not found, keep searching */ }
-      }
-      dir = path.dirname(dir);
-    }
-    // Fallback: use cwd as the root
-    console.warn("[makeSourceMap] WARNING: Project root not found, using cwd()");
-    return Deno.cwd();
-  }
-
   // Use only the filename for sources
   const fileNameOnly = path.basename(originalHqlPath);
   sourceMap.file = tsFileName;
   sourceMap.sources = [fileNameOnly];
   sourceMap.sourcesContent = [code];
 
-  // Logging for debug
-  console.log("[makeSourceMap] sources:", JSON.stringify(sourceMap.sources));
   return JSON.stringify(sourceMap);
 }

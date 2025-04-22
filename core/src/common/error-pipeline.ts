@@ -96,18 +96,18 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
     const column = error.sourceLocation.column || 1;
 
     // DEBUG: Log the file path before resolution
-    console.log('[formatHQLError] filePath before resolution:', filepath);
+    logger.debug(`[formatHQLError] filePath before resolution: ${filepath}`, 'source-map');
 
     // Use universal resolver for robust path normalization
     const projectRoot = path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../../');
     try {
       const resolved = await (await import("./utils.ts")).resolveSourcePath(filepath, projectRoot);
-      console.log('[formatHQLError] [DEBUG] Path input:', filepath);
-      console.log('[formatHQLError] [DEBUG] Project root:', projectRoot);
-      console.log('[formatHQLError] [DEBUG] Resolved path:', resolved);
+      logger.debug(`[formatHQLError] [DEBUG] Path input: ${filepath}`, 'source-map');
+      logger.debug(`[formatHQLError] [DEBUG] Project root: ${projectRoot}`, 'source-map');
+      logger.debug(`[formatHQLError] [DEBUG] Resolved path: ${resolved}`, 'source-map');
       filepath = resolved;
     } catch (e) {
-      console.log('[formatHQLError] Could not resolve source path:', filepath, e);
+      logger.debug(`[formatHQLError] Could not resolve source path: ${filepath} ${e instanceof Error ? e.message : String(e)}`, 'source-map');
       // fallback: keep filepath as-is (may fail to extract context)
     }
 
@@ -117,10 +117,10 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
       const fileLines = fileContent.split(/\r?\n/);
       const errorIdx = line - 1;
 
-      console.log('[formatHQLError] errorIdx:', errorIdx);
-      console.log('[formatHQLError] column:', column);
-      console.log('[formatHQLError] line:', line);
-      console.log('[formatHQLError] filepath:', filepath);
+      logger.debug(`[formatHQLError] errorIdx: ${errorIdx}`, 'source-map');
+      logger.debug(`[formatHQLError] column: ${column}`, 'source-map');
+      logger.debug(`[formatHQLError] line: ${line}`, 'source-map');
+      logger.debug(`[formatHQLError] filepath: ${filepath}`, 'source-map');
       
       for (let i = Math.max(0, errorIdx - 1); i <= Math.min(fileLines.length - 1, errorIdx + 1); i++) {
         contextLines.push({
@@ -131,7 +131,7 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
         });
       }
     } catch (e) {
-      console.log('[formatHQLError] Could not read file for contextLines:', filepath, e);
+      logger.debug(`[formatHQLError] Could not read file for contextLines: ${filepath} ${e instanceof Error ? e.message : String(e)}`, 'source-map');
     }
 
     if (contextLines.length > 0) {
@@ -180,26 +180,26 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
  */
 export async function reportError(error: unknown, isDebug = false): Promise<void> {
   const bundlePath = getCurrentBundlePath();
-  console.log("[reportError] bundlePath:", bundlePath);
+  logger.debug(`[reportError] bundlePath: ${bundlePath}`, 'source-map');
   
-  console.log("[reportError] Caller stack:\n", new Error().stack);
+  logger.debug(`[reportError] Caller stack: ${new Error().stack}`, 'error-pipeline');
   if (error instanceof Error) {
-    console.log("[reportError] Error stack (pre-remap):", error.stack);
-    console.log("[reportError] Error full stack (pre-remap):", JSON.stringify(error));
-    console.log("[reportError] Error (pre-remap):", error);
+    logger.debug(`[reportError] Error stack (pre-remap): ${error.stack}`, 'error-pipeline');
+    logger.debug(`[reportError] Error full stack (pre-remap): ${JSON.stringify(error)}`, 'error-pipeline');
+    logger.debug(`[reportError] Error (pre-remap): ${String(error)}`, 'error-pipeline');
   }
 
   // Apply source map transformation if possible
   if (error instanceof Error && error.stack && bundlePath) {
     try {
-      console.log(`[reportError] Attempting to remap stack trace using bundle: ${bundlePath}`);
-      console.log("[reportError/DEBUG] Calling mapStackTraceToHql with:", {error, bundlePath});
+      logger.debug(`[reportError] Attempting to remap stack trace using bundle: ${bundlePath}`, 'source-map');
+      logger.debug(`[reportError/DEBUG] Calling mapStackTraceToHql with: ${JSON.stringify({error, bundlePath})}`, 'source-map');
       const remapped = await mapStackTraceToHql(error, bundlePath);
-      console.log("[reportError/DEBUG] mapStackTraceToHql returned:", remapped);
+      logger.debug(`[reportError/DEBUG] mapStackTraceToHql returned: ${remapped}`, 'source-map');
       error.stack = remapped;
-      console.log("[reportError] Stack trace remapped:", remapped);
+      logger.debug(`[reportError] Stack trace remapped: ${remapped}`, 'source-map');
     } catch (e) {
-      console.log("[reportError] Stack trace remapping failed:", e);
+      logger.debug(`[reportError] Stack trace remapping failed: ${e instanceof Error ? e.message : String(e)}`, 'source-map');
       // Fallback to original stack if remapping fails
     }
   }
@@ -208,27 +208,27 @@ export async function reportError(error: unknown, isDebug = false): Promise<void
   let hqlError: HQLError;
   if (error instanceof HQLError) {
     hqlError = error;
-    console.log("[reportError] Error is already HQLError, stack:", hqlError.stack);
+    logger.debug(`[reportError] Error is already HQLError, stack: ${hqlError.stack}`, 'error-pipeline');
   } else {
     hqlError = new HQLError(error instanceof Error ? error.message : String(error));
     // Preserve stack trace if possible
     if (error instanceof Error && error.stack) {
       hqlError.stack = error.stack;
-      console.log("[reportError] Copied stack trace to HQLError:", hqlError.stack);
+      logger.debug(`[reportError] Copied stack trace to HQLError: ${hqlError.stack}`, 'error-pipeline');
     }
   }
 
   // Extract HQL file location from remapped stack trace
   if (hqlError.stack) {
     const lines = hqlError.stack.split('\n');
-    console.log('[reportError/DEBUG] Remapped stack lines:', lines);
+    logger.debug(`[reportError/DEBUG] Remapped stack lines: ${lines}`, 'source-map');
     const hqlFrame = lines.find(line => line.includes('.hql:'));
-    console.log('[reportError/DEBUG] Extracted hqlFrame:', hqlFrame);
+    logger.debug(`[reportError/DEBUG] Extracted hqlFrame: ${hqlFrame}`, 'source-map');
     
     if (hqlFrame) {
       // Extract file, line, column info for user-friendly display
       const match = hqlFrame.match(/([\w\/-]+\.hql):(\d+):(\d+)/);
-      console.log('[reportError/DEBUG] Regex match result:', match);
+      logger.debug(`[reportError/DEBUG] Regex match result: ${match}`, 'source-map');
       if (match) {
         const [, file, line, col] = match;
         // Always set sourceLocation on the error for unified formatting
@@ -242,27 +242,27 @@ export async function reportError(error: unknown, isDebug = false): Promise<void
         // We rely on the actual source file being accessible
         // The sourceLocation is set correctly from the remapped stack trace
         // (which may use the hard-coded mapping in mapStackTraceToHql)
-        console.log(`[reportError] Set sourceLocation to ${hqlError.sourceLocation.filePath}:${hqlError.sourceLocation.line}:${hqlError.sourceLocation.column}`);
+        logger.debug(`[reportError] Set sourceLocation to ${hqlError.sourceLocation.filePath}:${hqlError.sourceLocation.line}:${hqlError.sourceLocation.column}`, 'source-map');
       }
     }
   }
 
   // Always attempt to extract source and context before formatting
   // This is critical for displaying context lines in the error output
-  console.log('[reportError] Extracting source and context...');
+  logger.debug('[reportError] Extracting source and context...', 'source-map');
   hqlError.extractSourceAndContext();
   
   // Log context lines to verify they're present
-  console.log('[reportError] Context lines count:', hqlError.contextLines?.length || 0);
+  logger.debug(`[reportError] Context lines count: ${hqlError.contextLines?.length || 0}`, 'source-map');
 
     // Print the actual context lines for verification
   if (hqlError.contextLines && hqlError.contextLines.length > 0) {
-    console.log('[reportError] Context lines details:');
+    logger.debug('[reportError] Context lines details:', 'source-map');
     hqlError.contextLines.forEach((line, index) => {
-      console.log(`  [${index}] Line ${line.line}${line.isError ? ' (ERROR)' : ''}: ${line.content}`);
+      logger.debug(`  [${index}] Line ${line.line}${line.isError ? ' (ERROR)' : ''}: ${line.content}`, 'source-map');
     });
   } else {
-    console.log('[reportError] No context lines were extracted');
+    logger.debug('[reportError] No context lines were extracted', 'source-map');
   }
   
   const formatted = await formatHQLError(hqlError, isDebug);

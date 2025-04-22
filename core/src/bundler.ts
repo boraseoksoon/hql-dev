@@ -107,63 +107,28 @@ export async function transpileCLI(
       if (sourceMap) {
         await Deno.writeTextFile(tsOutputPath + ".map", sourceMap);
         logger.log({ text: `[SourceMap] Wrote source map to ${tsOutputPath}.map`, namespace: "bundler" });
-        // Log the contents of the .map file
-        // try {
-        //   const mapContent = await Deno.readTextFile(tsOutputPath + ".map");
-        //   console.log("[DEBUG][POST-WRITE] Raw .map file content:\n", mapContent);
-        //   const parsedMap = JSON.parse(mapContent);
-        //   console.log("[DEBUG][POST-WRITE] Parsed source map:", parsedMap);
-        //   console.log("[POST-WRITE] .map file sources:", parsedMap.sources);
-        // } catch (e) {
-        //   console.log("[POST-WRITE] Could not read or parse .map file:", e);
-        // }
+
         // ---- Embed the source map as an inline comment in the .ts file ----
         try {
           // Read the generated TS code
           const tsCode = await Deno.readTextFile(tsOutputPath);
-          console.log("[DEBUG][EMBED] TS code before embedding source map:\n", tsCode);
-          // Import base64 encoder
-          // Use a polyfill for base64 encoding in Deno (btoa only works for ASCII)
           function base64Encode(str: string): string {
             return btoa(unescape(encodeURIComponent(str)));
           }
           const inlineMapComment = "\n//# sourceMappingURL=data:application/json;base64," + base64Encode(sourceMap);
           await Deno.writeTextFile(tsOutputPath, tsCode + inlineMapComment);
-          console.log("[DEBUG][EMBED] TS code after embedding source map:\n", tsCode + inlineMapComment);
-          console.log("[EMBED] Wrote inline source map to", tsOutputPath);
         } catch (e) {
-          console.log("[EMBED] Failed to write inline source map:", e);
+          logger.error({ text: `[EMBED] Failed to write inline source map: ${e instanceof Error ? e.message : String(e)}` , namespace: "bundler" });
         }
       }
 
-      // [TRACE] After embedding inline source map, check the .ts file for inline map and log the .map file again
-      try {
-        const tsContent = await Deno.readTextFile(tsOutputPath);
-        const tsMatch = tsContent.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
-        if (tsMatch) {
-          const tsDecoded = atob(tsMatch[1]);
-          const tsSourceMap = JSON.parse(tsDecoded);
-          console.log("[PRE-BUNDLE] Inline source map sources in .ts:", tsSourceMap.sources);
-        } else {
-          console.log("[PRE-BUNDLE] No inline source map found in .ts file.");
-        }
-      } catch (e) {
-        console.log("[PRE-BUNDLE] Error reading .ts file for inline source map:", e);
-      }
-      // Also log the .map file again before bundling
-      try {
-        const mapContent = await Deno.readTextFile(tsOutputPath + ".map");
-        const parsedMap = JSON.parse(mapContent);
-        console.log("[PRE-BUNDLE] .map file sources:", parsedMap.sources);
-      } catch (e) {
-        console.log("[PRE-BUNDLE] Could not read or parse .map file:", e);
-      }
+
 
       // Bundle the processed file
       if (options.showTiming) logger.startTiming("transpile-cli", "esbuild Bundling");
       logger.log({ text: `[Bundler] Forcing esbuild to use inline source maps for the bundle.` , namespace: "bundler" });
       await bundleWithEsbuild(tsOutputPath, outPath, { ...bundleOptions, sourcemap: "inline" });
-      console.log(`[Bundler] Bundled to ${outPath}`);
+      logger.log({ text: `[Bundler] Bundled to ${outPath}` , namespace: "bundler" });
 
       // Register the bundle path globally for error reporting
       setCurrentBundlePath(outPath);
@@ -562,22 +527,6 @@ async function bundleWithEsbuild(
   outputPath: string,
   options: BundleOptions = {},
 ): Promise<string> {
-  // --- LOG: PRE-BUNDLE ---
-  try {
-    console.log("[PRE-BUNDLE] Reading entry file:", entryPath)
-    const preContent = await Deno.readTextFile(entryPath);
-    const preMatch = preContent.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
-    if (preMatch) {
-      const preDecoded = atob(preMatch[1]);
-      const preSourceMap = JSON.parse(preDecoded);
-      console.log("[PRE-BUNDLE] Inline source map sources:", preSourceMap.sources);
-    } else {
-      console.log("[PRE-BUNDLE] No inline source map found in entry file.");
-    }
-  } catch (e) {
-    console.log("[PRE-BUNDLE] Error reading entry for source map:", e);
-  }
-  
   logger.log({ text: `Bundling ${entryPath} to ${outputPath}`, namespace: "bundler" });
     
   // Create temp directory if needed
@@ -639,73 +588,12 @@ async function bundleWithEsbuild(
     
     // Run the build
     logger.log({ text: `Starting bundling: ${entryPath}`, namespace: "bundler" });
-    logger.log({ text: `[Bundler] esbuild buildOptions.sourcemap: ${buildOptions.sourcemap}`, namespace: "bundler" });
+    logger.log({ text: `[Bundler] esbuild buildOptions.sourcemap: ${buildOptions.sourcemap}`, namespace: "bundler"});
     const result = await runBuildWithRetry(buildOptions, MAX_RETRIES);
-
-    // Log source map info if present in output
-    if (result.outputFiles) {
-      for (const file of result.outputFiles) {
-        if (file.path.endsWith('.js.map')) {
-          const mapObj = JSON.parse(new TextDecoder().decode(file.contents));
-          logger.log({ text: `[Bundler] Final bundle source map sources: ${JSON.stringify(mapObj.sources)}`, namespace: "bundler" });
-          if (Array.isArray(mapObj.sources)) {
-            const hasHql = mapObj.sources.some((src: string) => src.endsWith('.hql'));
-            logger.log({ text: `[Bundler] Final bundle source map includes HQL: ${hasHql}`, namespace: "bundler" });
-          }
-        }
-      }
-    }
-    // Additionally, check inline source map in bundle.js
-    try {
-      const bundleContent = await readTextFile(outputPath);
-      const inlineMapMatch = bundleContent.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
-      if (inlineMapMatch) {
-        const mapStr = atob(inlineMapMatch[1]);
-        const mapObj = JSON.parse(mapStr);
-        logger.log({ text: `[Bundler] Inline source map sources: ${JSON.stringify(mapObj.sources)}`, namespace: "bundler" });
-        if (Array.isArray(mapObj.sources)) {
-          const hasHql = mapObj.sources.some((src: string) => src.endsWith('.hql'));
-          logger.log({ text: `[Bundler] Inline source map includes HQL: ${hasHql}`, namespace: "bundler" });
-        }
-      } else {
-        logger.warn({ text: `[Bundler] No inline source map found in bundle`, namespace: "bundler" });
-      }
-    } catch (err) {
-      logger.warn({ text: `[Bundler] Error reading inline source map from bundle: ${err}`, namespace: "bundler" });
-    }
-    
-    // --- LOG: POST-BUNDLE ---
-    try {
-      const bundleContent = await Deno.readTextFile(outputPath);
-      const match = bundleContent.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
-      if (match) {
-        const decoded = atob(match[1]);
-        const sourceMap = JSON.parse(decoded);
-        // console.log("[POST-BUNDLE] Inline source map sources:", sourceMap.sources);
-      } else {
-        console.log("[POST-BUNDLE] No inline source map found in bundle.");
-      }
-    } catch (e) {
-      console.log("[POST-BUNDLE] Error reading bundle for source map:", e);
-    }
 
     // Post-process the output if needed
     if (result.metafile) {
       await postProcessBundleOutput(outputPath);
-      // --- LOG: POST-PROCESS ---
-      try {
-        const postContent = await Deno.readTextFile(outputPath);
-        const postMatch = postContent.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
-        if (postMatch) {
-          const postDecoded = atob(postMatch[1]);
-          const postSourceMap = JSON.parse(postDecoded);
-          console.log("[POST-PROCESS] Inline source map sources:", postSourceMap.sources);
-        } else {
-          console.log("[POST-PROCESS] No inline source map found in bundle after post-process.");
-        }
-      } catch (e) {
-        console.log("[POST-PROCESS] Error reading bundle for source map after post-process:", e);
-      }
     }
     
     logger.log({ 
