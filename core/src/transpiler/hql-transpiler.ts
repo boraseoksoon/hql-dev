@@ -13,12 +13,8 @@ import { SExp } from "../s-exp/types.ts";
 import {
   ImportError,
   MacroError,
-  ParseError,
   TransformError,
   TranspilerError,
-} from "../common/error-pipeline.ts";
-import { 
-  registerSourceFile, 
 } from "../common/error-pipeline.ts";
 import { globalLogger as logger } from "../logger.ts";
 import { ErrorPipeline } from "../common/error-pipeline.ts";
@@ -57,10 +53,6 @@ export async function processHql(
   }
 
   const sourceFilename = path.basename(options.baseDir || "unknown");
-  const sourceFilePath = options.baseDir || "unknown";
-
-  // Register source for error enhancement
-  registerSourceFile(sourceFilePath, source);
 
   try {
     // Initialize environment first to set current file
@@ -78,20 +70,6 @@ export async function processHql(
       if (options.showTiming) logger.endTiming("hql-process", "Parsing");
     } catch (error) {
       reportError(error);
-      
-      // if (error instanceof ParseError) {
-      //   // console.log(error)
-      //   // reportError(error);
-
-      //   // const exactErrorLine = error.contextLines.filter(line => line.isError)?.[0]
-      //   // console.log(exactErrorLine)
-      //   // throw new ErrorPipeline.ParseError(error.message, {
-      //   //   filePath: options.currentFile,
-      //   //   line: exactErrorLine?.line || error.line || 1,
-      //   //   column: exactErrorLine?.column || error.column || 1,
-      //   //   source: source
-      //   // });
-      // }
     }
     
     // Only proceed with later stages if parsing succeeded

@@ -228,9 +228,6 @@ function processEntryFile(
   outputPath: string,
   options: BundleOptions = {},
 ): Promise<string> {
-  const source = Deno.readTextFileSync(inputPath);
-  ErrorPipeline.registerSourceFile(inputPath, source);
-  
   try {
     const resolvedInputPath = resolve(inputPath);
     logger.debug(`Processing entry file: ${resolvedInputPath}`);

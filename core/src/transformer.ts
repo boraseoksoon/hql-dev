@@ -10,19 +10,22 @@ import { globalLogger as logger, Logger } from "./logger.ts";
 import { RUNTIME_FUNCTIONS } from "./transpiler/runtime/runtime.ts";
 import { Environment } from "./environment.ts";
 import type { HQLNode } from "./transpiler/type/hql_ast.ts";
-import {
-  CodeGenError,
-  TransformError,
-  TranspilerError,
-} from "./common/error-pipeline.ts";
+import { TransformError } from "./common/error-pipeline.ts";
 import {
   extractImportInfo,
   findExistingImports,
   findExternalModuleReferences,
   importSourceRegistry,
 } from "./common/import-utils.ts";
-import { registerSourceMapData } from "./common/error-source-map-registry.ts";
-import { HQLError } from "./common/error-pipeline.ts";
+
+/**
+ * Options controlling transformation behavior.
+ */
+export interface TransformOptions {
+  verbose?: boolean;
+  replMode?: boolean;
+  sourceFile?: string;
+}
 
 /**
  * Timer helper to measure and log transformation phases.
@@ -141,51 +144,6 @@ function convertExports(rawAst: any[]): HQLNode[] {
 }
 
 /**
- * Options controlling transformation behavior.
- */
-export interface TransformOptions {
-  verbose?: boolean;
-  replMode?: boolean;
-  sourceFile?: string;     // Added for source map support
-  generateSourceMap?: boolean; // Added for explicit source map control
-}
-
-/**
- * Get the original source content from a file path
- */
-async function getOriginalSource(filePath: string): Promise<string> {
-  try {
-    if (await Deno.stat(filePath).then(stat => stat.isFile)) {
-      return await Deno.readTextFile(filePath);
-    }
-  } catch (error) {
-    logger.debug(`Failed to read source file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  
-  // Try to find in example directories if direct path fails
-  try {
-    const fileName = filePath.split('/').pop() || '';
-    
-    // Try common example paths
-    for (const dir of ['doc/examples', '../doc/examples', 'examples']) {
-      const testPath = `${dir}/${fileName}`;
-      try {
-        if (await Deno.stat(testPath).then(stat => stat.isFile)) {
-          logger.debug(`Found source file at ${testPath}`);
-          return await Deno.readTextFile(testPath);
-        }
-      } catch {
-        // Continue to next path
-      }
-    }
-  } catch (error) {
-    logger.debug(`Failed to find source file in alternative paths: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  
-  return "";
-}
-
-/**
  * Transforms HQL AST nodes through all pipeline phases and outputs TS code.
  */
 export async function transformAST(
@@ -193,41 +151,33 @@ export async function transformAST(
   currentDir: string,
   options: TransformOptions = {}
 ): Promise<string> {
-  const timer = new Timer(logger);
   try {
+    const timer = new Timer(logger);
     logger.debug(`Starting transformation: ${astNodes.length} nodes`);
     timer.phase("initialization");
-
+  
     // Initialize or get global environment
     const env = await getGlobalEnvironment(options.verbose);
     timer.phase("environment init");
-
+  
     // Macro expansion
     const expanded = await expandMacros(astNodes, env, {
       verbose: options.verbose,
       currentFile: currentDir,
     });
     timer.phase("macro expansion");
-
+  
     // Import processing (dedupe + inject)
     const withImports = processImports(expanded, env);
     timer.phase("import processing");
-
+  
     // Convert legacy exports
     const converted = convertExports(withImports as any);
     timer.phase("AST conversion");
-
+  
     // Determine source file path - prioritize options.sourceFile if provided
     const sourceFilePath = options.sourceFile || currentDir;
     
-    // Fetch original source content for source map generation
-    const originalSource = await getOriginalSource(sourceFilePath);
-    if (originalSource) {
-      logger.debug(`Retrieved original source for ${sourceFilePath}: ${originalSource.length} bytes`);
-    } else {
-      logger.debug(`No original source found for ${sourceFilePath}`);
-    }
-
     // AST -> IR
     let ir;
     try {
@@ -238,69 +188,30 @@ export async function transformAST(
         `AST to IR failed: ${err instanceof Error ? err.message : String(err)}`,
         "AST to IR transformation",
         {
-          filePath: sourceFilePath,
-          source: originalSource
+          filePath: sourceFilePath
         }
       );
     }
 
     // IR -> TS code (with source map generation)
-    let tsCode;
-    let sourceMap;
-    try {
-      const tsResult = await generateTypeScript(ir, {
-        sourceFilePath: sourceFilePath,
-        generateSourceMap: options.generateSourceMap !== false,
-        inlineSourceMap: true,
-        originalSource: originalSource
-      });
-      
-      tsCode = tsResult.code;
-      sourceMap = tsResult.sourceMap;
-      timer.phase("TS code generation");
-      
-      // Register source map data with the error registry for accurate error reporting
-      if (sourceMap) {
-        await registerSourceMapData(
-          sourceFilePath,  // The file path used in error stacks
-          sourceFilePath,  // Original source file path
-          sourceMap,       // Source map content
-          originalSource   // Original source content
-        );
-        
-        logger.debug(`Registered source map for ${sourceFilePath}`);
-      }
-    } catch (err) {
-      throw new CodeGenError(
-        `TS generation failed: ${err instanceof Error ? err.message : String(err)}`,
-        {
-          filePath: sourceFilePath,
-          source: originalSource
-        }
-      );
-    }
-
+    const tsResult = await generateTypeScript(ir, { sourceFilePath: sourceFilePath });
+    
+    const tsCode = tsResult.code;
+    timer.phase("TS code generation");
+  
     // Prepend runtime unless in REPL mode
     const finalCode = options.replMode
       ? tsCode
       : `${RUNTIME_FUNCTIONS}\n\n${tsCode}`;
     timer.breakdown();
     return finalCode;
-
   } catch (error) {
-    if (options.verbose && !(error instanceof TranspilerError)) {
-      console.error("Detailed transformer error:", error);
-    }
-    
-    // Ensure we've properly enhanced the error with source details if possible
-    if (error instanceof Error && !(error instanceof HQLError)) {
-      // Use the sourceFile from options if present
-      error = enhanceError(error, {
-        filePath: options.sourceFile || currentDir,
-        useSourceMaps: true
-      });
-    }
-    
-    throw error;
+    throw new TransformError(
+      `Transformation failed: ${error instanceof Error ? error.message : String(error)}`,
+      "Transformation failed",
+      {
+        filePath: options.sourceFile || currentDir
+      }
+    );
   }
 }

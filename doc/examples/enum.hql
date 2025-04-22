@@ -4,7 +4,7 @@
 ;; --------------------------------------
 ;; 1. Simple Enums - no associated values
 ;; --------------------------------------
-(enum Direction :Symbol 
+(enum Direction
   (case north)
   (case south)
   (case east)
@@ -205,11 +205,11 @@
   (case north)
   (case south)
   (case east)
-  (case west
+  (case west)
 )
 
 ;; Missing closing parenthesis below - deliberate syntax error
-(let x 10)
+(let x 10
 
 ;; This code should not execute
 (print "Value is" x)

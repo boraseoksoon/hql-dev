@@ -263,7 +263,7 @@ export async function processCachedImports(
         const importBasename = path.basename(resolvedOriginalPath, '.hql');
         
         // Two possible locations: hash-based or preserveRelative
-        let cachedImportPaths = [];
+        const cachedImportPaths = [];
         
         // Strategy 1: preserveRelative makes exact directory structure
         const importRelativeDir = path.relative(Deno.cwd(), dirname(resolvedOriginalPath));

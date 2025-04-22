@@ -4,7 +4,6 @@ import * as IR from "../type/hql_ir.ts";
 import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { CodeGenError, perform } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { addSourceMappings } from "./source-map-utils.ts";
 
 
 /**
@@ -76,23 +75,14 @@ export async function generateTypeScript(
     logger.debug("Printing TypeScript AST to code string");
     const printStartTime = performance.now();
 
-    const code = perform(
-      () => {
-        // Create an empty source file for printing
-        const resultFile = ts.createSourceFile(
-          options.sourceFilePath || "output.ts",
-          "",
-          ts.ScriptTarget.Latest,
-          false,
-        );
-
-        // Generate the code
-        return printer.printNode(ts.EmitHint.Unspecified, tsAST, resultFile);
-      },
-      "TS AST printing",
-      CodeGenError,
-      [tsAST],
+    const resultFile = ts.createSourceFile(
+      options.sourceFilePath || "output.ts",
+      "",
+      ts.ScriptTarget.Latest,
+      false,
     );
+
+    const code = printer.printNode(ts.EmitHint.Unspecified, tsAST, resultFile);
 
     const printTime = performance.now() - printStartTime;
     
@@ -102,102 +92,18 @@ export async function generateTypeScript(
       }ms with ${code.length} characters`,
     );
 
-    let sourceMap: string | undefined = undefined;
-if (options.generateSourceMap) {
-  try {
-    // Use the SourceMapGenerator from the source-map library
-    const { SourceMapGenerator } = await import("https://esm.sh/source-map@0.7.3");
-    const map = new SourceMapGenerator({
-      file: options.sourceFilePath || "output.ts",
-    });
-    
-    // Use the more robust source map utility to create detailed mappings
-    // This uses the AST structure to create more accurate mappings
-    if (options.originalSource) {
-      map.setSourceContent(options.sourceFilePath || "output.ts", options.originalSource);
-      
-      // Use the addSourceMappings utility function for more accurate mappings
-      // This maps IR nodes to generated TS nodes to maintain position information
-      const sourcePath = options.sourceFilePath || "output.ts";
-      addSourceMappings(
-        map,
-        ir,
-        tsAST,
-        sourcePath,
-        code
-      );
-    } else {
-      // Fallback to simple line mapping if no original source provided
-      const codeLines = code.split("\n");
-      for (let i = 0; i < codeLines.length; i++) {
-        map.addMapping({
-          generated: { line: i + 1, column: 0 },
-          original: { line: i + 1, column: 0 },
-          source: options.sourceFilePath || "output.ts",
-        });
-      }
-    }
-    
-    // Generate the source map JSON string
-    const sourceMapJson = map.toString();
-    
-    // Keep raw JSON for the registry
-    sourceMap = sourceMapJson;
-    
-    // If inline source map requested, append the base64 inlined version to the code
-    if (options.inlineSourceMap) {
-      const base64Map = btoa(sourceMapJson);
-      const inlineComment = `//# sourceMappingURL=data:application/json;base64,${base64Map}`;
-      // Create final code with source map comment
-      const codeWithSourceMap = code + '\n' + inlineComment + '\n';
-      // Return the code with source map included
-      return { code: codeWithSourceMap, sourceMap };
-    }
-  } catch (smError) {
-    logger.error(`Source map generation failed: ${smError instanceof Error ? smError.message : String(smError)}`);
-  }
-}
-return { code, sourceMap };
+    return { code: code, sourceMap: undefined }
   } catch (error) {
-    // Create a comprehensive error report
-    const errorReport = createErrorReport(
-      error instanceof Error ? error : new Error(String(error)),
-      "TypeScript code generation",
-      {
-        irNodeCount: ir?.body?.length || 0,
-        irType: ir?.type ? IR.IRNodeType[ir.type] : "unknown",
-      },
-    );
-
-    // Log the error report for detailed diagnostics
-    logger.error(
+    throw new CodeGenError(
       `Failed to generate TypeScript code: ${
         error instanceof Error ? error.message : String(error)
       }`,
+      "TypeScript code generation",
+      ir,
     );
-    if (Deno.env.get("HQL_DEBUG") === "1") {
-      console.error(errorReport);
-    }
-
-    // Re-throw CodeGenError, otherwise wrap in CodeGenError
-    if (error instanceof CodeGenError) {
-      throw error;
-    } else {
-      throw new CodeGenError(
-        `Failed to generate TypeScript code: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        "TypeScript code generation",
-        ir,
-      );
-    }
   }
 }
 
-/**
- * Converts HQL IR directly to the official TypeScript AST.
- * Enhanced with better error handling and diagnostics using perform utility.
- */
 /**
  * Converts HQL IR directly to the official TypeScript AST.
  * Enhanced with better error handling and diagnostics using perform utility.

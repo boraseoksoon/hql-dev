@@ -1,8 +1,6 @@
 // src/repl/command-executor.ts
 
-import { formatErrorMessage } from "../../core/src/common/common-utils.ts";
-// Central command execution logic for REPL
-
+import { formatErrorMessage } from "../../core/src/common/error-pipeline.ts";
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { ReplState, resetReplState } from "./repl-state.ts";
 import { Logger } from "@core/logger.ts";
@@ -10,8 +8,6 @@ import {
   ReplStateHandlers, 
   CommonReplOptions, 
   printError, 
-  colorText, 
-  moduleUtils 
 } from "./repl-common.ts";
 import {
   commandHelp,

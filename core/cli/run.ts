@@ -84,7 +84,6 @@ async function readInputFile(inputPath: string): Promise<string> {
   logger.startTiming("run", "File Reading");
   try {
     const source = await Deno.readTextFile(inputPath);
-    ErrorPipeline.registerSourceFile(inputPath, source);
     return source;
   } finally {
     logger.endTiming("run", "File Reading");

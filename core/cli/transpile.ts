@@ -101,11 +101,7 @@ function transpile(
     if (outputPath) {
       registerExplicitOutput(outputPath);
     }
-    
-    // Load source for better error reporting
-    const source = await Deno.readTextFile(resolvedInputPath);
-    ErrorPipeline.registerSourceFile(resolvedInputPath, source);
-    
+
     // Use direct execution rather than error pipeline to control error handling ourselves
     return await transpileCLI(resolvedInputPath, outputPath, {
       verbose: opts.verbose,
@@ -187,11 +183,8 @@ export async function main(): Promise<void> {
       logger.debug(`Using cache directory: ${cacheDir}`);
     }
 
-    // Load the file and check for common errors before processing
-    const resolvedInputPath = resolve(inputPath);
     const source = await Deno.readTextFile(inputPath);
-    ErrorPipeline.registerSourceFile(resolvedInputPath, source);
-    
+
     // Proceed with transpilation
     const bundledPath = await transpile(inputPath, outputPath, opts);
 

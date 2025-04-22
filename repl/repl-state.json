@@ -1,29 +1,28 @@
 {
   "version": "1.0.0",
-  "lastModule": "hql",
+  "lastModule": "global",
   "modules": {
     "global": {
       "definitions": {
         "variables": {},
-        "functions": {},
+        "functions": {
+          "add": {
+            "_type": "function",
+            "source": "function add(x, y) {\n    return x + y;\n}",
+            "_metadata": {
+              "source": "(fn add (x y) (+ x y))",
+              "jsSource": "function add(x, y) {\n    return x + y;\n}\n",
+              "timestamp": "2025-04-22T03:00:42.906Z",
+              "created": "2025-04-22T03:00:42.906Z"
+            }
+          }
+        },
         "macros": {}
       },
       "imports": [],
       "exports": [],
       "metadata": {
         "lastInitialized": "2025-04-14T21:19:01.902Z"
-      }
-    },
-    "hql": {
-      "definitions": {
-        "variables": {},
-        "functions": {},
-        "macros": {}
-      },
-      "imports": [],
-      "exports": [],
-      "metadata": {
-        "lastInitialized": "2025-04-18T20:46:00.437Z"
       }
     }
   },

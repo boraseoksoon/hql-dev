@@ -8,11 +8,9 @@ import { persistentStateManager } from "./persistent-state-manager.ts";
 import { REPLEnvironment } from "./repl-environment.ts";
 import { parse } from "@transpiler/pipeline/parser.ts";
 import { processImports, ImportProcessorOptions } from "@core/imports.ts";
-import { SExp, SList, isImport, isSymbol, isLiteral, SSymbol, isSExpNamespaceImport, isSExpVectorImport } from "@s-exp/types.ts";
-import { ImportError } from "@transpiler/error/errors.ts";
-
+import { SList, isImport, isSymbol, SSymbol, isSExpNamespaceImport, isSExpVectorImport } from "@s-exp/types.ts";
 import { Logger } from "@core/logger.ts";
-import { formatErrorMessage } from "../../core/src/common/common-utils.ts";
+import { formatErrorMessage } from "../../core/src/common/error-pipeline.ts";
 /**
  * Options for the module-aware evaluator
  */

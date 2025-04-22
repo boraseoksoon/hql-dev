@@ -4,9 +4,7 @@
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { globalLogger as logger } from "@core/logger.ts";
-
-
-import { formatErrorMessage } from "../../core/src/common/common-utils.ts";
+import { formatErrorMessage } from "../../core/src/common/error-pipeline.ts";
 const HISTORY_FILE = ".hql_history";
 
 class HistoryManager {

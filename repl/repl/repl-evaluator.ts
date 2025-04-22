@@ -11,13 +11,10 @@ import { REPLEnvironment } from "./repl-environment.ts";
 import { Environment, Value } from "@core/environment.ts";
 import { SExp } from "@s-exp/types.ts";
 import { RUNTIME_FUNCTIONS } from "@transpiler/runtime/runtime.ts";
-import { registerSourceFile, withErrorHandling } from "../../core/src/transpiler/error/errors.ts";
-import { report } from "@transpiler/error/errors.ts";
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { ErrorPipeline } from "../../core/src/common/error-pipeline.ts";
-
 import { Logger, globalLogger as logger } from "@core/logger.ts";
-import { formatErrorMessage } from "@core/common/common-utils.ts";
+import { formatErrorMessage } from "../../core/src/common/error-pipeline.ts"
 
 // Options for REPL evaluation
 export interface REPLEvalOptions {
@@ -78,7 +75,7 @@ export class REPLEvaluator {
     this.logger = logger;
     this.logger.setEnabled(!!options.verbose);
     // Always resolve baseDir relative to the REPL evaluator file if not provided
-this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../');
+    this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../');
     
     // Initialize runtime functions immediately
     this.initializeRuntimeFunctions();
@@ -110,30 +107,21 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
    * Parse a single line of input
    * Uses caching to avoid re-parsing identical input
    */
-  async parseLine(input: string): Promise<SExp[]> {
+  parseLine(input: string): SExp[] {
     // Check cache first for better performance
     if (this.parseCache.has(input)) {
       return this.parseCache.get(input)!;
     }
     
-    // Register the input source for error enhancement
-    registerSourceFile("REPL", input);
-    
-    // Use shared error handling mechanism
-    return await withErrorHandling(
-      () => {
-        try {
-          const result = parse(input);
-          // Cache the result for future use
-          this.parseCache.set(input, result);
-          return result;
-        } catch (error) {
-          this.logger.error(`Parse error: ${formatErrorMessage(error)}`);
-          throw error;
-        }
-      },
-      { source: input, filePath: "REPL" }
-    )();
+    try {
+      const result = parse(input);
+      // Cache the result for future use
+      this.parseCache.set(input, result);
+      return result;
+    } catch (error) {
+      this.logger.error(`Parse error: ${formatErrorMessage(error)}`);
+      throw error;
+    }
   }
   
   /**
@@ -141,9 +129,6 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
    * With special handling for import statements
    */
   async evaluate(input: string, options: REPLEvalOptions = {}): Promise<REPLEvalResult> {
-    // Register the input for error context
-    ErrorPipeline.registerSourceFile("REPL", input);
-    
     const log = (message: string) => {
       if (this.logger.isVerbose) this.logger.debug(message);
     };
@@ -197,77 +182,75 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
       // Process the input through the evaluation pipeline
       log("Parsing input...");
       currentTime = performance.now();
-      const sexps = await withErrorHandling(
-        () => this.parseLine(input),
-        { source: input, filePath: "REPL" }
-      )();
+      
+      // Direct parsing without withErrorHandling wrapper
+      const sexps = this.parseLine(input);
+      
       metrics.parseTimeMs = performance.now() - currentTime;
       log(`Parsed ${sexps.length} expressions`);
       
       log("Transforming syntax...");
       currentTime = performance.now();
-      const transformedSexps = await withErrorHandling(
-        () => transformSyntax(sexps, { verbose: options.verbose }),
-        { source: input, filePath: "REPL" }
-      )();
+      
+      // Direct transformation without withErrorHandling wrapper
+      const transformedSexps = await transformSyntax(sexps, { verbose: options.verbose });
+      
       metrics.syntaxTransformTimeMs = performance.now() - currentTime;
       log(`Transformed to ${transformedSexps.length} expressions`);
       
       log("Processing imports...");
       currentTime = performance.now();
-      await withErrorHandling(
-        async () => {
-          await processImports(transformedSexps, this.replEnv.hqlEnv, {
-            verbose: options.verbose,
-            baseDir: options.baseDir || this.baseDir
-          });
-        },
-        { source: input, filePath: "REPL" }
-      )();
+      
+      // Direct import processing without withErrorHandling wrapper
+      await processImports(transformedSexps, this.replEnv.hqlEnv, {
+        verbose: options.verbose,
+        baseDir: options.baseDir || this.baseDir
+      });
+      
       metrics.importProcessingTimeMs = performance.now() - currentTime;
       
       log("Expanding macros...");
       currentTime = performance.now();
-      const expandedSexps = await withErrorHandling(
-        () => expandMacros(transformedSexps, this.replEnv.hqlEnv, {
-          verbose: options.verbose,
-        }),
-        { source: input, filePath: "REPL" }
-      )();
+      
+      // Direct macro expansion without withErrorHandling wrapper
+      const expandedSexps = await expandMacros(transformedSexps, this.replEnv.hqlEnv, {
+        verbose: options.verbose,
+      });
+      
       metrics.macroExpansionTimeMs = performance.now() - currentTime;
       log(`Expanded to ${expandedSexps.length} expressions`);
       
       log("Converting to AST...");
       currentTime = performance.now();
-      const ast = await withErrorHandling(
-        () => convertToHqlAst(expandedSexps, { verbose: options.verbose }),
-        { source: input, filePath: "REPL" }
-      )();
+      
+      // Direct AST conversion without withErrorHandling wrapper
+      const ast = await convertToHqlAst(expandedSexps, { verbose: options.verbose });
+      
       metrics.astConversionTimeMs = performance.now() - currentTime;
       log("AST conversion completed");
       
       log("Generating JavaScript...");
       currentTime = performance.now();
-      const jsCode = await withErrorHandling(
-        () => transformAST(ast, options.baseDir || this.baseDir, {
-          verbose: options.verbose,
-          replMode: true
-        }),
-        { source: input, filePath: "REPL" }
-      )();
+      
+      // Direct AST transformation without withErrorHandling wrapper
+      const jsCode = await transformAST(ast, options.baseDir || this.baseDir, {
+        verbose: options.verbose,
+        replMode: true
+      });
+      
       metrics.codeGenerationTimeMs = performance.now() - currentTime;
       log("JavaScript generation completed");
       
       log("Cleaning up generated code...");
-      const cleanedCode = this.removeRuntimeFunctions(jsCode);
+      const cleanedCode = this.removeRuntimeFunctions(await jsCode);
       const preparedJs = this.replEnv.prepareJsForRepl(cleanedCode);
       
       log("Evaluating JavaScript...");
       currentTime = performance.now();
-      const value = await withErrorHandling(
-        () => this.evaluateJs(preparedJs),
-        { source: preparedJs, filePath: "REPL JS" }
-      )();
+      
+      // Direct JS evaluation without withErrorHandling wrapper
+      const value = await this.evaluateJs(preparedJs);
+      
       metrics.evaluationTimeMs = performance.now() - currentTime;
       log("Evaluation completed");
       
@@ -286,41 +269,23 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
         expandedExpressions: expandedSexps,
         executionTimeMs: metrics.totalTimeMs,
       };
-    } catch (error: unknown) {
+    } catch (error) {
       this.replEnv.hqlEnv.setCurrentFile(null);
-      log(`Evaluation error: ${formatErrorMessage(error)}`);
-      
-      // Use the new error pipeline
-      const enhancedError = ErrorPipeline.enhanceError(error, {
-        source: input,
-        filePath: "REPL"
-      });
-      
-      // Report the error with appropriate verbosity
-      ErrorPipeline.reportError(enhancedError, {
-        verbose: options.verbose,
-        makePathsClickable: true,
-        showCallStack: options.verbose
-      });
-      
-      // Convert the error to a standard result
-      return {
-        value: `Error: ${enhancedError.message}`,
-        jsCode: `// Error: ${enhancedError.message}`,
-        parsedExpressions: [],
-        expandedExpressions: [],
-        executionTimeMs: performance.now() - startTime
-      };
-    } finally {
-      // ... existing code ...
-    }
+      ErrorPipeline.reportError(error);
+      throw error; // Re-throw to maintain error propagation
+    } 
   }
 
   /**
    * Remove runtime functions from the generated code
    * This prevents redefinition errors
    */
-  private removeRuntimeFunctions(code: string): string {
+  private removeRuntimeFunctions(code: Promise<string> | string): string {
+    // Handle Promise case
+    if (code instanceof Promise) {
+      throw new Error("removeRuntimeFunctions was called with a Promise. This function expects a resolved string.");
+    }
+    
     // If no runtime function names are cached, extract them
     if (!this.runtimeFunctionNames) {
       const functionRegex = /function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
@@ -376,7 +341,8 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
    */
   async processImportDirectly(input: string): Promise<{ success: boolean, moduleName: string, message: string }> {
     try {
-      const sexps = await this.parseLine(input);
+      // Direct parsing without withErrorHandling
+      const sexps = this.parseLine(input);
       
       if (!sexps || sexps.length === 0) {
         return { 
@@ -392,7 +358,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
       // Set current file in the environment
       this.replEnv.hqlEnv.setCurrentFile(this.baseDir);
       
-      // Convert sexps to transformedSexps using syntax transformer
+      // Convert sexps to transformedSexps using syntax transformer - direct call
       const transformedSexps = await transformSyntax(sexps, { verbose: this.logger.isVerbose });
       
       // Extract import information before processing
@@ -406,7 +372,7 @@ this.baseDir = options.baseDir || path.resolve(path.dirname(path.fromFileUrl(imp
         };
       }
       
-      // Process the import directly using the imports.ts module
+      // Process the import directly using the imports.ts module - direct call
       await processImports(transformedSexps, this.replEnv.hqlEnv, {
         verbose: this.logger.isVerbose,
         baseDir: this.baseDir
