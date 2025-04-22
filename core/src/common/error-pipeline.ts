@@ -141,9 +141,6 @@ export interface SourceLocation {
   source?: string;
 }
 
-/**
- * Source location with utility methods for error reporting
- */
 export class SourceLocationInfo implements SourceLocation {
   public filePath?: string;
   public line?: number;
@@ -225,6 +222,43 @@ export class SourceLocationInfo implements SourceLocation {
     
     return contextLines;
   }
+  
+  /**
+   * Static helper to extract source location from an error
+   */
+  static fromError(error: Error): SourceLocationInfo | undefined {
+    // Check if error has stack trace
+    if (!error.stack) {
+      return undefined;
+    }
+
+    // Common stack trace patterns: 
+    // - at functionName (file:line:column)
+    // - at file:line:column
+    const stackLines = error.stack.split('\n');
+    
+    // Look for first line with file information (usually after the error message lines)
+    for (const line of stackLines) {
+      // Match file path, line and column information
+      const fileMatch = line.match(/\s+at\s+(?:[\w<>.$]+\s+)?\(?((?:\/|[a-zA-Z]:\\|file:\/\/)[^:)]+):(\d+):(\d+)/);
+      if (fileMatch) {
+        const [, filePath, lineStr, columnStr] = fileMatch;
+        const lineNum = parseInt(lineStr, 10);
+        const column = parseInt(columnStr, 10);
+        
+        if (!isNaN(lineNum) && !isNaN(column)) {
+          return new SourceLocationInfo({
+            filePath,
+            line: lineNum,
+            column,
+            source: error.stack // Include the stack trace as source initially
+          });
+        }
+      }
+    }
+
+    return undefined;
+  }
 }
 
 // ----- Legacy API Compatibility -----
@@ -274,6 +308,10 @@ export enum ErrorType {
 
 // ----- HQL Error Class -----
 
+/**
+ * Base error class for all HQL-related errors
+ * Provides source location tracking, context extraction, and common error utilities
+ */
 /**
  * Base error class for all HQL-related errors
  * Provides source location tracking, context extraction, and common error utilities
@@ -333,12 +371,33 @@ export class HQLError extends Error {
       ? options.errorType 
       : options.errorType || ErrorType.GENERIC;
     
-    // Create a SourceLocationInfo from the provided location
-    this.sourceLocation = options.sourceLocation instanceof SourceLocationInfo
-      ? options.sourceLocation
-      : new SourceLocationInfo(options.sourceLocation || {});
-    
+    // Determine original error (if any)
     this.originalError = options.originalError;
+
+    // Source location extraction logic
+    let locationInfo: SourceLocationInfo | undefined;
+    
+    // Priority 1: Use provided sourceLocation if available
+    if (options.sourceLocation) {
+      locationInfo = options.sourceLocation instanceof SourceLocationInfo
+        ? options.sourceLocation
+        : new SourceLocationInfo(options.sourceLocation);
+    }
+    // Priority 2: If originalError is provided and no sourceLocation, try to extract from it
+    else if (options.originalError) {
+      locationInfo = SourceLocationInfo.fromError(options.originalError);
+    }
+    // Priority 3: If neither sourceLocation nor originalError provided, try to extract from this error
+    else {
+      // Capture stack trace for this error first to ensure it's available
+      if (Error.captureStackTrace) {
+        Error.captureStackTrace(this, this.constructor);
+      }
+      locationInfo = SourceLocationInfo.fromError(this);
+    }
+    
+    // Ensure we always have a sourceLocation object, even if empty
+    this.sourceLocation = locationInfo || new SourceLocationInfo();
 
     // Copy source location props to top level for easier access
     this.filePath = this.sourceLocation.filePath;
@@ -354,8 +413,8 @@ export class HQLError extends Error {
       this.extractSourceAndContext();
     }
 
-    // Capture stack trace
-    if (Error.captureStackTrace) {
+    // Capture stack trace if not already done
+    if (!options.originalError && Error.captureStackTrace) {
       Error.captureStackTrace(this, this.constructor);
     }
   }
@@ -1027,29 +1086,78 @@ function formatHQLError(error: HQLError): string {
  * Report an error with proper formatting - consolidated function
  */
 export async function reportError(error: unknown): Promise<void> {
-  console.error(Deno.formatError(error));
-  
   // console.log("error : ", error);
   
-  // // Apply source map transformation
-  // if (error instanceof Error && error.stack) {
-  //   error = await transformErrorStack(error);
-  // }
+  // Apply source map transformation
+  if (error instanceof Error && error.stack) {
+    error = await transformErrorStack(error);
+  }
   
-  // // Convert to HQLError if needed
-  // const hqlError = error instanceof HQLError ? error : new HQLError(error instanceof Error ? error.message : String(error));
+  // Convert to HQLError if needed
+  const hqlError = error instanceof HQLError ? error : new HQLError(error instanceof Error ? error.message : String(error));
   
-  // // Prevent double-reporting the same error
-  // if (hqlError.reported) {
-  //   return;
-  // }
+  // Prevent double-reporting the same error
+  if (hqlError.reported) {
+    return;
+  }
   
-  // // Mark as reported to prevent duplicate reporting
-  // hqlError.reported = true;
+  // Mark as reported to prevent duplicate reporting
+  hqlError.reported = true;
   
-  // // Format and output the error
-  // const formatted = formatHQLError(hqlError);
-  // console.error(formatted);
+  // Format and output the error
+  const formatted = formatHQLError(hqlError);
+  console.error(formatted);
+}
+
+export function perform<T>(
+  fn: () => T,
+  context?: string,
+  errorType?: new (message: string, ...args: unknown[]) => HQLError,
+  errorArgs?: unknown[],
+  sourceContext?: SourceLocation
+): T {
+  try {
+    return fn();
+  } catch (error) {
+    // If error is already of the expected type, just return it
+    if (errorType && error instanceof errorType) {
+      throw error;
+    }
+
+    // Prepare the message with context
+    const msg = context
+      ? `${context}: ${error instanceof Error ? error.message : String(error)}`
+      : error instanceof Error
+        ? error.message
+        : String(error);
+
+    // Try to extract source context from the error if not provided
+    let locationInfo: SourceLocationInfo | undefined;
+    
+    if (sourceContext) {
+      // Use provided source context
+      locationInfo = new SourceLocationInfo(sourceContext);
+    } else if (error instanceof Error) {
+      // Try to extract from error
+      locationInfo = SourceLocationInfo.fromError(error);
+    }
+
+    // If an error type is specified, create a new error of that type
+    if (errorType) {
+      if (locationInfo) {
+        throw new errorType(msg, locationInfo);
+      } else {
+        throw new errorType(msg, ...(errorArgs || []));
+      }
+    }
+
+    // Otherwise, use a generic HQLError with source context if available
+    if (locationInfo) {
+      throw new HQLError(msg, { sourceLocation: locationInfo });
+    } else {
+      throw new HQLError(msg);
+    }
+  }
 }
 
 /**
@@ -1060,7 +1168,7 @@ export const ErrorPipeline = {
   registerSourceMap,
   mapToOriginalPosition,
   transformErrorStack,
-  
+  perform,
   // Error classes
   HQLError,
   ParseError,
