@@ -1,7 +1,20 @@
 /**
  * error-pipeline.ts
+ * 
+ * A unified error handling pipeline for HQL that provides:
+ * 1. Standardized error collection, processing, and reporting
+ * 2. Error messages with file path, line, and column information
+ * 3. Separation of core error info and debug details
+ * 4. Support for specialized error types (Parse, Import, Validation, etc.)
+ * 5. Source map support for accurate error reporting in HQL code
  */
+
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import { SourceMapConsumer } from "npm:source-map@0.7.3";
+import { globalLogger } from "../logger.ts";
+
+// Direct access to logger
+const logger = globalLogger;
 
 // ----- Color Formatting -----
 
@@ -9,8 +22,6 @@ export type ColorFn = (s: string) => string;
 export const colorConfig = createColorConfig();
 
 // ----- Color Utilities -----
-
-// ----- SICP-Inspired Color Configuration -----
 export interface ColorConfig {
   purple: (s: string) => string;
   red: (s: string) => string;
@@ -133,6 +144,92 @@ export async function reportError(error: unknown, isDebug = false): Promise<void
   console.error(formatted);
 }
 
+// ----- Source Registry -----
+
+// Centralized registry for source code content, source maps, and path mappings
+class SourceRegistry {
+  private sources = new Map<string, string>();
+  private sourceMaps = new Map<string, Record<string, unknown>>();
+  private pathMap = new Map<string, string>();
+
+  /** Register source file for error reporting */
+  registerSource(filePath: string, source: string): void {
+    this.sources.set(filePath, source);
+    logger.debug(`Registered source file: ${filePath} (${source.length} bytes)`);
+  }
+
+  /** Get source content for error reporting */
+  getSource(filePath: string): string | undefined {
+    return this.sources.get(filePath);
+  }
+
+  /** Load source file if not already in registry */
+  loadSourceIfNeeded(filePath: string): string | undefined {
+    let source = this.getSource(filePath);
+    
+    // Try to load the file if it's not in the registry
+    if (!source && filePath && typeof Deno !== 'undefined') {
+      try {
+        source = Deno.readTextFileSync(filePath);
+        this.registerSource(filePath, source);
+      } catch {
+        // Failed to read file, return undefined
+      }
+    }
+    
+    return source;
+  }
+
+  /** Register a source map with the registry */
+  registerSourceMap(
+    generatedPath: string,
+    originalPath: string,
+    sourceMapContent: string | object,
+    originalSource?: string
+  ): void {
+    try {
+      // Store the path mapping
+      this.pathMap.set(generatedPath, originalPath);
+      
+      // Parse and store the source map
+      const sourceMap = typeof sourceMapContent === 'string' 
+        ? JSON.parse(sourceMapContent) 
+        : sourceMapContent;
+        
+      this.sourceMaps.set(generatedPath, sourceMap);
+      
+      // Register source content if available
+      if (originalSource) {
+        this.registerSource(originalPath, originalSource);
+      }
+      
+      logger.debug(`Registered source map: ${generatedPath} -> ${originalPath}`);
+    } catch (error) {
+      logger.warn(`Failed to register source map: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** Get the original path for a generated path */
+  getOriginalPath(generatedPath: string): string | undefined {
+    return this.pathMap.get(generatedPath);
+  }
+
+  /** Get source map for a generated path */
+  getSourceMap(generatedPath: string): Record<string, unknown> | undefined {
+    return this.sourceMaps.get(generatedPath);
+  }
+
+  /** Clear all registries */
+  clear(): void {
+    this.sources.clear();
+    this.sourceMaps.clear();
+    this.pathMap.clear();
+  }
+}
+
+// Global source registry instance
+const registry = new SourceRegistry();
+
 // ----- Source Location -----
 
 export interface SourceLocation {
@@ -159,7 +256,11 @@ export class SourceLocationInfo implements SourceLocation {
    * Loads source content if available
    */
   loadSource(): string | undefined {
-    return this.source
+    if (this.source) return this.source;
+    if (!this.filePath) return undefined;
+    
+    this.source = registry.loadSourceIfNeeded(this.filePath);
+    return this.source;
   }
   
   /**
@@ -256,6 +357,34 @@ export class SourceLocationInfo implements SourceLocation {
 
     return undefined;
   }
+}
+
+// ----- Legacy API Compatibility -----
+
+/**
+ * Register source file for error reporting (legacy API)
+ */
+export function registerSourceFile(filePath: string, source: string): void {
+  registry.registerSource(filePath, source);
+}
+
+/**
+ * Get source content for error reporting (legacy API)
+ */
+export function getSourceFile(filePath: string): string | undefined {
+  return registry.getSource(filePath);
+}
+
+/**
+ * Register a source map with the registry (legacy API)
+ */
+export function registerSourceMap(
+  generatedPath: string,
+  originalPath: string,
+  sourceMapContent: string | object,
+  originalSource?: string
+): void {
+  registry.registerSourceMap(generatedPath, originalPath, sourceMapContent, originalSource);
 }
 
 // ----- Error Types -----
@@ -746,10 +875,66 @@ export class TranspilerError extends HQLError {
   }
 }
 
+// ----- Source Map Utilities -----
+
+/**
+ * Map a position in generated code to the original source position
+ */
+export async function mapToOriginalPosition(
+  generatedPath: string,
+  line: number,
+  column: number
+): Promise<{ source: string; line: number; column: number } | null> {
+  try {
+    // Check if we have a source map for this file
+    const sourceMap = registry.getSourceMap(generatedPath);
+    if (!sourceMap) {
+      return null;
+    }
+    
+    // Initialize source map consumer
+    const consumer = await new SourceMapConsumer(sourceMap);
+    
+    try {
+      // Use the consumer to get original position
+      const originalPosition = consumer.originalPositionFor({
+        line,
+        column
+      });
+      
+      if (originalPosition.source && originalPosition.line !== null) {
+        return {
+          source: originalPosition.source,
+          line: originalPosition.line,
+          column: originalPosition.column || 0
+        };
+      }
+    } finally {
+      // Always destroy the consumer to free memory
+      consumer.destroy();
+    }
+  } catch (error) {
+    logger.debug(`Error mapping position: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  
+  // If we don't have a source map but we do have path mapping, return an approximation
+  const originalPath = registry.getOriginalPath(generatedPath);
+  if (originalPath) {
+    return {
+      source: originalPath,
+      line: line,
+      column: column
+    };
+  }
+  
+  return null;
+}
+
 /**
  * Transform an error stack using source maps to point to original source locations
  */
 export async function transformErrorStack(error: Error): Promise<Error> {
+  // Only transform if stack is available
   if (!error.stack) return error;
   
   const stackLines = error.stack.split('\n');
@@ -757,7 +942,30 @@ export async function transformErrorStack(error: Error): Promise<Error> {
   
   // Process each line of the stack trace
   for (const line of stackLines) {
-    transformedLines.push(line);
+    // Look for filename, line and column in stack trace
+    // Format: at functionName (/path/to/file.js:line:column)
+    const match = line.match(/at\s+(.+?)\s+\(?([^:]+):(\d+):(\d+)\)?/);
+    
+    if (match) {
+      const [, fnName, filePath, lineStr, colStr] = match;
+      const lineNum = parseInt(lineStr, 10);
+      const colNum = parseInt(colStr, 10);
+      
+      // Try to map to original source position
+      const originalPos = await mapToOriginalPosition(filePath, lineNum, colNum);
+      
+      if (originalPos) {
+        // Replace with original source position
+        const mappedLine = `at ${fnName} (${originalPos.source}:${originalPos.line}:${originalPos.column})`;
+        transformedLines.push(mappedLine);
+      } else {
+        // Keep original line if mapping fails
+        transformedLines.push(line);
+      }
+    } else {
+      // Line doesn't contain file info, keep as is
+      transformedLines.push(line);
+    }
   }
   
   // Replace stack with transformed stack
@@ -768,10 +976,28 @@ export async function transformErrorStack(error: Error): Promise<Error> {
     const { filePath, line, column } = error.sourceLocation;
     
     if (filePath && line && column) {
-      error.filePath = filePath;
-      error.line = line;
-      error.column = column;
-      error.filename = filePath;
+      const originalPos = await mapToOriginalPosition(filePath, line, column);
+      
+      if (originalPos) {
+        // Update error's source location with original position
+        const newLocation = new SourceLocationInfo({
+          filePath: originalPos.source,
+          line: originalPos.line,
+          column: originalPos.column,
+          source: error.sourceLocation.source
+        });
+        
+        error.sourceLocation = newLocation;
+        
+        // Also update the top-level properties
+        error.filePath = newLocation.filePath;
+        error.line = newLocation.line;
+        error.column = newLocation.column;
+        error.filename = newLocation.filePath;
+        
+        // Reload source context with new location
+        error.extractSourceAndContext();
+      }
     }
   }
   
@@ -887,6 +1113,8 @@ export function perform<T>(
  */
 export const ErrorPipeline = {
   reportError,
+  registerSourceMap,
+  mapToOriginalPosition,
   transformErrorStack,
   perform,
   // Error classes
@@ -899,6 +1127,12 @@ export const ErrorPipeline = {
   RuntimeError,
   CodeGenError,
   ErrorType,
+  
+  // Source registry
+  registerSourceFile,
+  getSourceFile,
+  
+  // Source location utilities
   SourceLocationInfo,
 };
 

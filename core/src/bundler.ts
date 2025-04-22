@@ -505,7 +505,6 @@ async function bundleWithEsbuild(
       format: 'esm',
       logLevel: options.verbose ? 'info' : 'silent',
       minify: options.minify !== false,
-      sourcemap: options.debug ? 'inline' : false,
       treeShaking: true,
       platform: 'neutral',
       target: ['es2020'],
@@ -515,7 +514,6 @@ async function bundleWithEsbuild(
       write: true,
       absWorkingDir: Deno.cwd(),
       nodePaths: [Deno.cwd(), dirname(entryPath)],
-      // Configure TypeScript and other loaders
       loader: {
         '.ts': 'ts',
         '.js': 'js',

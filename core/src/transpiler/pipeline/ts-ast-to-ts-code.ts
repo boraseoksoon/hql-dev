@@ -27,12 +27,7 @@ export interface TypeScriptOutput {
  */
 export async function generateTypeScript(
   ir: IR.IRProgram,
-  options: {
-    sourceFilePath?: string;
-    generateSourceMap?: boolean;
-    inlineSourceMap?: boolean;
-    originalSource?: string;
-  } = {}
+  options: { sourceFilePath?: string } = {}
 ): Promise<TypeScriptOutput> {
   try {
     logger.debug(
