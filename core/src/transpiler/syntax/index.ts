@@ -1,7 +1,3 @@
-// src/transpiler/syntax/index.ts
-// Export all syntax handlers from a single point
-
-// Re-export all functionality from syntax modules
 export * from "./binding.ts";
 export * from "./class.ts";
 export * from "./conditional.ts";
@@ -13,6 +9,7 @@ export * from "./js-interop.ts";
 export * from "./loop-recur.ts";
 export * from "./primitive.ts";
 export * from "./quote.ts";
+export * from "./get.ts"; // Add export for the new get module
 
 // Define a consistent API for all syntax handlers
 import * as IR from "../type/hql_ir.ts";

@@ -102,18 +102,6 @@ export async function processHql(
       logger.logPerformance("hql-process", sourceFilename);
     }
     
-    // [TRACE] Immediately before returning from HQL transpile
-    // if (sourceMap !== undefined) {
-    //   try {
-    //     console.log("[TRACE][Transpiler] original sourceMap :", sourceMap);
-    //     const parsedMap = JSON.parse(sourceMap);
-    //     console.log("[TRACE][Transpiler] Final source map before return:", parsedMap);
-    //   } catch (e) {
-    //     console.log("[TRACE][Transpiler] Could not parse final sourceMap:", e, sourceMap);
-    //   }
-    // }
-    // console.log("[TRACE][Transpiler] Final TS code before return:\n", jsCode);
-    
     return { code: jsCode, sourceMap };
   } catch (error) {
     if (error instanceof Error) {

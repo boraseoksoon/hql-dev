@@ -218,52 +218,52 @@ export async function reportError(error: unknown, isDebug = false): Promise<void
     }
   }
 
-  // Extract HQL file location from remapped stack trace
-  if (hqlError.stack) {
-    const lines = hqlError.stack.split('\n');
-    logger.debug(`[reportError/DEBUG] Remapped stack lines: ${lines}`, 'source-map');
-    const hqlFrame = lines.find(line => line.includes('.hql:'));
-    logger.debug(`[reportError/DEBUG] Extracted hqlFrame: ${hqlFrame}`, 'source-map');
+  // // Extract HQL file location from remapped stack trace
+  // if (hqlError.stack) {
+  //   const lines = hqlError.stack.split('\n');
+  //   logger.debug(`[reportError/DEBUG] Remapped stack lines: ${lines}`, 'source-map');
+  //   const hqlFrame = lines.find(line => line.includes('.hql:'));
+  //   logger.debug(`[reportError/DEBUG] Extracted hqlFrame: ${hqlFrame}`, 'source-map');
     
-    if (hqlFrame) {
-      // Extract file, line, column info for user-friendly display
-      const match = hqlFrame.match(/([\w\/-]+\.hql):(\d+):(\d+)/);
-      logger.debug(`[reportError/DEBUG] Regex match result: ${match}`, 'source-map');
-      if (match) {
-        const [, file, line, col] = match;
-        // Always set sourceLocation on the error for unified formatting
-        if (!hqlError.sourceLocation) {
-          hqlError.sourceLocation = new SourceLocationInfo();
-        }
-        hqlError.sourceLocation.filePath = `/${file.replace(/^\/+/, '')}`;
-        hqlError.sourceLocation.line = Number(line);
-        hqlError.sourceLocation.column = Number(col);
+  //   if (hqlFrame) {
+  //     // Extract file, line, column info for user-friendly display
+  //     const match = hqlFrame.match(/([\w\/-]+\.hql):(\d+):(\d+)/);
+  //     logger.debug(`[reportError/DEBUG] Regex match result: ${match}`, 'source-map');
+  //     if (match) {
+  //       const [, file, line, col] = match;
+  //       // Always set sourceLocation on the error for unified formatting
+  //       if (!hqlError.sourceLocation) {
+  //         hqlError.sourceLocation = new SourceLocationInfo();
+  //       }
+  //       hqlError.sourceLocation.filePath = `/${file.replace(/^\/+/, '')}`;
+  //       hqlError.sourceLocation.line = Number(line);
+  //       hqlError.sourceLocation.column = Number(col);
         
-        // We rely on the actual source file being accessible
-        // The sourceLocation is set correctly from the remapped stack trace
-        // (which may use the hard-coded mapping in mapStackTraceToHql)
-        logger.debug(`[reportError] Set sourceLocation to ${hqlError.sourceLocation.filePath}:${hqlError.sourceLocation.line}:${hqlError.sourceLocation.column}`, 'source-map');
-      }
-    }
-  }
+  //       // We rely on the actual source file being accessible
+  //       // The sourceLocation is set correctly from the remapped stack trace
+  //       // (which may use the hard-coded mapping in mapStackTraceToHql)
+  //       logger.debug(`[reportError] Set sourceLocation to ${hqlError.sourceLocation.filePath}:${hqlError.sourceLocation.line}:${hqlError.sourceLocation.column}`, 'source-map');
+  //     }
+  //   }
+  // }
 
-  // Always attempt to extract source and context before formatting
-  // This is critical for displaying context lines in the error output
-  logger.debug('[reportError] Extracting source and context...', 'source-map');
-  hqlError.extractSourceAndContext();
+  // // Always attempt to extract source and context before formatting
+  // // This is critical for displaying context lines in the error output
+  // logger.debug('[reportError] Extracting source and context...', 'source-map');
+  // hqlError.extractSourceAndContext();
   
-  // Log context lines to verify they're present
-  logger.debug(`[reportError] Context lines count: ${hqlError.contextLines?.length || 0}`, 'source-map');
+  // // Log context lines to verify they're present
+  // logger.debug(`[reportError] Context lines count: ${hqlError.contextLines?.length || 0}`, 'source-map');
 
-    // Print the actual context lines for verification
-  if (hqlError.contextLines && hqlError.contextLines.length > 0) {
-    logger.debug('[reportError] Context lines details:', 'source-map');
-    hqlError.contextLines.forEach((line, index) => {
-      logger.debug(`  [${index}] Line ${line.line}${line.isError ? ' (ERROR)' : ''}: ${line.content}`, 'source-map');
-    });
-  } else {
-    logger.debug('[reportError] No context lines were extracted', 'source-map');
-  }
+  //   // Print the actual context lines for verification
+  // if (hqlError.contextLines && hqlError.contextLines.length > 0) {
+  //   logger.debug('[reportError] Context lines details:', 'source-map');
+  //   hqlError.contextLines.forEach((line, index) => {
+  //     logger.debug(`  [${index}] Line ${line.line}${line.isError ? ' (ERROR)' : ''}: ${line.content}`, 'source-map');
+  //   });
+  // } else {
+  //   logger.debug('[reportError] No context lines were extracted', 'source-map');
+  // }
   
   const formatted = await formatHQLError(hqlError, isDebug);
   console.error(formatted);

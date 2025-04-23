@@ -5,6 +5,10 @@ import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError, perform } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
+import { transformGet, createGetOperation } from "./get.ts";
+
+// Export the get function to make it available through the module
+export { transformGet, createGetOperation };
 
 /**
  * Process elements in a vector, handling vector keyword and commas
@@ -253,60 +257,6 @@ export function transformEmptySet(_list: ListNode, _currentDir: string): IR.IRNo
 }
 
 /**
- * Transform collection 'get' operation.
- */
-export function transformGet(
-  list: ListNode, 
-  currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode | null
-): IR.IRNode {
-  return perform(
-    () => {
-      if (list.elements.length !== 3) {
-        throw new ValidationError(
-          "get operation requires a collection and an index/key",
-          "get operation",
-          "2 arguments (collection, index/key)",
-          `${list.elements.length - 1} arguments`,
-        );
-      }
-
-      const collection = transformNode(list.elements[1], currentDir);
-      if (!collection) {
-        throw new ValidationError(
-          "Collection transformed to null",
-          "get operation",
-          "valid collection expression",
-          "null",
-        );
-      }
-
-      const index = transformNode(list.elements[2], currentDir);
-      if (!index) {
-        throw new ValidationError(
-          "Index transformed to null",
-          "get operation",
-          "valid index expression",
-          "null",
-        );
-      }
-
-      return {
-        type: IR.IRNodeType.CallExpression,
-        callee: {
-          type: IR.IRNodeType.Identifier,
-          name: "get",
-        } as IR.IRIdentifier,
-        arguments: [collection, index],
-      } as IR.IRCallExpression;
-    },
-    "transformGet",
-    TransformError,
-    [list],
-  );
-}
-
-/**
  * Transform "new" constructor.
  */
 export function transformNew(
@@ -427,15 +377,8 @@ export function transformCollectionAccess(
         }
       }
 
-      // Generic collection access using 'get' function
-      return {
-        type: IR.IRNodeType.CallExpression,
-        callee: {
-          type: IR.IRNodeType.Identifier,
-          name: "get",
-        } as IR.IRIdentifier,
-        arguments: [collection, index],
-      } as IR.IRCallExpression;
+      // Use our createGetOperation function to create a get call
+      return createGetOperation(collection, index);
     },
     "transformCollectionAccess",
     TransformError,

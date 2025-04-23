@@ -438,82 +438,26 @@ function determineCallOrAccess(
     );
   }
 
-  const first = elements[0];
-  const secondElement = elements[1];
-  
-  // Known macros that should be treated as function calls
-  const knownMacros = ["contains?", "empty?", "nil?", "first", "second", "rest", "next", "nth"];
-  
-  // Handle macro calls
-  if (first.type === "symbol") {
-    const symbolName = (first as SymbolNode).name;
-    if (knownMacros.includes(symbolName)) {
-      return createCallExpression(list, currentDir, transformNode, firstTransformed);
+  // For two-element forms (obj key), use createGetOperation which handles
+  // both property access and function calls at runtime
+  if (elements.length === 2) {
+    const secondElement = transformNode(elements[1], currentDir);
+    if (!secondElement) {
+      throw new ValidationError(
+        "Second element transformed to null",
+        "function call or property access",
+        "valid second argument",
+        "null"
+      );
     }
     
-    // Check for collection naming patterns - these should override function call assumptions
-    const collectionIndicators = ["Collection", "Array", "List", "Vector", "Map", "Set"];
-    
-    // Check for explicit collection naming patterns
-    const hasCollectionIndicator = collectionIndicators.some(indicator => 
-      symbolName.includes(indicator) || symbolName.startsWith("my") || symbolName.endsWith("s"));
-      
-    if (hasCollectionIndicator && elements.length === 2) {
-      // Check if the second element is a number or seems like an index
-      const isLikelyIndex = 
-        (secondElement.type === "literal" && typeof (secondElement as LiteralNode).value === "number") ||
-        (secondElement.type === "symbol" && /^[0-9i]|index|idx|key$/.test((secondElement as SymbolNode).name));
-      
-      if (isLikelyIndex) {
-        return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode, firstTransformed);
-      }
-    }
+    // Use the get operation for all two-element forms
+    // This will be transpiled to handle both property access and function calls
+    return dataStructureModule.createGetOperation(firstTransformed, secondElement);
   }
   
-  // Structural-based detection (more reliable than name-based heuristics)
-  
-  // 1. If the first element is already a function expression, it's definitely a function call
-  if (firstTransformed.type === IR.IRNodeType.FunctionExpression) {
-    return createCallExpression(list, currentDir, transformNode, firstTransformed);
-  }
-  
-  // 2. If the first element is a list node, it's likely a lambda/function being called
-  if (first.type === "list") {
-    return createCallExpression(list, currentDir, transformNode, firstTransformed);
-  }
-  
-  // 3. For more than two arguments, it's almost certainly a function call
-  if (elements.length > 2) {
-    return createCallExpression(list, currentDir, transformNode, firstTransformed);
-  }
-
-  // 4. Check if the second element (index) is a numeric literal - likely collection access
-  const isNumericIndex = 
-    secondElement.type === "literal" && 
-    typeof (secondElement as LiteralNode).value === "number";
-  
-  // 5. Look at transformed node type for additional structural clues
-  const isMemberExpression = firstTransformed.type === IR.IRNodeType.MemberExpression;
-  
-  // If we have a member expression with a property access and a numeric index
-  // e.g., (obj.items 0) is likely a collection access
-  if (isMemberExpression && isNumericIndex) {
-    return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode, firstTransformed);
-  }
-  
-  // When we have a simple identifier with a numeric index, use advanced heuristics
-  if (firstTransformed.type === IR.IRNodeType.Identifier && isNumericIndex) {
-    return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode, firstTransformed);
-  }
-  
-  // Default: If it's a symbol (identifier) with a second argument, prefer function call semantics
-  // This represents typical function call syntax in Lisp-like languages
-  if (first.type === "symbol") {
-    return createCallExpression(list, currentDir, transformNode, firstTransformed);
-  }
-  
-  // As a fallback, create collection access - let the runtime handle errors
-  return dataStructureModule.transformCollectionAccess(list, currentDir, transformNode, firstTransformed);
+  // For more than two arguments, it's a function call
+  return createCallExpression(list, currentDir, transformNode, firstTransformed);
 }
 
 /**

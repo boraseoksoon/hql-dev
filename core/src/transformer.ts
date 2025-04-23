@@ -147,6 +147,7 @@ function convertExports(rawAst: any[]): HQLNode[] {
 /**
  * Transforms HQL AST nodes through all pipeline phases and outputs TS code.
  */
+// Update transformAST function in transformer.ts
 export async function transformAST(
   astNodes: HQLNode[],
   currentDir: string,
@@ -202,16 +203,10 @@ export async function transformAST(
 
     timer.phase("TS code generation");
   
-    // Prepend runtime unless in REPL mode
-    const finalCode = options.replMode
-      ? tsCode
-      : `${RUNTIME_FUNCTIONS}\n\n${tsCode}`;
+    // MODIFIED: Don't prepend runtime functions - use the pure TypeScript code
+    const finalCode = tsCode;
 
     timer.breakdown();
-
-    // if (sourceMap !== undefined) {
-    //   console.log("in transformAST sourceMap : " , sourceMap);
-    // }
     
     return { code: finalCode, sourceMap };
   } catch (error) {
