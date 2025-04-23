@@ -28,5 +28,10 @@ export function makeSourceMap(
   sourceMap.sources = [fileNameOnly];
   sourceMap.sourcesContent = [code];
 
+  // Debug logging to verify source map generation
+  console.log(`[SourceMap] Generated source map for ${originalHqlPath}, size: ${JSON.stringify(sourceMap).length}`);
+  console.log(`[SourceMap] Source map structure: sources=${JSON.stringify(sourceMap.sources)}, file=${sourceMap.file}`);
+  console.log(`[SourceMap] Mappings preview: ${sourceMap.mappings.substring(0, 50)}...`);
+
   return JSON.stringify(sourceMap);
 }

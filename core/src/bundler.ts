@@ -63,7 +63,6 @@ interface ImportInfo {
   path: string;
 }
 
-// Main API function
 export async function transpileCLI(
   inputPath: string,
   outputPath?: string,
@@ -90,17 +89,20 @@ export async function transpileCLI(
       // Process entry file
       if (options.showTiming) logger.startTiming("transpile-cli", "Process Entry");
       const { tsOutputPath, sourceMap } = await processEntryFile(resolvedInputPath, outPath, bundleOptions);
-      // console.log("[TRACE] After processEntryFile: tsOutputPath=", tsOutputPath);
-      // if (sourceMap) {
-      //   try {
-      //     const parsedMap = JSON.parse(sourceMap);
-      //     console.log("[TRACE] Source map after processEntryFile:", parsedMap);
-      //   } catch (e) {
-      //     console.log("[TRACE] Could not parse sourceMap after processEntryFile:", e, sourceMap);
-      //   }
-      // } else {
-      //   console.log("[TRACE] No sourceMap after processEntryFile!");
-      // }
+      logger.log({ text: `[Bundler] After processEntryFile: tsOutputPath=${tsOutputPath}`, namespace: "bundler" });
+      
+      if (sourceMap) {
+        logger.log({ text: `[Bundler] Source map from processEntryFile exists, size: ${sourceMap.length}`, namespace: "bundler" });
+        try {
+          const parsedMap = JSON.parse(sourceMap);
+          logger.log({ text: `[Bundler] Source map details: sources=${JSON.stringify(parsedMap.sources)}, file=${parsedMap.file}`, namespace: "bundler" });
+        } catch (e) {
+          logger.log({ text: `[Bundler] Could not parse sourceMap: ${e instanceof Error ? e.message : String(e)}`, namespace: "bundler" });
+        }
+      } else {
+        logger.log({ text: `[Bundler] No sourceMap after processEntryFile!`, namespace: "bundler" });
+      }
+      
       if (options.showTiming) logger.endTiming("transpile-cli", "Process Entry");
       
       // [TRACE] Before writing source map and embedding inline map
@@ -117,21 +119,48 @@ export async function transpileCLI(
           }
           const inlineMapComment = "\n//# sourceMappingURL=data:application/json;base64," + base64Encode(sourceMap);
           await Deno.writeTextFile(tsOutputPath, tsCode + inlineMapComment);
+          logger.log({ text: `[SourceMap] Added inline source map to TS file ${tsOutputPath}`, namespace: "bundler" });
         } catch (e) {
           logger.error({ text: `[EMBED] Failed to write inline source map: ${e instanceof Error ? e.message : String(e)}` , namespace: "bundler" });
         }
       }
 
-
-
       // Bundle the processed file
       if (options.showTiming) logger.startTiming("transpile-cli", "esbuild Bundling");
       logger.log({ text: `[Bundler] Forcing esbuild to use inline source maps for the bundle.` , namespace: "bundler" });
+      
+      // Always force inline source maps for the bundle
       await bundleWithEsbuild(tsOutputPath, outPath, { ...bundleOptions, sourcemap: "inline" });
+      
       logger.log({ text: `[Bundler] Bundled to ${outPath}` , namespace: "bundler" });
+
+      // Verify the bundled file has source maps
+      try {
+        const bundleContent = await Deno.readTextFile(outPath);
+        const hasInlineSourceMap = bundleContent.includes("//# sourceMappingURL=data:application/json;base64,");
+        logger.log({ text: `[Bundler] Final bundle has inline source map: ${hasInlineSourceMap}`, namespace: "bundler" });
+        
+        if (hasInlineSourceMap) {
+          // Extract a small part of the base64 source map to verify
+          const mapParts = bundleContent.split("//# sourceMappingURL=data:application/json;base64,");
+          if (mapParts.length > 1) {
+            const mapBase64 = mapParts[1].trim();
+            try {
+              // Try to decode a small part of the base64 to verify
+              const decoded = atob(mapBase64.substring(0, 100));
+              logger.log({ text: `[Bundler] Source map in bundle starts with: ${decoded.substring(0, 50)}...`, namespace: "bundler" });
+            } catch (e) {
+              logger.error({ text: `[Bundler] Error decoding base64 source map: ${e instanceof Error ? e.message : String(e)}`, namespace: "bundler" });
+            }
+          }
+        }
+      } catch (e) {
+        logger.error({ text: `[Bundler] Error checking bundle for source maps: ${e instanceof Error ? e.message : String(e)}`, namespace: "bundler" });
+      }
 
       // Register the bundle path globally for error reporting
       setCurrentBundlePath(outPath);
+      logger.log({ text: `[Bundler] Set current bundle path for error reporting: ${outPath}`, namespace: "bundler" });
 
       if (options.showTiming) logger.endTiming("transpile-cli", "esbuild Bundling");
       
@@ -265,7 +294,6 @@ async function processHqlImportsInTs(
   }
 }
 
-// Main processing function
 async function processEntryFile(
   inputPath: string,
   outputPath: string,
@@ -315,6 +343,8 @@ async function processHqlEntryFile(
     currentFile: resolvedInputPath
   });
 
+  logger.log({ text: `[SourceMap] After processHql, source map exists: ${sourceMap ? 'yes' : 'no'}`, namespace: "bundler" });
+  
   // Process nested HQL imports if present
   if (checkForHqlImports(tsCode)) {
     logger.log({ text: "Detected nested HQL imports in transpiled output. Processing them.", namespace: "bundler" });
@@ -327,11 +357,24 @@ async function processHqlEntryFile(
   // Write source map if present
   if (sourceMap) {
     await Deno.writeTextFile(tsOutputPath + ".map", sourceMap);
-    const sourceMapComment = `\n//# sourceMappingURL=${path.basename(tsOutputPath)}.map`;
-    await Deno.writeTextFile(tsOutputPath, tsCode + sourceMapComment);
-  } else {
-  }
+    logger.log({ text: `[SourceMap] Wrote source map to ${tsOutputPath}.map`, namespace: "bundler" });
 
+    // ---- Embed the source map as an inline comment in the .ts file ----
+    try {
+      // Read the generated TS code
+      const tsCode = await Deno.readTextFile(tsOutputPath);
+      function base64Encode(str: string): string {
+        return btoa(unescape(encodeURIComponent(str)));
+      }
+      const inlineMapComment = "\n//# sourceMappingURL=data:application/json;base64," + base64Encode(sourceMap);
+      await Deno.writeTextFile(tsOutputPath, tsCode + inlineMapComment);
+      logger.log({ text: `[SourceMap] Added inline source map to TypeScript file`, namespace: "bundler" });
+    } catch (e) {
+      logger.error({ text: `[EMBED] Failed to write inline source map: ${e instanceof Error ? e.message : String(e)}` , namespace: "bundler" });
+    }
+  } else {
+    logger.log({ text: `[SourceMap] No source map to write`, namespace: "bundler" });
+  }
 
   return { tsOutputPath, sourceMap };
 }
@@ -582,18 +625,55 @@ async function bundleWithEsbuild(
           allowJs: true,
           forceConsistentCasingInFileNames: true,
           importsNotUsedAsValues: "preserve",
+          sourceMap: true,
+          inlineSources: true
         }
       })
     };
     
+    // Log detailed source map settings
+    logger.log({ text: `[Bundler] esbuild buildOptions.sourcemap: ${buildOptions.sourcemap}`, namespace: "bundler"});
+    
+    // Check if source map file exists for the entry
+    try {
+      const sourceMapPath = entryPath + ".map";
+      const mapExists = await Deno.stat(sourceMapPath).then(() => true).catch(() => false);
+      logger.log({ text: `[Bundler] Entry file source map (${sourceMapPath}) exists: ${mapExists}`, namespace: "bundler"});
+      
+      if (mapExists) {
+        try {
+          const mapContent = await Deno.readTextFile(sourceMapPath);
+          const mapObj = JSON.parse(mapContent);
+          logger.log({ text: `[Bundler] Source map before bundling: sources=${JSON.stringify(mapObj.sources)}, file=${mapObj.file}`, namespace: "bundler"});
+        } catch (e) {
+          logger.error({ text: `[Bundler] Error reading source map: ${e instanceof Error ? e.message : String(e)}`, namespace: "bundler"});
+        }
+      }
+    } catch (e) {
+      logger.error({ text: `[Bundler] Error checking for source map: ${e instanceof Error ? e.message : String(e)}`, namespace: "bundler"});
+    }
+    
     // Run the build
     logger.log({ text: `Starting bundling: ${entryPath}`, namespace: "bundler" });
-    logger.log({ text: `[Bundler] esbuild buildOptions.sourcemap: ${buildOptions.sourcemap}`, namespace: "bundler"});
     const result = await runBuildWithRetry(buildOptions, MAX_RETRIES);
 
     // Post-process the output if needed
     if (result.metafile) {
       await postProcessBundleOutput(outputPath);
+    }
+    
+    // Verify if the output file contains the source map
+    try {
+      const content = await Deno.readTextFile(outputPath);
+      const hasSourceMap = content.includes("//# sourceMappingURL=");
+      logger.log({ text: `[Bundler] Output file contains sourceMappingURL: ${hasSourceMap}`, namespace: "bundler" });
+      
+      if (hasSourceMap) {
+        const isInline = content.includes("//# sourceMappingURL=data:application/json;base64,");
+        logger.log({ text: `[Bundler] Source map is inline: ${isInline}`, namespace: "bundler" });
+      }
+    } catch (e) {
+      logger.error({ text: `[Bundler] Error checking for source map in output: ${e instanceof Error ? e.message : String(e)}`, namespace: "bundler" });
     }
     
     logger.log({ 
@@ -608,7 +688,6 @@ async function bundleWithEsbuild(
     await cleanupAfterBundling(tempDir, cleanupTemp);
   }
 }
-
 /**
  * Post-process bundle output to ensure it's fully self-contained
  */

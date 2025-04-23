@@ -202,8 +202,7 @@ export async function transformAST(
     const sourceMap = tsResult.sourceMap;
 
     timer.phase("TS code generation");
-  
-    // MODIFIED: Don't prepend runtime functions - use the pure TypeScript code
+    
     const finalCode = tsCode;
 
     timer.breakdown();

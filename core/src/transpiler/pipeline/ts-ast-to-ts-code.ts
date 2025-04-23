@@ -85,7 +85,22 @@ export async function generateTypeScript(
     let sourceMap: string | undefined = undefined;
     if (!isStdlib && isHqlFile(currentFilePath)) {
       sourceMap = makeSourceMap(code, currentFilePath!);
+      logger.debug(`[SourceMap] Generated source map for ${currentFilePath}, size: ${sourceMap.length}`, 'source-map');
+      
+      // Log source map content for debugging
+      try {
+        const sourceMapObj = JSON.parse(sourceMap);
+        logger.debug(`[SourceMap] Source map for ${currentFilePath}: ${JSON.stringify({
+          version: sourceMapObj.version,
+          sources: sourceMapObj.sources,
+          sourcesContent: sourceMapObj.sourcesContent ? "[present]" : "[missing]",
+          mappings: sourceMapObj.mappings.substring(0, 50) + "..." // Show first 50 chars
+        })}`, 'source-map');
+      } catch (e) {
+        logger.debug(`[SourceMap] Error parsing source map: ${e instanceof Error ? e.message : String(e)}`, 'source-map');
+      }
     }
+    
     return { code, sourceMap };
   } catch (error) {
     throw new CodeGenError(
