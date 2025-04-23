@@ -209,10 +209,10 @@
 )
 
 ;; Missing closing parenthesis below - deliberate syntax error
-(let x 10)
+(le x 10)
 
 ;; This code should not execute
 (print "Value is" x)
 
-(prnt "yo Value is" x) ;; where the intentional error occurs
+(print "yo Value is" x) ;; where the intentional error occurs
 (print "Value is" x)

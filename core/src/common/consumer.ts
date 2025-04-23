@@ -1,137 +1,122 @@
-import { SourceMapConsumer } from "npm:source-map@0.7.3";
+// consumer.ts - Source map stack trace consumer for HQL -> JS/TS error mapping
+
+import { SourceMapConsumer } from "npm:source-map@0.7.4";
+import { dirname, normalize, relative } from "https://deno.land/std@0.200.0/path/mod.ts";
 import { globalLogger as logger } from "../logger.ts";
 
-// This URL points to the source-map library's wasm file on a CDN
-const WASM_URL = "https://unpkg.com/source-map@0.7.3/lib/mappings.wasm";
-
-// Track if SourceMapConsumer has been initialized
-let sourceMapConsumerInitialized = false;
-
-// Initialize the SourceMapConsumer with the WASM file
-async function initializeSourceMapConsumer() {
-  if (sourceMapConsumerInitialized) {
-    return;
-  }
-
+/**
+ * Extracts the inline source map from a JS bundle file.
+ * Returns the parsed source map object, or null if not found.
+ */
+export async function extractInlineSourceMap(bundlePath: string): Promise<any | null> {
   try {
-    logger.debug(`[mapStackTraceToHql] Initializing SourceMapConsumer with WASM module from ${WASM_URL}`, 'source-map');
-    
-    // Fetch the WASM binary
-    const response = await fetch(WASM_URL);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch WASM module: ${response.status} ${response.statusText}`);
+    // console.log('[extractInlineSourceMap] Reading bundle:', bundlePath);
+    logger.debug(`[extractInlineSourceMap] Reading bundle: ${bundlePath}`, 'source-map');
+    const bundle = await Deno.readTextFile(bundlePath);
+    // console.log('[extractInlineSourceMap] Bundle read, length:', bundle.length);
+    logger.debug(`[extractInlineSourceMap] Bundle read, length: ${bundle.length}`, 'source-map');
+    const match = bundle.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
+    if (!match) {
+      console.warn('[extractInlineSourceMap] No inline source map regex match.');
+      return null;
     }
-    
-    // Get the WASM as an ArrayBuffer
-    const wasmBuffer = await response.arrayBuffer();
-    
-    // Initialize the SourceMapConsumer with the WASM module
-    await SourceMapConsumer.initialize({
-      'lib/mappings.wasm': wasmBuffer
-    });
-    
-    sourceMapConsumerInitialized = true;
-    logger.debug(`[mapStackTraceToHql] SourceMapConsumer initialized successfully`, 'source-map');
+    // console.log('[extractInlineSourceMap] Inline source map regex matched.');
+    logger.debug('[extractInlineSourceMap] Inline source map regex matched.', 'source-map');
+    const rawMap = atob(match[1]);
+    // console.log('[extractInlineSourceMap] Base64 decode success, length:', rawMap.length);
+    logger.debug(`[extractInlineSourceMap] Base64 decode success, length: ${rawMap.length}`, 'source-map');
+    const parsed = JSON.parse(rawMap);
+    // console.log('[extractInlineSourceMap] JSON parse success. sources:', parsed.sources);
+    logger.debug(`[extractInlineSourceMap] JSON parse success. sources: ${parsed.sources}`, 'source-map');
+    return parsed;
   } catch (error) {
-    logger.debug(`[mapStackTraceToHql] Failed to initialize SourceMapConsumer: ${error instanceof Error ? error.message : String(error)}`, 'source-map');
-    throw error;
+    console.error(`[extractInlineSourceMap] Failed to extract source map from ${bundlePath}:`, error);
+    return null;
   }
 }
 
-// Simple source map parser without the WebAssembly dependency
-export async function mapStackTraceToHql(
-  error: Error,
-  bundlePath: string
-): Promise<string> {
-  if (!error.stack) {
-    logger.debug(`[mapStackTraceToHql] No stack trace to map for error: ${error.message}`, 'source-map');
-    return error.message;
-  }
+/**
+ * Maps a JS/TS stack trace to original HQL locations using the inline source map.
+ * Returns the remapped stack trace as a string.
+ */
+export async function mapStackTraceToHql(error: Error, bundlePath: string): Promise<string> {
+  // console.log('[mapStackTraceToHql/DEBUG] Input:', { errorStack: error.stack, bundlePath });
+  logger.debug(`[mapStackTraceToHql/DEBUG] Input: ${JSON.stringify({ errorStack: error.stack, bundlePath })}`, 'source-map');
+  if (!error.stack) return "";
 
-  try {
-    logger.debug(`[mapStackTraceToHql] Reading bundle from: ${bundlePath}`, 'source-map');
-    const jsContent = await Deno.readTextFile(bundlePath);
-    
-    // Extract the source map from the inline comment
-    logger.debug(`[mapStackTraceToHql] Looking for sourceMappingURL comment...`, 'source-map');
-    const sourceMapComment = jsContent.match(/\/\/# sourceMappingURL=data:application\/json;base64,([^"]*)/);
-    
-    if (!sourceMapComment || !sourceMapComment[1]) {
-      logger.debug(`[mapStackTraceToHql] No source map found in bundle, falling back to original stack`, 'source-map');
-      return error.stack;
-    }
-
-    // Decode the base64 source map
-    logger.debug(`[mapStackTraceToHql] Source map found, decoding base64...`, 'source-map');
-    const base64 = sourceMapComment[1];
-    const jsonStr = atob(base64);
-    
-    // Parse the source map
-    logger.debug(`[mapStackTraceToHql] Parsing source map...`, 'source-map');
-    const sourceMap = JSON.parse(jsonStr);
-    
-    if (!sourceMap.sources || sourceMap.sources.length === 0) {
-      logger.debug(`[mapStackTraceToHql] Source map contains no sources, unable to remap`, 'source-map');
-      return error.stack;
-    }
-    
-    logger.debug(`[mapStackTraceToHql] Source map contains sources: ${JSON.stringify(sourceMap.sources)}`, 'source-map');
-    
-    // Process stack trace directly
-    const stackLines = error.stack.split('\n');
-    const remappedLines = [];
-    
-    logger.debug(`[mapStackTraceToHql] Processing ${stackLines.length} stack lines`, 'source-map');
-    
-    // Keep the error message line
-    if (stackLines.length > 0) {
-      remappedLines.push(stackLines[0]);
-    }
-    
-    // Process the stack frames
-    for (let i = 1; i < stackLines.length; i++) {
-      const line = stackLines[i];
-      
-      // Match stack frame format: at [function] (file:line:column)
-      const frameMatch = line.match(/^\s*at\s+(?:(.+?)\s+\()?(?:file:\/\/)?([^:()]+):(\d+):(\d+)(?:\))?/);
-      
-      if (frameMatch) {
-        const [, fnName, filePath, lineStr, colStr] = frameMatch;
-        
-        // Only process frames from our bundle
-        if (filePath.includes(bundlePath)) {
-          // Look for a direct line mapping in the source map
-          // Simple approach: use the first source in the sources array
-          if (sourceMap.sources.length > 0) {
-            const originalSource = sourceMap.sources[0];
-            
-            // Create a remapped line pointing to the HQL file
-            // This is a simplification - ideally we'd properly decode the mappings
-            // but for a quick fix, we'll just change the file path
-            const prefix = fnName ? `    at ${fnName} (` : '    at ';
-            const suffix = fnName ? ')' : '';
-            
-            // Use the original line and column if possible, otherwise use the generated ones
-            const remappedLine = `${prefix}${originalSource}:${lineStr}:${colStr}${suffix}`;
-            remappedLines.push(remappedLine);
-            
-            logger.debug(`[mapStackTraceToHql] Remapped line: ${remappedLine}`, 'source-map');
-            continue;
-          }
-        }
-      }
-      
-      // If we couldn't remap this line, keep the original
-      remappedLines.push(line);
-    }
-    
-    // Combine remapped lines into a single stack trace
-    const remappedStack = remappedLines.join('\n');
-    logger.debug(`[mapStackTraceToHql] Remapped stack trace: ${remappedStack}`, 'source-map');
-    
-    return remappedStack;
-  } catch (e) {
-    logger.debug(`[mapStackTraceToHql] Error mapping stack trace: ${e instanceof Error ? e.message : String(e)}`, 'source-map');
+  const sourceMap = await extractInlineSourceMap(bundlePath);
+  if (!sourceMap) {
+    // console.log('[mapStackTraceToHql/DEBUG] No source map found for bundle:', bundlePath);
+    logger.debug(`[mapStackTraceToHql/DEBUG] No source map found for bundle: ${bundlePath}`, 'source-map');
     return error.stack;
   }
+  // console.log('[mapStackTraceToHql/DEBUG] Parsed sourceMap:', JSON.stringify(sourceMap, null, 2));
+  logger.debug(`[mapStackTraceToHql/DEBUG] Parsed sourceMap: ${JSON.stringify(sourceMap, null, 2)}`, 'source-map');
+  if (sourceMap.sourcesContent) {
+    // console.log('[mapStackTraceToHql/DEBUG] sourceMap.sourcesContent:', sourceMap.sourcesContent.map((c: string, i: number) => `[${i}] ${c.slice(0, 60)}...`));
+    logger.debug(`[mapStackTraceToHql/DEBUG] sourceMap.sourcesContent: ${sourceMap.sourcesContent.map((c: string, i: number) => `[${i}] ${c.slice(0, 60)}...`).join(', ')}`,'source-map');
+  }
+
+  const consumer = await new SourceMapConsumer(sourceMap);
+  const cwd = Deno.cwd();
+  const remapped: string[] = [];
+
+  // A regex that captures optional function name, file URL/path, line and column
+  const frameRegex = /^\s*at\s+(?:(.*?)\s+\()?(.+?):(\d+):(\d+)\)?$/;
+
+  for (const line of error.stack.split('\n')) {
+    // console.log('[mapStackTraceToHql/DEBUG] Processing stack line:', line);
+    logger.debug(`[mapStackTraceToHql/DEBUG] Processing stack line: ${line}`,'source-map');
+    const m = line.match(frameRegex);
+    if (m) {
+      const fnName = m[1] || '';
+      const filePath = m[2];
+      const lineNum = Number(m[3]);
+      const colNum = Number(m[4]);
+      // console.log('[mapStackTraceToHql/DEBUG] Mapping JS frame:', { fnName, filePath, lineNum, colNum });
+      logger.debug(`[mapStackTraceToHql/DEBUG] Mapping JS frame: ${JSON.stringify({ fnName, filePath, lineNum, colNum })}`,'source-map');
+
+      // Try mapping at the reported column, fallback by decrementing if no source
+      let orig = consumer.originalPositionFor({ line: lineNum, column: colNum });
+      // console.log('[mapStackTraceToHql/DEBUG] Mapping result:', orig);
+      logger.debug(`[mapStackTraceToHql/DEBUG] Mapping result: ${JSON.stringify(orig)}`,'source-map');
+      if (!orig.source) {
+        for (let c = colNum - 1; c >= 0; c--) {
+          orig = consumer.originalPositionFor({ line: lineNum, column: c });
+          // console.log(`[mapStackTraceToHql/DEBUG] Fallback mapping result for column ${c}:`, orig);
+          logger.debug(`[mapStackTraceToHql/DEBUG] Fallback mapping result for column ${c}: ${JSON.stringify(orig)}`,'source-map');
+          if (orig.source) break;
+        }
+      }
+
+      if (orig.source) {
+        // Normalize and relativize the source path
+        let src = normalize(orig.source);
+        src = relative(cwd, src) || src;
+        // console.log('[mapStackTraceToHql/DEBUG] Final mapped source:', src, 'line:', orig.line, 'col:', orig.column);
+        logger.debug(`[mapStackTraceToHql/DEBUG] Final mapped source: ${src} line: ${orig.line} col: ${orig.column}`,'source-map');
+        const location = `${src}:${orig.line}:${orig.column ?? 0}`;
+        remapped.push(fnName
+          ? `at ${fnName} (${location})`
+          : `at ${location}`
+        );
+        continue;
+      } else {
+        // console.log('[mapStackTraceToHql/DEBUG] No mapping found for frame:', { fnName, filePath, lineNum, colNum });
+        logger.debug(`[mapStackTraceToHql/DEBUG] No mapping found for frame: ${JSON.stringify({ fnName, filePath, lineNum, colNum })}`,'source-map');
+      }
+    } else {
+      // console.log('[mapStackTraceToHql/DEBUG] Stack line did not match frame regex:', line);
+      logger.debug(`[mapStackTraceToHql/DEBUG] Stack line did not match frame regex: ${line}`,'source-map');
+    }
+
+    // If not matched or no mapping, keep original line
+    remapped.push(line);
+  }
+
+  consumer.destroy();
+  const result = remapped.join('\n');
+  // console.log('[mapStackTraceToHql/DEBUG] Final remapped stack trace:', result);
+  logger.debug(`[mapStackTraceToHql/DEBUG] Final remapped stack trace: ${result}`,'source-map');
+  return result;
 }

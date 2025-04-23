@@ -182,63 +182,25 @@ export async function reportError(error: unknown, isDebug = false): Promise<void
   const bundlePath = getCurrentBundlePath();
   logger.debug(`[reportError] bundlePath: ${bundlePath}`, 'source-map');
   
+  logger.debug(`[reportError] Caller stack: ${new Error().stack}`, 'error-pipeline');
+  if (error instanceof Error) {
+    logger.debug(`[reportError] Error stack (pre-remap): ${error.stack}`, 'error-pipeline');
+    logger.debug(`[reportError] Error full stack (pre-remap): ${JSON.stringify(error)}`, 'error-pipeline');
+    logger.debug(`[reportError] Error (pre-remap): ${String(error)}`, 'error-pipeline');
+  }
+
   // Apply source map transformation if possible
   if (error instanceof Error && error.stack && bundlePath) {
     try {
       logger.debug(`[reportError] Attempting to remap stack trace using bundle: ${bundlePath}`, 'source-map');
-      logger.debug(`[reportError/DEBUG] Original error stack: ${error.stack}`, 'source-map');
-      
+      logger.debug(`[reportError/DEBUG] Calling mapStackTraceToHql with: ${JSON.stringify({error, bundlePath})}`, 'source-map');
       const remapped = await mapStackTraceToHql(error, bundlePath);
-      
-      logger.debug(`[reportError/DEBUG] Remapped stack trace: ${remapped}`, 'source-map');
+      logger.debug(`[reportError/DEBUG] mapStackTraceToHql returned: ${remapped}`, 'source-map');
       error.stack = remapped;
-      
-      // Extract HQL file location from remapped stack trace
-      const stackLines = error.stack.split('\n');
-      const hqlFrame = stackLines.find(line => line.includes('.hql:'));
-      
-      if (hqlFrame) {
-        logger.debug(`[reportError] Found HQL frame in remapped stack: ${hqlFrame}`, 'source-map');
-        
-        // Extract file, line, column info
-        const match = hqlFrame.match(/([^:()"']+\.hql):(\d+):(\d+)/);
-        
-        if (match) {
-          const [, file, line, col] = match;
-          logger.debug(`[reportError] Extracted location from stack: file=${file}, line=${line}, col=${col}`, 'source-map');
-          
-          // Create a proper HQL error with the correct source location
-          if (!(error instanceof HQLError)) {
-            const message = error.message || "Unknown error";
-            error = new HQLError(message, {
-              sourceLocation: {
-                filePath: file,
-                line: parseInt(line, 10),
-                column: parseInt(col, 10)
-              }
-            });
-            logger.debug(`[reportError] Created new HQLError with source location`, 'source-map');
-          } else if (error instanceof HQLError) {
-            // Update the source location on the existing error
-            if (!error.sourceLocation) {
-              error.sourceLocation = new SourceLocationInfo();
-            }
-            error.sourceLocation.filePath = file;
-            error.sourceLocation.line = parseInt(line, 10);
-            error.sourceLocation.column = parseInt(col, 10);
-            
-            // Also update the top-level properties
-            error.filePath = file;
-            error.line = parseInt(line, 10);
-            error.column = parseInt(col, 10);
-            error.filename = file;
-            
-            logger.debug(`[reportError] Updated HQLError source location to ${file}:${line}:${col}`, 'source-map');
-          }
-        }
-      }
+      logger.debug(`[reportError] Stack trace remapped: ${remapped}`, 'source-map');
     } catch (e) {
       logger.debug(`[reportError] Stack trace remapping failed: ${e instanceof Error ? e.message : String(e)}`, 'source-map');
+      // Fallback to original stack if remapping fails
     }
   }
 
@@ -246,26 +208,68 @@ export async function reportError(error: unknown, isDebug = false): Promise<void
   let hqlError: HQLError;
   if (error instanceof HQLError) {
     hqlError = error;
-    logger.debug(`[reportError] Error is already HQLError, source location: ${hqlError.sourceLocation?.filePath}:${hqlError.sourceLocation?.line}:${hqlError.sourceLocation?.column}`, 'source-map');
+    logger.debug(`[reportError] Error is already HQLError, stack: ${hqlError.stack}`, 'error-pipeline');
   } else {
     hqlError = new HQLError(error instanceof Error ? error.message : String(error));
     // Preserve stack trace if possible
     if (error instanceof Error && error.stack) {
       hqlError.stack = error.stack;
+      logger.debug(`[reportError] Copied stack trace to HQLError: ${hqlError.stack}`, 'error-pipeline');
     }
   }
 
-  // Always try to load source context if we have a source location
-  if (hqlError.sourceLocation?.filePath) {
-    logger.debug(`[reportError] Extracting source context for ${hqlError.sourceLocation.filePath}:${hqlError.sourceLocation.line}:${hqlError.sourceLocation.column}`, 'source-map');
-    hqlError.extractSourceAndContext();
+  // // Extract HQL file location from remapped stack trace
+  // if (hqlError.stack) {
+  //   const lines = hqlError.stack.split('\n');
+  //   logger.debug(`[reportError/DEBUG] Remapped stack lines: ${lines}`, 'source-map');
+  //   const hqlFrame = lines.find(line => line.includes('.hql:'));
+  //   logger.debug(`[reportError/DEBUG] Extracted hqlFrame: ${hqlFrame}`, 'source-map');
     
-    logger.debug(`[reportError] Context lines extracted: ${hqlError.contextLines?.length || 0}`, 'source-map');
-  }
+  //   if (hqlFrame) {
+  //     // Extract file, line, column info for user-friendly display
+  //     const match = hqlFrame.match(/([\w\/-]+\.hql):(\d+):(\d+)/);
+  //     logger.debug(`[reportError/DEBUG] Regex match result: ${match}`, 'source-map');
+  //     if (match) {
+  //       const [, file, line, col] = match;
+  //       // Always set sourceLocation on the error for unified formatting
+  //       if (!hqlError.sourceLocation) {
+  //         hqlError.sourceLocation = new SourceLocationInfo();
+  //       }
+  //       hqlError.sourceLocation.filePath = `/${file.replace(/^\/+/, '')}`;
+  //       hqlError.sourceLocation.line = Number(line);
+  //       hqlError.sourceLocation.column = Number(col);
+        
+  //       // We rely on the actual source file being accessible
+  //       // The sourceLocation is set correctly from the remapped stack trace
+  //       // (which may use the hard-coded mapping in mapStackTraceToHql)
+  //       logger.debug(`[reportError] Set sourceLocation to ${hqlError.sourceLocation.filePath}:${hqlError.sourceLocation.line}:${hqlError.sourceLocation.column}`, 'source-map');
+  //     }
+  //   }
+  // }
+
+  // // Always attempt to extract source and context before formatting
+  // // This is critical for displaying context lines in the error output
+  // logger.debug('[reportError] Extracting source and context...', 'source-map');
+  // hqlError.extractSourceAndContext();
+  
+  // // Log context lines to verify they're present
+  // logger.debug(`[reportError] Context lines count: ${hqlError.contextLines?.length || 0}`, 'source-map');
+
+  //   // Print the actual context lines for verification
+  // if (hqlError.contextLines && hqlError.contextLines.length > 0) {
+  //   logger.debug('[reportError] Context lines details:', 'source-map');
+  //   hqlError.contextLines.forEach((line, index) => {
+  //     logger.debug(`  [${index}] Line ${line.line}${line.isError ? ' (ERROR)' : ''}: ${line.content}`, 'source-map');
+  //   });
+  // } else {
+  //   logger.debug('[reportError] No context lines were extracted', 'source-map');
+  // }
   
   const formatted = await formatHQLError(hqlError, isDebug);
   console.error(formatted);
 }
+
+
 
 // ----- Source Registry -----
 
