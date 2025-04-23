@@ -428,8 +428,8 @@ function transformDotChainForm(list: SList, enumDefinitions: Map<string, SList>,
       for (let i = 1; i < list.elements.length; i++) {
         const element = list.elements[i];
         
-        // Check if this is a method indicator (symbol starting with '.')
-        if (isSymbol(element) && (element as SSymbol).name.startsWith('.')) {
+        // Check if this is a method/property indicator (symbol starting with '.')
+        if (isSymbol(element) && (element as SymbolNode).name.startsWith('.')) {
           // If we have a previous method, store it
           if (currentMethod !== null) {
             methodGroups.push({
@@ -441,7 +441,7 @@ function transformDotChainForm(list: SList, enumDefinitions: Map<string, SList>,
           }
           
           // Set current method
-          currentMethod = element as SSymbol;
+          currentMethod = element as SymbolNode;
         } 
         // If not a method indicator, it's an argument to the current method
         else if (currentMethod !== null) {
@@ -461,17 +461,29 @@ function transformDotChainForm(list: SList, enumDefinitions: Map<string, SList>,
       
       // Build the nested method calls from inside out
       for (const { method, args } of methodGroups) {
-        const methodName = (method as SSymbol).name;
+        const methodName = (method as SymbolNode).name;
         const methodNameWithoutDot = methodName.substring(1);
         
-        // Now we'll use a different approach - create a get-and-call expression
-        // This will ensure proper method invocation using the get runtime function
-        result = createList(
-          createSymbol("method-call"),
-          result,                           // Object
-          createLiteral(methodNameWithoutDot),  // Method name
-          ...args                           // Arguments (if any)
-        );
+        // Methods like trim, toUpperCase should always be called, even with no arguments
+        const knownNoArgMethods = ["trim", "toUpperCase", "toLowerCase", "toString", "valueOf"];
+        
+        // Check if this is a property access (no arguments) or method call
+        if (args.length === 0 && !knownNoArgMethods.includes(methodNameWithoutDot)) {
+          // This is likely a property access
+          result = createList(
+            createSymbol("js-get"),
+            result,
+            createLiteral(methodNameWithoutDot)
+          );
+        } else {
+          // This is a method call - with args or with no args but known to be a method
+          result = createList(
+            createSymbol("method-call"),
+            result,
+            createLiteral(methodNameWithoutDot),
+            ...args
+          );
+        }
       }
       
       return result;

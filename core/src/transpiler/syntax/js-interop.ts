@@ -324,17 +324,35 @@ export function transformJsGet(
       }
 
       try {
+        // Try to get a string literal property name
         const property = extractStringLiteral(list.elements[2]);
-        return {
-          type: IR.IRNodeType.MemberExpression,
-          object,
-          property: {
-            type: IR.IRNodeType.StringLiteral,
-            value: property,
-          } as IR.IRStringLiteral,
-          computed: true,
-        } as IR.IRMemberExpression;
+        
+        // Check if property name is a valid JavaScript identifier
+        if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(property)) {
+          // Use dot notation for valid identifiers
+          return {
+            type: IR.IRNodeType.MemberExpression,
+            object,
+            property: {
+              type: IR.IRNodeType.Identifier,
+              name: property,
+            } as IR.IRIdentifier,
+            computed: false,
+          } as IR.IRMemberExpression;
+        } else {
+          // Use bracket notation for non-identifier properties
+          return {
+            type: IR.IRNodeType.MemberExpression,
+            object,
+            property: {
+              type: IR.IRNodeType.StringLiteral,
+              value: property,
+            } as IR.IRStringLiteral,
+            computed: true,
+          } as IR.IRMemberExpression;
+        }
       } catch {
+        // Handle non-string literal property
         const propExpr = transformNode(list.elements[2], currentDir);
         if (!propExpr) {
           throw new ValidationError(

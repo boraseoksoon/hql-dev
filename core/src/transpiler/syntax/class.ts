@@ -84,41 +84,69 @@ export function convertCallExpression(node: IR.IRCallExpression): ts.CallExpress
 export function convertMemberExpression(node: IR.IRMemberExpression): ts.Expression {
   return execute(node, "member expression", () => {
     const object = convertIRExpr(node.object);
+    
     if (node.property.type === IR.IRNodeType.Identifier) {
+      // For identifier properties, always use dot notation
       return ts.factory.createPropertyAccessExpression(
         object,
         ts.factory.createIdentifier((node.property as IR.IRIdentifier).name)
       );
     } else if (node.property.type === IR.IRNodeType.StringLiteral) {
       const propValue = (node.property as IR.IRStringLiteral).value;
-      return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propValue)
-        ? ts.factory.createPropertyAccessExpression(object, ts.factory.createIdentifier(propValue))
-        : ts.factory.createElementAccessExpression(object, ts.factory.createStringLiteral(propValue));
+      
+      // Use dot notation for valid identifiers, bracket notation otherwise
+      if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propValue) && !node.computed) {
+        return ts.factory.createPropertyAccessExpression(
+          object, 
+          ts.factory.createIdentifier(propValue)
+        );
+      } else {
+        return ts.factory.createElementAccessExpression(
+          object,
+          ts.factory.createStringLiteral(propValue)
+        );
+      }
     } else {
-      return ts.factory.createElementAccessExpression(object, convertIRExpr(node.property));
+      // Use bracket notation for other property types
+      return ts.factory.createElementAccessExpression(
+        object,
+        convertIRExpr(node.property)
+      );
     }
   });
 }
 
 export function convertCallMemberExpression(node: IR.IRCallMemberExpression): ts.CallExpression {
   return execute(node, "call member expression", () => {
+    // Create the property access expression
     let memberExpr: ts.Expression;
+    
     if (node.property.type === IR.IRNodeType.StringLiteral) {
-      memberExpr = ts.factory.createPropertyAccessExpression(
-        convertIRExpr(node.object),
-        ts.factory.createIdentifier((node.property as IR.IRStringLiteral).value)
-      );
+      // For string literal properties, use dot notation when possible
+      const propName = (node.property as IR.IRStringLiteral).value;
+      
+      if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propName)) {
+        // Valid identifier - use dot notation
+        memberExpr = ts.factory.createPropertyAccessExpression(
+          convertIRExpr(node.object),
+          ts.factory.createIdentifier(propName)
+        );
+      } else {
+        // Not a valid identifier - use bracket notation
+        memberExpr = ts.factory.createElementAccessExpression(
+          convertIRExpr(node.object),
+          ts.factory.createStringLiteral(propName)
+        );
+      }
     } else {
-      const property = convertIRExpr(node.property);
-      memberExpr = ts.isStringLiteral(property)
-        ? ts.factory.createPropertyAccessExpression(
-            convertIRExpr(node.object),
-            ts.factory.createIdentifier(property.text)
-          )
-        : ts.isIdentifier(property)
-          ? ts.factory.createPropertyAccessExpression(convertIRExpr(node.object), property)
-          : ts.factory.createElementAccessExpression(convertIRExpr(node.object), property);
+      // For non-string properties, use bracket notation
+      memberExpr = ts.factory.createElementAccessExpression(
+        convertIRExpr(node.object),
+        convertIRExpr(node.property)
+      );
     }
+
+    // Create the method call expression
     return ts.factory.createCallExpression(
       memberExpr,
       undefined,
@@ -299,16 +327,16 @@ export function transformMethodCall(
         return transformed;
       });
 
-      // Create a GetAndCall node - new IR node type for this pattern
+      // Create a CallMemberExpression node
       return {
-        type: IR.IRNodeType.GetAndCall,
+        type: IR.IRNodeType.CallMemberExpression,
         object,
-        method: {
+        property: {
           type: IR.IRNodeType.StringLiteral,
           value: methodName
         } as IR.IRStringLiteral,
         arguments: args
-      } as IR.IRGetAndCall;
+      } as IR.IRCallMemberExpression;
     },
     "transformMethodCall",
     TransformError,
