@@ -460,28 +460,34 @@ function transformDotChainForm(list: SList, enumDefinitions: Map<string, SList>,
       }
       
       // Build the nested method calls from inside out
-      for (const { method, args } of methodGroups) {
+      for (let i = 0; i < methodGroups.length; i++) {
+        const { method, args } = methodGroups[i];
         const methodName = (method as SymbolNode).name;
         const methodNameWithoutDot = methodName.substring(1);
         
-        // Methods like trim, toUpperCase should always be called, even with no arguments
-        const knownNoArgMethods = ["trim", "toUpperCase", "toLowerCase", "toString", "valueOf"];
-        
-        // Check if this is a property access (no arguments) or method call
-        if (args.length === 0 && !knownNoArgMethods.includes(methodNameWithoutDot)) {
-          // This is likely a property access
-          result = createList(
-            createSymbol("js-get"),
-            result,
-            createLiteral(methodNameWithoutDot)
-          );
-        } else {
-          // This is a method call - with args or with no args but known to be a method
+        // Determine how to handle this dot-chain element
+        if (args.length > 0) {
+          // Has arguments - definitely a method call
           result = createList(
             createSymbol("method-call"),
             result,
             createLiteral(methodNameWithoutDot),
             ...args
+          );
+        } else if (i < methodGroups.length - 1) {
+          // No arguments but not the last in chain - treat as a JS method with runtime check
+          result = createList(
+            createSymbol("js-method"),
+            result,
+            createLiteral(methodNameWithoutDot)
+          );
+        } else {
+          // No arguments and last in chain - could be property or no-arg method
+          // Use js-method to dynamically check at runtime
+          result = createList(
+            createSymbol("js-method"),
+            result,
+            createLiteral(methodNameWithoutDot)
           );
         }
       }

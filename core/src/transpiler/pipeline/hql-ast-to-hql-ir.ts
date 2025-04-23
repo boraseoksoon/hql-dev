@@ -169,6 +169,9 @@ function initializeTransformFactory(): void {
     transformFactory.set("empty-array", dataStructureModule.transformEmptyArray);
     transformFactory.set("empty-map", dataStructureModule.transformEmptyMap);
     transformFactory.set("empty-set", dataStructureModule.transformEmptySet);
+    transformFactory.set("js-method", (list: ListNode, currentDir: string) => {
+      return transformJsMethod(list, currentDir, transformNode);
+    });
     transformFactory.set("export", (_list, _currentDir) => {
       logger.debug(`Skipping export transformation for now`);
       return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
@@ -183,6 +186,59 @@ function initializeTransformFactory(): void {
   }, "initializeTransformFactory", TransformError);
 }
 
+// Correct version of transformJsMethod with proper handling of transformNode
+export function transformJsMethod(
+  list: ListNode, 
+  currentDir: string,
+  transformNodeFunc: (node: any, dir: string) => IR.IRNode | null
+): IR.IRNode | null {
+  return perform(
+    () => {
+      if (list.elements.length !== 3) {
+        throw new ValidationError(
+          `js-method requires exactly 2 arguments, got ${list.elements.length - 1}`,
+          "js-method",
+          "2 arguments",
+          `${list.elements.length - 1} arguments`,
+        );
+      }
+
+      const object = transformNodeFunc(list.elements[1], currentDir);
+      if (!object) {
+        throw new ValidationError(
+          "Object transformed to null",
+          "js-method",
+          "valid object expression",
+          "null",
+        );
+      }
+
+      let methodName: string;
+      if (list.elements[2].type === "literal") {
+        methodName = String((list.elements[2] as LiteralNode).value);
+      } else if (list.elements[2].type === "symbol") {
+        methodName = (list.elements[2] as SymbolNode).name;
+      } else {
+        throw new ValidationError(
+          "Method name must be a string literal or symbol",
+          "js-method",
+          "string literal or symbol",
+          list.elements[2].type,
+        );
+      }
+      
+      // Create a JsMethodAccess node
+      return {
+        type: IR.IRNodeType.JsMethodAccess,
+        object,
+        method: methodName
+      } as IR.IRJsMethodAccess;
+    },
+    "transformJsMethod",
+    TransformError,
+    [list],
+  );
+}
 
 /**
  * Transform a single HQL node to its IR representation.

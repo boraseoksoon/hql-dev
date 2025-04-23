@@ -18,6 +18,8 @@ import { convertGetCallExpression } from "../syntax/get.ts";
 export function convertIRExpr(node: IR.IRNode): ts.Expression {
   return execute(node, "IR expression", () => {
     switch (node.type) {
+      case IR.IRNodeType.JsMethodAccess:
+  return convertJsMethodAccess(node as IR.IRJsMethodAccess);
       case IR.IRNodeType.ObjectExpression:
         return convertObjectExpression(node as IR.IRObjectExpression);
       case IR.IRNodeType.StringLiteral:
@@ -31,13 +33,11 @@ export function convertIRExpr(node: IR.IRNode): ts.Expression {
       case IR.IRNodeType.Identifier:
         return convertIdentifier(node as IR.IRIdentifier);
       case IR.IRNodeType.CallExpression: {
-        // Check if this is a get call that needs special handling
         const callExpr = node as IR.IRCallExpression;
         if (callExpr.callee.type === IR.IRNodeType.Identifier && 
             (callExpr.callee as IR.IRIdentifier).name === "get") {
           return convertGetCallExpression(callExpr);
         }
-        // Otherwise use normal call expression handling
         return convertCallExpression(callExpr);
       }
       case IR.IRNodeType.MemberExpression:
@@ -183,6 +183,99 @@ export function convertIRNode(
           node,
         );
     }
+  });
+}
+
+/**
+ * Convert a JsMethodAccess node to a TypeScript expression
+ * This handles the runtime check to see if a property is a method that should be called
+ */
+export function convertJsMethodAccess(node: IR.IRJsMethodAccess): ts.Expression {
+  return execute(node, "js method access", () => {
+    const object = convertIRExpr(node.object);
+    const methodName = node.method;
+    
+    // Create property access or element access based on method name
+    let propertyAccess: ts.Expression;
+    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(methodName)) {
+      // Valid identifier - use property access
+      propertyAccess = ts.factory.createPropertyAccessExpression(
+        ts.factory.createIdentifier("_obj"),
+        methodName
+      );
+    } else {
+      // Not a valid identifier - use element access
+      propertyAccess = ts.factory.createElementAccessExpression(
+        ts.factory.createIdentifier("_obj"),
+        ts.factory.createStringLiteral(methodName)
+      );
+    }
+    
+    // Generate an IIFE that checks if the property is a function and calls it if so
+    return ts.factory.createCallExpression(
+      ts.factory.createParenthesizedExpression(
+        ts.factory.createArrowFunction(
+          undefined,
+          undefined,
+          [],
+          undefined,
+          ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+          ts.factory.createBlock([
+            // Create temporary variable _obj to hold the object
+            ts.factory.createVariableStatement(
+              undefined,
+              ts.factory.createVariableDeclarationList(
+                [ts.factory.createVariableDeclaration(
+                  ts.factory.createIdentifier("_obj"),
+                  undefined,
+                  undefined,
+                  object
+                )],
+                ts.NodeFlags.Const
+              )
+            ),
+            // Create temporary variable _prop to hold the property/method
+            ts.factory.createVariableStatement(
+              undefined,
+              ts.factory.createVariableDeclarationList(
+                [ts.factory.createVariableDeclaration(
+                  ts.factory.createIdentifier("_prop"),
+                  undefined,
+                  undefined,
+                  propertyAccess
+                )],
+                ts.NodeFlags.Const
+              )
+            ),
+            // Return the result based on runtime type check
+            ts.factory.createReturnStatement(
+              ts.factory.createConditionalExpression(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createTypeOfExpression(ts.factory.createIdentifier("_prop")),
+                  ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+                  ts.factory.createStringLiteral("function")
+                ),
+                ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+                // If it's a function, call it with the object as 'this'
+                ts.factory.createCallExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("_prop"),
+                    ts.factory.createIdentifier("call")
+                  ),
+                  undefined,
+                  [ts.factory.createIdentifier("_obj")]
+                ),
+                ts.factory.createToken(ts.SyntaxKind.ColonToken),
+                // If it's not a function, just return the property value
+                ts.factory.createIdentifier("_prop")
+              )
+            )
+          ], true)
+        )
+      ),
+      undefined,
+      []
+    );
   });
 }
 

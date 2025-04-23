@@ -68,6 +68,7 @@ export enum IRNodeType {
   // Enum Types (NEW)
   EnumDeclaration,
   EnumCase,
+  JsMethodAccess
 }
 
 export interface IRNode {
@@ -403,4 +404,10 @@ export interface IREnumCase extends IRNode {
   rawValue?: IRNode | null;
   associatedValues?: IREnumAssociatedValue[];
   hasAssociatedValues?: boolean;
+}
+
+export interface IRJsMethodAccess extends IRNode {
+  type: IRNodeType.JsMethodAccess;
+  object: IRNode;
+  method: string;
 }
