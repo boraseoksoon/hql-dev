@@ -453,6 +453,10 @@ function isBuiltInOperator(op: string): boolean {
   );
 }
 
+function shouldTreatAsFunctionCall(node: IR.IRNode): boolean {
+  return node && node.type === IR.IRNodeType.Identifier;
+}
+
 /**
  * Determines if a list represents a function call or a collection access.
  * For example, (myFunction arg) is a function call, while (myArray 0) is a collection access.
@@ -507,9 +511,13 @@ function determineCallOrAccess(
       );
     }
     
-    // Use the get operation for all two-element forms
-    // This will be transpiled to handle both property access and function calls
-    return dataStructureModule.createGetOperation(firstTransformed, secondElement);
+    // Heuristic: treat as function call if firstTransformed is an identifier (i.e., a function)
+    // Only treat as get/collection access if firstTransformed is an array, map, or known collection type.
+    if (shouldTreatAsFunctionCall(firstTransformed)) {
+      return createCallExpression(list, currentDir, transformNode, firstTransformed);
+    } else {
+      return dataStructureModule.createGetOperation(firstTransformed, secondElement);
+    }
   }
   
   // For more than two arguments, it's a function call

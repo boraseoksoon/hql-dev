@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "test": "deno task test-basics && deno task test-imports && deno task test-control-flow && deno task test-functions && deno task test-advanced",
+    "test": "deno task test-basics ; deno task test-imports ; deno task test-control-flow ; deno task test-functions ; deno task test-advanced",
     "run": "deno run -A cli/run.ts",
     "dev": "deno run -A cli/run.ts",
     "transpile": "deno run -A cli/transpile.ts",
