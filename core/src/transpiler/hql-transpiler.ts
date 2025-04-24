@@ -17,8 +17,8 @@ import {
   TranspilerError,
 } from "../common/error-pipeline.ts";
 import { globalLogger as logger } from "../logger.ts";
-import { ErrorPipeline } from "../common/error-pipeline.ts";
 import { reportError } from "../common/error-pipeline.ts";
+import { TranspileResult } from "./index.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
@@ -54,67 +54,54 @@ export async function processHql(
 
   const sourceFilename = path.basename(options.baseDir || "unknown");
 
+  // Initialize environment first to set current file
+  if (options.showTiming) logger.startTiming("hql-process", "Environment setup");
+  const env = await getGlobalEnv(options);
+  if (options.baseDir) env.setCurrentFile(options.baseDir);
+  if (options.showTiming) logger.endTiming("hql-process", "Environment setup");
+
+  if (options.showTiming) logger.startTiming("hql-process", "Parsing");
+
+  let sexps: SExp[] = [];
   try {
-    // Initialize environment first to set current file
-    if (options.showTiming) logger.startTiming("hql-process", "Environment setup");
-    const env = await getGlobalEnv(options);
-    if (options.baseDir) env.setCurrentFile(options.baseDir);
-    if (options.showTiming) logger.endTiming("hql-process", "Environment setup");
-
-    if (options.showTiming) logger.startTiming("hql-process", "Parsing");
-
-    let sexps: SExp[] = [];
-    try {
-      sexps = parse(source, options.currentFile);
-      logger.debug(`Parsed ${sexps.length} S-expressions`);
-      if (options.showTiming) logger.endTiming("hql-process", "Parsing");
-    } catch (error) {
-      reportError(error);
-    }
-    
-    // Only proceed with later stages if parsing succeeded
-    if (options.showTiming) logger.startTiming("hql-process", "Syntax transform");
-    const canonicalSexps = transformWithHandling(sexps, options.verbose, logger);
-    if (options.showTiming) logger.endTiming("hql-process", "Syntax transform");
-    
-    if (options.showTiming) logger.startTiming("hql-process", "Import processing");
-    await processImportsWithHandling(canonicalSexps, env, options);
-    if (options.showTiming) logger.endTiming("hql-process", "Import processing");
-    
-    if (options.showTiming) logger.startTiming("hql-process", "Macro expansion");
-    const expanded = expandWithHandling(canonicalSexps, env, options, logger);
-    if (options.showTiming) logger.endTiming("hql-process", "Macro expansion");
-    
-    if (options.showTiming) logger.startTiming("hql-process", "AST conversion");
-    const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
-    if (options.showTiming) logger.endTiming("hql-process", "AST conversion");
-    
-    if (options.showTiming) logger.startTiming("hql-process", "JS transformation");
-    
-    const { code: jsCode, sourceMap } = await transformAST(hqlAst, options.baseDir || Deno.cwd(), { verbose: options.verbose, currentFile: options.currentFile });
-
-    if (options.showTiming) logger.endTiming("hql-process", "JS transformation");
-
-    if (options.baseDir) env.setCurrentFile(null);
-
-    if (options.showTiming) {
-      logger.endTiming("hql-process", "Total");
-      logger.logPerformance("hql-process", sourceFilename);
-    }
-    
-    return { code: jsCode, sourceMap };
+    sexps = parse(source, options.currentFile);
+    logger.debug(`Parsed ${sexps.length} S-expressions`);
+    if (options.showTiming) logger.endTiming("hql-process", "Parsing");
   } catch (error) {
-    if (error instanceof Error) {
-      const hqlFilePath = options.baseDir || globalEnv?.getCurrentFile() || "unknown";
-      const errorMsg = `Error processing HQL: ${error.message}`;
-      throw new ErrorPipeline.ParseError(errorMsg, {
-        filePath: hqlFilePath,
-        line: 1,
-        column: 1,
-        source: ErrorPipeline.getSourceFile(hqlFilePath)
-      });
-    }
+    reportError(error);
   }
+  
+  // Only proceed with later stages if parsing succeeded
+  if (options.showTiming) logger.startTiming("hql-process", "Syntax transform");
+  const canonicalSexps = transformWithHandling(sexps, options.verbose, logger);
+  if (options.showTiming) logger.endTiming("hql-process", "Syntax transform");
+  
+  if (options.showTiming) logger.startTiming("hql-process", "Import processing");
+  await processImportsWithHandling(canonicalSexps, env, options);
+  if (options.showTiming) logger.endTiming("hql-process", "Import processing");
+  
+  if (options.showTiming) logger.startTiming("hql-process", "Macro expansion");
+  const expanded = expandWithHandling(canonicalSexps, env, options, logger);
+  if (options.showTiming) logger.endTiming("hql-process", "Macro expansion");
+  
+  if (options.showTiming) logger.startTiming("hql-process", "AST conversion");
+  const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
+  if (options.showTiming) logger.endTiming("hql-process", "AST conversion");
+  
+  if (options.showTiming) logger.startTiming("hql-process", "JS transformation");
+  
+  const { code: jsCode, sourceMap } = await transformAST(hqlAst, options.baseDir || Deno.cwd(), { verbose: options.verbose, currentFile: options.currentFile });
+
+  if (options.showTiming) logger.endTiming("hql-process", "JS transformation");
+
+  if (options.baseDir) env.setCurrentFile(null);
+
+  if (options.showTiming) {
+    logger.endTiming("hql-process", "Total");
+    logger.logPerformance("hql-process", sourceFilename);
+  }
+  
+  return { code: jsCode, sourceMap };
 }
 
 function transformWithHandling(sexps: any[], verbose: boolean | undefined, logger: Logger) {

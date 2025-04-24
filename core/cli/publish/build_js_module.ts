@@ -13,7 +13,7 @@ import { ensureDir } from "../../src/platform/platform.ts";
 import { exists } from "jsr:@std/fs@1.0.13";
 import { globalLogger as logger } from "../../src/logger.ts";
 import { isHqlFile, isJsFile, isTypeScriptFile } from "../../src/common/utils.ts";
-import { BundleError, ErrorTemplates, reportPublishError } from "./publish_errors.ts";
+import { PublishError } from "./publish_errors.ts";
 
 // Check if a file contains HQL imports
 function checkForHqlImports(source: string): boolean {
@@ -89,6 +89,7 @@ export async function buildJsModule(
       await transpileCLI(absoluteInputPath, jsOutputPath, {
         verbose: options.verbose,
       });
+
     } else if (isJsFile(absoluteInputPath) || isTypeScriptFile(absoluteInputPath)) {
       // For JS/TS files, read, process any HQL imports, and write directly
       const source = await readTextFile(absoluteInputPath);
@@ -121,21 +122,10 @@ export async function buildJsModule(
     
     console.log(`✅ Successfully bundled to ${jsOutputPath}`);
   } catch (error) {
-    // Use the specialized error reporting for bundling errors
-    const bundleError = ErrorTemplates.BUNDLE_FAILED(
-      absoluteInputPath,
+    throw new PublishError(
       error instanceof Error ? error.message : String(error),
-      isFile ? undefined : baseDir
+      { source: absoluteInputPath, phase: "bundling" }
     );
-    
-    // Report the error with enhanced context
-    reportPublishError(bundleError, {
-      filePath: absoluteInputPath,
-      phase: "bundling"
-    });
-    
-    // Rethrow the enhanced error
-    throw bundleError;
   }
   
   // Create final package structure

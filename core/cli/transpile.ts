@@ -106,7 +106,6 @@ function transpile(
     return await transpileCLI(resolvedInputPath, outputPath, {
       verbose: opts.verbose,
       showTiming: opts.showTiming,
-      skipPrimaryErrorReporting: true,
       force: opts.force
     });
   });

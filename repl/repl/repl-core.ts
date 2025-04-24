@@ -1,45 +1,29 @@
 // src/repl/repl-core.ts
 // Core REPL functionality and evaluation loop
 
+import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { ReplState, resetReplState, updateParenBalance } from "./repl-state.ts";
 import { Environment } from "@core/environment.ts";
 import { loadSystemMacros } from "@transpiler/hql-transpiler.ts";
-import { Logger, globalLogger as logger } from "@core/logger.ts";
+import { globalLogger as logger } from "@core/logger.ts";
 import { historyManager } from "./history-manager.ts";
 import { printBanner, getPrompt, prettyPrintResult } from "./repl-commands.ts";
-import { readLineWithArrowKeys } from "./repl-input.ts";
-import { createTabCompletion } from "./repl-completion.ts";
 import { printError, handleJsEvaluationError, ReplStateHandlers, CommonReplOptions, commandUtils } from "./repl-common.ts";
 import { formatErrorMessage } from "@core/common/error-pipeline.ts"
 import { executeCommand } from "./command-executor.ts";
 
 /**
- * Options for the REPL
- */
-export interface ReplOptions {
-  verbose?: boolean;
-  baseDir?: string;
-  historySize?: number;
-  showAst?: boolean;
-  showExpanded?: boolean;
-  showJs?: boolean;
-  initialFile?: string;
-  useColors?: boolean;
-  enableCompletion?: boolean;
-}
-
-/**
  * Main entry point for the REPL
  */
-export async function startRepl(options: ReplOptions = {}): Promise<void> {
+export async function startRepl(): Promise<void> {
   console.log("Starting HQL REPL...");
   
   // Always resolve baseDir relative to the REPL core file if not provided
-const baseDir = options.baseDir ?? path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../');
-  const useColors = options.useColors ?? true;
-  const historySize = options.historySize ?? 100;
-  const enableCompletion = options.enableCompletion ?? true;
+  const baseDir = path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../');
+  const useColors = true;
+  const historySize = 100;
+  const enableCompletion = true;
   
   let running = true;
   const history: string[] = historyManager.load(historySize);
@@ -47,9 +31,9 @@ const baseDir = options.baseDir ?? path.resolve(path.dirname(path.fromFileUrl(im
   
   // REPL display options
   let showVerbose = false;
-  let showAst = options.showAst ?? false;
-  let showExpanded = options.showExpanded ?? false;
-  let showJs = options.showJs ?? false;
+  let showAst = false;
+  let showExpanded = false;
+  let showJs = false;
   
   // Create a basic state object
   const replState: ReplState = { 
@@ -93,16 +77,16 @@ const baseDir = options.baseDir ?? path.resolve(path.dirname(path.fromFileUrl(im
   
   try {
     // Initialize environment
-    const env = await Environment.initializeGlobalEnv({ verbose: options.verbose });
-    await loadSystemMacros(env, { verbose: options.verbose, baseDir: Deno.cwd() });
+    const env = await Environment.initializeGlobalEnv({ verbose: showVerbose });
+    await loadSystemMacros(env, { verbose: showVerbose, baseDir: Deno.cwd() });
     
     // Create evaluator
     const evaluator = new ModuleAwareEvaluator(env, {
-      verbose: options.verbose,
+      verbose: showVerbose,
       baseDir,
-      showAst: options.showAst,
-      showExpanded: options.showExpanded,
-      showJs: options.showJs,
+      showAst,
+      showExpanded,
+      showJs,
     });
     
     // Initialize evaluator
@@ -110,78 +94,24 @@ const baseDir = options.baseDir ?? path.resolve(path.dirname(path.fromFileUrl(im
     await evaluator.switchModule("global");
     replState.currentModule = evaluator.getCurrentModuleSync();
 
-    // Setup tab completion if enabled
-    const tabCompletion = enableCompletion 
-      ? createTabCompletion(evaluator, () => replState.currentModule) 
-      : undefined;
-
-    // Load initial file if specified
-    if (options.initialFile) {
-      const file = options.initialFile;
-      try {
-        logger.log({ text: `Loading file: ${file}`, namespace: "repl" });
-        const content = await Deno.readTextFile(file) as string;
-        await evaluator.evaluate(content, {
-          verbose: options.verbose,
-          baseDir,
-          showAst: options.showAst,
-          showExpanded: options.showExpanded,
-          showJs: options.showJs,
-        });
-        logger.log({ text: `File ${file} loaded successfully`, namespace: "repl" });
-      } catch (error) {
-        console.error(`Error loading file ${file}: ${formatErrorMessage(error)}`);
-      }
-    }
-
-    // Setup terminal for raw mode if available
-    let isRawMode = false;
-    try {
-      if (Deno.build.os !== "windows") {
-        Deno.stdin.setRaw(true);
-        isRawMode = true;
-      }
-    } catch (e) {
-      // Raw mode not supported, will use normal mode
-      console.log("Warning: Advanced keyboard handling not available. History navigation may be limited.");
-    }
-
-    // Main REPL loop
     while (running) {
       try {
         const prompt = getPrompt(replState, useColors);
         
         // Handle input differently based on whether raw mode is available
         let input = "";
+        // Normal mode - basic input
+        Deno.stdout.writeSync(new TextEncoder().encode(prompt));
+        const buf = new Uint8Array(1024);
+        const n = await Deno.stdin.read(buf);
         
-        if (isRawMode) {
-          // Raw mode available - handle keyboard input directly
-          Deno.stdout.writeSync(new TextEncoder().encode(prompt));
-          input = await readLineWithArrowKeys(prompt, history, historyIndex, tabCompletion);
-          
-          // Check for Ctrl+D or Ctrl+C
-          if (input === "\x04" || input === "\x03") {
-            console.log("\nExiting REPL...");
-            running = false;
-            continue;
-          }
-          
-          // Add newline since we're in raw mode
-          Deno.stdout.writeSync(new TextEncoder().encode("\n"));
-        } else {
-          // Normal mode - basic input
-          Deno.stdout.writeSync(new TextEncoder().encode(prompt));
-          const buf = new Uint8Array(1024);
-          const n = await Deno.stdin.read(buf);
-          
-          if (n === null) {
-            console.log("\nExiting REPL...");
-            running = false;
-            continue;
-          }
-          
-          input = new TextDecoder().decode(buf.subarray(0, n)).trim();
+        if (n === null) {
+          console.log("\nExiting REPL...");
+          running = false;
+          continue;
         }
+        
+        input = new TextDecoder().decode(buf.subarray(0, n)).trim();
         
         // Reset history index
         historyIndex = -1;

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastModule": "global",
+  "lastModule": "hql",
   "modules": {
     "global": {
       "definitions": {
@@ -8,12 +8,12 @@
         "functions": {
           "add": {
             "_type": "function",
-            "source": "function add(x, y) {\n    return x + y;\n}",
+            "source": "function add() {\n    return console.log(\"a yo\");\n}",
             "_metadata": {
-              "source": "(fn add (x y) (+ x y))",
-              "jsSource": "function add(x, y) {\n    return x + y;\n}\n",
-              "timestamp": "2025-04-22T03:00:42.906Z",
-              "created": "2025-04-22T03:00:42.906Z"
+              "source": "(fn add () (print \"a yo\"))",
+              "jsSource": "function add() {\n    return console.log(\"a yo\");\n}\n",
+              "timestamp": "2025-04-24T19:32:40.841Z",
+              "created": "2025-04-24T19:32:40.841Z"
             }
           }
         },
@@ -22,7 +22,30 @@
       "imports": [],
       "exports": [],
       "metadata": {
-        "lastInitialized": "2025-04-14T21:19:01.902Z"
+        "lastInitialized": "2025-04-24T19:32:18.519Z"
+      }
+    },
+    "hql": {
+      "definitions": {
+        "variables": {},
+        "functions": {
+          "remove": {
+            "_type": "function",
+            "source": "function remove() {\n    return console.log(\"remove\");\n}",
+            "_metadata": {
+              "source": "(fn remove () (print \"remove\"))",
+              "jsSource": "function remove() {\n    return console.log(\"remove\");\n}\n",
+              "timestamp": "2025-04-24T19:33:07.800Z",
+              "created": "2025-04-24T19:33:07.800Z"
+            }
+          }
+        },
+        "macros": {}
+      },
+      "imports": [],
+      "exports": [],
+      "metadata": {
+        "lastInitialized": "2025-04-24T19:42:40.983Z"
       }
     }
   },

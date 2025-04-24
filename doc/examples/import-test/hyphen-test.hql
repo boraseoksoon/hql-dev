@@ -6,3 +6,5 @@
 (let result2 (add_ten 7))
 (console.log "multiply_by_five(6):" result1)
 (console.log "add_ten(7):" result2) 
+
+(export [multiply_by_five, add_ten])

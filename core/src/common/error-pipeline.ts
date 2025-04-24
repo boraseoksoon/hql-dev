@@ -210,12 +210,16 @@ export async function reportError(error: unknown, isDebug = false): Promise<void
     hqlError = error;
     logger.debug(`[reportError] Error is already HQLError, stack: ${hqlError.stack}`, 'error-pipeline');
   } else {
-    hqlError = new HQLError(error instanceof Error ? error.message : String(error));
-    // Preserve stack trace if possible
-    if (error instanceof Error && error.stack) {
-      hqlError.stack = error.stack;
-      logger.debug(`[reportError] Copied stack trace to HQLError: ${hqlError.stack}`, 'error-pipeline');
-    }
+    // hqlError = new HQLError(error instanceof Error ? error.message : String(error));
+    // // Preserve stack trace if possible
+    // if (error instanceof Error && error.stack) {
+    //   hqlError.stack = error.stack;
+    //   logger.debug(`[reportError] Copied stack trace to HQLError: ${hqlError.stack}`, 'error-pipeline');
+    // }
+
+    console.log(error)
+
+    return
   }
 
   // // Extract HQL file location from remapped stack trace

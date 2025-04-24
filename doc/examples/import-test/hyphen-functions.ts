@@ -6,7 +6,5 @@ function add_ten(x) {
   return x + 10;
 }
 console.log("hyphen-functions.hql loaded");
-export {
-  add_ten,
-  multiply_by_five
-};
+
+export { add_ten, multiply_by_five };

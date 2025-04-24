@@ -4,7 +4,6 @@
 import { publish } from "./publish/index.ts";
 import { parseArgs } from "jsr:@std/cli@1.0.13/parse-args";
 import { exit } from "@platform/platform.ts";
-import { report } from "../src/common/error-pipeline.ts";
 
 function showHelp() {
   console.log(`
@@ -48,34 +47,10 @@ async function main() {
   if (Deno.env.get("HQL_DEV") === "1") {
     Deno.env.set("SKIP_LOGIN_CHECK", "1");
   }
-  try {
-    await publish(args);
-  } catch (error) {
-    // Use our specialized publish error reporting
-    const { reportPublishError } = await import("./publish/publish_errors.ts");
-    const enhancedError = reportPublishError(error, { 
-      filePath: "publish.ts",
-      phase: "cli-entry",
-      useColors: true 
-    });
-    
-    // Avoid duplicate error messages
-    if (!(typeof (error as any).message === 'string' && (error as Error).message.includes("Publishing failed"))) {
-      console.error("\n❌ Publishing failed:", enhancedError.message);
-    }
-    
-    exit(1);
-  }
+
+  await publish(args);
 }
 
 if (import.meta.main) {
-  main().catch((error) => {
-    // Enhanced error reporting for unhandled errors
-    const enhancedError = report(error, { 
-      filePath: "publish.ts", 
-      useColors: true
-    });
-    console.error("\n❌ Unhandled error:", enhancedError.message);
-    exit(1);
-  });
+  main()
 }

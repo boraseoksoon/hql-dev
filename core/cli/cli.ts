@@ -1,6 +1,5 @@
-import { runHqlFile } from "./run.ts";
+import { run } from "./run.ts";
 import { parseCliOptions, CliOptions } from "./utils/cli-options.ts";
-import { ErrorPipeline } from "../src/common/error-pipeline.ts";
 
 // Version information
 const VERSION = "0.1.0";
@@ -67,26 +66,19 @@ function validateCommand(args: string[]): { command: string; target?: string } {
 }
 
 /**
- * Execute the run command
- */
-async function executeRunCommand(target: string, options: CliOptions) {
-  await runHqlFile(target, options);
-}
-
-/**
  * Execute the transpile command
  */
-async function executeTranspileCommand(target: string, options: CliOptions) {
-  const { transpileHqlFile } = await import("./run.ts");
-  await transpileHqlFile(target, options);
+async function executeTranspileCommand() {
+  const { main } = await import("./transpile.ts");
+  await main();
 }
 
 /**
  * Execute the repl command
  */
-async function executeReplCommand(options: CliOptions) {
+async function executeReplCommand() {
   const { startRepl } = await import("../../repl/repl/repl.ts");
-  await startRepl({ verbose: options.verbose });
+  await startRepl();
 }
 
 /**
@@ -116,20 +108,14 @@ async function main() {
   }
   
   // Validate command and get target
-  const { command, target } = validateCommand(args);
+  const { command } = validateCommand(args);
 
-  try {
-    // Process command
-    if (command === "run") {
-      await executeRunCommand(target!, cliOptions);
-    } else if (command === "transpile") {
-      await executeTranspileCommand(target!, cliOptions);
-    } else if (command === "repl") {
-      await executeReplCommand(cliOptions);
-    }
-  } catch (error) {
-    ErrorPipeline.reportError(error);
-    Deno.exit(1);
+  if (command === "run") {
+    await run(args);
+  } else if (command === "transpile") {
+    await executeTranspileCommand();
+  } else if (command === "repl") {
+    await executeReplCommand(cliOptions);
   }
 }
 

@@ -37,9 +37,6 @@ import {
 import { transpile, TranspileOptions } from './transpiler/index.ts';
 import { setCurrentBundlePath } from "./common/bundle-registry.ts";
 
-// Constants
-const MAX_RETRIES = 3;
-const ESBUILD_RETRY_DELAY_MS = 100;
 const DEFAULT_EXTERNAL_PATTERNS = ['npm:', 'jsr:', 'node:', 'https://', 'http://'];
 
 // Interfaces
@@ -54,17 +51,12 @@ export interface BundleOptions {
   sourceDir?: string;
   cleanup?: boolean;
   debug?: boolean;
-  force?: boolean;
-  sourcemap?: boolean | "inline" | "external";
+  force?: boolean
 }
 
 interface ImportInfo {
   full: string;
   path: string;
-}
-
-function base64Encode(str: string): string {
-  return btoa(unescape(encodeURIComponent(str)));
 }
 
 // Main API function
@@ -74,74 +66,37 @@ export async function transpileCLI(
   options: {
     verbose?: boolean;
     showTiming?: boolean;
-    force?: boolean;
-    skipPrimaryErrorReporting?: boolean;
-    sourcemap?: boolean | "inline" | "external";
+    force?: boolean
   } = {}
 ): Promise<string> {
-  try {
-    const startTime = performance.now();
-    configureLogger(options);
-    await initializeRuntime();
-    
-    const resolvedInputPath = resolve(inputPath);
-    const outPath = determineOutputPath(resolvedInputPath, outputPath);
-    const sourceDir = dirname(resolvedInputPath);
-    const bundleOptions = { ...options, sourceDir };
-    if (bundleOptions.sourcemap === undefined) bundleOptions.sourcemap = true;
-    
-    try {
-      // Process entry file
-      if (options.showTiming) logger.startTiming("transpile-cli", "Process Entry");
-      const { tsOutputPath, sourceMap } = await processEntryFile(resolvedInputPath, outPath, bundleOptions);
-      if (options.showTiming) logger.endTiming("transpile-cli", "Process Entry");
-      
-      // [TRACE] Before writing source map and embedding inline map
-      if (sourceMap) {
-        await Deno.writeTextFile(tsOutputPath + ".map", sourceMap);
-        logger.log({ text: `[SourceMap] Wrote source map to ${tsOutputPath}.map`, namespace: "bundler" });
+  configureLogger(options);
+  await initializeRuntime();
+  
+  const resolvedInputPath = resolve(inputPath);
+  const outPath = determineOutputPath(resolvedInputPath, outputPath);
+  const sourceDir = dirname(resolvedInputPath);
+  const bundleOptions = { ...options, sourceDir };
+  
+  // Process entry file
+  if (options.showTiming) logger.startTiming("transpile-cli", "Process Entry");
+  const { tsOutputPath, sourceMap } = await processEntryFile(resolvedInputPath, outPath, bundleOptions);
+  if (options.showTiming) logger.endTiming("transpile-cli", "Process Entry");
 
-        // ---- Embed the source map as an inline comment in the .ts file ----
-        try {
-          // Read the generated TS code
-          const tsCode = await Deno.readTextFile(tsOutputPath);
-          const inlineMapComment = "\n//# sourceMappingURL=data:application/json;base64," + base64Encode(sourceMap);
-          await Deno.writeTextFile(tsOutputPath, tsCode + inlineMapComment);
-        } catch (e) {
-          logger.error({ text: `[EMBED] Failed to write inline source map: ${e instanceof Error ? e.message : String(e)}` , namespace: "bundler" });
-        }
-      }
+  // Bundle the processed file
+  if (options.showTiming) logger.startTiming("transpile-cli", "esbuild Bundling");
 
-      // Bundle the processed file
-      if (options.showTiming) logger.startTiming("transpile-cli", "esbuild Bundling");
+  logger.log({ text: `[Bundler] Forcing esbuild to use inline source maps for the bundle.` , namespace: "bundler" });
+  
+  await bundleWithEsbuild(tsOutputPath, outPath, { ...bundleOptions });
 
-      logger.log({ text: `[Bundler] Forcing esbuild to use inline source maps for the bundle.` , namespace: "bundler" });
-      
-      await bundleWithEsbuild(tsOutputPath, outPath, { ...bundleOptions, sourcemap: "inline" });
+  logger.log({ text: `[Bundler] Bundled to ${outPath}` , namespace: "bundler" });
 
-      logger.log({ text: `[Bundler] Bundled to ${outPath}` , namespace: "bundler" });
+  // Register the bundle path globally for error reporting
+  setCurrentBundlePath(outPath);
 
-      // Register the bundle path globally for error reporting
-      setCurrentBundlePath(outPath);
+  if (options.showTiming) logger.endTiming("transpile-cli", "esbuild Bundling");
 
-      if (options.showTiming) logger.endTiming("transpile-cli", "esbuild Bundling");
-      
-      // Log completion
-      const endTime = performance.now();
-      logCompletionMessage(options, outPath, startTime, endTime);
-      
-      return outPath;
-    } catch (error) {
-      // Allow error to propagate upward without reporting if skipPrimaryErrorReporting is set
-      if (options.skipPrimaryErrorReporting) {
-        throw error;
-      }
-      
-      throw error;
-    }
-  } catch (error) {
-    throw error;
-  }
+  return outPath;
 }
 
 export async function processHqlImportsInJs(
@@ -268,7 +223,7 @@ async function processEntryFile(
     logger.debug(`Output path: ${outputPath}`);
     
     if (isHqlFile(resolvedInputPath)) {
-      return await processHqlEntryFile(resolvedInputPath, outputPath, options);
+      return await processHqlEntryFile(resolvedInputPath, options);
     } else if (isJsFile(resolvedInputPath) || isTypeScriptFile(resolvedInputPath)) {
       const tsOutputPath = await processJsOrTsEntryFile(resolvedInputPath, outputPath, options);
       return { tsOutputPath };
@@ -285,19 +240,15 @@ async function processEntryFile(
 
 async function processHqlEntryFile(
   resolvedInputPath: string,
-  outputPath: string,
   options: BundleOptions,
 ): Promise<{ tsOutputPath: string; sourceMap?: string }> {
   logger.log({ text: `Transpiling HQL entry file: ${resolvedInputPath}`, namespace: "bundler" });
-  
-  // Create temp directory
+
   const tempDir = await createTempDir("entry");
-  
-  // Read source file
+
   const source = await readFile(resolvedInputPath);
   logger.log({ text: `Read ${source.length} bytes from ${resolvedInputPath}`, namespace: "bundler" });
   
-  // Generate TypeScript code from HQL
   let { code: tsCode, sourceMap } = await processHql(source, {
     baseDir: dirname(resolvedInputPath),
     verbose: options.verbose,
@@ -306,23 +257,12 @@ async function processHqlEntryFile(
     currentFile: resolvedInputPath
   });
 
-  // Process nested HQL imports if present
   if (checkForHqlImports(tsCode)) {
     logger.log({ text: "Detected nested HQL imports in transpiled output. Processing them.", namespace: "bundler" });
     tsCode = await processHqlImportsInTs(tsCode, resolvedInputPath, options);
   }
   
-  // Write TypeScript output to cache
   const tsOutputPath = await writeToCachedPath(resolvedInputPath, tsCode, ".ts");
-
-  // Write source map if present
-  if (sourceMap) {
-    await Deno.writeTextFile(tsOutputPath + ".map", sourceMap);
-    const sourceMapComment = `\n//# sourceMappingURL=${path.basename(tsOutputPath)}.map`;
-    await Deno.writeTextFile(tsOutputPath, tsCode + sourceMapComment);
-  } else {
-  }
-
 
   return { tsOutputPath, sourceMap };
 }
@@ -580,7 +520,10 @@ async function bundleWithEsbuild(
     // Run the build
     logger.log({ text: `Starting bundling: ${entryPath}`, namespace: "bundler" });
     logger.log({ text: `[Bundler] esbuild buildOptions.sourcemap: ${buildOptions.sourcemap}`, namespace: "bundler"});
-    const result = await runBuildWithRetry(buildOptions, MAX_RETRIES);
+    
+    const result = await esbuild.build(buildOptions);
+
+    await esbuild.stop();
 
     // Post-process the output if needed
     if (result.metafile) {
@@ -624,56 +567,6 @@ async function postProcessBundleOutput(outputPath: string): Promise<void> {
   }
 }
 
-async function runBuildWithRetry(
-  buildOptions: any,
-  maxRetries: number,
-): Promise<any> {
-  let lastError = null;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const result = await esbuild.build(buildOptions);
-      
-      if (result.warnings.length > 0) {
-        logger.log({ text: `esbuild warnings: ${JSON.stringify(result.warnings, null, 2)}`, namespace: "bundler" });
-      }
-      
-      await esbuild.stop();
-      return result;
-    } catch (error) {
-      lastError = error;
-      
-      if (
-        error instanceof Error &&
-        error.message.includes("service was stopped") &&
-        attempt < maxRetries
-      ) {
-        logger.log({ text: `esbuild service error on attempt ${attempt}, retrying...`, namespace: "bundler" });
-        
-        await new Promise((resolve) =>
-          setTimeout(resolve, ESBUILD_RETRY_DELAY_MS * attempt)
-        );
-        
-        try {
-          await esbuild.stop();
-        } catch {}
-        
-        continue;
-      }
-      
-      break;
-    }
-  }
-  
-  const errorMsg = lastError instanceof Error
-    ? lastError.message
-    : String(lastError);
-    
-  logger.debug(`esbuild error after ${maxRetries} attempts: ${errorMsg}`);
-  
-  await esbuild.stop();
-}
-
 // Utility functions
 /**
  * Configure logger based on options
@@ -686,28 +579,6 @@ function configureLogger(options: BundleOptions): void {
   if (options.showTiming) {
     logger.setTimingOptions({ showTiming: true });
     logger.startTiming("transpile-cli", "Total");
-  }
-}
-
-/**
- * Log completion message with timing information
- */
-function logCompletionMessage(
-  options: BundleOptions,
-  outPath: string,
-  startTime: number,
-  endTime: number
-): void {
-  logger.log({
-    text: `Successfully processed output to ${outPath} in ${
-      (endTime - startTime).toFixed(2)
-    }ms`,
-    namespace: "cli"
-  });
-  
-  if (options.showTiming) {
-    logger.endTiming("transpile-cli", "Total");
-    logger.logPerformance("transpile-cli", outPath.split("/").pop());
   }
 }
 

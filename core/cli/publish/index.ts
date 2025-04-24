@@ -8,10 +8,9 @@ import {
 } from "../../src/platform/platform.ts";
 import { publishNpm } from "./publish_npm.ts";
 import { publishJSR } from "./publish_jsr.ts";
-import { parseCliOptions, applyCliOptions } from "../../src/common/cli-utils.ts";
-import { report } from "../../src/common/error-pipeline.ts";
+import { reportError } from "../../src/common/error-pipeline.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
-
+import { checkEnvironment } from "./publish_common.ts";
 export interface PublishOptions {
   platform: "jsr" | "npm";
   what: string;
@@ -85,9 +84,7 @@ function parsePublishArgs(args: string[]): PublishOptions {
     if (p === "npm" || p === "jsr") {
       platform = p as "jsr" | "npm";
     } else {
-      console.error(
-        `\n❌ Invalid value for --platform: "${parsed.platform}". Must be 'npm' or 'jsr'.`,
-      );
+      console.error(`\n❌ Invalid value for --platform: "${parsed.platform}". Must be 'npm' or 'jsr'.`);
       exit(1);
     }
   }
@@ -147,11 +144,7 @@ async function resolveEntryPoint(path: string): Promise<string> {
       return path;
     }
   } catch (error) {
-    console.error(
-      `\n❌ Error accessing path "${path}": ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    console.error(`\n❌ Error accessing path "${path}": ${error instanceof Error ? error.message : String(error)}`);
     exit(1);
   }
 
@@ -205,26 +198,16 @@ async function resolveEntryPoint(path: string): Promise<string> {
       logger.debug(`Using single file as entry point: ${entryPoint}`);
       return entryPoint;
     } else if (entries.length > 1) {
-      console.error(
-        `\n❌ Multiple potential entry points found. Please specify an entry file directly.`,
-      );
+      console.error(`\n❌ Multiple potential entry points found. Please specify an entry file directly.`);
     } else {
-      console.error(
-        `\n❌ No HQL, JS, or TS files found in "${path}".`,
-      );
+      console.error(`\n❌ No HQL, JS, or TS files found in "${path}".`);
     }
   } catch (error) {
-    console.error(
-      `\n❌ Error reading directory "${path}": ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    console.error(`\n❌ Error reading directory "${path}": ${error instanceof Error ? error.message : String(error)}`);
   }
 
   // If we reach here, no entry point was found
-  console.error(
-    `\n❌ Could not determine entry point. Please specify a file directly.`,
-  );
+  console.error(`\n❌ Could not determine entry point. Please specify a file directly.`);
   exit(1);
   // This line is never reached due to exit(1) above, but satisfies TypeScript
   return path;
@@ -248,11 +231,8 @@ export async function publish(args: string[]): Promise<void> {
   Version: ${options.version ?? "(auto-incremented)"}
   Mode: ${options.dryRun ? "Dry run (no actual publishing)" : "Live publish"}`);
 
-  // Check environment before proceeding
   if (!await checkEnvironment(options.platform)) {
-    console.error(
-      "\n❌ Environment check failed. Please fix the issues before publishing.",
-    );
+    console.error("\n❌ Environment check failed. Please fix the issues before publishing.");
     exit(1);
   }
 
@@ -270,30 +250,11 @@ export async function publish(args: string[]): Promise<void> {
     }
     console.log("\n✅ Publishing process completed successfully!");
   } catch (error) {
-    // Enhanced error handling
-    const enhancedError = report(error, {
-      filePath: entryPoint,
-      useColors: true
-    });
-    console.error(
-      "\n❌ Publishing failed:",
-      enhancedError.message
-    );
-    throw enhancedError; // Rethrow for upstream handling
+    reportError(error); 
+    exit(1);
   }
 }
 
 if (import.meta.main) {
-  publish(Deno.args).catch((err) => {
-    // Enhanced error reporting
-    const enhancedError = report(err, {
-      filePath: "publish.ts",
-      useColors: true
-    });
-    console.error(
-      "\n❌ Publish failed:",
-      enhancedError.message
-    );
-    exit(1);
-  });
+  publish(Deno.args)
 }

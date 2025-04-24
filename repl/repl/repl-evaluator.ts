@@ -15,7 +15,7 @@ import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { ErrorPipeline } from "../../core/src/common/error-pipeline.ts";
 import { Logger, globalLogger as logger } from "@core/logger.ts";
 import { formatErrorMessage } from "../../core/src/common/error-pipeline.ts"
-
+import { reportError } from "@core/common/error-pipeline.ts";
 // Options for REPL evaluation
 export interface REPLEvalOptions {
   verbose?: boolean;
@@ -313,29 +313,6 @@ export class REPLEvaluator {
   }
 
   /**
-   * Track an imported module for user feedback
-   */
-  private trackImportedModule(importStatement: string): void {
-    try {
-      const match = importStatement.match(/\(import\s+([a-zA-Z0-9_-]+)\s+from\s+"([^"]+)"\)/);
-      if (match && match.length >= 3) {
-        const moduleName = match[1];
-        const modulePath = match[2];
-        
-        if (!this.importedModules) {
-          this.importedModules = new Map<string, string>();
-        }
-        
-        this.importedModules.set(moduleName, modulePath);
-        this.logger.debug(`Tracked imported module: ${moduleName} from ${modulePath}`);
-      }
-    } catch (error: unknown) {
-      const errorMessage = formatErrorMessage(error);
-      this.logger.debug(`Error tracking imported module: ${errorMessage}`);
-    }
-  }
-
-  /**
    * Process an import statement directly
    * This method allows imports to be handled specially in the REPL
    */
@@ -413,10 +390,7 @@ export class REPLEvaluator {
     } catch (error: unknown) {
       // Use common error handling
       if (error instanceof Error) {
-        const enhancedError = report(error, {
-          source: input,
-          filePath: "REPL Import"
-        });
+        const enhancedError = reportError(error);
         
         const errorMessage = enhancedError.message || "Unknown error";
         this.logger.error(`Import error: ${errorMessage}`);
@@ -588,7 +562,6 @@ export class REPLEvaluator {
       
       // Create a function that has access to the REPL environment
       // This ensures that variables defined in the REPL environment are available
-      // deno-lint-ignore no-explicit-any
       const fn = new Function(
         "replEnv",
         wrappedCode + "\n//# sourceURL=repl-eval.js"
@@ -609,10 +582,7 @@ export class REPLEvaluator {
       // Rethrow the error
       if (error instanceof Error) {
         // Use common error handling
-        const enhancedError = report(error, {
-          source: code,
-          filePath: "REPL JS"
-        });
+        const enhancedError = reportError(error);
         throw enhancedError;
       }
       throw new Error(String(error));
