@@ -25,6 +25,7 @@ export function transformLet(
       name: sanitizeIdentifier(nameNode.name),
     } as IR.IRIdentifier;
     
+    // Universal: just use transformNode, which now handles single-symbol calls
     const init = transformNode(list.elements[2], currentDir);
 
     if (!init) {

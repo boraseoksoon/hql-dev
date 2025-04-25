@@ -409,16 +409,29 @@ function determineCallOrAccess(
   
   // Handle single-element list
   if (elements.length === 1) {
-    // Just transform the single element
-    const singleElement = transformNode(elements[0], currentDir);
-    if (!singleElement) {
-      throw new TransformError(
-        "Single element transformed to null", 
-        JSON.stringify(list), 
-        "Single element transformation"
-      );
+    const only = elements[0];
+    // If it's a symbol, treat as function call with zero args
+    if (only.type === "symbol") {
+      return {
+        type: IR.IRNodeType.CallExpression,
+        callee: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(only.name),
+        },
+        arguments: [],
+      } as IR.IRCallExpression;
+    } else {
+      // Otherwise, just transform the single element (for e.g., nested list)
+      const singleElement = transformNode(only, currentDir);
+      if (!singleElement) {
+        throw new TransformError(
+          "Single element transformed to null", 
+          JSON.stringify(list), 
+          "Single element transformation"
+        );
+      }
+      return singleElement;
     }
-    return singleElement;
   }
 
   // First, transform the first element
