@@ -73,6 +73,24 @@ export function createGetOperation(
     } as IR.IRMemberExpression;
   }
 
+/**
+ * Create a special node to represent a numeric access/call operation
+ * This will attempt array indexing first, then fall back to function call if that returns undefined
+ */
+export function createNumericAccessOperation(
+    collection: IR.IRNode,
+    key: IR.IRNode,
+  ): IR.IRNode {
+    // Create a call to getNumeric helper function
+    return {
+      type: IR.IRNodeType.CallExpression,
+      callee: {
+        type: IR.IRNodeType.Identifier,
+        name: "getNumeric"
+      } as IR.IRIdentifier,
+      arguments: [collection, key]
+    } as IR.IRCallExpression;
+  }
 
 /**
  * Convert a get() call directly to property access or function call
@@ -84,6 +102,7 @@ export function convertGetCallExpression(
   ): ts.Expression {
     console.log("convertGetCallExpression!!")
     return execute(node, "get call expression", () => {
+
       // Make sure this is actually a get call
       if (node.callee.type !== IR.IRNodeType.Identifier || 
           (node.callee as IR.IRIdentifier).name !== "get") {
@@ -122,25 +141,92 @@ export function convertGetCallExpression(
         const keyValue = (keyArg as IR.IRNumericLiteral).value;
         return ts.factory.createElementAccessExpression(obj, ts.factory.createNumericLiteral(keyValue));
       }
+    });
+  }
+
+/**
+ * Convert a getNumeric() call to a runtime helper that tries array access first, then function call
+ * This resolves the ambiguity between array indexing and function calls at runtime
+ */
+export function convertNumericCallExpression(
+    node: IR.IRCallExpression
+  ): ts.Expression {
+    return execute(node, "numeric access/call expression", () => {
+      // Make sure this is actually a getNumeric call
+      if (node.callee.type !== IR.IRNodeType.Identifier || 
+          (node.callee as IR.IRIdentifier).name !== "getNumeric") {
+        throw new Error("Not a getNumeric call expression");
+      }
       
-      // For other cases where we can't statically determine the right approach,
-      // use a conditional at runtime to choose between property access and function call
+      // Extract the arguments
+      const args = node.arguments;
+      if (args.length < 2) {
+        logger.warn("getNumeric call with insufficient arguments", args.length);
+        return ts.factory.createIdentifier("undefined");
+      }
       
-      // Generate a conditional expression that checks if the object is a function
-      // and if so, calls it with the key; otherwise accesses the property
-      return ts.factory.createConditionalExpression(
-        // Condition: typeof obj === "function"
-        ts.factory.createBinaryExpression(
-          ts.factory.createTypeOfExpression(obj),
-          ts.factory.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
-          ts.factory.createStringLiteral("function")
+      // Extract object and key
+      const objArg = args[0];
+      const keyArg = args[1];
+      const obj = convertIRExpr(objArg);
+      const key = convertIRExpr(keyArg);
+      
+      // Generate runtime code that tries array indexing first, then function call
+      // (o, k) => { try { const result = o[k]; return result !== undefined ? result : o(k); } catch { return o(k); } }
+      return ts.factory.createCallExpression(
+        ts.factory.createArrowFunction(
+          undefined,
+          undefined,
+          [],
+          undefined,
+          ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+          ts.factory.createBlock([
+            // Try to use array indexing first
+            ts.factory.createTryStatement(
+              ts.factory.createBlock([
+                // const result = o[k];
+                ts.factory.createVariableStatement(
+                  undefined,
+                  ts.factory.createVariableDeclarationList(
+                    [ts.factory.createVariableDeclaration(
+                      "result",
+                      undefined,
+                      undefined,
+                      ts.factory.createElementAccessExpression(obj, key)
+                    )],
+                    ts.NodeFlags.Const
+                  )
+                ),
+                // return result !== undefined ? result : o(k);
+                ts.factory.createReturnStatement(
+                  ts.factory.createConditionalExpression(
+                    ts.factory.createBinaryExpression(
+                      ts.factory.createIdentifier("result"),
+                      ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                      ts.factory.createIdentifier("undefined")
+                    ),
+                    ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+                    ts.factory.createIdentifier("result"),
+                    ts.factory.createToken(ts.SyntaxKind.ColonToken),
+                    ts.factory.createCallExpression(obj, undefined, [key])
+                  )
+                )
+              ]),
+              ts.factory.createCatchClause(
+                ts.factory.createVariableDeclaration("_", undefined, undefined, undefined),
+                ts.factory.createBlock([
+                  // If array access fails, try function call
+                  ts.factory.createReturnStatement(
+                    ts.factory.createCallExpression(obj, undefined, [key])
+                  )
+                ])
+              ),
+              undefined
+            )
+          ], true)
         ),
-        ts.factory.createToken(ts.SyntaxKind.QuestionToken),
-        // Then: obj(key) - function call
-        ts.factory.createCallExpression(obj, undefined, [key]),
-        ts.factory.createToken(ts.SyntaxKind.ColonToken),
-        // Else: obj[key] - property access
-        ts.factory.createElementAccessExpression(obj, key)
+        undefined,
+        []
       );
     });
   }

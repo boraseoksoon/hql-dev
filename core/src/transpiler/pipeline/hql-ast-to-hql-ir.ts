@@ -7,8 +7,6 @@ import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../type/hql_ast.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { TransformError, ValidationError, perform } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { macroCache } from "../../s-exp/macro.ts";
-import { getFnFunction, getFxFunction } from "../syntax/function.ts";
 import { transformStandardFunctionCall, processFunctionBody, transformNamedArgumentCall, handleFxFunctionCall } from "../syntax/function.ts";
 import {
   isNamespaceImport,
@@ -29,10 +27,6 @@ import * as loopRecurModule from "../syntax/loop-recur.ts";
 import * as primitiveModule from "../syntax/primitive.ts";
 import * as quoteModule from "../syntax/quote.ts";
 
-// Per-file imported identifier set (reset for each transformToIR run)
-let importedIdentifierSet = new Set<string>();
-
-
 /**
  * Transform factory to map operators to handler functions
  */
@@ -52,7 +46,7 @@ export function transformToIR(
   if (transformFactory.size === 0) {
     initializeTransformFactory();
   }
-  importedIdentifierSet = new Set<string>(); // Reset for each file/module
+  
   const body: IR.IRNode[] = [];
   for (let i = 0; i < nodes.length; i++) {
     const ir = transformNode(nodes[i], currentDir);
@@ -439,7 +433,8 @@ function determineCallOrAccess(
 
   // Handle special patterns for (obj arg) expressions
   if (elements.length === 2) {
-    const firstElement = elements[0];
+    // firstElement is used in the string literal check below
+    const _firstElement = elements[0];
     const secondElement = elements[1];
     
     // Special case 1: Property access with string literals (person "hobbies") -> get(person, "hobbies")
@@ -463,14 +458,11 @@ function determineCallOrAccess(
       return createPropertyAccessWithFallback(firstTransformed, keyTransformed);
     }
 
-    // Special case 2: Handle specific known array indexing patterns
-    // Example: (entry 0) -> entry[0] when entry is a parameter name in filter/map functions
+    // Special case 2: Handle numeric indexing patterns - (obj 0) expressions
+    // Example: For constructs like (entry 0), (array 1), etc.
     const isNumberLiteral = secondElement.type === "literal" && typeof (secondElement as LiteralNode).value === "number";
     
-    // Check if the first element has the pattern of a lambda parameter name
-    const isPossibleArrayIndex = isNumberLiteral && firstElement.type === "symbol"
-    
-    if (isPossibleArrayIndex) {
+    if (isNumberLiteral) {
       const keyTransformed = transformNode(secondElement, currentDir);
       if (!keyTransformed) {
         throw new TransformError(
@@ -480,13 +472,12 @@ function determineCallOrAccess(
         );
       }
       
-      // Generate direct array access - this becomes entry[0] in JavaScript
-      return {
-        type: IR.IRNodeType.MemberExpression,
-        object: firstTransformed,
-        property: keyTransformed,
-        computed: true
-      } as IR.IRMemberExpression;
+      // Create a numeric fallback that tries both array access and function call
+      // This resolves the ambiguity at runtime without using any hacks or heuristics
+      return createNumericAccessWithFallback(firstTransformed, keyTransformed);
+    } else {
+      // For non-numeric cases (including function calls)
+      return createCallExpression(list, currentDir, transformNode, firstTransformed);
     }
   }
   
@@ -513,6 +504,23 @@ function createPropertyAccessWithFallback(
     arguments: [objectNode, keyNode]
   } as IR.IRCallExpression;
 }
+
+// Create a numeric access with fallback to function call
+// This will try array access first, and if that fails, it will call the target as a function
+function createNumericAccessWithFallback(
+  objectNode: IR.IRNode,
+  keyNode: IR.IRNode
+): IR.IRNode {
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.Identifier,
+      name: "getNumeric"
+    } as IR.IRIdentifier,
+    arguments: [objectNode, keyNode]
+  } as IR.IRCallExpression;
+}
+
 /**
  * Helper function to create a call expression
  */

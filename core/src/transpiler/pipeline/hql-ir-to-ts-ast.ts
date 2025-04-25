@@ -13,7 +13,7 @@ import { convertFunctionDeclaration, convertFxFunctionDeclaration, convertFnFunc
 import { convertImportDeclaration, convertExportNamedDeclaration, convertExportVariableDeclaration, convertJsImportReference } from "../syntax/import-export.ts";
 import { convertInteropIIFE } from "../syntax/js-interop.ts";
 import { isExpressionNode } from "../syntax/expression.ts";
-import { convertGetCallExpression } from "../syntax/get.ts";
+import { convertGetCallExpression, convertNumericCallExpression } from "../syntax/get.ts";
 
 export function convertIRExpr(node: IR.IRNode): ts.Expression {
   return execute(node, "IR expression", () => {
@@ -34,9 +34,13 @@ export function convertIRExpr(node: IR.IRNode): ts.Expression {
         return convertIdentifier(node as IR.IRIdentifier);
       case IR.IRNodeType.CallExpression: {
         const callExpr = node as IR.IRCallExpression;
-        if (callExpr.callee.type === IR.IRNodeType.Identifier && 
-            (callExpr.callee as IR.IRIdentifier).name === "get") {
-          return convertGetCallExpression(callExpr);
+        if (callExpr.callee.type === IR.IRNodeType.Identifier) {
+          const calleeName = (callExpr.callee as IR.IRIdentifier).name;
+          if (calleeName === "get") {
+            return convertGetCallExpression(callExpr);
+          } else if (calleeName === "getNumeric") {
+            return convertNumericCallExpression(callExpr);
+          }
         }
         return convertCallExpression(callExpr);
       }

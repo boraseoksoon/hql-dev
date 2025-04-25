@@ -627,28 +627,23 @@ async function processJsImportsInJs(content: string, filePath: string): Promise<
       let foundFile = false;
       if (await exists(resolvedImportPath)) {
         foundFile = true;
-        // For cached files, copy the JS file to the cache
-        if (!explicitOutputs.has(filePath)) {
-          const cachedJsPath = await writeToCachedPath(resolvedImportPath, await readTextFile(resolvedImportPath), "", {
-            preserveRelative: true
-          });
-          
-          // Register the mapping
-          registerImportMapping(resolvedImportPath, cachedJsPath);
-          
-          // Determine new import path
-          let newImportPath: string;
-          if (importPath.endsWith('.js')) {
-            newImportPath = `file://${cachedJsPath}`;
-          } else {
-            // Preserve the original import without extension if that's how it was written
-            newImportPath = `file://${cachedJsPath.replace(/\.js$/, '')}`;
-          }
-          
-          const newImport = fullImport.replace(importPath, newImportPath);
-          modifiedContent = modifiedContent.replace(fullImport, newImport);
-          logger.debug(`Rewritten JS import: ${importPath} -> ${newImportPath}`);
+        // Always copy the JS file to the cache and rewrite the import
+        const cachedJsPath = await writeToCachedPath(resolvedImportPath, await readTextFile(resolvedImportPath), "", {
+          preserveRelative: true
+        });
+        // Register the mapping
+        registerImportMapping(resolvedImportPath, cachedJsPath);
+        // Determine new import path
+        let newImportPath: string;
+        if (importPath.endsWith('.js')) {
+          newImportPath = `file://${cachedJsPath}`;
+        } else {
+          // Preserve the original import without extension if that's how it was written
+          newImportPath = `file://${cachedJsPath.replace(/\.js$/, '')}`;
         }
+        const newImport = fullImport.replace(importPath, newImportPath);
+        modifiedContent = modifiedContent.replace(fullImport, newImport);
+        logger.debug(`Rewritten JS import: ${importPath} -> ${newImportPath}`);
       }
       
       // If not found with original name, check alternative versions (convert dashes to underscores)
