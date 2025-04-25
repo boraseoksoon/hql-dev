@@ -10,7 +10,6 @@ import { transformAST } from "@core/transformer.ts";
 import { REPLEnvironment } from "./repl-environment.ts";
 import { Environment, Value } from "@core/environment.ts";
 import { SExp } from "@s-exp/types.ts";
-import { RUNTIME_FUNCTIONS } from "@transpiler/runtime/runtime.ts";
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { ErrorPipeline } from "../../core/src/common/error-pipeline.ts";
 import { Logger, globalLogger as logger } from "@core/logger.ts";

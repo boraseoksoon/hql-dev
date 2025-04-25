@@ -791,40 +791,55 @@ async function transpileTypeScriptToJavaScript(
 /**
  * Load an NPM module
  */
+async function tryImportSources(
+  sources: (() => Promise<any>)[],
+  moduleName: string,
+  modulePath: string,
+  env: Environment,
+  loggerMsg: string,
+  errorMsg: string,
+  ImportErrorClass: typeof Error = Error
+): Promise<void> {
+  try {
+    const importResults = await Promise.allSettled(sources.map(fn => fn()));
+    const successfulImport = importResults.find((result) => result.status === "fulfilled");
+    if (successfulImport && successfulImport.status === "fulfilled") {
+      env.importModule(moduleName, successfulImport.value);
+      logger.debug(loggerMsg);
+    } else {
+      const errors = importResults
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => typeof result.reason === "string" ? result.reason : (result.reason?.message || String(result.reason)))
+        .join("; ");
+      throw new ImportErrorClass(`${errorMsg}: ${errors}`, modulePath);
+    }
+  } catch (error) {
+    wrapError(loggerMsg, error, modulePath);
+  }
+}
+
+/**
+ * Load an NPM module
+ */
 async function loadNpmModule(
   moduleName: string,
   modulePath: string,
   env: Environment,
 ): Promise<void> {
-  try {
-    const packageName = modulePath.substring(4);
-    
-    // Try multiple CDNs in parallel for better reliability
-    const importResults = await Promise.allSettled([
-      import(modulePath),
-      import(`https://esm.sh/${packageName}`),
-      import(`https://cdn.skypack.dev/${packageName}`),
-    ]);
-    
-    const successfulImport = importResults.find((result) => result.status === "fulfilled");
-    
-    if (successfulImport && successfulImport.status === "fulfilled") {
-      env.importModule(moduleName, successfulImport.value);
-      logger.debug(`Imported NPM module: ${moduleName} (${packageName})`);
-    } else {
-      const errors = importResults
-        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-        .map((result) => formatErrorMessage(result.reason))
-        .join("; ");
-      
-      throw new ImportError(
-        `Failed to import from all sources (npm, esm.sh, skypack): ${errors}`,
-        modulePath
-      );
-    }
-  } catch (error) {
-    wrapError(`Importing NPM module ${moduleName}`, error, modulePath);
-  }
+  const packageName = modulePath.substring(4);
+  await tryImportSources(
+    [
+      () => import(modulePath),
+      () => import(`https://esm.sh/${packageName}`),
+      () => import(`https://cdn.skypack.dev/${packageName}`),
+    ],
+    moduleName,
+    modulePath,
+    env,
+    `Imported NPM module: ${moduleName} (${packageName})`,
+    `Failed to import from all sources (npm, esm.sh, skypack)`,
+    ImportError
+  );
 }
 
 /**
@@ -835,13 +850,15 @@ async function loadJsrModule(
   modulePath: string,
   env: Environment,
 ): Promise<void> {
-  try {
-    const module = await import(modulePath);
-    env.importModule(moduleName, module);
-    logger.debug(`Imported JSR module: ${moduleName}`);
-  } catch (error) {
-    wrapError(`Importing JSR module ${moduleName}`, error, modulePath);
-  }
+  await tryImportSources(
+    [() => import(modulePath)],
+    moduleName,
+    modulePath,
+    env,
+    `Imported JSR module: ${moduleName}`,
+    `Failed to import JSR module`,
+    Error
+  );
 }
 
 /**
@@ -852,13 +869,15 @@ async function loadHttpModule(
   modulePath: string,
   env: Environment,
 ): Promise<void> {
-  try {
-    const module = await import(modulePath);
-    env.importModule(moduleName, module);
-    logger.debug(`Imported HTTP module: ${moduleName}`);
-  } catch (error) {
-    wrapError(`Importing HTTP module ${moduleName}`, error, modulePath);
-  }
+  await tryImportSources(
+    [() => import(modulePath)],
+    moduleName,
+    modulePath,
+    env,
+    `Imported HTTP module: ${moduleName}`,
+    `Failed to import HTTP module`,
+    Error
+  );
 }
 
 /**

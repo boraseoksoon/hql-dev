@@ -131,21 +131,10 @@ scope management for lexical scoping
 Error Handling The transpiler implements a comprehensive error handling system:
 
 Custom error types for each stage Source position tracking for parse errors
-Detailed error messages Error recovery for partial compilation Performance
+Detailed error messages Error recovry for partial compilation Performance
 tracking Logging and diagnostics
 
-Runtime Functions The system includes a set of runtime functions
-(src/transpiler/runtime.ts) that are prepended to the output JavaScript:
-javascriptCopy// Enhanced runtime functions for HQL transpilation function
-get(obj, key, notFound = null) { // Handle null/undefined case if (obj == null)
-return notFound;
-
-// Handle arrays (vectors) if (Array.isArray(obj)) { return (typeof key ===
-'number' && key >= 0 && key < obj.length) ? obj[key] : notFound; }
-
-// Handle objects (maps) return (key in obj) ? obj[key] : notFound; } These
-functions implement core HQL functionality in JavaScript. Overall Process Flow
-with Example Let's trace through an end-to-end example: CopyHQL Input: (fn greet
+Overall Process Flow with Example Let's trace through an end-to-end example: CopyHQL Input: (fn greet
 [name] (str "Hello, " name "!"))
 
 (let message (greet "World"))

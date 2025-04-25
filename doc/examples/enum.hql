@@ -209,7 +209,7 @@
 )
 
 ;; Missing closing parenthesis below - deliberate syntax error
-(le x 10)
+(let x 10)
 
 ;; This code should not execute
 (print "Value is" x)

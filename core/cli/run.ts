@@ -114,6 +114,7 @@ export async function run(args: string[] = Deno.args): Promise<number> {
   logger.startTiming("run", "Total Processing");
 
   const runDir = await createTempDir("run");
+  
   logger.log({ text: `Created temporary directory: ${runDir}`, namespace: "cli" });
 
   const inputPath = positional[0]

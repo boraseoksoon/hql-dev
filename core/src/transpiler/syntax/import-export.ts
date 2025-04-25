@@ -1,5 +1,4 @@
 // src/transpiler/syntax/import-export.ts
-// Module for handling import and export operations
 
 import * as ts from "npm:typescript";
 import * as path from "../../platform/platform.ts";
@@ -13,7 +12,6 @@ import { Environment } from "../../environment.ts";
 import { isUserLevelMacro } from "../../s-exp/macro.ts";
 import { processVectorElements } from "./data-structure.ts";
 import { execute, convertVariableDeclaration } from "../pipeline/hql-ir-to-ts-ast.ts";
-import { registerImportedIdentifier } from "../pipeline/hql-ast-to-hql-ir.ts";
 
 export function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclaration {
   return execute(node, "import declaration", () => {
@@ -243,7 +241,7 @@ export function isNamespaceImport(list: ListNode): boolean {
 /**
  * Check if a position in a list of nodes has an 'as' alias following it
  */
-export function hasAliasFollowing(elements: any[], position: number): boolean {
+function hasAliasFollowing(elements: any[], position: number): boolean {
   return (
     position + 2 < elements.length &&
     elements[position + 1].type === "symbol" &&
@@ -255,7 +253,7 @@ export function hasAliasFollowing(elements: any[], position: number): boolean {
 /**
  * Create an import specifier for the IR
  */
-export function createImportSpecifier(
+function createImportSpecifier(
   imported: string,
   local: string,
 ): IR.IRImportSpecifier {
@@ -282,7 +280,7 @@ export function createImportSpecifier(
 /**
  * Check if a symbol is a macro in a module
  */
-export function isSymbolMacroInModule(
+function isSymbolMacroInModule(
   symbolName: string,
   modulePath: string,
   currentDir: string,
@@ -367,9 +365,6 @@ export function transformNamespaceImport(
       const name = (nameNode as SymbolNode).name;
       const pathVal = String((pathNode as LiteralNode).value);
 
-      // Register the imported namespace identifier
-      registerImportedIdentifier(name);
-
       return {
         type: IR.IRNodeType.JsImportReference,
         name,
@@ -437,7 +432,7 @@ export function transformVectorExport(
 /**
  * Create an export specifier
  */
-export function createExportSpecifier(symbolName: string): IR.IRExportSpecifier {
+function createExportSpecifier(symbolName: string): IR.IRExportSpecifier {
   return perform(
     () => {
       return {
@@ -463,7 +458,7 @@ export function createExportSpecifier(symbolName: string): IR.IRExportSpecifier 
  */
 export function transformVectorImport(
   list: ListNode,
-  currentDir: string,
+  currentDir: string
 ): IR.IRNode | null {
   return perform(
     () => {
@@ -472,8 +467,7 @@ export function transformVectorImport(
         throw new ValidationError(
           "Import path must be a string literal",
           "vector import",
-          "string literal",
-          list.elements[3].type,
+          "string literal"
         );
       }
 
@@ -482,8 +476,7 @@ export function transformVectorImport(
         throw new ValidationError(
           "Import path must be a string",
           "vector import",
-          "string",
-          typeof modulePath,
+          "string"
         );
       }
 
@@ -516,16 +509,13 @@ export function transformVectorImport(
             importSpecifiers.push(
               createImportSpecifier(symbolName, aliasName!),
             );
-            // Register both the alias and original name as imported
-            registerImportedIdentifier(aliasName!);
-            registerImportedIdentifier(symbolName);
+
             i += 3;
           } else {
             importSpecifiers.push(
               createImportSpecifier(symbolName, symbolName),
             );
-            // Register the imported symbol
-            registerImportedIdentifier(symbolName);
+
             i += 1;
           }
         } else {

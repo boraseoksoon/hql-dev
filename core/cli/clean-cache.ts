@@ -1,6 +1,6 @@
 #!/usr/bin/env deno run -A
 
-import { getCacheDir, getCacheStats, clearCache } from "../src/common/temp-file-tracker.ts";
+import { getCacheDir, clearCache } from "../src/common/temp-file-tracker.ts";
 import { parse } from "https://deno.land/std@0.170.0/flags/mod.ts";
 
 // Parse command line arguments

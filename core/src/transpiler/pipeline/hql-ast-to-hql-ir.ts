@@ -29,7 +29,9 @@ import * as loopRecurModule from "../syntax/loop-recur.ts";
 import * as primitiveModule from "../syntax/primitive.ts";
 import * as quoteModule from "../syntax/quote.ts";
 
-const importedIdentifierSet = new Set<string>();
+// Per-file imported identifier set (reset for each transformToIR run)
+let importedIdentifierSet = new Set<string>();
+
 
 /**
  * Transform factory to map operators to handler functions
@@ -47,90 +49,18 @@ export function transformToIR(
   nodes: HQLNode[],
   currentDir: string,
 ): IR.IRProgram {
-  return perform(
-    () => {
-      logger.debug(`Transforming ${nodes.length} HQL AST nodes to IR`);
-      const startTime = performance.now();
-
-      macroCache.clear();
-
-      // Initialize the factory if it hasn't been already
-      if (transformFactory.size === 0) {
-        initializeTransformFactory();
-      }
-
-      const body: IR.IRNode[] = [];
-      const errors: { node: HQLNode; error: Error }[] = [];
-
-      // Process each node in a single loop, collecting successful transformations and errors
-      for (let i = 0; i < nodes.length; i++) {
-        try {
-          const ir = perform(
-            () => transformNode(nodes[i], currentDir),
-            `transform node #${i + 1}`,
-            TransformError,
-            [nodes[i]],
-          );
-          if (ir) body.push(ir);
-        } catch (error) {
-          const errorMsg = error instanceof Error
-            ? error.message
-            : String(error);
-          logger.error(`Error transforming node #${i + 1}: ${errorMsg}`);
-          errors.push({
-            node: nodes[i],
-            error: error instanceof Error ? error : new Error(errorMsg),
-          });
-        }
-      }
-
-      // Log appropriate error summaries based on success rate
-      if (errors.length > 0) {
-        const MAX_DETAILED_ERRORS = 3;
-        
-        if (body.length > 0) {
-          logger.warn(
-            `Transformed ${body.length} nodes successfully, but ${errors.length} nodes failed`,
-          );
-          
-          errors.slice(0, MAX_DETAILED_ERRORS).forEach((err, index) => {
-            logger.error(
-              `Error ${index + 1}/${errors.length}: ${err.error.message}`,
-            );
-          });
-          
-          if (errors.length > MAX_DETAILED_ERRORS) {
-            logger.error(
-              `...and ${errors.length - MAX_DETAILED_ERRORS} more errors`,
-            );
-          }
-        } else {
-          // If no successful transformations, throw an error with the first error message
-          throw new TransformError(
-            `Failed to transform any nodes (${errors.length} errors). First error: ${
-              errors[0].error.message
-            }`,
-            `${nodes.length} AST nodes`,
-            "AST to IR transformation",
-            nodes,
-          );
-        }
-      }
-
-      const endTime = performance.now();
-      logger.debug(
-        `Transformation completed in ${
-          (endTime - startTime).toFixed(2)
-        }ms with ${body.length} IR nodes`,
-      );
-
-      return { type: IR.IRNodeType.Program, body };
-    },
-    "transformToIR",
-    TransformError,
-    [nodes],
-  );
+  if (transformFactory.size === 0) {
+    initializeTransformFactory();
+  }
+  importedIdentifierSet = new Set<string>(); // Reset for each file/module
+  const body: IR.IRNode[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const ir = transformNode(nodes[i], currentDir);
+    if (ir) body.push(ir);
+  }
+  return { type: IR.IRNodeType.Program, body };
 }
+
 
 /**
  * Initialize the transform factory with handlers for each operation
@@ -463,35 +393,18 @@ function isBuiltInOperator(op: string): boolean {
   );
 }
 
-function isIRIdentifier(node: IR.IRNode): node is IR.IRIdentifier {
-  return node && node.type === IR.IRNodeType.Identifier && typeof (node as any).name === "string";
-}
-
-function shouldTreatAsFunctionCall(node: IR.IRNode): boolean {
-  if (!isIRIdentifier(node)) return false;
-  
-  const name = node.name;
-  
-  if (getFnFunction(name) || getFxFunction(name)) return true;
-
-  if (importedIdentifierSet.has(name)) return true;
-
-  return false;
-}
-
-export function registerImportedIdentifier(name: string) {
-  importedIdentifierSet.add(name);
-}
-
 /**
  * Determines if a list represents a function call or a collection access.
  * For example, (myFunction arg) is a function call, while (myArray 0) is a collection access.
  * This function makes the determination based on structural analysis rather than naming patterns.
  */
+/**
+ * Determines if a list represents a function call or a collection access.
+ */
 function determineCallOrAccess(
   list: ListNode,
   currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode | null
+  transformNode: (node: HQLNode, dir: string) => IR.IRNode | null
 ): IR.IRNode {
   const elements = list.elements;
   
@@ -524,31 +437,84 @@ function determineCallOrAccess(
     );
   }
 
-  // For two-element forms (obj key), use createGetOperation which handles
-  // both property access and function calls at runtime
+  // Handle special patterns for (obj arg) expressions
   if (elements.length === 2) {
-    const secondElement = transformNode(elements[1], currentDir);
-    if (!secondElement) {
-      throw new ValidationError(
-        "Second element transformed to null",
-        "function call or property access",
-        "valid second argument",
-        "null"
-      );
+    const firstElement = elements[0];
+    const secondElement = elements[1];
+    
+    // Special case 1: Property access with string literals (person "hobbies") -> get(person, "hobbies")
+    const isStringLiteral = 
+      (secondElement.type === "literal" && 
+       typeof (secondElement as LiteralNode).value === "string") ||
+      (secondElement.type === "symbol" && 
+       (secondElement as SymbolNode).name.startsWith("\""));
+    
+    if (isStringLiteral) {
+      const keyTransformed = transformNode(secondElement, currentDir);
+      if (!keyTransformed) {
+        throw new TransformError(
+          "Key transformed to null", 
+          JSON.stringify(list), 
+          "Function or collection access"
+        );
+      }
+      
+      // Generate property access via get function
+      return createPropertyAccessWithFallback(firstTransformed, keyTransformed);
     }
 
-    // Use enhanced function call detection
-    if (shouldTreatAsFunctionCall(firstTransformed)) {
-      return createCallExpression(list, currentDir, transformNode, firstTransformed);
-    } else {
-      return dataStructureModule.createGetOperation(firstTransformed, secondElement);
+    // Special case 2: Handle specific known array indexing patterns
+    // Example: (entry 0) -> entry[0] when entry is a parameter name in filter/map functions
+    const isNumberLiteral = 
+      secondElement.type === "literal" && 
+      typeof (secondElement as LiteralNode).value === "number";
+    
+    // Check if the first element has the pattern of a lambda parameter name
+    const isPossibleArrayIndex = isNumberLiteral && firstElement.type === "symbol"
+    
+    if (isPossibleArrayIndex) {
+      const keyTransformed = transformNode(secondElement, currentDir);
+      if (!keyTransformed) {
+        throw new TransformError(
+          "Key transformed to null", 
+          JSON.stringify(list), 
+          "Function or collection access"
+        );
+      }
+      
+      // Generate direct array access - this becomes entry[0] in JavaScript
+      return {
+        type: IR.IRNodeType.MemberExpression,
+        object: firstTransformed,
+        property: keyTransformed,
+        computed: true
+      } as IR.IRMemberExpression;
     }
   }
   
-  // For more than two arguments, it's a function call
+  // Default case: treat as a function call
   return createCallExpression(list, currentDir, transformNode, firstTransformed);
 }
 
+/**
+ * Generate an IR node for property access with function call fallback
+ */
+function createPropertyAccessWithFallback(
+  objectNode: IR.IRNode,
+  keyNode: IR.IRNode
+): IR.IRNode {
+  // Simply generate a call to a get function that will check the property first
+  // and fall back to function call if needed
+  // Equivalent to: get(person, "hobbies")
+  return {
+    type: IR.IRNodeType.CallExpression,
+    callee: {
+      type: IR.IRNodeType.Identifier,
+      name: "get"
+    } as IR.IRIdentifier,
+    arguments: [objectNode, keyNode]
+  } as IR.IRCallExpression;
+}
 /**
  * Helper function to create a call expression
  */
