@@ -671,7 +671,7 @@ export class SpecialFormCompletionHandler extends CompletionHandler {
   private specialForms = [
     "if", "cond", "do", "let", "fn", "macro", "import", "export", 
     "module", "quote", "quasiquote", "unquote", "unquote-splicing",
-    "set", "def", "fn", "defmacro", "try", "catch", "finally",
+    "set", "def", "fn", "macro", "try", "catch", "finally",
     "throw", "new", "instanceof", "typeof", "print", "pprint"
   ];
   

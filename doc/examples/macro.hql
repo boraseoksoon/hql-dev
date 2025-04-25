@@ -6,7 +6,7 @@
 
 (import chalk from "jsr:@nothing628/chalk@1.0.0")
 
-(defmacro color-text (color text)
+(macro color-text (color text)
   `(console.log (js-call chalk ~color ~text)))
 
 (color-text "red" "This should be red!")

@@ -50,7 +50,7 @@ Prevents circular dependencies Allows importing and exporting macros between
 modules
 
 3. Macro System (src/s-exp/macro.ts) Copy┌───────────────────────┐
-   ┌───────────────────────┐ │ (defmacro when │ │ System-level macros │ │ [test
+   ┌───────────────────────┐ │ (macro when │ │ System-level macros │ │ [test
    & body] │---->│ registered in │ │ `(if ~test (do │ │ Environment │ │ ~@body)
    nil)) │ └───────────────────────┘ └───────────────────────┘ │ v
    ┌───────────────────────┐ ┌───────────────────────┐ │ (when x > 0 │ │
@@ -59,7 +59,7 @@ modules
    └───────────────────────┘ │ v ┌───────────────────────┐ │ (if (> x 0) │ │ (do
    │ │ (println "Positive")│ │ (process x)) │ │ nil) │ └───────────────────────┘
 
-Supports macros (defmacro) Implements
+Supports macros (macro) Implements
 macro hygiene using gensym Provides quasiquote and unquote for template-based
 macros Uses fixed-point iteration to fully expand all macros Handles nested
 macro expansions Caches macro expansions for performance
@@ -184,7 +184,7 @@ reprocessing the same file
 Macro System (src/s-exp/macro.ts) One of the most sophisticated parts of the
 system, providing compile-time code transformation:
 
-Supports macros via defmacro:
+Supports macros via macro:
 
 Implements hygienic macros through the gensym function to avoid variable capture
 Provides powerful template capabilities via quasiquote/unquote Uses fixed-point

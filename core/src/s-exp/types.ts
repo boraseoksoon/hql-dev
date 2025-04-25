@@ -65,7 +65,7 @@ export function isForm(exp: SExp, formName: string): boolean {
 }
 
 export function isDefMacro(exp: SExp): boolean {
-  return isForm(exp, "defmacro");
+  return isForm(exp, "macro");
 }
 
 export function isImport(exp: SExp): boolean {

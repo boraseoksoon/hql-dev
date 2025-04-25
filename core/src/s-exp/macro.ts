@@ -587,7 +587,7 @@ function expandMacroExpression(
   const first = list.elements[0];
   if (isSymbol(first)) {
     const op = (first as SSymbol).name;
-    if (op === "defmacro") return expr;
+    if (op === "macro") return expr;
     
     if (env.hasMacro(op)) {
       const macroFn = env.getMacro(op);

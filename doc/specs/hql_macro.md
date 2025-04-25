@@ -6,20 +6,20 @@ HQL implements a rich macro system inspired by Lisp traditions but adapted for a
 
 This document outlines the design, usage patterns, and implementation details of the HQL macro system.
 
-## Macros: `defmacro`
+## Macros: `macro`
 
 Macros are globally available throughout the codebase without requiring explicit imports.
 
 ### Definition
 
 ```lisp
-(defmacro macro-name [parameters]
+(macro macro-name [parameters]
   body-expression)
 ```
 
 ### Characteristics
 
-- Defined using the `defmacro` special form
+- Defined using the `macro` special form
 - Registered globally in the system
 - Available in all modules without importing
 - Cannot be meaningfully exported (since they're already global)
@@ -29,7 +29,7 @@ Macros are globally available throughout the codebase without requiring explicit
 ### Example
 
 ```lisp
-(defmacro unless [test & body]
+(macro unless [test & body]
   `(if ~test
        nil
        (do ~@body)))
@@ -41,7 +41,7 @@ Macros are globally available throughout the codebase without requiring explicit
 
 ### Macro Registry
 
-The macro system maintains a global registry for all macros defined with `defmacro`.
+The macro system maintains a global registry for all macros defined with `macro`.
 
 ### Expansion Process
 
@@ -54,11 +54,11 @@ Macros are resolved from the global macro registry, making them accessible throu
 
 ## Macro Visibility
 
-Macros defined with `defmacro` are globally available and do not require import or export operations. They are accessible in all modules automatically after they are defined.
+Macros defined with `macro` are globally available and do not require import or export operations. They are accessible in all modules automatically after they are defined.
 
 ## Best Practices
 
-1. Use `defmacro` for both language features and user-defined abstractions
+1. Use `macro` for both language features and user-defined abstractions
 2. Consider macro naming carefully to avoid conflicts in the global namespace
 3. Document macro behavior, especially when extending the language semantics
 4. Keep macros focused on specific transformations for better maintenance

@@ -35,7 +35,7 @@ forms.
 
 Steps to Build the Macro System:
 
-defmacro: Create a special form that allows users to define new macros. This
+macro: Create a special form that allows users to define new macros. This
 form will capture a macro’s parameters and body and register it in a global
 macro environment. Macro Expander: Write a function that recursively traverses
 your AST. When it encounters a list whose first element corresponds to a macro
@@ -98,7 +98,7 @@ migration.
    symbols, and lists. Implement a minimal evaluator for core forms (quote, if,
    fn, def, fn). Build a standard environment with arithmetic, list
    operations, and equality primitives. Implement the Macro System: Implement
-   defmacro to register macro definitions. Write a recursive macro expander that
+   macro to register macro definitions. Write a recursive macro expander that
    processes the AST and expands all macros into core forms. Refactor Built‑Ins
    as Macros: Gradually refactor high-level constructs (fn, import, export,
    print, etc.) so that they are defined as macros over the minimal kernel.
@@ -124,7 +124,7 @@ migration.
    so that after parsing and macro expansion, the IR is transformed into a final
    JavaScript AST and then into a self-contained JS file. Next Steps: Finalize
    the core AST and evaluator (ensuring everything is an expression). Implement
-   and test a robust macro expander with defmacro. Refactor built‑ins (like
+   and test a robust macro expander with macro. Refactor built‑ins (like
    fn, import, export) as macros. Integrate these stages into your transpiler
    pipeline and confirm that the final output is a single bundled JS file.
    Continue refining and testing until the system is stable. This roadmap
@@ -219,8 +219,8 @@ Provide basic operations (arithmetic, list manipulation, equality). Example
 
 ;; AST: literal, symbol, list ;; Evaluator: every expression returns a value ;;
 Core built-ins: quote, if, fn, def, fn, +, -, *, /, cons, car, cdr, eq? Step
-2: Implement the Macro System defmacro: Define a special form that lets you
-write macros, e.g.: (defmacro defmacro [name params & body] ;; Register macro
+2: Implement the Macro System macro: Define a special form that lets you
+write macros, e.g.: (macro macro [name params & body] ;; Register macro
 definition in the macro environment ) Macro Expander: Create a function that
 walks the AST and replaces macro invocations with their expansions. Ensure that
 after expansion, only core forms remain. Expression Everywhere: Guarantee that
@@ -287,7 +287,7 @@ Example: HQL source:
 "symbol", "name": "greeting" }, { "type": "literal", "value": "Hello, HQL!" } ]
 } HQL AST → Macro-Expanded HQL AST Macro Expansion: A macro expander walks the
 AST recursively. It looks for lists where the first element is a macro (as
-defined via defmacro) and expands them. After expansion, the AST consists solely
+defined via macro) and expands them. After expansion, the AST consists solely
 of core constructs (like quote, if, fn, def, etc.), ensuring everything is an
 expression. Example: Suppose you have a macro defined for fn that expands into
 (let name (lambda [params] body...)). Before expansion, you might see:

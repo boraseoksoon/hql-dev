@@ -140,12 +140,12 @@ Right-Threading (->>)
 
 (->> data (filter valid?) (map process) (reduce combine 0)) How It Works: Here,
 the result is threaded as the last argument of each subsequent function call.
-User-Defined Macros HQL provides a native defmacro so users can write their own
+User-Defined Macros HQL provides a native macro so users can write their own
 extensions. All macros—whether built‑in or user‑written—are treated uniformly.
 
 Example: Defining a JavaScript Array Literal Macro
 
-(defmacro js-array (& elements) ;; Converts [1,2,3] into (vector 1 2 3) (concat
+(macro js-array (& elements) ;; Converts [1,2,3] into (vector 1 2 3) (concat
 (list 'vector) elements)) Usage:
 
 (let my-array (js-array 1 2 3 4)) This macro operates on the same level as the

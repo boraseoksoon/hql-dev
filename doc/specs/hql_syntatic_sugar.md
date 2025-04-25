@@ -132,7 +132,7 @@ expanded = expandMacros(sexps, env, { ... });
 │                  Macro System                     │
 ├───────────────────────────────────────────────────┤
 │                  Macros                           │
-│                (defmacro)                         │
+│                (macro)                         │
 ├───────────────────────────────────────────────────┤
 │ • Defined in core.hql or user modules            │
 │ • Available globally                             │
@@ -140,4 +140,4 @@ expanded = expandMacros(sexps, env, { ... });
 └───────────────────────────────────────────────────┘
 ```
 
-- **Macros**: Defined with `defmacro` and available globally throughout the codebase.
+- **Macros**: Defined with `macro` and available globally throughout the codebase.

@@ -14,7 +14,7 @@
 ;; (while (< count 5)
 ;;   (print count)
 ;;   (set! count (+ count 1)))
-(defmacro while (condition & body)
+(macro while (condition & body)
   `(loop ()
      (if ~condition
        (do
@@ -29,7 +29,7 @@
 ;; Simple repeat loop - repeats body a specific number of times
 ;; Example usage:
 ;; (repeat 3 (print "hello"))
-(defmacro repeat (count & body)
+(macro repeat (count & body)
   `(loop (i 0)
      (if (< i ~count)
        (do
@@ -53,7 +53,7 @@
 ;; (for (i to: 10) ...) - iterates i from 0 to 9
 ;; (for (i from: 5 to: 10) ...) - iterates i from 5 to 9
 ;; (for (i from: 0 to: 10 by: 2) ...) - iterates i from 0 to 9 by steps of 2
-(defmacro for (binding & body)
+(macro for (binding & body)
   (let (var (first binding))
     (cond
       ;; Case: (for (i to: 10) ...)

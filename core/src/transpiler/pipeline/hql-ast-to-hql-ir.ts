@@ -233,7 +233,7 @@ function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
     const op = (first as SymbolNode).name;
 
     // Skip macro definitions
-    if (op === "defmacro" || op === "macro") {
+    if (op === "macro" || op === "macro") {
       logger.debug(`Skipping macro definition: ${op}`);
       return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
     }

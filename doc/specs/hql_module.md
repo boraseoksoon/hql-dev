@@ -6,15 +6,15 @@ MODULE IMPORT & EXPORT
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Today, our macros are defined with defmacro and auto-register globally.
+;; Today, our macros are defined with macro and auto-register globally.
 
 ;; For example, in a.hql we have:
 
-(defmacro print (& args)
+(macro print (& args)
 
 `(console.log ~@args))
 
-(defmacro log (& args)
+(macro log (& args)
 
 `(console.log "LOG:" ~@args))
 
@@ -81,7 +81,7 @@ cognitive load:
 
 ;; 3. Maintains module boundaries to avoid global namespace pollution.
 
-;; - All macros are defined with defmacro and are available globally.
+;; - All macros are defined with macro and are available globally.
 
 ;;
 
@@ -103,17 +103,17 @@ cognitive load:
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; All macros are defined with defmacro (global)
+;; All macros are defined with macro (global)
 
-(defmacro print (& args)
+(macro print (& args)
 
 `(console.log ~@args))
 
-(defmacro log (& args)
+(macro log (& args)
 
 `(console.log "LOG:" ~@args))
 
-(defmacro user-log (& args)
+(macro user-log (& args)
 
 `(console.log "LOG:" ~@args))
 
@@ -141,7 +141,7 @@ cognitive load:
 (export add) => X
 
 ;; We do NOT export 'print', 'log', or 'user-log' here because they are macros
-;; (defined with defmacro) which are automatically global.
+;; (defined with macro) which are automatically global.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -179,7 +179,7 @@ cognitive load:
 
 ;; CURRENT STATE:
 
-;; - Macros are defined only with defmacro and auto-register globally.
+;; - Macros are defined only with macro and auto-register globally.
 
 ;; - Exports use a verbose, string-based syntax, e.g.:
 
@@ -219,7 +219,7 @@ cognitive load:
 
 ;;
 
-;; - Use defmacro for all macro definitions, which are globally available.
+;; - Use macro for all macro definitions, which are globally available.
 
 ;;
 

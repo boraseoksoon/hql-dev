@@ -187,7 +187,7 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
         currentFile: macroPath,
       });
 
-      // Process macros in system files - only defmacro is used
+      // Process macros in system files - only macro is used
       expandMacros(transformed, env, { verbose: options.verbose, currentFile: macroPath });
       
       // Register in symbol table

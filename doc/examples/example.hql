@@ -7,7 +7,7 @@
 (console.log "Result:" result)
 
 (let a 10)
-(defmacro double-man (x)
+(macro double-man (x)
   `(* ~x a))
 
 (console.log "double man a yo: " (double-man 20))

@@ -924,7 +924,7 @@ async function loadHttpModule(
 }
 
 /**
- * Process file definitions (let, fn, defmacro) for variables, functions and macros
+ * Process file definitions (let, fn, macro) for variables, functions and macros
  */
 function processFileDefinitions(
   exprs: SExp[],

@@ -136,7 +136,7 @@ export function transformSyntax(
       const list = node as SList;
       if (list.elements.length > 0 && isSymbol(list.elements[0])) {
         const head = (list.elements[0] as SSymbol).name;
-        if (["fn", "fx", "defmacro"].includes(head) && list.elements.length > 1 && isSymbol(list.elements[1])) {
+        if (["fn", "fx", "macro"].includes(head) && list.elements.length > 1 && isSymbol(list.elements[1])) {
           const name = (list.elements[1] as SSymbol).name;
           const kind = head === "fn" ? "function" : (head === "fx" ? "fx" : "macro");
           let params: { name: string; type?: string }[] | undefined = undefined;
