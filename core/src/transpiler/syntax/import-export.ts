@@ -13,6 +13,7 @@ import { Environment } from "../../environment.ts";
 import { isUserLevelMacro } from "../../s-exp/macro.ts";
 import { processVectorElements } from "./data-structure.ts";
 import { execute, convertVariableDeclaration } from "../pipeline/hql-ir-to-ts-ast.ts";
+import { registerImportedIdentifier } from "../pipeline/hql-ast-to-hql-ir.ts";
 
 export function convertImportDeclaration(node: IR.IRImportDeclaration): ts.ImportDeclaration {
   return execute(node, "import declaration", () => {
@@ -366,6 +367,9 @@ export function transformNamespaceImport(
       const name = (nameNode as SymbolNode).name;
       const pathVal = String((pathNode as LiteralNode).value);
 
+      // Register the imported namespace identifier
+      registerImportedIdentifier(name);
+
       return {
         type: IR.IRNodeType.JsImportReference,
         name,
@@ -512,11 +516,16 @@ export function transformVectorImport(
             importSpecifiers.push(
               createImportSpecifier(symbolName, aliasName!),
             );
+            // Register both the alias and original name as imported
+            registerImportedIdentifier(aliasName!);
+            registerImportedIdentifier(symbolName);
             i += 3;
           } else {
             importSpecifiers.push(
               createImportSpecifier(symbolName, symbolName),
             );
+            // Register the imported symbol
+            registerImportedIdentifier(symbolName);
             i += 1;
           }
         } else {

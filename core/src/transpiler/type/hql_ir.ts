@@ -1,74 +1,67 @@
-// src/transpiler/hql_ir.ts - Updated with enum types
+// src/transpiler/hql_ir.ts - Updated with explicit enum values
 
 export enum IRNodeType {
-  // Basic program structure
-  Program,
-
-  // Literals
-  StringLiteral,
-  NumericLiteral,
-  BooleanLiteral,
-  NullLiteral,
-
-  // Identifiers
-  Identifier,
+  Program = 0,
+  StringLiteral = 1,
+  NumericLiteral = 2,
+  BooleanLiteral = 3,
+  NullLiteral = 4,
+  Identifier = 5,
 
   // Expressions
-  CallExpression,
-  MemberExpression,
-  CallMemberExpression,
-  NewExpression,
-  BinaryExpression,
-  UnaryExpression,
-  ConditionalExpression,
-  ArrayExpression,
-  ArrayConsExpression,
-  FunctionExpression,
-
-  // Object literal support (for maps)
-  ObjectExpression,
-  ObjectProperty,
+  CallExpression = 6,
+  MemberExpression = 7,
+  CallMemberExpression = 8,
+  NewExpression = 9,
+  BinaryExpression = 10,
+  UnaryExpression = 11,
+  ConditionalExpression = 12,
+  ArrayExpression = 13,
+  ArrayConsExpression = 14,
+  FunctionExpression = 15,
+  ObjectExpression = 16,
+  ObjectProperty = 17,
 
   // Statements/Declarations
-  VariableDeclaration,
-  VariableDeclarator,
-  FunctionDeclaration,
-  ReturnStatement,
-  BlockStatement,
+  VariableDeclaration = 18,
+  VariableDeclarator = 19,
+  FunctionDeclaration = 20,
+  ReturnStatement = 21,
+  BlockStatement = 22,
 
   // Import/Export
-  ImportDeclaration,
-  ImportSpecifier,
-  ExportNamedDeclaration,
-  ExportSpecifier,
-  ExportVariableDeclaration,
+  ImportDeclaration = 23,
+  ImportSpecifier = 24,
+  ExportNamedDeclaration = 25,
+  ExportSpecifier = 26,
+  ExportVariableDeclaration = 27,
 
   // JS Interop
-  InteropIIFE,
+  InteropIIFE = 28,
 
   // Other
-  CommentBlock,
-  Raw,
+  CommentBlock = 29,
+  Raw = 30,
 
   // For representing a JS import reference from (js-import "module")
-  JsImportReference,
-  AssignmentExpression,
-  SpreadAssignment,
-  ExpressionStatement,
-  FxFunctionDeclaration,
-  FnFunctionDeclaration,
-  IfStatement,
+  JsImportReference = 31,
+  AssignmentExpression = 32,
+  SpreadAssignment = 33,
+  ExpressionStatement = 34,
+  FxFunctionDeclaration = 35,
+  FnFunctionDeclaration = 36,
+  IfStatement = 37,
 
-  ClassDeclaration,
-  ClassField,
-  ClassMethod,
-  ClassConstructor,
-  GetAndCall,
+  ClassDeclaration = 38,
+  ClassField = 39,
+  ClassMethod = 40,
+  ClassConstructor = 41,
+  GetAndCall = 42,
 
-  // Enum Types (NEW)
-  EnumDeclaration,
-  EnumCase,
-  JsMethodAccess
+  // Enum Types
+  EnumDeclaration = 43,
+  EnumCase = 44,
+  JsMethodAccess = 45
 }
 
 export interface IRNode {
@@ -238,6 +231,7 @@ export interface IRBlockStatement extends IRNode {
 export interface IRImportDeclaration extends IRNode {
   type: IRNodeType.ImportDeclaration;
   source: string;
+  specifiers: IRImportSpecifier[];
 }
 
 export interface IRExportNamedDeclaration extends IRNode {
@@ -286,13 +280,6 @@ export interface IRImportSpecifier extends IRNode {
   type: IRNodeType.ImportSpecifier;
   imported: IRIdentifier;
   local: IRIdentifier;
-}
-
-// Update the ImportDeclaration interface to use the new ImportSpecifier
-export interface IRImportDeclaration extends IRNode {
-  type: IRNodeType.ImportDeclaration;
-  source: string;
-  specifiers: IRImportSpecifier[];
 }
 
 export interface IRAssignmentExpression extends IRNode {
@@ -352,7 +339,7 @@ export interface IRClassMethod extends IRNode {
   type: IRNodeType.ClassMethod;
   name: string;
   params: IRIdentifier[];
-  defaults?: { name: string, value: IRNode }[]; // Add this field to store defaults
+  defaults?: { name: string, value: IRNode }[];
   body: IRBlockStatement;
 }
 

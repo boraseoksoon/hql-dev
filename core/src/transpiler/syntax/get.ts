@@ -64,9 +64,7 @@ export function transformGet(
 export function createGetOperation(
     collection: IR.IRNode,
     key: IR.IRNode,
-    defaultValue: IR.IRNode | null = null
   ): IR.IRNode {
-    // Instead of creating a CallExpression with "get", create a MemberExpression with computed=true
     return {
       type: IR.IRNodeType.MemberExpression,
       object: collection,

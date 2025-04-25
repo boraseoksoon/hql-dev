@@ -8,6 +8,7 @@ import { sanitizeIdentifier } from "../../common/utils.ts";
 import { TransformError, ValidationError, perform } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { macroCache } from "../../s-exp/macro.ts";
+import { getFnFunction, getFxFunction } from "../syntax/function.ts";
 import { transformStandardFunctionCall, processFunctionBody, transformNamedArgumentCall, handleFxFunctionCall } from "../syntax/function.ts";
 import {
   isNamespaceImport,
@@ -27,6 +28,8 @@ import * as jsInteropModule from "../syntax/js-interop.ts";
 import * as loopRecurModule from "../syntax/loop-recur.ts";
 import * as primitiveModule from "../syntax/primitive.ts";
 import * as quoteModule from "../syntax/quote.ts";
+
+const importedIdentifierSet = new Set<string>();
 
 /**
  * Transform factory to map operators to handler functions
@@ -177,10 +180,17 @@ function initializeTransformFactory(): void {
       return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
     });
 
-    transformFactory.set("import", (_list, _currentDir) => {
-      logger.debug(`Skipping import transformation for now`);
-      return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
-    });
+    transformFactory.set("import", (list, currentDir) => {
+  // Try vector import first, fallback to namespace import
+  if (isVectorImport(list)) {
+    return importExportModule.transformVectorImport(list, currentDir);
+  }
+  if (importExportModule.isNamespaceImport(list)) {
+    return importExportModule.transformNamespaceImport(list, currentDir);
+  }
+  logger.debug(`Unknown import form, skipping`);
+  return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+});
 
     logger.debug(`Registered ${transformFactory.size} handler functions`);
   }, "initializeTransformFactory", TransformError);
@@ -453,8 +463,24 @@ function isBuiltInOperator(op: string): boolean {
   );
 }
 
+function isIRIdentifier(node: IR.IRNode): node is IR.IRIdentifier {
+  return node && node.type === IR.IRNodeType.Identifier && typeof (node as any).name === "string";
+}
+
 function shouldTreatAsFunctionCall(node: IR.IRNode): boolean {
-  return node && node.type === IR.IRNodeType.Identifier;
+  if (!isIRIdentifier(node)) return false;
+  
+  const name = node.name;
+  
+  if (getFnFunction(name) || getFxFunction(name)) return true;
+
+  if (importedIdentifierSet.has(name)) return true;
+
+  return false;
+}
+
+export function registerImportedIdentifier(name: string) {
+  importedIdentifierSet.add(name);
 }
 
 /**
@@ -510,9 +536,8 @@ function determineCallOrAccess(
         "null"
       );
     }
-    
-    // Heuristic: treat as function call if firstTransformed is an identifier (i.e., a function)
-    // Only treat as get/collection access if firstTransformed is an array, map, or known collection type.
+
+    // Use enhanced function call detection
     if (shouldTreatAsFunctionCall(firstTransformed)) {
       return createCallExpression(list, currentDir, transformNode, firstTransformed);
     } else {
