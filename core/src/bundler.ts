@@ -29,11 +29,10 @@ import {
   getCachedPath,
   needsRegeneration, 
   writeToCachedPath,
-  registerExplicitOutput,
   getImportMapping,
   registerImportMapping,
   createTempDirIfNeeded,
-} from "./common/temp-file-tracker.ts";
+} from "./common/hql-cache-tracker.ts";
 import { transpile, TranspileOptions } from './transpiler/index.ts';
 import { setCurrentBundlePath } from "./common/bundle-registry.ts";
 
@@ -425,10 +424,7 @@ function createUnifiedBundlePlugin(options: {
           const cachedPath = await cacheTranspiledFile(actualPath, tsCode, ".ts", { 
             preserveRelative: true 
           });
-          
-          // Register for explicit output
-          registerExplicitOutput(cachedPath);
-          
+                    
           // Save in local map for this bundling session
           filePathMap.set(args.path, cachedPath);
           if (args.path !== actualPath) {
@@ -1020,13 +1016,6 @@ async function writeOutput(
     );
     
     logger.debug(`Written output to cache: ${cachedPath}`);
-    
-    // Register for final output
-    registerExplicitOutput(outputPath);
-    
-    if (await exists(outputPath)) {
-      logger.warn(`File '${outputPath}' already exists. Will be overwritten when cache is cleaned up.`);
-    }
   } catch (error) {
     throw new TranspilerError(
       `Failed to write output to '${outputPath}': ${

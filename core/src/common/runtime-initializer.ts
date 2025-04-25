@@ -7,7 +7,7 @@
 
 import { globalLogger as logger } from "../logger.ts";
 import { exists, join } from "../platform/platform.ts";
-import { processHqlFile, copyNeighborFiles } from "./temp-file-tracker.ts";
+import { processHqlFile, copyNeighborFiles } from "./hql-cache-tracker.ts";
 import { dirname, fromFileUrl } from "https://deno.land/std@0.224.0/path/mod.ts";
 
 // Runtime component initialization states

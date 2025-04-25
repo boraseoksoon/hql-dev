@@ -5,12 +5,7 @@ import { transpileCLI } from "../src/bundler.ts";
 import { globalLogger as logger } from "../src/logger.ts";
 import { parseCliOptions, applyCliOptions, CliOptions } from "./utils/cli-options.ts";
 import { ErrorPipeline } from "../src/common/error-pipeline.ts";
-import { 
-  cleanupAllTempFiles, 
-  getCacheDir,
-  registerExplicitOutput,
-  getCacheStats
-} from "../src/common/temp-file-tracker.ts";
+import { getCacheDir, getCacheStats } from "../src/common/hql-cache-tracker.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
 
 /**
@@ -56,9 +51,7 @@ function printHelp(): void {
 /**
  * Parse positional args: input and optional output
  */
-function parsePaths(
-  args: string[]
-): { inputPath: string; outputPath?: string } {
+function parsePaths(args: string[]): { inputPath: string; outputPath?: string } {
   const [inputPath, maybeOutput] = args;
   if (!inputPath) {
     printHelp();
@@ -96,11 +89,6 @@ function transpile(
 ): Promise<string> {
   return timed("transpile", "Compile", async () => {
     const resolvedInputPath = resolve(inputPath);
-    
-    // Register output file if provided
-    if (outputPath) {
-      registerExplicitOutput(outputPath);
-    }
 
     // Use direct execution rather than error pipeline to control error handling ourselves
     return await transpileCLI(resolvedInputPath, outputPath, {
@@ -124,11 +112,7 @@ function printJS(bundledPath: string): Promise<void> {
 /**
  * Dynamically import and execute the JS file
  */
-function runJS(
-  bundledPath: string,
-  inputPath: string,
-  source: string
-): Promise<void> {
+function runJS(bundledPath: string): Promise<void> {
   console.log(`Running: ${bundledPath}`);
   return timed("transpile", "Execute", async () => {
     await import("file://" + resolve(bundledPath));
@@ -136,76 +120,52 @@ function runJS(
 }
 
 /**
- * Clean up all temp files
- */
-function cleanup(): Promise<void> {
-  return cleanupAllTempFiles().then(() => {
-    logger.debug("Cleanup complete");
-  });
-}
-
-/**
  * Entry point
  */
 export async function main(): Promise<void> {
-  try {
-    const args = Deno.args;
+  const args = Deno.args;
 
-    if (!args.length || args.includes("--help") || args.includes("-h")) {
-      printHelp();
-      Deno.exit(args.length ? 1 : 0);
-    }
-    
-    // Initialize runtime early - this will prevent redundant initializations later
-    await initializeRuntime();
-    
-    // Handle cache info request
-    if (args.includes("--cache-info")) {
-      await showCacheInfo();
-      return;
-    }
-    
-    // Parse options
-    const { inputPath, outputPath } = parsePaths(args);
-    const opts = parseCliOptions(args);
-    
-    // Handle debug mode
-    if (args.includes("--debug")) {
-      opts.debug = true;
-    }
-    
-    applyCliOptions(opts);
-
-    // Show cache directory in verbose mode
-    if (opts.verbose) {
-      const cacheDir = await getCacheDir();
-      logger.debug(`Using cache directory: ${cacheDir}`);
-    }
-
-    const source = await Deno.readTextFile(inputPath);
-
-    // Proceed with transpilation
-    const bundledPath = await transpile(inputPath, outputPath, opts);
-
-    if (args.includes("--print")) {
-      await printJS(bundledPath);
-    }
-
-    if (args.includes("--run")) {
-      await runJS(bundledPath, inputPath, source);
-    }
-
-    logger.logPerformance("transpile", inputPath.split("/").pop()!);
-  } catch (error) {
-    ErrorPipeline.reportError(error);
-    Deno.exit(1);
-  } finally {
-    try {
-      await cleanup();
-    } catch (cleanupError) {
-      console.error("Error during cleanup:", cleanupError);
-    }
+  if (!args.length || args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    Deno.exit(args.length ? 1 : 0);
   }
+  
+  // Initialize runtime early - this will prevent redundant initializations later
+  await initializeRuntime();
+  
+  // Handle cache info request
+  if (args.includes("--cache-info")) {
+    await showCacheInfo();
+    return;
+  }
+  
+  // Parse options
+  const { inputPath, outputPath } = parsePaths(args);
+  const opts = parseCliOptions(args);
+  
+  // Handle debug mode
+  if (args.includes("--debug")) {
+    opts.debug = true;
+  }
+  
+  applyCliOptions(opts);
+
+  if (opts.verbose) {
+    const cacheDir = await getCacheDir();
+    logger.debug(`Using cache directory: ${cacheDir}`);
+  }
+
+  const bundledPath = await transpile(inputPath, outputPath, opts);
+
+  if (args.includes("--print")) {
+    await printJS(bundledPath);
+  }
+
+  if (args.includes("--run")) {
+    await runJS(bundledPath);
+  }
+
+  logger.logPerformance("transpile", inputPath.split("/").pop()!);
 }
 
 if (import.meta.main) {

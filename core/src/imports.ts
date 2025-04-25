@@ -10,7 +10,7 @@ import {
   processJavaScriptFile,
   getImportMapping,
   createTempDirIfNeeded
-} from "./common/temp-file-tracker.ts";
+} from "./common/hql-cache-tracker.ts";
 import {
   isImport,
   isLiteral,

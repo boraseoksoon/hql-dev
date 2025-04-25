@@ -465,9 +465,7 @@ function determineCallOrAccess(
 
     // Special case 2: Handle specific known array indexing patterns
     // Example: (entry 0) -> entry[0] when entry is a parameter name in filter/map functions
-    const isNumberLiteral = 
-      secondElement.type === "literal" && 
-      typeof (secondElement as LiteralNode).value === "number";
+    const isNumberLiteral = secondElement.type === "literal" && typeof (secondElement as LiteralNode).value === "number";
     
     // Check if the first element has the pattern of a lambda parameter name
     const isPossibleArrayIndex = isNumberLiteral && firstElement.type === "symbol"

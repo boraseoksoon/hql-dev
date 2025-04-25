@@ -5,10 +5,7 @@ import { reportError } from "../src/common/error-pipeline.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
 import { basename } from "../src/platform/platform.ts";
-import {
-  createTempDir,
-  cleanupAllTempFiles
-} from "../src/common/temp-file-tracker.ts";
+import { createTempDir } from "../src/common/hql-cache-tracker.ts";
 import {
   parseLogNamespaces,
   parseCliOptions,
@@ -129,7 +126,5 @@ if (import.meta.main) {
   } catch (error) {
     reportError(error);
     Deno.exit(1); 
-  } finally {
-    await cleanupAllTempFiles();
   }
 }

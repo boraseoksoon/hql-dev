@@ -20,8 +20,6 @@ const CACHE_VERSION = "1"; // Increment when cache structure changes
 // Memory caches
 const contentHashCache = new Map<string, string>();
 const outputPathCache = new Map<string, Map<string, string>>();
-const tempDirs = new Set<string>();
-const explicitOutputs = new Set<string>();
 
 /**
  * Map of original imports to cached paths 
@@ -475,70 +473,8 @@ export async function createTempDir(
   const dirPath = join(cacheDir, "temp", `${prefix}-${timestamp}-${random}`);
   
   await ensureDir(dirPath);
-  tempDirs.add(dirPath);
-  
   logger.debug(`Created temp directory: ${dirPath}`);
   return dirPath;
-}
-
-/**
- * Mark a file as an explicit output that should be preserved
- */
-export function registerExplicitOutput(outputPath: string): void {
-  explicitOutputs.add(outputPath);
-  logger.debug(`Registered explicit output: ${outputPath}`);
-}
-
-/**
- * Clean up all temporary cache directories
- */
-export async function cleanupAllTempFiles(): Promise<void> {
-  // // Remove temp directories
-  // for (const dir of tempDirs) {
-  //   try {
-  //     await Deno.remove(dir, { recursive: true });
-  //     logger.debug(`Removed temp directory: ${dir}`);
-  //   } catch (error) {
-  //     logger.debug(`Failed to remove temp directory ${dir}: ${error}`);
-  //   }
-  // }
-  
-  // // Copy explicit outputs from cache to their final destination
-  // for (const outputPath of explicitOutputs) {
-  //   for (const sourceMap of outputPathCache.values()) {
-  //     for (const [ext, cachePath] of sourceMap.entries()) {
-  //       // Find if this output path matches the target extension
-  //       if (outputPath.endsWith(ext)) {
-  //         try {
-  //           // If cache file exists, copy to explicit output
-  //           if (await exists(cachePath)) {
-  //             const content = await readTextFile(cachePath);
-              
-  //             // IMPORTANT: For user-level files, we need to restore relative paths 
-  //             // instead of using absolute file:// URLs to cache
-  //             let outputContent = content;
-              
-  //             // Process content to replace absolute cache paths with relative paths
-  //             if (outputPath.endsWith('.js') || outputPath.endsWith('.ts')) {
-  //               outputContent = await restoreRelativePaths(content, outputPath, cachePath);
-  //             }
-              
-  //             await writeTextFile(outputPath, outputContent);
-  //             logger.debug(`Copied cached output to explicit path: ${cachePath} -> ${outputPath}`);
-  //           }
-  //         } catch (error) {
-  //           logger.debug(`Failed to copy explicit output ${cachePath} -> ${outputPath}: ${error}`);
-  //         }
-  //       }
-  //     }
-  //   }
-  // }
-  
-  // // Clear in-memory trackers
-  // tempDirs.clear();
-  // explicitOutputs.clear();
-  
-  // logger.debug("Cache cleanup complete");
 }
 
 /**
