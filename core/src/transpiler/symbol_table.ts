@@ -1,6 +1,11 @@
 // Universal Symbol Table for HQL Transpiler
 // Supports variables, functions, macros, types, and more
 
+import type { HQLNode } from "./type/hql_ast.ts";
+import type { IRNode } from "./type/hql_ir.ts";
+import { isSymbol, isList, SList, SSymbol } from "../s-exp/types.ts";
+import { globalLogger as logger } from "../logger.ts";
+
 // Expanded SymbolKind for all HQL constructs
 export type SymbolKind =
   | 'variable'
@@ -26,9 +31,6 @@ export type SymbolKind =
   | 'special-form'
   | 'builtin'
   | 'alias';
-
-import type { HQLNode } from "./type/hql_ast.ts";
-import type { IRNode } from "./type/hql_ir.ts";
 
 export interface SymbolInfo {
   name: string;
@@ -59,6 +61,7 @@ export class SymbolTable {
   }
 
   set(symbol: SymbolInfo) {
+    logger.debug(`Symbol table: setting ${symbol.name} as ${symbol.kind}${symbol.type ? ' (' + symbol.type + ')' : ''}`);
     this.table.set(symbol.name, symbol);
   }
 
@@ -80,11 +83,19 @@ export class SymbolTable {
   dump(): Record<string, SymbolInfo> {
     return Object.fromEntries(this.table.entries());
   }
-}
 
-// Example usage (to be integrated in parser/transformer):
-// const globalSymbols = new SymbolTable();
-// globalSymbols.set({ name: 'my-set', kind: 'variable', type: 'Set', scope: 'global' });
-// globalSymbols.set({ name: 'my-macro', kind: 'macro', scope: 'global' });
-// const localSymbols = new SymbolTable(globalSymbols);
-// localSymbols.set({ name: 'x', kind: 'parameter', type: 'Number', scope: 'parameter' });
+  // Method to check if a symbol is a specific type of collection
+  isCollection(name: string): boolean {
+    const info = this.get(name);
+    if (!info || !info.type) return false;
+    
+    return info.type === 'Array' || info.type === 'Set' || info.type === 'Map';
+  }
+
+  // Method to get the specific collection type
+  getCollectionType(name: string): string | undefined {
+    const info = this.get(name);
+    if (!info) return undefined;
+    return info.type;
+  }
+}

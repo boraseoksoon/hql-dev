@@ -1,5 +1,6 @@
-// src/transpiler/syntax-transformer.ts
+// src/transpiler/pipeline/syntax-transformer.ts
 // Enhanced version with comprehensive dot notation handling for enums in all contexts
+// And added symbol table integration for collection type detection
 
 import {
   createLiteral,
@@ -8,11 +9,11 @@ import {
   isList,
   isSymbol,
   SExp,
+  sexpToString,
   SList,
   SSymbol,
 } from "../../s-exp/types.ts";
-import { globalLogger as logger } from "../../logger.ts";
-import { Logger } from "../../logger.ts";
+import { Logger, globalLogger as logger } from "../../logger.ts";
 import { TransformError, perform } from "../../common/error-pipeline.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { SymbolTable, SymbolInfo } from "../symbol_table.ts";
@@ -38,7 +39,6 @@ export function transformSyntax(
   if (typeof globalSymbolTable.clear === "function") {
     globalSymbolTable.clear();
   }
-  const logger = options.logger ?? { debug: () => {}, warn: () => {} };
 
   // === Phase 1: Register enums and cases ===
   const enumDefinitions = new Map<string, SList>();
@@ -173,18 +173,54 @@ export function transformSyntax(
   }
   logger.debug("=== Symbol Table after FUNCTION/MACRO/FX phase ===\n" + JSON.stringify(globalSymbolTable.dump(), null, 2));
 
-  // === Phase 4: Register let bindings ===
+  // === Phase 4: Register let bindings and data types ===
   for (const node of ast) {
     if (isList(node)) {
       const list = node as SList;
       if (list.elements.length > 0 && isSymbol(list.elements[0])) {
         const head = (list.elements[0] as SSymbol).name;
-        if (head === "let" && list.elements.length > 1 && isList(list.elements[1])) {
-          const bindings = list.elements[1] as SList;
-          for (const b of bindings.elements) {
-            if (isList(b) && b.elements.length > 0 && isSymbol(b.elements[0])) {
-              const varName = (b.elements[0] as SSymbol).name;
-              globalSymbolTable.set({ name: varName, kind: "variable", scope: "local", node: b });
+        
+        // Process let binding (either global binding form or with a binding list)
+        if (head === "let") {
+          // Global binding form: (let name value)
+          if (list.elements.length === 3 && isSymbol(list.elements[1])) {
+            const varName = (list.elements[1] as SSymbol).name;
+            const valueNode = list.elements[2];
+            
+            // Register variable and detect its type
+            const dataType = inferDataType(valueNode);
+            globalSymbolTable.set({ 
+              name: varName, 
+              kind: "variable", 
+              type: dataType,
+              scope: "local", 
+              node: valueNode 
+            });
+            
+            logger.debug(`Registered let binding: ${varName} with type ${dataType}`);
+          }
+          // Binding list form: (let (name1 value1 name2 value2...) body...)
+          else if (list.elements.length > 1 && isList(list.elements[1])) {
+            const bindings = list.elements[1] as SList;
+            
+            // Process each binding pair
+            for (let i = 0; i < bindings.elements.length; i += 2) {
+              if (i + 1 < bindings.elements.length && isSymbol(bindings.elements[i])) {
+                const varName = (bindings.elements[i] as SSymbol).name;
+                const valueNode = bindings.elements[i + 1];
+                
+                // Register variable and detect its type
+                const dataType = inferDataType(valueNode);
+                globalSymbolTable.set({ 
+                  name: varName, 
+                  kind: "variable", 
+                  type: dataType,
+                  scope: "local", 
+                  node: valueNode 
+                });
+                
+                logger.debug(`Registered let binding: ${varName} with type ${dataType}`);
+              }
             }
           }
         }
@@ -216,13 +252,61 @@ export function transformSyntax(
   }
   logger.debug("=== Symbol Table after MODULE/IMPORT/EXPORT/ETC. phase ===\n" + JSON.stringify(globalSymbolTable.dump(), null, 2));
 
-  // === Phase 6: Transform nodes as before ===
+  // === Phase 6: Transform nodes with all the collected metadata ===
   const transformed: SExp[] = [];
   for (const node of ast) {
     transformed.push(transformNode(node, enumDefinitions, logger));
   }
   logger.debug("=== FINAL Symbol Table ===\n" + JSON.stringify(globalSymbolTable.dump(), null, 2));
   return transformed;
+}
+
+/**
+ * Helper function to infer data types for variables during binding
+ */
+function inferDataType(node: SExp): string {
+  if (!node) return "Unknown";
+  
+  // If it's a list, examine its structure
+  if (isList(node)) {
+    const list = node as SList;
+    
+    // Empty list
+    if (list.elements.length === 0) {
+      return "Array";
+    }
+    
+    // Check the first element for operation type
+    if (isSymbol(list.elements[0])) {
+      const op = (list.elements[0] as SSymbol).name;
+      
+      // Check common data structure constructors
+      if (op === "vector" || op === "empty-array") {
+        return "Array";
+      }
+      if (op === "hash-set" || op === "empty-set") {
+        return "Set";
+      }
+      if (op === "hash-map" || op === "empty-map") {
+        return "Map";
+      }
+      
+      // Check for new expressions
+      if (op === "new" && list.elements.length > 1 && isSymbol(list.elements[1])) {
+        const className = (list.elements[1] as SSymbol).name;
+        if (className === "Set") return "Set";
+        if (className === "Map") return "Map";
+        if (className.includes("Array")) return "Array";
+      }
+      
+      // Function literals
+      if (op === "fn" || op === "fx" || op === "lambda") {
+        return "Function";
+      }
+    }
+  }
+  
+  return "Unknown";
 }
 
 /**
@@ -253,6 +337,42 @@ export function transformNode(
       if (list.elements.length === 0) {
         // Empty lists don't need transformation
         return list;
+      }
+
+      // Handle collection access: (collection index) with collection type from symbol table
+      if (list.elements.length >= 2 && isSymbol(list.elements[0])) {
+        const collectionName = (list.elements[0] as SSymbol).name;
+        const collectionInfo = globalSymbolTable.get(collectionName);
+        
+        if (collectionInfo && collectionInfo.type) {
+          logger.debug(`Found symbol ${collectionName} with type ${collectionInfo.type}`);
+          
+          // Handle different collection types
+          if (collectionInfo.type === "Set") {
+            // For sets, convert to Array.from(set)[index]
+            return createList(
+              createSymbol("js-get"),
+              createList(
+                createSymbol("js-call"),
+                createSymbol("Array"),
+                createLiteral("from"),
+                list.elements[0]
+              ),
+              ...list.elements.slice(1)
+            );
+          }
+          else if (collectionInfo.type === "Map") {
+            // For maps, use the get method
+            return createList(
+              createSymbol("js-call"),
+              list.elements[0],
+              createLiteral("get"),
+              ...list.elements.slice(1)
+            );
+          }
+          // For arrays and other types, use standard indexing
+          // (which is handled by the default conversion)
+        }
       }
 
       // Handle enum declarations with explicit colon syntax: (enum Name : Type ...)
@@ -436,7 +556,7 @@ function transformEqualityExpression(
 }
 
 /**
- * Transform special forms like if, cond, when, unless that might contain comparisons with dot notation
+ * Transform special forms that might contain enum comparisons
  */
 function transformSpecialForm(
   list: SList,
@@ -519,7 +639,7 @@ function transformSpecialForm(
 }
 
 /**
- * Transform named arguments, checking for dot-notation shorthand for enums
+ * Transform function call with named arguments
  */
 function transformNamedArguments(
   list: SList,
