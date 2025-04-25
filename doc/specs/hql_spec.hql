@@ -367,18 +367,18 @@
 ;; 7. Daily Macros
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Assume core macros (including when/unless) are already loaded.
+;; Assume core defmacros (including when/unless) are already loaded.
 
 ;; Define a variable
-(let macro_x 10)
+(let defmacro_x 10)
 
 ;; Use 'when' to log a message if x is greater than 5.
-(when (> macro_x 5)
-  (js-call console "log" "macro_x is greater than 5"))  ;; x is greater than 5
+(when (> defmacro_x 5)
+  (js-call console "log" "defmacro_x is greater than 5"))  ;; x is greater than 5
 
 ;; Use 'unless' to log a message if x is not less than 5.
-(unless (< macro_x 5)
-  (console.log "macro_x is not less than 5")) ;; x is not less than 5
+(unless (< defmacro_x 5)
+  (console.log "defmacro_x is not less than 5")) ;; x is not less than 5
 
 (fn hql-unless (x)
   (unless x
@@ -387,10 +387,10 @@
 (export "unless" hql-unless)
 
 ;; Use 'inc' to compute x+1.
-(let x_plus_one (inc macro_x))
+(let x_plus_one (inc defmacro_x))
 
 ;; Use 'dec' to compute x-1.
-(let x_minus_one (dec macro_x))
+(let x_minus_one (dec defmacro_x))
 
 (console.log x_plus_one)  ;; 11
 (console.log x_minus_one) ;; 9

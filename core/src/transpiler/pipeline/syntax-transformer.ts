@@ -97,7 +97,7 @@ export function transformSyntax(
                 }
                 fields.push({ name: fieldName, type: fieldType });
                 globalSymbolTable.set({ name: `${typeName}.${fieldName}`, kind: "field", parent: typeName, scope: head as any, type: fieldType, node: el });
-              } else if (["fn", "fx", "method"].includes(subHead) && el.elements.length > 1 && isSymbol(el.elements[1])) {
+              } else if (["fn", "fx"].includes(subHead) && el.elements.length > 1 && isSymbol(el.elements[1])) {
                 const mName = (el.elements[1] as SSymbol).name;
                 let params: { name: string; type?: string }[] = [];
                 let returnType: string | undefined = undefined;
@@ -140,9 +140,9 @@ export function transformSyntax(
       const list = node as SList;
       if (list.elements.length > 0 && isSymbol(list.elements[0])) {
         const head = (list.elements[0] as SSymbol).name;
-        if (["fn", "fx", "macro"].includes(head) && list.elements.length > 1 && isSymbol(list.elements[1])) {
+        if (["fn", "fx"].includes(head) && list.elements.length > 1 && isSymbol(list.elements[1])) {
           const name = (list.elements[1] as SSymbol).name;
-          const kind = head === "fn" ? "function" : (head === "fx" ? "fx" : "macro");
+          const kind = head === "fn" ? "function" : (head === "fx" ? "fx" : undefined);
           let params: { name: string; type?: string }[] | undefined = undefined;
           let returnType: string | undefined = undefined;
           if (list.elements.length > 2 && isList(list.elements[2])) {

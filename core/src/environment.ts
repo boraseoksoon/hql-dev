@@ -24,17 +24,16 @@ export type MacroFn = ((args: SExp[], env: Environment) => SExp) & {
   isMacro?: boolean;
   macroName?: string;
   sourceFile?: string;
-  isUserMacro?: boolean;
 };
 
 export class Environment {
   public variables = new Map<string, Value>();
   public macros = new Map<string, MacroFn>();
   public moduleExports = new Map<string, Record<string, Value>>();
-  public moduleMacros = new Map<string, Map<string, MacroFn>>();
-  public exportedMacros = new Map<string, Set<string>>();
-  public importedMacros = new Map<string, Map<string, string>>();
-  public macroAliases = new Map<string, Map<string, string>>();
+  public  = new Map<string, Map<string, MacroFn>>();
+  public  = new Map<string, Set<string>>();
+  public  = new Map<string, Map<string, string>>();
+  public  = new Map<string, Map<string, string>>();
 
   private parent: Environment | null;
   private static globalEnv: Environment | null = null;
@@ -329,15 +328,13 @@ export class Environment {
       Object.defineProperty(macro, "macroName", { value: name });
       if (sourceFile) {
         Object.defineProperty(macro, "sourceFile", { value: sourceFile });
-        Object.defineProperty(macro, "isUserMacro", { value: true });
+        Object.defineProperty(macro, "", { value: true });
       }
     } catch (error) {
       this.logger.warn(
         `Could not tag macro function ${name}: ${
           error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+
   }
 
   defineMacro(key: string, macro: MacroFn): void {
@@ -356,76 +353,13 @@ export class Environment {
     }
   }
 
-  defineModuleMacro(filePath: string, macroName: string, macroFn: MacroFn): void {
-    try {
-      this.logger.debug(`Defining module macro: ${macroName} in ${filePath}`);
-      this.tagMacroFunction(macroFn, macroName, filePath);
-      this.macroRegistry.defineModuleMacro(filePath, macroName, macroFn);
-      if (!this.moduleMacros.has(filePath)) {
-        this.moduleMacros.set(filePath, new Map<string, MacroFn>());
-      }
-      this.moduleMacros.get(filePath)!.set(macroName, macroFn);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new MacroError(`Failed to define module macro ${macroName}: ${msg}`, macroName, filePath);
-    }
-  }
-
-  exportMacro(filePath: string, macroName: string): void {
-    try {
-      this.macroRegistry.exportMacro(filePath, macroName);
-      if (!this.exportedMacros.has(filePath)) {
-        this.exportedMacros.set(filePath, new Set<string>());
-      }
-      this.exportedMacros.get(filePath)!.add(macroName);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new MacroError(`Failed to export macro ${macroName}: ${msg}`, macroName, filePath);
-    }
-  }
-
-  importMacro(sourceFile: string, macroName: string, targetFile: string, aliasName?: string): boolean {
-    try {
-      const success = this.macroRegistry.importMacro(sourceFile, macroName, targetFile, aliasName);
-      if (success) {
-        const importName = aliasName || macroName;
-        if (!this.importedMacros.has(targetFile)) {
-          this.importedMacros.set(targetFile, new Map<string, string>());
-        }
-        this.importedMacros.get(targetFile)!.set(importName, sourceFile);
-        if (aliasName && aliasName !== macroName) {
-          if (!this.macroAliases.has(targetFile)) {
-            this.macroAliases.set(targetFile, new Map<string, string>());
-          }
-          this.macroAliases.get(targetFile)!.set(aliasName, macroName);
-        }
-      }
-      return success;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new MacroError(`Failed to import macro ${macroName}: ${msg}`, macroName, sourceFile);
-    }
-  }
-
-  hasMacro(key: string): boolean {
-    return this.macroRegistry.hasMacro(key, this.currentFilePath);
-  }
-
   getMacro(key: string): MacroFn | undefined {
     return this.macroRegistry.getMacro(key, this.currentFilePath);
   }
 
-  hasModuleMacro(filePath: string, macroName: string): boolean {
-    return this.macroRegistry.hasModuleMacro(filePath, macroName);
-  }
-
-  isUserLevelMacro(symbolName: string, fromFile: string): boolean {
+  (symbolName: string, fromFile: string): boolean {
     return this.macroRegistry.hasMacro(symbolName, fromFile) &&
       !this.macroRegistry.isSystemMacro(symbolName);
-  }
-
-  getExportedMacros(filePath: string): Set<string> | undefined {
-    return this.macroRegistry.getExportedMacros(filePath);
   }
 
   markFileProcessed(filePath: string): void {
@@ -440,18 +374,7 @@ export class Environment {
     return this.processedFiles.has(filePath);
   }
 
-  setCurrentFile(filePath: string | null): void {
-    try {
-      if (filePath) this.logger.debug(`Setting current file to: ${filePath}`);
-      else this.logger.debug(`Clearing current file`);
-      this.currentFilePath = filePath;
-    } catch (error) {
-      this.logger.warn(
-        `Error setting current file: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+
   }
 
   getCurrentFile(): string {
