@@ -9,6 +9,7 @@ import { perform } from "../../common/error-pipeline.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { Environment } from "../../environment.ts";
+import { isUserLevelMacro } from "../../s-exp/macro.ts";
 import { processVectorElements } from "./data-structure.ts";
 import { execute, convertVariableDeclaration } from "../pipeline/hql-ir-to-ts-ast.ts";
 
@@ -277,26 +278,57 @@ function createImportSpecifier(
 }
 
 /**
- * Create an export specifier
+ * Check if a symbol is a macro in a module
  */
-function createExportSpecifier(symbolName: string): IR.IRExportSpecifier {
+function isSymbolMacroInModule(
+  symbolName: string,
+  modulePath: string,
+  currentDir: string,
+): boolean {
   return perform(
     () => {
-      return {
-        type: IR.IRNodeType.ExportSpecifier,
-        local: {
-          type: IR.IRNodeType.Identifier,
-          name: sanitizeIdentifier(symbolName),
-        } as IR.IRIdentifier,
-        exported: {
-          type: IR.IRNodeType.Identifier,
-          name: symbolName,
-        } as IR.IRIdentifier,
-      };
+      const env = Environment.getGlobalEnv();
+      if (!env) {
+        logger.debug(
+          `No global environment, assuming '${symbolName}' is not a macro in module`,
+        );
+        return false;
+      }
+
+      if (!modulePath.endsWith(".hql")) {
+        logger.debug(`Not an HQL file, skipping macro check: ${modulePath}`);
+        return false;
+      }
+
+      let resolvedPath = modulePath;
+      if (modulePath.startsWith("./") || modulePath.startsWith("../")) {
+        resolvedPath = path.resolve(currentDir, modulePath);
+        logger.debug(
+          `Resolved relative path '${modulePath}' to '${resolvedPath}'`,
+        );
+      }
+
+      for (const [filePath, macros] of env.moduleMacros.entries()) {
+        if (
+          (filePath === resolvedPath || filePath.endsWith(resolvedPath)) &&
+          macros.has(symbolName) &&
+          env.getExportedMacros(filePath)?.has(symbolName)
+        ) {
+          logger.debug(
+            `Symbol '${symbolName}' is a macro in module ${filePath}`,
+          );
+          return true;
+        }
+      }
+
+      logger.debug(
+        `Symbol '${symbolName}' is not a macro in module ${modulePath}`,
+      );
+      return false;
     },
-    `createExportSpecifier '${symbolName}'`,
+    `isSymbolMacroInModule '${symbolName}'`,
     TransformError,
-    [symbolName],
+    [symbolName, modulePath, currentDir],
   );
 }
 
@@ -373,11 +405,16 @@ export function transformVectorExport(
           continue;
         }
         const symbolName = (elem as SymbolNode).name;
+
+        if (isUserLevelMacro(symbolName, currentDir)) {
+          logger.debug(`Skipping macro in export: ${symbolName}`);
+          continue;
+        }
         exportSpecifiers.push(createExportSpecifier(symbolName));
       }
 
       if (exportSpecifiers.length === 0) {
-        logger.debug("No exports found, skipping export declaration");
+        logger.debug("All exports were macros, skipping export declaration");
         return null;
       }
 
@@ -389,6 +426,30 @@ export function transformVectorExport(
     "transformVectorExport",
     TransformError,
     [list],
+  );
+}
+
+/**
+ * Create an export specifier
+ */
+function createExportSpecifier(symbolName: string): IR.IRExportSpecifier {
+  return perform(
+    () => {
+      return {
+        type: IR.IRNodeType.ExportSpecifier,
+        local: {
+          type: IR.IRNodeType.Identifier,
+          name: sanitizeIdentifier(symbolName),
+        } as IR.IRIdentifier,
+        exported: {
+          type: IR.IRNodeType.Identifier,
+          name: symbolName,
+        } as IR.IRIdentifier,
+      };
+    },
+    `createExportSpecifier '${symbolName}'`,
+    TransformError,
+    [symbolName],
   );
 }
 
@@ -431,6 +492,19 @@ export function transformVectorImport(
             ? (elements[i + 2] as SymbolNode).name
             : null;
 
+          const isMacro = isUserLevelMacro(symbolName, currentDir) ||
+            isSymbolMacroInModule(symbolName, modulePath, currentDir);
+
+          if (isMacro) {
+            logger.debug(
+              `Skipping macro in import: ${symbolName}${
+                aliasName ? ` as ${aliasName}` : ""
+              }`,
+            );
+            i += hasAlias ? 3 : 1;
+            continue;
+          }
+
           if (hasAlias) {
             importSpecifiers.push(
               createImportSpecifier(symbolName, aliasName!),
@@ -450,7 +524,7 @@ export function transformVectorImport(
       }
 
       if (importSpecifiers.length === 0) {
-        logger.debug("No imports found, skipping import declaration");
+        logger.debug("All imports were macros, skipping import declaration");
         return null;
       }
 

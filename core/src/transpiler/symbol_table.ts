@@ -1,5 +1,5 @@
 // Universal Symbol Table for HQL Transpiler
-// Supports variables, functions, types, and more
+// Supports variables, functions, macros, types, and more
 
 import type { HQLNode } from "./type/hql_ast.ts";
 import type { IRNode } from "./type/hql_ir.ts";
@@ -10,7 +10,7 @@ import { globalLogger as logger } from "../logger.ts";
 export type SymbolKind =
   | 'variable'
   | 'function'
-  
+  | 'macro'
   | 'fx'
   | 'fn'
   | 'type'

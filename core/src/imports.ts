@@ -3,7 +3,7 @@
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { globalLogger as logger } from "./logger.ts";
 import { Environment, Value } from "./environment.ts";
-import { evaluateForMacro } from "./s-exp/macro.ts";
+import { defineUserMacro, evaluateForMacro } from "./s-exp/macro.ts";
 import { parse } from "./transpiler/pipeline/parser.ts";
 import { readFile } from "./common/utils.ts";
 import {
@@ -484,8 +484,20 @@ function importSymbols(
   env: Environment,
   currentFile: string,
 ): void {
+  const isHqlModule = modulePath.endsWith(".hql");
+  
   for (const [symbolName, aliasName] of requestedSymbols.entries()) {
     try {
+      // Check for macros in HQL files
+      if (isHqlModule && env.hasModuleMacro(resolvedPath, symbolName)) {
+        const success = env.importMacro(resolvedPath, symbolName, currentFile, aliasName || undefined);
+        if (success) {
+          logger.debug(`Imported macro ${symbolName}${aliasName ? ` as ${aliasName}` : ""}`);
+        } else {
+          logger.warn(`Failed to import macro ${symbolName} from ${resolvedPath}`);
+        }
+      }
+      
       // Try to import the symbol value
       const moduleLookupKey = `${tempModuleName}.${symbolName}`;
       try {
@@ -494,13 +506,15 @@ function importSymbols(
         logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ""}`);
       } catch (lookupError) {
         // Only throw for non-macros or non-HQL files
-        logger.debug(`Symbol not found in module: ${symbolName}`);
-        wrapError(
-          `Symbol '${symbolName}' not found in module '${modulePath}'`,
-          lookupError,
-          modulePath,
-          currentFile,
-        );
+        if (!(isHqlModule && env.hasModuleMacro(resolvedPath, symbolName))) {
+          logger.debug(`Symbol not found in module: ${symbolName}`);
+          wrapError(
+            `Symbol '${symbolName}' not found in module '${modulePath}'`,
+            lookupError,
+            modulePath,
+            currentFile,
+          );
+        }
       }
     } catch (error) {
       wrapError(
@@ -955,7 +969,21 @@ function processFileExportsAndDefinitions(
   filePath: string,
 ): void {
   try {
-
+    // Process macro definitions
+    for (const expr of expressions) {
+      if (expr.type === "list" && expr.elements.length > 0 && 
+          isSymbol(expr.elements[0]) && expr.elements[0].name === "macro") {
+        try {
+          defineUserMacro(expr as SList, filePath, env, logger);
+        } catch (error) {
+          const macroName = expr.elements.length > 1 && isSymbol(expr.elements[1])
+            ? expr.elements[1].name
+            : "unknown";
+          wrapError(`Error defining user macro for '${macroName}'`, error, filePath, filePath);
+        }
+      }
+    }
+    
     // Collect and process exports
     const exportDefinitions = collectExportDefinitions(expressions);
     

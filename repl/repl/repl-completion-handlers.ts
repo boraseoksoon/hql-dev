@@ -669,7 +669,7 @@ export class SymbolCompletionHandler extends CompletionHandler {
 export class SpecialFormCompletionHandler extends CompletionHandler {
   // Special forms in the language
   private specialForms = [
-    "if", "cond", "do", "let", "fn", "import", "export", 
+    "if", "cond", "do", "let", "fn", "macro", "import", "export", 
     "module", "quote", "quasiquote", "unquote", "unquote-splicing",
     "set", "def", "fn", "defmacro", "try", "catch", "finally",
     "throw", "new", "instanceof", "typeof", "print", "pprint"

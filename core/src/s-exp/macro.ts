@@ -1,4 +1,4 @@
-// src/s-exp/defdefmacro.ts - Refactored implementation with proper hygiene
+// src/s-exp/macro.ts - Refactored implementation with proper hygiene
 
 import {
   createList,
@@ -8,6 +8,7 @@ import {
   isList,
   isLiteral,
   isSymbol,
+  isUserMacro,
   SExp,
   sexpToString,
   SList,
@@ -24,8 +25,8 @@ import { globalLogger as logger } from "../logger.ts";
 
 // Constants and caches
 const MAX_EXPANSION_ITERATIONS = 100;
-export const defdefmacroCache = new Map<string, Map<string, boolean>>();
-const defdefmacroExpansionCache = new LRUCache<string, SExp>(5000);
+export const macroCache = new Map<string, Map<string, boolean>>();
+const macroExpansionCache = new LRUCache<string, SExp>(5000);
 const symbolRenameMap = new Map<string, Map<string, string>>();
 
 interface MacroExpanderOptions {
@@ -61,34 +62,34 @@ function convertJsValueToSExp(value: any): SExp {
   return createLiteral(String(value));
 }
 
-/* Helper: Extract defdefmacro definition parts */
+/* Helper: Extract macro definition parts */
 function processMacroDefinition(
-  defdefmacroForm: SList,
+  macroForm: SList,
   logger: Logger,
 ): {
-  defdefmacroName: string;
+  macroName: string;
   params: string[];
   restParam: string | null;
   body: SExp[];
 } {
-  if (defdefmacroForm.elements.length < 4) {
+  if (macroForm.elements.length < 4) {
     throw new MacroError(
       "Macro definition requires a name, parameter list, and body",
       "unknown",
     );
   }
-  const defdefmacroNameExp = defdefmacroForm.elements[1];
-  if (!isSymbol(defdefmacroNameExp)) {
+  const macroNameExp = macroForm.elements[1];
+  if (!isSymbol(macroNameExp)) {
     throw new MacroError("Macro name must be a symbol", "unknown");
   }
-  const defdefmacroName = defdefmacroNameExp.name;
-  const paramsExp = defdefmacroForm.elements[2];
+  const macroName = macroNameExp.name;
+  const paramsExp = macroForm.elements[2];
   if (!isList(paramsExp)) {
-    throw new MacroError("Macro parameters must be a list", defdefmacroName);
+    throw new MacroError("Macro parameters must be a list", macroName);
   }
   const { params, restParam } = processParamList(paramsExp);
-  const body = defdefmacroForm.elements.slice(3);
-  return { defdefmacroName, params, restParam, body };
+  const body = macroForm.elements.slice(3);
+  return { macroName, params, restParam, body };
 }
 
 /* Helper: Process a parameter list (including rest parameters) */
@@ -125,54 +126,61 @@ function processParamList(
   return { params, restParam };
 }
 
-/* Helper: Registers a defdefmacro (global or user-level) */
+/* Helper: Registers a macro (global or user-level) */
 function registerMacroDefinition(
-  defdefmacroForm: SList,
+  macroForm: SList,
   env: Environment,
   logger: Logger,
-  register: (defdefmacroName: string, defdefmacroFn: MacroFn) => void,
-  defdefmacroType: "global" | "user",
+  register: (macroName: string, macroFn: MacroFn) => void,
+  macroType: "global" | "user",
   filePath?: string,
 ): void {
   try {
-    const { defdefmacroName, params, restParam, body } = processMacroDefinition(defdefmacroForm, logger);
-    if (defdefmacroType === "user" && filePath && env.hasModuleMacro(filePath, defdefmacroName)) {
-      logger.debug(`Macro ${defdefmacroName} already defined in ${filePath}, skipping`);
+    const { macroName, params, restParam, body } = processMacroDefinition(macroForm, logger);
+    if (macroType === "user" && filePath && env.hasModuleMacro(filePath, macroName)) {
+      logger.debug(`Macro ${macroName} already defined in ${filePath}, skipping`);
       return;
     }
-    const defdefmacroFn = createMacroFunction(defdefmacroName, params, restParam, body, logger, filePath);
-    register(defdefmacroName, defdefmacroFn);
+    const macroFn = createMacroFunction(macroName, params, restParam, body, logger, filePath);
+    register(macroName, macroFn);
     logger.debug(
-      `${defdefmacroType === "global" ? "Registered global" : "Defined user-level"} defdefmacro ${defdefmacroName}${filePath ? " in " + filePath : ""}`,
+      `${macroType === "global" ? "Registered global" : "Defined user-level"} macro ${macroName}${filePath ? " in " + filePath : ""}`,
     );
   } catch (error) {
-    const defdefmacroName = defdefmacroForm.elements[1] && isSymbol(defdefmacroForm.elements[1])
-      ? (defdefmacroForm.elements[1] as SSymbol).name
+    const macroName = macroForm.elements[1] && isSymbol(macroForm.elements[1])
+      ? (macroForm.elements[1] as SSymbol).name
       : "unknown";
     throw new MacroError(
-      `Failed to define ${defdefmacroType === "global" ? "defdefmacro" : "user defdefmacro"}: ${
+      `Failed to define ${macroType === "global" ? "macro" : "user macro"}: ${
         error instanceof Error ? error.message : String(error)
       }`,
-      defdefmacroName,
+      macroName,
       filePath,
       error instanceof Error ? error : undefined,
     );
   }
 }
 
-/* Exported: Register a global defdefmacro definition */
+/* Exported: Register a global macro definition */
 export function defineMacro(
-  defdefmacroForm: SList,
+  macroForm: SList,
   env: Environment,
   logger: Logger,
 ): void {
-  registerMacroDefinition(defdefmacroForm, env, logger, (name, defdefmacroFn) => env.defineMacro(name, defdefmacroFn), "global");
+  registerMacroDefinition(macroForm, env, logger, (name, macroFn) => env.defineMacro(name, macroFn), "global");
 }
 
-/* Exported: Define a user-level defdefmacro in the module scope */
-// User/module macro support removed. This function is obsolete and has been removed.
+/* Exported: Define a user-level macro in the module scope */
+export function defineUserMacro(
+  macroForm: SList,
+  filePath: string,
+  env: Environment,
+  logger: Logger,
+): void {
+  registerMacroDefinition(macroForm, env, logger, (name, macroFn) => env.defineModuleMacro(filePath, name, macroFn), "user", filePath);
+}
 
-/* Expand all defdefmacros in a list of S-expressions */
+/* Expand all macros in a list of S-expressions */
 export function expandMacros(
   exprs: SExp[],
   env: Environment,
@@ -181,12 +189,15 @@ export function expandMacros(
   const currentFile = options.currentFile;
   const useCache = options.useCache !== false;
   logger.debug(
-    `Starting defdefmacro expansion on ${exprs.length} expressions${currentFile ? ` in ${currentFile}` : ""}`,
+    `Starting macro expansion on ${exprs.length} expressions${currentFile ? ` in ${currentFile}` : ""}`,
   );
 
-  // No need to set current file for macro expansion; user/module macro context removed.
+  if (currentFile) {
+    env.setCurrentFile(currentFile);
+    logger.debug(`Setting current file to: ${currentFile}`);
+  }
 
-  // Process defdefmacro definitions (global first, then user-level if a current file is provided)
+  // Process macro definitions (global first, then user-level if a current file is provided)
   for (const expr of exprs) {
     if (isDefMacro(expr) && isList(expr)) {
       defineMacro(expr as SList, env, logger);
@@ -194,7 +205,7 @@ export function expandMacros(
   }
   if (currentFile) {
     for (const expr of exprs) {
-      if ((expr) && isList(expr)) {
+      if (isUserMacro(expr) && isList(expr)) {
         defineUserMacro(expr as SList, currentFile, env, logger);
       }
     }
@@ -210,13 +221,13 @@ export function expandMacros(
 
     const newExprs = currentExprs.map((expr) => {
       const exprStr = useCache ? sexpToString(expr) : "";
-      if (useCache && defdefmacroExpansionCache.has(exprStr)) {
+      if (useCache && macroExpansionCache.has(exprStr)) {
         logger.debug(`Cache hit for expression: ${exprStr.substring(0, 30)}...`);
-        return defdefmacroExpansionCache.get(exprStr)!;
+        return macroExpansionCache.get(exprStr)!;
       }
       const expandedExpr = expandMacroExpression(expr, env, options, 0);
       if (useCache) {
-        defdefmacroExpansionCache.set(exprStr, expandedExpr);
+        macroExpansionCache.set(exprStr, expandedExpr);
       }
       return expandedExpr;
     });
@@ -237,35 +248,38 @@ export function expandMacros(
       `Macro expansion reached maximum iterations (${MAX_EXPANSION_ITERATIONS}). Check for infinite recursion.`,
     );
   }
-  logger.debug(`Completed defdefmacro expansion after ${iteration} iterations`);
+  logger.debug(`Completed macro expansion after ${iteration} iterations`);
 
   currentExprs = filterMacroDefinitions(currentExprs, logger);
-  // No need to clear current file; user/module macro context removed.
+  if (currentFile) {
+    env.setCurrentFile(null);
+    logger.debug(`Clearing current file`);
+  }
   return currentExprs;
 }
 
-/* Check if a symbol represents a user-level defdefmacro with caching. */
+/* Check if a symbol represents a user-level macro with caching. */
 export function isUserLevelMacro(
   symbolName: string,
   currentDir: string,
 ): boolean {
   return perform(
     () => {
-      if (!defdefmacroCache.has(currentDir)) {
-        defdefmacroCache.set(currentDir, new Map<string, boolean>());
+      if (!macroCache.has(currentDir)) {
+        macroCache.set(currentDir, new Map<string, boolean>());
       }
-      const fileCache = defdefmacroCache.get(currentDir)!;
+      const fileCache = macroCache.get(currentDir)!;
       if (fileCache.has(symbolName)) return fileCache.get(symbolName)!;
 
       const env = Environment.getGlobalEnv();
       if (!env) {
-        logger.debug(`No global environment found, assuming '${symbolName}' is not a defdefmacro`);
+        logger.debug(`No global environment found, assuming '${symbolName}' is not a macro`);
         fileCache.set(symbolName, false);
         return false;
       }
       const result = env.isUserLevelMacro(symbolName, currentDir);
       fileCache.set(symbolName, result);
-      logger.debug(`Checking if '${symbolName}' is a user-level defdefmacro: ${result}`);
+      logger.debug(`Checking if '${symbolName}' is a user-level macro: ${result}`);
       return result;
     },
     `isUserLevelMacro '${symbolName}'`,
@@ -274,20 +288,20 @@ export function isUserLevelMacro(
   );
 }
 
-/* Evaluate an S-expression for defdefmacro expansion */
+/* Evaluate an S-expression for macro expansion */
 export function evaluateForMacro(
   expr: SExp,
   env: Environment,
   logger: Logger,
 ): SExp {
-  logger.debug(`Evaluating for defdefmacro: ${sexpToString(expr)}`);
+  logger.debug(`Evaluating for macro: ${sexpToString(expr)}`);
   if (isLiteral(expr)) return expr;
   if (isSymbol(expr)) return evaluateSymbol(expr as SSymbol, env, logger);
   if (isList(expr)) return evaluateList(expr as SList, env, logger);
   return expr;
 }
 
-/* Evaluate a symbol for defdefmacro expansion, including module property access */
+/* Evaluate a symbol for macro expansion, including module property access */
 function evaluateSymbol(expr: SSymbol, env: Environment, logger: Logger): SExp {
   if (expr.name.includes(".") && !expr.name.startsWith(".")) {
     const parts = expr.name.split(".");
@@ -296,9 +310,9 @@ function evaluateSymbol(expr: SSymbol, env: Environment, logger: Logger): SExp {
     try {
       const moduleValue = env.lookup(moduleName);
       // Optional export validation
-      const defdefmacroContext = env.getCurrentMacroContext();
+      const macroContext = env.getCurrentMacroContext();
       const currentFile = env.getCurrentFile();
-      if (defdefmacroContext && currentFile) {
+      if (macroContext && currentFile) {
         let moduleFilePath: string | null = null;
         for (const [modPath] of env.moduleExports.entries()) {
           if (modPath === moduleName || modPath.endsWith(`/${moduleName}`)) {
@@ -325,7 +339,7 @@ function evaluateSymbol(expr: SSymbol, env: Environment, logger: Logger): SExp {
       }
       return convertJsValueToSExp(result);
     } catch {
-      logger.debug(`Module property access failed: ${expr.name} during defdefmacro evaluation`);
+      logger.debug(`Module property access failed: ${expr.name} during macro evaluation`);
       return expr;
     }
   }
@@ -333,12 +347,12 @@ function evaluateSymbol(expr: SSymbol, env: Environment, logger: Logger): SExp {
     const value = env.lookup(expr.name);
     return convertJsValueToSExp(value);
   } catch {
-    logger.debug(`Symbol lookup failed for '${expr.name}' during defdefmacro evaluation`);
+    logger.debug(`Symbol lookup failed for '${expr.name}' during macro evaluation`);
     return expr;
   }
 }
 
-/* Evaluate a list expression during defdefmacro expansion */
+/* Evaluate a list expression during macro expansion */
 function evaluateList(expr: SList, env: Environment, logger: Logger): SExp {
   if (expr.elements.length === 0) return expr;
   const first = expr.elements[0];
@@ -446,15 +460,15 @@ function evaluateLet(list: SList, env: Environment, logger: Logger): SExp {
   return result;
 }
 
-/* Evaluate a defdefmacro call */
+/* Evaluate a macro call */
 function evaluateMacroCall(list: SList, env: Environment, logger: Logger): SExp {
   const op = (list.elements[0] as SSymbol).name;
-  const defdefmacroFn = env.getMacro(op);
-  if (!defdefmacroFn) {
+  const macroFn = env.getMacro(op);
+  if (!macroFn) {
     throw new MacroError(`Macro not found: ${op}`, op);
   }
   const args = list.elements.slice(1);
-  const expanded = defdefmacroFn(args, env);
+  const expanded = macroFn(args, env);
   logger.debug(`Macro ${op} expanded to: ${sexpToString(expanded)}`);
   return evaluateForMacro(expanded, env, logger);
 }
@@ -510,7 +524,7 @@ function evaluateFunctionCall(list: SList, env: Environment, logger: Logger): SE
         return convertJsValueToSExp(fn(...evalArgs));
       }
     } catch {
-      logger.debug(`Function '${op}' not found during defdefmacro expansion`);
+      logger.debug(`Function '${op}' not found during macro expansion`);
     }
   }
   return createList(
@@ -597,7 +611,7 @@ function expandMacroExpression(
   const maxDepth = options.maxExpandDepth || 100;
   
   if (depth > maxDepth) {
-    logger.warn(`Reached maximum expansion depth (${maxDepth}). Possible recursive defdefmacro?`, "defdefmacro");
+    logger.warn(`Reached maximum expansion depth (${maxDepth}). Possible recursive macro?`, "macro");
     return expr;
   }
   
@@ -609,18 +623,18 @@ function expandMacroExpression(
   const first = list.elements[0];
   if (isSymbol(first)) {
     const op = (first as SSymbol).name;
-    if (op === "defdefdefmacro" || op === "defdefmacro") return expr;
+    if (op === "defmacro" || op === "macro") return expr;
     
     if (env.hasMacro(op)) {
-      const defdefmacroFn = env.getMacro(op);
-      if (!defdefmacroFn) return expr;
+      const macroFn = env.getMacro(op);
+      if (!macroFn) return expr;
       
       const args = list.elements.slice(1);
       const originalExpr = list;
       
-      logger.debug(`Expanding defdefmacro ${op} at depth ${depth}`, "defdefmacro");
+      logger.debug(`Expanding macro ${op} at depth ${depth}`, "macro");
       
-      const expanded = defdefmacroFn(args, env);
+      const expanded = macroFn(args, env);
       visualizeMacroExpansion(originalExpr, expanded, op, logger);
       return expandMacroExpression(expanded, env, options, depth + 1);
     }
@@ -633,53 +647,53 @@ function expandMacroExpression(
   return createList(...expandedElements);
 }
 
-/* Filter out defdefmacro definitions from the final S-expression list */
+/* Filter out macro definitions from the final S-expression list */
 function filterMacroDefinitions(exprs: SExp[], logger: Logger): SExp[] {
   return exprs.filter((expr) => {
     if (isDefMacro(expr)) {
-      logger.debug(`Filtering out system defdefmacro definition: ${sexpToString(expr)}`);
+      logger.debug(`Filtering out system macro definition: ${sexpToString(expr)}`);
       return false;
     }
-    if ((expr)) {
-      logger.debug(`Filtering out user defdefmacro definition: ${sexpToString(expr)}`);
+    if (isUserMacro(expr)) {
+      logger.debug(`Filtering out user macro definition: ${sexpToString(expr)}`);
       return false;
     }
     return true;
   });
 }
 
-/* Visualize the defdefmacro expansion process with ASCII graphics */
+/* Visualize the macro expansion process with ASCII graphics */
 export function visualizeMacroExpansion(
   original: SExp,
   expanded: SExp,
-  defdefmacroName: string,
+  macroName: string,
   logger: Logger,
 ): void {
-  if (!logger.isNamespaceEnabled("defdefmacro")) return;
+  if (!logger.isNamespaceEnabled("macro")) return;
 
   const originalStr = sexpToString(original);
   const expandedStr = sexpToString(expanded);
   const separator = "=".repeat(80);
-  const header = `MACRO EXPANSION: ${defdefmacroName}`;
+  const header = `MACRO EXPANSION: ${macroName}`;
   const headerLine = `== ${header} ${"=".repeat(Math.max(0, separator.length - header.length - 4))}`;
 
   logger.log({
     text: `\n${separator}\n${headerLine}\n${separator}\n`,
-    namespace: "defdefmacro"
+    namespace: "macro"
   });
   logger.log({
     text: `ORIGINAL:\n${formatExpression(originalStr)}`,
-    namespace: "defdefmacro"
+    namespace: "macro"
   });
   logger.log({
     text: `\n   |\n   V\n`,
-    namespace: "defdefmacro"
+    namespace: "macro"
   });
   logger.log({
     text: `EXPANDED:\n${formatExpression(expandedStr)}\n`,
-    namespace: "defdefmacro"
+    namespace: "macro"
   });
-  logger.log({ text: separator, namespace: "defdefmacro" });
+  logger.log({ text: separator, namespace: "macro" });
 }
 
 /* Format an S-expression string for readability */
@@ -724,25 +738,34 @@ function formatExpression(expr: string): string {
   return result;
 }
 
-/* Log detailed defdefmacro evaluation environment information */
+/* Log detailed macro evaluation environment information */
 export function visualizeEnvironment(
   env: Environment,
   context: string,
   logger: Logger,
 ): void {
-  if (!logger.isNamespaceEnabled("defdefmacro")) return;
+  if (!logger.isNamespaceEnabled("macro")) return;
 
   logger.log({
     text: `\n== MACRO ENVIRONMENT: ${context} ==`,
-    namespace: "defdefmacro"
+    namespace: "macro"
   });
-  logger.log({ text: "Variables:", namespace: "defdefmacro" });
+  logger.log({ text: "Variables:", namespace: "macro" });
   
   if (env.variables.size === 0) {
-    logger.log({ text: "  (none)", namespace: "defdefmacro" });
+    logger.log({ text: "  (none)", namespace: "macro" });
   } else {
     for (const [key, value] of env.variables.entries()) {
-      logger.log({ text: `  ${key}: ${formatValue(value)}`, namespace: "defdefmacro" });
+      logger.log({ text: `  ${key}: ${formatValue(value)}`, namespace: "macro" });
+    }
+  }
+
+  const currentFile = env.getCurrentFile();
+  if (currentFile && env.moduleMacros.has(currentFile)) {
+    logger.log({ text: "\nLocal Macros:", namespace: "macro" });
+    const moduleMacros = env.moduleMacros.get(currentFile)!;
+    for (const [name, _] of moduleMacros.entries()) {
+      logger.log({ text: `  ${name}`, namespace: "macro" });
     }
   }
 }
@@ -759,42 +782,42 @@ function formatValue(value: any): string {
   return String(value);
 }
 
-/* Create a defdefmacro function */
+/* Create a macro function */
 function createMacroFunction(
-  defdefmacroName: string,
+  macroName: string,
   params: string[],
   restParam: string | null,
   body: SExp[],
   logger: Logger,
   sourceFile?: string,
 ): MacroFn {
-  const defdefmacroFn = (args: SExp[], callEnv: Environment): SExp => {
+  const macroFn = (args: SExp[], callEnv: Environment): SExp => {
     const source = sourceFile ? ` from ${sourceFile}` : "";
-    logger.debug(`Expanding ${sourceFile ? "module " : ""}defdefmacro ${defdefmacroName}${source} with ${args.length} args`);
-    callEnv.setCurrentMacroContext(`defdefmacro_${defdefmacroName}`);
-    const defdefmacroEnv = createMacroEnv(callEnv, params, restParam, args, logger);
+    logger.debug(`Expanding ${sourceFile ? "module " : ""}macro ${macroName}${source} with ${args.length} args`);
+    callEnv.setCurrentMacroContext(`macro_${macroName}`);
+    const macroEnv = createMacroEnv(callEnv, params, restParam, args, logger);
     let result: SExp = createNilLiteral();
     for (const expr of body) {
-      result = evaluateForMacro(expr, defdefmacroEnv, logger);
+      result = evaluateForMacro(expr, macroEnv, logger);
     }
-    result = applyHygiene(result, defdefmacroName, logger);
+    result = applyHygiene(result, macroName, logger);
     callEnv.setCurrentMacroContext(null);
-    logger.debug(`Macro ${defdefmacroName} expanded to: ${sexpToString(result)}`);
+    logger.debug(`Macro ${macroName} expanded to: ${sexpToString(result)}`);
     return result;
   };
 
-  Object.defineProperty(defdefmacroFn, "isMacro", { value: true });
-  Object.defineProperty(defdefmacroFn, "defdefmacroName", { value: defdefmacroName });
+  Object.defineProperty(macroFn, "isMacro", { value: true });
+  Object.defineProperty(macroFn, "macroName", { value: macroName });
   if (sourceFile) {
-    Object.defineProperty(defdefmacroFn, "sourceFile", { value: sourceFile });
-    Object.defineProperty(defdefmacroFn, "", { value: true });
+    Object.defineProperty(macroFn, "sourceFile", { value: sourceFile });
+    Object.defineProperty(macroFn, "isUserMacro", { value: true });
   }
-  return defdefmacroFn;
+  return macroFn;
 }
 
 /* Apply hygiene transformations to an expression */
-function applyHygiene(expr: SExp, defdefmacroName: string, logger: Logger): SExp {
-  const hygieneContext = `defdefmacro_${defdefmacroName}`;
+function applyHygiene(expr: SExp, macroName: string, logger: Logger): SExp {
+  const hygieneContext = `macro_${macroName}`;
   function processExpr(expr: SExp): SExp {
     if (isList(expr)) {
       return createList(...(expr as SList).elements.map(processExpr));
@@ -813,7 +836,7 @@ function applyHygiene(expr: SExp, defdefmacroName: string, logger: Logger): SExp
   }
 }
 
-/* Create a new environment for defdefmacro expansion with parameter bindings and hygiene */
+/* Create a new environment for macro expansion with parameter bindings and hygiene */
 function createMacroEnv(
   parent: Environment,
   params: string[],
@@ -822,15 +845,15 @@ function createMacroEnv(
   logger: Logger,
 ): Environment {
   const env = parent.extend();
-  const defdefmacroContext = parent.getCurrentMacroContext();
+  const macroContext = parent.getCurrentMacroContext();
 
   for (let i = 0; i < params.length; i++) {
     const hygienicParamName = `${params[i]}_${gensym("param")}`;
-    if (defdefmacroContext) {
-      if (!symbolRenameMap.has(defdefmacroContext)) {
-        symbolRenameMap.set(defdefmacroContext, new Map());
+    if (macroContext) {
+      if (!symbolRenameMap.has(macroContext)) {
+        symbolRenameMap.set(macroContext, new Map());
       }
-      symbolRenameMap.get(defdefmacroContext)!.set(params[i], hygienicParamName);
+      symbolRenameMap.get(macroContext)!.set(params[i], hygienicParamName);
     }
     const paramValue = i < args.length ? args[i] : createNilLiteral();
     env.define(hygienicParamName, paramValue);
@@ -843,11 +866,11 @@ function createMacroEnv(
     const restList = createList(...restArgs);
     Object.defineProperty(restList, "isRestParameter", { value: true });
     const hygienicRestName = `${restParam}_${gensym("rest")}`;
-    if (defdefmacroContext) {
-      if (!symbolRenameMap.has(defdefmacroContext)) {
-        symbolRenameMap.set(defdefmacroContext, new Map());
+    if (macroContext) {
+      if (!symbolRenameMap.has(macroContext)) {
+        symbolRenameMap.set(macroContext, new Map());
       }
-      symbolRenameMap.get(defdefmacroContext)!.set(restParam, hygienicRestName);
+      symbolRenameMap.get(macroContext)!.set(restParam, hygienicRestName);
     }
     env.define(hygienicRestName, restList);
     env.define(restParam, restList);

@@ -6,7 +6,7 @@ MODULE IMPORT & EXPORT
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Today, our defdefmacros are defined with defmacro and auto-register globally.
+;; Today, our macros are defined with defmacro and auto-register globally.
 
 ;; For example, in a.hql we have:
 
@@ -24,13 +24,13 @@ MODULE IMPORT & EXPORT
 
 ;; Exports are done in a verbose, string-based manner:
 
-(export "print" print) ;; Global defdefmacro; cannot be exported.
+(export "print" print) ;; Global macro; cannot be exported.
 
-(export "log" log) ;; Global defdefmacro; cannot be exported.
+(export "log" log) ;; Global macro; cannot be exported.
 
 (export "add" add)
 
-;; As a result, defdefmacros like print and log are available everywhere,
+;; As a result, macros like print and log are available everywhere,
 
 ;; which risks name collisions in larger codebases.
 
@@ -81,15 +81,15 @@ cognitive load:
 
 ;; 3. Maintains module boundaries to avoid global namespace pollution.
 
-;; - Instead of relying on global defmacro for user-defined defdefmacros,
+;; - Instead of relying on global defmacro for user-defined macros,
 
-;; we plan to differentiate system-level defdefmacros (using defmacro) from
+;; we plan to differentiate system-level macros (using defmacro) from
 
-;; user-level modular defdefmacros (using a new form, e.g. "defdefmacro").
+;; user-level modular macros (using a new form, e.g. "macro").
 
 ;;
 
-;; - In our future design, user-level defdefmacros will not auto-register globally;
+;; - In our future design, user-level macros will not auto-register globally;
 
 ;; they must be explicitly exported and imported.
 
@@ -117,18 +117,18 @@ cognitive load:
 
 `(console.log "LOG:" ~@args))
 
-;; user-level defdefmacro. it must be imported/exported to be used like other normal
-module in contrast to defmacro (system global defdefmacro we have already)
+;; user-level macro. it must be imported/exported to be used like other normal
+module in contrast to defmacro (system global macro we have already)
 
-(defdefmacro user-log (& args)
+(macro user-log (& args)
 
 `(console.log "LOG:" ~@args))
 
 ;; USER-LEVEL MACROS and functions use our new, opinionated export syntax.
 
-;; (Note: In the future, we plan to introduce a new defdefmacro form (e.g. "defdefmacro")
+;; (Note: In the future, we plan to introduce a new macro form (e.g. "macro")
 
-;; for user-defined defdefmacros that are modular. For now, assume functions and
+;; for user-defined macros that are modular. For now, assume functions and
 
 ;; other exportable symbols follow the same vector export style.)
 
@@ -174,7 +174,7 @@ module in contrast to defmacro (system global defdefmacro we have already)
 
 (print2 "Hello from module a, aliased!") ;; 'print2' now refers to 'print'
 
-(log2 "hello user defdefmacro log") ;; user defdefmacro exported and used
+(log2 "hello user macro log") ;; user macro exported and used
 
 ;; For namespace imports (entire module):
 
@@ -204,7 +204,7 @@ module in contrast to defmacro (system global defdefmacro we have already)
 
 ;; (import moduleA from "./a.hql")
 
-;; - There is no mechanism to restrict defdefmacro registration to a module.
+;; - There is no mechanism to restrict macro registration to a module.
 
 ;; FUTURE VISION:
 
@@ -230,7 +230,7 @@ module in contrast to defmacro (system global defdefmacro we have already)
 
 ;;
 
-;; - Introduce a new defdefmacro form (e.g., "defdefmacro") for user-level defdefmacros that are
+;; - Introduce a new macro form (e.g., "macro") for user-level macros that are
 modular.
 
 ;; These will NOT auto-register globally and must be explicitly exported.

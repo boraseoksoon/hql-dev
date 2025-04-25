@@ -11,7 +11,7 @@
   (/ x y))
 
 ;; Define a macro to export (user-level)
-(defmacro format_message (msg)
+(macro format_message (msg)
   `(str "MESSAGE: " ~msg))
 
 ;; Define variables to export

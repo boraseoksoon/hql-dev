@@ -1,6 +1,6 @@
 ;; a.hql
 
-(defmacro hello (name)
+(macro hello (name)
   `(console.log (+ "Hello, " ~name "!")))
 
 (export [hello])
