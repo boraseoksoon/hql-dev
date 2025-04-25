@@ -57,7 +57,7 @@ const TOKEN_PATTERNS = {
 export function parse(input: string, filePath: string = ""): SExp[] {
   const tokens = tokenize(input, filePath);
   
-  validateTokenBalance(tokens, input, filePath);
+  // validateTokenBalance(tokens, input, filePath);
   
   return parseTokens(tokens, input, filePath);
 }

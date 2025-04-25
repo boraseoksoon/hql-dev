@@ -15,6 +15,10 @@ import { globalLogger as logger } from "../../logger.ts";
 import { Logger } from "../../logger.ts";
 import { TransformError, perform } from "../../common/error-pipeline.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
+import { SymbolTable, SymbolInfo } from "../symbol_table.ts";
+
+// Global symbol table for compile-time symbol/type tracking
+export const globalSymbolTable = new SymbolTable();
 
 /**
  * Options for syntax transformation
@@ -30,32 +34,195 @@ export function transformSyntax(
   ast: SExp[],
   options: TransformOptions = {},
 ): SExp[] {
-  logger.debug(`Starting syntax transformation on ${ast.length} expressions`);
+  // Clear the symbol table at the start if possible
+  if (typeof globalSymbolTable.clear === "function") {
+    globalSymbolTable.clear();
+  }
+  const logger = options.logger ?? { debug: () => {}, warn: () => {} };
 
-  // First pass: collect all enum definitions
+  // === Phase 1: Register enums and cases ===
   const enumDefinitions = new Map<string, SList>();
-  
   for (const node of ast) {
     if (isList(node)) {
       const list = node as SList;
-      if (list.elements.length > 0 && 
-          isSymbol(list.elements[0]) && 
-          (list.elements[0] as SSymbol).name === "enum" && 
-          list.elements.length >= 2 && 
-          isSymbol(list.elements[1])) {
-        // Extract the enum name (handle both "Name" and "Name:Type" forms)
-        let enumName = (list.elements[1] as SSymbol).name;
-        if (enumName.includes(":")) {
-          enumName = enumName.split(":")[0];
-        }
+      if (list.elements.length > 0 && isSymbol(list.elements[0]) && (list.elements[0] as SSymbol).name === "enum" && list.elements.length > 1 && isSymbol(list.elements[1])) {
+        const enumName = (list.elements[1] as SSymbol).name.split(":")[0];
         enumDefinitions.set(enumName, list);
-        logger.debug(`Found enum definition: ${enumName}`);
+        const cases: string[] = [];
+        const associatedValues: { name: string; type: string }[] = [];
+        for (let i = 2; i < list.elements.length; i++) {
+          const el = list.elements[i];
+          if (isList(el) && el.elements.length > 1 && isSymbol(el.elements[0]) && (el.elements[0] as SSymbol).name === "case") {
+            const caseName = (el.elements[1] as SSymbol)?.name;
+            if (caseName) cases.push(caseName);
+            if (el.elements.length > 2 && isList(el.elements[2])) {
+              for (const field of (el.elements[2] as SList).elements) {
+                if (isSymbol(field)) {
+                  const fieldStr = (field as SSymbol).name;
+                  if (fieldStr.includes(":")) {
+                    const [fname, ftype] = fieldStr.split(":");
+                    associatedValues.push({ name: fname, type: ftype });
+                  }
+                }
+              }
+            }
+            globalSymbolTable.set({ name: `${enumName}.${caseName}`, kind: "enum-case", parent: enumName, scope: "global", associatedValues, node: el });
+          }
+        }
+        globalSymbolTable.set({ name: enumName, kind: "enum", cases, associatedValues, scope: "global", node: list });
       }
     }
   }
+  logger.debug("=== Symbol Table after ENUM phase ===\n" + JSON.stringify(globalSymbolTable.dump(), null, 2));
 
-  // Second pass: transform nodes with knowledge of enums
-  return ast.map((node) => transformNode(node, enumDefinitions, logger));
+  // === Phase 2: Register classes, structs, interfaces ===
+  for (const node of ast) {
+    if (isList(node)) {
+      const list = node as SList;
+      if (list.elements.length > 0 && isSymbol(list.elements[0])) {
+        const head = (list.elements[0] as SSymbol).name;
+        if (["struct", "class", "interface"].includes(head) && list.elements.length > 1 && isSymbol(list.elements[1])) {
+          const typeName = (list.elements[1] as SSymbol).name;
+          const fields: { name: string; type?: string }[] = [];
+          const methods: { name: string; params?: { name: string; type?: string }[], returnType?: string }[] = [];
+          for (let i = 2; i < list.elements.length; i++) {
+            const el = list.elements[i];
+            if (isList(el) && el.elements.length > 0 && isSymbol(el.elements[0])) {
+              const subHead = (el.elements[0] as SSymbol).name;
+              if (subHead === "field" && el.elements.length > 1 && isSymbol(el.elements[1])) {
+                const fieldName = (el.elements[1] as SSymbol).name;
+                let fieldType = undefined;
+                if (el.elements.length > 2 && isSymbol(el.elements[2])) {
+                  fieldType = (el.elements[2] as SSymbol).name;
+                }
+                fields.push({ name: fieldName, type: fieldType });
+                globalSymbolTable.set({ name: `${typeName}.${fieldName}`, kind: "field", parent: typeName, scope: head as any, type: fieldType, node: el });
+              } else if (["fn", "fx", "method"].includes(subHead) && el.elements.length > 1 && isSymbol(el.elements[1])) {
+                const mName = (el.elements[1] as SSymbol).name;
+                let params: { name: string; type?: string }[] = [];
+                let returnType: string | undefined = undefined;
+                if (el.elements.length > 2 && isList(el.elements[2])) {
+                  params = (el.elements[2] as SList).elements.map(p => {
+                    if (isSymbol(p)) {
+                      const pname = (p as SSymbol).name;
+                      if (pname.includes(":")) {
+                        const [paramName, paramType] = pname.split(":");
+                        return { name: paramName, type: paramType };
+                      }
+                      return { name: pname };
+                    }
+                    return { name: "?" };
+                  });
+                }
+                if (el.elements.length > 3 && isList(el.elements[3])) {
+                  const retList = el.elements[3] as SList;
+                  if (retList.elements.length > 1 && isSymbol(retList.elements[0]) && (retList.elements[0] as SSymbol).name === "->") {
+                    if (isSymbol(retList.elements[1])) {
+                      returnType = (retList.elements[1] as SSymbol).name;
+                    }
+                  }
+                }
+                methods.push({ name: mName, params, returnType });
+                globalSymbolTable.set({ name: `${typeName}.${mName}`, kind: "method", parent: typeName, scope: head as any, params, returnType, node: el });
+              }
+            }
+          }
+          globalSymbolTable.set({ name: typeName, kind: head as any, fields, methods, scope: "global", node: list });
+        }
+      }
+    }
+  }
+  logger.debug("=== Symbol Table after CLASS/STRUCT/INTERFACE phase ===\n" + JSON.stringify(globalSymbolTable.dump(), null, 2));
+
+  // === Phase 3: Register functions, macros, fx ===
+  for (const node of ast) {
+    if (isList(node)) {
+      const list = node as SList;
+      if (list.elements.length > 0 && isSymbol(list.elements[0])) {
+        const head = (list.elements[0] as SSymbol).name;
+        if (["fn", "fx", "macro"].includes(head) && list.elements.length > 1 && isSymbol(list.elements[1])) {
+          const name = (list.elements[1] as SSymbol).name;
+          const kind = head === "fn" ? "function" : (head === "fx" ? "fx" : "macro");
+          let params: { name: string; type?: string }[] | undefined = undefined;
+          let returnType: string | undefined = undefined;
+          if (list.elements.length > 2 && isList(list.elements[2])) {
+            params = (list.elements[2] as SList).elements.map(p => {
+              if (isSymbol(p)) {
+                const pname = (p as SSymbol).name;
+                if (pname.includes(":")) {
+                  const [paramName, paramType] = pname.split(":");
+                  return { name: paramName, type: paramType };
+                }
+                return { name: pname };
+              }
+              return { name: "?" };
+            });
+          }
+          if (list.elements.length > 3 && isList(list.elements[3])) {
+            const retList = list.elements[3] as SList;
+            if (retList.elements.length > 1 && isSymbol(retList.elements[0]) && (retList.elements[0] as SSymbol).name === "->") {
+              if (isSymbol(retList.elements[1])) {
+                returnType = (retList.elements[1] as SSymbol).name;
+              }
+            }
+          }
+          globalSymbolTable.set({ name, kind, scope: "global", params, returnType, node: list });
+        }
+      }
+    }
+  }
+  logger.debug("=== Symbol Table after FUNCTION/MACRO/FX phase ===\n" + JSON.stringify(globalSymbolTable.dump(), null, 2));
+
+  // === Phase 4: Register let bindings ===
+  for (const node of ast) {
+    if (isList(node)) {
+      const list = node as SList;
+      if (list.elements.length > 0 && isSymbol(list.elements[0])) {
+        const head = (list.elements[0] as SSymbol).name;
+        if (head === "let" && list.elements.length > 1 && isList(list.elements[1])) {
+          const bindings = list.elements[1] as SList;
+          for (const b of bindings.elements) {
+            if (isList(b) && b.elements.length > 0 && isSymbol(b.elements[0])) {
+              const varName = (b.elements[0] as SSymbol).name;
+              globalSymbolTable.set({ name: varName, kind: "variable", scope: "local", node: b });
+            }
+          }
+        }
+      }
+    }
+  }
+  logger.debug("=== Symbol Table after LET phase ===\n" + JSON.stringify(globalSymbolTable.dump(), null, 2));
+
+  // === Phase 5: Register module/import/export/namespace/alias/operator/constant/property/special-form/builtin ===
+  for (const node of ast) {
+    if (isList(node)) {
+      const list = node as SList;
+      if (list.elements.length > 0 && isSymbol(list.elements[0])) {
+        const head = (list.elements[0] as SSymbol).name;
+        if (["module", "import", "export", "namespace", "alias"].includes(head)) {
+          const name = (list.elements[1] && isSymbol(list.elements[1])) ? (list.elements[1] as SSymbol).name : undefined;
+          if (name) {
+            globalSymbolTable.set({ name, kind: head as any, scope: "global", node: list });
+          }
+        }
+        if (["operator", "constant", "property", "special-form", "builtin"].includes(head)) {
+          const name = (list.elements[1] && isSymbol(list.elements[1])) ? (list.elements[1] as SSymbol).name : undefined;
+          if (name) {
+            globalSymbolTable.set({ name, kind: head as any, scope: "global", node: list });
+          }
+        }
+      }
+    }
+  }
+  logger.debug("=== Symbol Table after MODULE/IMPORT/EXPORT/ETC. phase ===\n" + JSON.stringify(globalSymbolTable.dump(), null, 2));
+
+  // === Phase 6: Transform nodes as before ===
+  const transformed: SExp[] = [];
+  for (const node of ast) {
+    transformed.push(transformNode(node, enumDefinitions, logger));
+  }
+  logger.debug("=== FINAL Symbol Table ===\n" + JSON.stringify(globalSymbolTable.dump(), null, 2));
+  return transformed;
 }
 
 /**

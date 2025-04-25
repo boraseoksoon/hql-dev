@@ -1,6 +1,6 @@
 #!/usr/bin/env deno run -A
 
-import { getCacheDir, clearCache } from "../src/common/hql-cache-tracker.ts";
+import { getCacheDir, getCacheStats, clearCache } from "../src/common/hql-cache-tracker.ts";
 import { parse } from "https://deno.land/std@0.170.0/flags/mod.ts";
 
 // Parse command line arguments
