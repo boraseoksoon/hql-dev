@@ -1,9 +1,9 @@
 ;; a.hql
 
-(macro greeting (name)
-  `(console.log (+ "Hello... " ~name "!")))
+(fn greeting (name)
+  (console.log (+ "Hello... " name "!")))
 
-(macro farewell (name)
-  `(console.log (+ "Goodbye, " ~name "!")))
+(fn farewell (name)
+  (console.log (+ "Goodbye, " name "!")))
 
 (export [greeting, farewell])

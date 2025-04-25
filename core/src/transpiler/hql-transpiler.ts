@@ -1,5 +1,5 @@
-// src/transpiler/hql-transpiler.ts - Refactored
-import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+// core/src/transpiler/hql-transpiler.ts - Modified to remove user-level macro support
+import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { parse } from "./pipeline/parser.ts";
 import { Environment } from "../environment.ts";
 import { expandMacros } from "../s-exp/macro.ts";
@@ -19,6 +19,7 @@ import {
 import { globalLogger as logger } from "../logger.ts";
 import { reportError } from "../common/error-pipeline.ts";
 import { TranspileResult } from "./index.ts";
+import { globalSymbolTable } from "../transpiler/symbol_table.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
@@ -157,6 +158,9 @@ function expandWithHandling(sexps: any[], env: Environment, options: ProcessOpti
   }
 }
 
+/**
+ * Load built-in system macros from the standard library files
+ */
 export async function loadSystemMacros(env: Environment, options: ProcessOptions): Promise<void> {
   if (systemMacrosLoaded) {
     logger.debug("System macros already loaded, skipping");
@@ -183,10 +187,23 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
         currentFile: macroPath,
       });
 
+      // Process macros in system files - only defmacro is used
       expandMacros(transformed, env, { verbose: options.verbose, currentFile: macroPath });
+      
+      // Register in symbol table
+      globalSymbolTable.set({
+        name: path.basename(macroPath, '.hql'),
+        kind: 'module',
+        scope: 'global',
+        meta: { isCore: true, isMacroModule: true }
+      });
+      
+      // Mark as processed
       env.markFileProcessed(macroPath);
     }
+    
     systemMacrosLoaded = true;
+    logger.debug("System macros loaded successfully");
   } catch (error) {
     if (error instanceof Error) {
       throw new TranspilerError(`Loading system macro files: ${error.message}`);
@@ -196,6 +213,9 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
   }
 }
 
+/**
+ * Get or initialize the global environment
+ */
 async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
   if (globalEnv) {
     logger.debug("Reusing existing global environment");

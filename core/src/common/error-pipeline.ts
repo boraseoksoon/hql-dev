@@ -389,20 +389,12 @@ export class SourceLocationInfo implements SourceLocation {
   loadSource(): string | undefined {
     if (this.source) return this.source;
     if (!this.filePath) return undefined;
-    console.log('[SourceLocationInfo] Attempting to load source for:', this.filePath);
     this.source = registry.loadSourceIfNeeded(this.filePath);
     if (!this.source) {
-      try {
-        // Try absolute path from project root (Deno compatible)
-        const absPath = this.filePath.startsWith('/')
+      const absPath = this.filePath.startsWith('/')
           ? Deno.cwd() + this.filePath
           : this.filePath;
-        console.log('[SourceLocationInfo] Trying to load from disk:', absPath);
-        this.source = Deno.readTextFileSync(absPath);
-        console.log('[SourceLocationInfo] Loaded from disk:', absPath);
-      } catch (e) {
-        console.warn('[SourceLocationInfo] Could not load source for', this.filePath, e);
-      }
+      // this.source = Deno.readTextFileSync(absPath);
     }
     return this.source;
   }

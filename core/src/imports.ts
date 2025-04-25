@@ -1,9 +1,9 @@
-// src/s-exp/imports.ts
+// core/src/imports.ts - Modified to remove user-level macro support
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { globalLogger as logger } from "./logger.ts";
 import { Environment, Value } from "./environment.ts";
-import { defineUserMacro, evaluateForMacro } from "./s-exp/macro.ts";
+import { evaluateForMacro } from "./s-exp/macro.ts";
 import { parse } from "./transpiler/pipeline/parser.ts";
 import { readFile } from "./common/utils.ts";
 import {
@@ -32,6 +32,7 @@ import {
 } from "./common/import-utils.ts";
 import { wrapError, formatErrorMessage } from "./common/error-pipeline.ts";
 import { MacroError, ImportError } from "./common/error-pipeline.ts";
+import { globalSymbolTable } from "./transpiler/symbol_table.ts";
 
 export interface ImportProcessorOptions {
   verbose?: boolean;
@@ -142,6 +143,9 @@ function collectExportDefinitions(expressions: SExp[]): { name: string; value: S
         if (isSymbol(elem)) {
           exportDefinitions.push({ name: (elem as SSymbol).name, value: null });
           logger.debug(`Collected vector export: ${(elem as SSymbol).name}`);
+          
+          // Add to symbol table as exported
+          globalSymbolTable.update((elem as SSymbol).name, { isExported: true });
         }
       }
     } 
@@ -152,6 +156,9 @@ function collectExportDefinitions(expressions: SExp[]): { name: string; value: S
       const exportName = (expr.elements[1] as SLiteral).value as string;
       exportDefinitions.push({ name: exportName, value: expr.elements[2] });
       logger.debug(`Collected string export with expression: "${exportName}"`);
+      
+      // Add to symbol table as exported
+      globalSymbolTable.update(exportName, { isExported: true });
     }
   }
   
@@ -354,6 +361,16 @@ async function processSimpleImport(
     env,
     options
   );
+  
+  // Register in symbol table
+  globalSymbolTable.set({
+    name: path.basename(modulePath, path.extname(modulePath)),
+    kind: 'module',
+    scope: 'global',
+    isImported: true,
+    sourceModule: modulePath,
+    meta: { importedInFile: options.currentFile }
+  });
 }
 
 /**
@@ -381,6 +398,16 @@ async function processNamespaceImport(
     
     const resolvedPath = path.resolve(baseDir, modulePath);
     await loadModule(moduleName, modulePath, resolvedPath, env, options);
+    
+    // Register in symbol table
+    globalSymbolTable.set({
+      name: moduleName,
+      kind: 'module',
+      scope: 'global',
+      isImported: true,
+      sourceModule: modulePath,
+      meta: { importedInFile: options.currentFile }
+    });
   } catch (error) {
     const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
     wrapError("Processing namespace import", error, modulePath);
@@ -422,6 +449,24 @@ async function processVectorBasedImport(
       env,
       options.currentFile || "",
     );
+    
+    // Register in symbol table for each imported symbol
+    for (const [symbolName, aliasName] of requestedSymbols.entries()) {
+      const finalName = aliasName || symbolName;
+      
+      // Check if this is a system macro
+      const isMacro = env.isSystemMacro(symbolName);
+      
+      globalSymbolTable.set({
+        name: finalName,
+        kind: isMacro ? 'macro' : 'variable', 
+        scope: 'local',
+        isImported: true,
+        sourceModule: modulePath,
+        aliasOf: aliasName ? symbolName : undefined,
+        meta: { importedInFile: options.currentFile }
+      });
+    }
   } catch (error) {
     const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
     wrapError("Processing vector import", error, modulePath);
@@ -484,17 +529,15 @@ function importSymbols(
   env: Environment,
   currentFile: string,
 ): void {
-  const isHqlModule = modulePath.endsWith(".hql");
-  
   for (const [symbolName, aliasName] of requestedSymbols.entries()) {
     try {
-      // Check for macros in HQL files
-      if (isHqlModule && env.hasModuleMacro(resolvedPath, symbolName)) {
-        const success = env.importMacro(resolvedPath, symbolName, currentFile, aliasName || undefined);
+      // Check for system macros
+      if (env.isSystemMacro(symbolName)) {
+        const success = env.importMacro("system", symbolName, currentFile, aliasName || undefined);
         if (success) {
-          logger.debug(`Imported macro ${symbolName}${aliasName ? ` as ${aliasName}` : ""}`);
+          logger.debug(`Imported system macro ${symbolName}${aliasName ? ` as ${aliasName}` : ""}`);
         } else {
-          logger.warn(`Failed to import macro ${symbolName} from ${resolvedPath}`);
+          logger.warn(`Failed to import system macro ${symbolName}`);
         }
       }
       
@@ -505,8 +548,8 @@ function importSymbols(
         env.define(aliasName || symbolName, value);
         logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ""}`);
       } catch (lookupError) {
-        // Only throw for non-macros or non-HQL files
-        if (!(isHqlModule && env.hasModuleMacro(resolvedPath, symbolName))) {
+        // Only throw for non-macros
+        if (!env.isSystemMacro(symbolName)) {
           logger.debug(`Symbol not found in module: ${symbolName}`);
           wrapError(
             `Symbol '${symbolName}' not found in module '${modulePath}'`,
@@ -789,7 +832,7 @@ async function transpileTypeScriptToJavaScript(
 }
 
 /**
- * Load an NPM module
+ * Helper function to try importing from multiple sources
  */
 async function tryImportSources(
   sources: (() => Promise<any>)[],
@@ -881,7 +924,7 @@ async function loadHttpModule(
 }
 
 /**
- * Process file definitions (let, fn) for macros and variables
+ * Process file definitions (let, fn, defmacro) for variables, functions and macros
  */
 function processFileDefinitions(
   exprs: SExp[],
@@ -960,7 +1003,7 @@ function processFunctionDefinition(
 }
 
 /**
- * Process file exports and definitions including macros
+ * Process file exports and definitions
  */
 function processFileExportsAndDefinitions(
   expressions: SExp[],
@@ -969,21 +1012,6 @@ function processFileExportsAndDefinitions(
   filePath: string,
 ): void {
   try {
-    // Process macro definitions
-    for (const expr of expressions) {
-      if (expr.type === "list" && expr.elements.length > 0 && 
-          isSymbol(expr.elements[0]) && expr.elements[0].name === "macro") {
-        try {
-          defineUserMacro(expr as SList, filePath, env, logger);
-        } catch (error) {
-          const macroName = expr.elements.length > 1 && isSymbol(expr.elements[1])
-            ? expr.elements[1].name
-            : "unknown";
-          wrapError(`Error defining user macro for '${macroName}'`, error, filePath, filePath);
-        }
-      }
-    }
-    
     // Collect and process exports
     const exportDefinitions = collectExportDefinitions(expressions);
     
@@ -997,13 +1025,6 @@ function processFileExportsAndDefinitions(
     
     for (const { name, value } of exportDefinitions) {
       try {
-        // Check if it's a macro export
-        if (env.hasModuleMacro(filePath, name)) {
-          env.exportMacro(filePath, name);
-          logger.debug(`Marked macro ${name} as exported from ${filePath}`);
-          continue;
-        }
-        
         // Try to evaluate the export expression if present
         if (value) {
           try {

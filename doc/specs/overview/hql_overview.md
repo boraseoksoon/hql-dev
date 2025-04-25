@@ -59,7 +59,7 @@ modules
    └───────────────────────┘ │ v ┌───────────────────────┐ │ (if (> x 0) │ │ (do
    │ │ (println "Positive")│ │ (process x)) │ │ nil) │ └───────────────────────┘
 
-Supports system-level macros (defmacro) Supports user-level macros (macro) Implements
+Supports macros (defmacro) Implements
 macro hygiene using gensym Provides quasiquote and unquote for template-based
 macros Uses fixed-point iteration to fully expand all macros Handles nested
 macro expansions Caches macro expansions for performance
@@ -184,9 +184,7 @@ reprocessing the same file
 Macro System (src/s-exp/macro.ts) One of the most sophisticated parts of the
 system, providing compile-time code transformation:
 
-Supports two types of macros:
-
-System-level macros via fn User-level macros via fn statement (with module scope)
+Supports macros via defmacro:
 
 Implements hygienic macros through the gensym function to avoid variable capture
 Provides powerful template capabilities via quasiquote/unquote Uses fixed-point

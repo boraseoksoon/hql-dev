@@ -1,3 +1,5 @@
+// core/src/environment.ts - Final cleanup of user macro references
+
 import { SExp } from "./s-exp/types.ts";
 import { Logger } from "./logger.ts";
 import { MacroRegistry } from "./s-exp/macro-registry.ts";
@@ -8,6 +10,7 @@ import {
 } from "./common/error-pipeline.ts";
 import { LRUCache } from "./common/lru-cache.ts";
 import { globalLogger as logger } from "./logger.ts";
+import { globalSymbolTable } from "./transpiler/symbol_table.ts";
 
 export type Value =
   | string
@@ -24,15 +27,12 @@ export type MacroFn = ((args: SExp[], env: Environment) => SExp) & {
   isMacro?: boolean;
   macroName?: string;
   sourceFile?: string;
-  isUserMacro?: boolean;
 };
 
 export class Environment {
   public variables = new Map<string, Value>();
   public macros = new Map<string, MacroFn>();
   public moduleExports = new Map<string, Record<string, Value>>();
-  public moduleMacros = new Map<string, Map<string, MacroFn>>();
-  public exportedMacros = new Map<string, Set<string>>();
   public importedMacros = new Map<string, Map<string, string>>();
   public macroAliases = new Map<string, Map<string, string>>();
 
@@ -153,11 +153,32 @@ export class Environment {
       this.define("throw", (message: string) => {
         throw new TranspilerError(message);
       });
+      
+      // Register all builtins in the symbol table
+      this.registerBuiltinsInSymbolTable();
+      
       this.logger.debug("Built-in functions initialized successfully");
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to initialize built-in functions: ${msg}`);
       throw new ValidationError(`Failed to initialize built-in functions: ${msg}`, "environment");
+    }
+  }
+  
+  /**
+   * Register all builtin functions in the global symbol table
+   */
+  private registerBuiltinsInSymbolTable(): void {
+    const builtins = ['+', '-', '*', '/', '%', '=', 'eq?', '!=', '<', '>', '<=', '>=', 'get', 'js-get', 'js-call', 'throw'];
+    
+    for (const name of builtins) {
+      globalSymbolTable.set({
+        name,
+        kind: 'builtin',
+        scope: 'global',
+        type: 'Function',
+        meta: { isCore: true }
+      });
     }
   }
 
@@ -169,6 +190,24 @@ export class Environment {
       if (typeof value === "function") {
         Object.defineProperty(value, "isDefFunction", { value: true });
       }
+      
+      // Add to symbol table
+      let type = typeof value;
+      if (type === 'object') {
+        if (value === null) type = 'null';
+        else if (Array.isArray(value)) type = 'Array';
+      } else if (type === 'function') {
+        type = 'Function';
+      }
+      
+      globalSymbolTable.set({
+        name: key,
+        kind: 'variable',
+        scope: this.currentFilePath ? 'local' : 'global',
+        type: type.charAt(0).toUpperCase() + type.slice(1),
+        definition: { type: 'variable', name: key } as any,
+        meta: { definedInFile: this.currentFilePath || 'global' }
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       throw new ValidationError(`Failed to define symbol ${key}: ${msg}`, "environment");
@@ -303,6 +342,16 @@ export class Environment {
       const moduleObj: Record<string, Value> = { ...exports };
       this.define(moduleName, moduleObj);
       this.moduleExports.set(moduleName, exports);
+      
+      // Register module in symbol table
+      globalSymbolTable.set({
+        name: moduleName,
+        kind: 'module',
+        scope: 'global',
+        isImported: true,
+        meta: { importPath: this.currentFilePath || 'unknown' }
+      });
+      
       for (const [exportName, exportValue] of Object.entries(exports)) {
         if (typeof exportValue === "function") {
           if ("isMacro" in exportValue) {
@@ -310,9 +359,48 @@ export class Environment {
             if (moduleName === "core" || moduleName === "lib/core") {
               this.defineMacro(exportName, exportValue as MacroFn);
             }
+            
+            // Register macro in symbol table
+            globalSymbolTable.set({
+              name: `${moduleName}.${exportName}`,
+              kind: 'macro',
+              scope: 'module',
+              parent: moduleName,
+              definition: { type: 'macro', name: exportName } as any,
+              isImported: true,
+              sourceModule: moduleName
+            });
           } else if ("isDefFunction" in exportValue) {
             this.define(`${moduleName}.${exportName}`, exportValue);
+            
+            // Register function in symbol table
+            globalSymbolTable.set({
+              name: `${moduleName}.${exportName}`,
+              kind: 'function',
+              scope: 'module',
+              parent: moduleName,
+              type: 'Function',
+              isImported: true,
+              sourceModule: moduleName
+            });
           }
+        } else {
+          // Register other exported values in symbol table
+          let type = typeof exportValue;
+          if (type === 'object') {
+            if (exportValue === null) type = 'null';
+            else if (Array.isArray(exportValue)) type = 'Array';
+          }
+          
+          globalSymbolTable.set({
+            name: `${moduleName}.${exportName}`,
+            kind: 'variable',
+            scope: 'module',
+            parent: moduleName,
+            type: type.charAt(0).toUpperCase() + type.slice(1),
+            isImported: true,
+            sourceModule: moduleName
+          });
         }
       }
       this.logger.debug(`Module ${moduleName} imported with exports`);
@@ -329,13 +417,12 @@ export class Environment {
       Object.defineProperty(macro, "macroName", { value: name });
       if (sourceFile) {
         Object.defineProperty(macro, "sourceFile", { value: sourceFile });
-        Object.defineProperty(macro, "isUserMacro", { value: true });
       }
     } catch (error) {
       this.logger.warn(
         `Could not tag macro function ${name}: ${
           error instanceof Error ? error.message : String(error)
-        }`,
+        }`
       );
     }
   }
@@ -350,37 +437,17 @@ export class Environment {
       if (sanitizedKey !== key) {
         this.macros.set(sanitizedKey, macro);
       }
+      
+      // Register in symbol table
+      globalSymbolTable.set({
+        name: key,
+        kind: 'macro',
+        scope: 'global',
+        meta: { isSystemMacro: true }
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       throw new MacroError(`Failed to define macro ${key}: ${msg}`, key, this.currentFilePath || undefined);
-    }
-  }
-
-  defineModuleMacro(filePath: string, macroName: string, macroFn: MacroFn): void {
-    try {
-      this.logger.debug(`Defining module macro: ${macroName} in ${filePath}`);
-      this.tagMacroFunction(macroFn, macroName, filePath);
-      this.macroRegistry.defineModuleMacro(filePath, macroName, macroFn);
-      if (!this.moduleMacros.has(filePath)) {
-        this.moduleMacros.set(filePath, new Map<string, MacroFn>());
-      }
-      this.moduleMacros.get(filePath)!.set(macroName, macroFn);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new MacroError(`Failed to define module macro ${macroName}: ${msg}`, macroName, filePath);
-    }
-  }
-
-  exportMacro(filePath: string, macroName: string): void {
-    try {
-      this.macroRegistry.exportMacro(filePath, macroName);
-      if (!this.exportedMacros.has(filePath)) {
-        this.exportedMacros.set(filePath, new Set<string>());
-      }
-      this.exportedMacros.get(filePath)!.add(macroName);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new MacroError(`Failed to export macro ${macroName}: ${msg}`, macroName, filePath);
     }
   }
 
@@ -399,6 +466,17 @@ export class Environment {
           }
           this.macroAliases.get(targetFile)!.set(aliasName, macroName);
         }
+        
+        // Register in symbol table
+        globalSymbolTable.set({
+          name: importName,
+          kind: 'macro',
+          scope: 'local',
+          aliasOf: aliasName ? macroName : undefined,
+          sourceModule: sourceFile,
+          isImported: true,
+          meta: { importedInFile: targetFile }
+        });
       }
       return success;
     } catch (error) {
@@ -415,17 +493,8 @@ export class Environment {
     return this.macroRegistry.getMacro(key, this.currentFilePath);
   }
 
-  hasModuleMacro(filePath: string, macroName: string): boolean {
-    return this.macroRegistry.hasModuleMacro(filePath, macroName);
-  }
-
-  isUserLevelMacro(symbolName: string, fromFile: string): boolean {
-    return this.macroRegistry.hasMacro(symbolName, fromFile) &&
-      !this.macroRegistry.isSystemMacro(symbolName);
-  }
-
-  getExportedMacros(filePath: string): Set<string> | undefined {
-    return this.macroRegistry.getExportedMacros(filePath);
+  isSystemMacro(symbolName: string): boolean {
+    return this.macroRegistry.isSystemMacro(symbolName);
   }
 
   markFileProcessed(filePath: string): void {
@@ -449,7 +518,7 @@ export class Environment {
       this.logger.warn(
         `Error setting current file: ${
           error instanceof Error ? error.message : String(error)
-        }`,
+        }`
       );
     }
   }
@@ -474,8 +543,6 @@ export class Environment {
     this.lookupCache.clear();
     this.logger.debug("Lookup cache cleared");
   }
-
-  // Add these methods to Environment class in src/environment.ts
 
   /**
    * Get all defined symbols in the environment

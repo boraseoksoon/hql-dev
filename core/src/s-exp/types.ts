@@ -1,8 +1,6 @@
-// src/s-exp/types.ts - S-expression type definitions
+// core/src/s-exp/types.ts
+// Remove references to isUserMacro and macro form
 
-/**
- * Core S-expression types representing the fundamental HQL building blocks
- */
 export type SExp = SSymbol | SList | SLiteral;
 
 export interface SSymbol {
@@ -68,10 +66,6 @@ export function isForm(exp: SExp, formName: string): boolean {
 
 export function isDefMacro(exp: SExp): boolean {
   return isForm(exp, "defmacro");
-}
-
-export function isUserMacro(exp: SExp): boolean {
-  return isForm(exp, "macro");
 }
 
 export function isImport(exp: SExp): boolean {

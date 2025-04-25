@@ -1,4 +1,4 @@
-// src/s-exp/macro.ts - Refactored implementation with proper hygiene
+// core/src/s-exp/macro.ts - Refactored to remove user-level macro support
 
 import {
   createList,
@@ -8,7 +8,6 @@ import {
   isList,
   isLiteral,
   isSymbol,
-  isUserMacro,
   SExp,
   sexpToString,
   SList,
@@ -126,58 +125,30 @@ function processParamList(
   return { params, restParam };
 }
 
-/* Helper: Registers a macro (global or user-level) */
-function registerMacroDefinition(
-  macroForm: SList,
-  env: Environment,
-  logger: Logger,
-  register: (macroName: string, macroFn: MacroFn) => void,
-  macroType: "global" | "user",
-  filePath?: string,
-): void {
-  try {
-    const { macroName, params, restParam, body } = processMacroDefinition(macroForm, logger);
-    if (macroType === "user" && filePath && env.hasModuleMacro(filePath, macroName)) {
-      logger.debug(`Macro ${macroName} already defined in ${filePath}, skipping`);
-      return;
-    }
-    const macroFn = createMacroFunction(macroName, params, restParam, body, logger, filePath);
-    register(macroName, macroFn);
-    logger.debug(
-      `${macroType === "global" ? "Registered global" : "Defined user-level"} macro ${macroName}${filePath ? " in " + filePath : ""}`,
-    );
-  } catch (error) {
-    const macroName = macroForm.elements[1] && isSymbol(macroForm.elements[1])
-      ? (macroForm.elements[1] as SSymbol).name
-      : "unknown";
-    throw new MacroError(
-      `Failed to define ${macroType === "global" ? "macro" : "user macro"}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      macroName,
-      filePath,
-      error instanceof Error ? error : undefined,
-    );
-  }
-}
-
 /* Exported: Register a global macro definition */
 export function defineMacro(
   macroForm: SList,
   env: Environment,
   logger: Logger,
 ): void {
-  registerMacroDefinition(macroForm, env, logger, (name, macroFn) => env.defineMacro(name, macroFn), "global");
-}
-
-/* Exported: Define a user-level macro in the module scope */
-export function defineUserMacro(
-  macroForm: SList,
-  filePath: string,
-  env: Environment,
-  logger: Logger,
-): void {
-  registerMacroDefinition(macroForm, env, logger, (name, macroFn) => env.defineModuleMacro(filePath, name, macroFn), "user", filePath);
+  try {
+    const { macroName, params, restParam, body } = processMacroDefinition(macroForm, logger);
+    const macroFn = createMacroFunction(macroName, params, restParam, body, logger);
+    env.defineMacro(macroName, macroFn);
+    logger.debug(`Registered global macro ${macroName}`);
+  } catch (error) {
+    const macroName = macroForm.elements[1] && isSymbol(macroForm.elements[1])
+      ? (macroForm.elements[1] as SSymbol).name
+      : "unknown";
+    throw new MacroError(
+      `Failed to define macro: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      macroName,
+      undefined,
+      error instanceof Error ? error : undefined,
+    );
+  }
 }
 
 /* Expand all macros in a list of S-expressions */
@@ -197,17 +168,10 @@ export function expandMacros(
     logger.debug(`Setting current file to: ${currentFile}`);
   }
 
-  // Process macro definitions (global first, then user-level if a current file is provided)
+  // Process macro definitions
   for (const expr of exprs) {
     if (isDefMacro(expr) && isList(expr)) {
       defineMacro(expr as SList, env, logger);
-    }
-  }
-  if (currentFile) {
-    for (const expr of exprs) {
-      if (isUserMacro(expr) && isList(expr)) {
-        defineUserMacro(expr as SList, currentFile, env, logger);
-      }
     }
   }
 
@@ -258,8 +222,8 @@ export function expandMacros(
   return currentExprs;
 }
 
-/* Check if a symbol represents a user-level macro with caching. */
-export function isUserLevelMacro(
+/* Check if a symbol represents a macro with caching. */
+export function isMacro(
   symbolName: string,
   currentDir: string,
 ): boolean {
@@ -277,12 +241,12 @@ export function isUserLevelMacro(
         fileCache.set(symbolName, false);
         return false;
       }
-      const result = env.isUserLevelMacro(symbolName, currentDir);
+      const result = env.hasMacro(symbolName);
       fileCache.set(symbolName, result);
-      logger.debug(`Checking if '${symbolName}' is a user-level macro: ${result}`);
+      logger.debug(`Checking if '${symbolName}' is a macro: ${result}`);
       return result;
     },
-    `isUserLevelMacro '${symbolName}'`,
+    `isMacro '${symbolName}'`,
     TransformError,
     [symbolName, currentDir],
   );
@@ -623,7 +587,7 @@ function expandMacroExpression(
   const first = list.elements[0];
   if (isSymbol(first)) {
     const op = (first as SSymbol).name;
-    if (op === "defmacro" || op === "macro") return expr;
+    if (op === "defmacro") return expr;
     
     if (env.hasMacro(op)) {
       const macroFn = env.getMacro(op);
@@ -651,11 +615,7 @@ function expandMacroExpression(
 function filterMacroDefinitions(exprs: SExp[], logger: Logger): SExp[] {
   return exprs.filter((expr) => {
     if (isDefMacro(expr)) {
-      logger.debug(`Filtering out system macro definition: ${sexpToString(expr)}`);
-      return false;
-    }
-    if (isUserMacro(expr)) {
-      logger.debug(`Filtering out user macro definition: ${sexpToString(expr)}`);
+      logger.debug(`Filtering out macro definition: ${sexpToString(expr)}`);
       return false;
     }
     return true;
@@ -789,11 +749,9 @@ function createMacroFunction(
   restParam: string | null,
   body: SExp[],
   logger: Logger,
-  sourceFile?: string,
 ): MacroFn {
   const macroFn = (args: SExp[], callEnv: Environment): SExp => {
-    const source = sourceFile ? ` from ${sourceFile}` : "";
-    logger.debug(`Expanding ${sourceFile ? "module " : ""}macro ${macroName}${source} with ${args.length} args`);
+    logger.debug(`Expanding macro ${macroName} with ${args.length} args`);
     callEnv.setCurrentMacroContext(`macro_${macroName}`);
     const macroEnv = createMacroEnv(callEnv, params, restParam, args, logger);
     let result: SExp = createNilLiteral();
@@ -808,10 +766,7 @@ function createMacroFunction(
 
   Object.defineProperty(macroFn, "isMacro", { value: true });
   Object.defineProperty(macroFn, "macroName", { value: macroName });
-  if (sourceFile) {
-    Object.defineProperty(macroFn, "sourceFile", { value: sourceFile });
-    Object.defineProperty(macroFn, "isUserMacro", { value: true });
-  }
+  
   return macroFn;
 }
 

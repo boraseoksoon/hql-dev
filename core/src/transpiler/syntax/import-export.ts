@@ -9,7 +9,7 @@ import { perform } from "../../common/error-pipeline.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { Environment } from "../../environment.ts";
-import { isUserLevelMacro } from "../../s-exp/macro.ts";
+// Removed: import { isUserLevelMacro } from "../../s-exp/macro.ts";
 import { processVectorElements } from "./data-structure.ts";
 import { execute, convertVariableDeclaration } from "../pipeline/hql-ir-to-ts-ast.ts";
 
@@ -278,61 +278,6 @@ function createImportSpecifier(
 }
 
 /**
- * Check if a symbol is a macro in a module
- */
-function isSymbolMacroInModule(
-  symbolName: string,
-  modulePath: string,
-  currentDir: string,
-): boolean {
-  return perform(
-    () => {
-      const env = Environment.getGlobalEnv();
-      if (!env) {
-        logger.debug(
-          `No global environment, assuming '${symbolName}' is not a macro in module`,
-        );
-        return false;
-      }
-
-      if (!modulePath.endsWith(".hql")) {
-        logger.debug(`Not an HQL file, skipping macro check: ${modulePath}`);
-        return false;
-      }
-
-      let resolvedPath = modulePath;
-      if (modulePath.startsWith("./") || modulePath.startsWith("../")) {
-        resolvedPath = path.resolve(currentDir, modulePath);
-        logger.debug(
-          `Resolved relative path '${modulePath}' to '${resolvedPath}'`,
-        );
-      }
-
-      for (const [filePath, macros] of env.moduleMacros.entries()) {
-        if (
-          (filePath === resolvedPath || filePath.endsWith(resolvedPath)) &&
-          macros.has(symbolName) &&
-          env.getExportedMacros(filePath)?.has(symbolName)
-        ) {
-          logger.debug(
-            `Symbol '${symbolName}' is a macro in module ${filePath}`,
-          );
-          return true;
-        }
-      }
-
-      logger.debug(
-        `Symbol '${symbolName}' is not a macro in module ${modulePath}`,
-      );
-      return false;
-    },
-    `isSymbolMacroInModule '${symbolName}'`,
-    TransformError,
-    [symbolName, modulePath, currentDir],
-  );
-}
-
-/**
  * Transform namespace import with "from" syntax
  */
 export function transformNamespaceImport(
@@ -406,15 +351,13 @@ export function transformVectorExport(
         }
         const symbolName = (elem as SymbolNode).name;
 
-        if (isUserLevelMacro(symbolName, currentDir)) {
-          logger.debug(`Skipping macro in export: ${symbolName}`);
-          continue;
-        }
+        // Removed isUserLevelMacro check
+        // Simply process all symbols now
         exportSpecifiers.push(createExportSpecifier(symbolName));
       }
 
       if (exportSpecifiers.length === 0) {
-        logger.debug("All exports were macros, skipping export declaration");
+        logger.debug("No valid exports found, skipping export declaration");
         return null;
       }
 
@@ -491,19 +434,6 @@ export function transformVectorImport(
           const aliasName = hasAlias
             ? (elements[i + 2] as SymbolNode).name
             : null;
-
-          const isMacro = isUserLevelMacro(symbolName, currentDir) ||
-            isSymbolMacroInModule(symbolName, modulePath, currentDir);
-
-          if (isMacro) {
-            logger.debug(
-              `Skipping macro in import: ${symbolName}${
-                aliasName ? ` as ${aliasName}` : ""
-              }`,
-            );
-            i += hasAlias ? 3 : 1;
-            continue;
-          }
 
           if (hasAlias) {
             importSpecifiers.push(

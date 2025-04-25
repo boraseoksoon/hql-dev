@@ -34,7 +34,7 @@ diagrams and code examples to illustrate the concepts.
 ├──────────┬─────────────────┬──────────────────┬──────────────────┤
 │  Parser  │     Syntax      │      Macro       │       Code       │
 │          │   Transformer   │     Expander     │     Generator    │
-│  [hard-  │    [hard-       │  [user-defined   │    [backend      │
+│  [hard-  │    [hard-       │  [defined        │    [backend      │
 │  coded]  │     coded]      │    macros]       │    processing]   │
 └──────────┴─────────────────┴──────────────────┴──────────────────┘
 ```
@@ -44,13 +44,13 @@ diagrams and code examples to illustrate the concepts.
 ```plaintext
 ┌───────────────────────────────────────────────────────────────────┐
 │                        Future Approach                            │
-├──────────┬─────────────────┬──────────────────┬──────────────────┤
-│  Parser  │     Core        │     User         │       Code       │
-│          │    Macros       │    Macros        │     Generator    │
-│  [hard-  │   [replaces     │  [additional     │    [backend      │
-│  coded]  │    syntax       │    macros]       │    processing]   │
-│          │  transformer]   │                  │                  │
-└──────────┴─────────────────┴──────────────────┴──────────────────┘
+├──────────┬─────────────────────────────────────┬──────────────────┤
+│  Parser  │              Macros                 │       Code       │
+│          │                                     │     Generator    │
+│  [hard-  │   [replaces syntax transformer      │    [backend      │
+│  coded]  │    and provides extensibility]      │    processing]   │
+│          │                                     │                  │
+└──────────┴─────────────────────────────────────┴──────────────────┘
 ```
 
 The key difference is that the macro system allows the language to extend itself
@@ -125,21 +125,19 @@ expanded = expandMacros(sexps, env, { ... });
 
 ---
 
-## System vs. User Macros
+## Macro System
 
 ```plaintext
 ┌───────────────────────────────────────────────────┐
 │                  Macro System                     │
-├───────────────────────┬───────────────────────────┤
-│    System Macros      │      User Macros          │
-│    (defmacro)         │      (macro)              │
-├───────────────────────┼───────────────────────────┤
-│ • Defined in core.hql │ • Defined in user modules │
-│ • Available globally  │ • Scoped to modules       │
-│ • Loaded first        │ • Can be exported/imported│
-└───────────────────────┴───────────────────────────┘
+├───────────────────────────────────────────────────┤
+│                  Macros                           │
+│                (defmacro)                         │
+├───────────────────────────────────────────────────┤
+│ • Defined in core.hql or user modules            │
+│ • Available globally                             │
+│ • Core macros loaded first                        │
+└───────────────────────────────────────────────────┘
 ```
 
-- **System Macros**: Defined with `defmacro` and loaded from `core.hql` before
-  any user code.
-- **User Macros**: Defined with `macro` in user modules and scoped accordingly.
+- **Macros**: Defined with `defmacro` and available globally throughout the codebase.

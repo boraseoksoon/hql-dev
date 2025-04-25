@@ -10,9 +10,9 @@
 (fn divide_numbers (x y)
   (/ x y))
 
-;; Define a macro to export (user-level)
-(macro format_message (msg)
-  `(str "MESSAGE: " ~msg))
+;; Define a function to export
+(fn format_message (msg)
+  (str "MESSAGE: " msg))
 
 ;; Define variables to export
 (let secret_number 42)

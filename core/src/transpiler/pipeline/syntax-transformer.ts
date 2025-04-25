@@ -1,6 +1,5 @@
-// src/transpiler/pipeline/syntax-transformer.ts
-// Enhanced version with comprehensive dot notation handling for enums in all contexts
-// And added symbol table integration for collection type detection
+// core/src/transpiler/pipeline/syntax-transformer.ts
+// Modified version with user-level macro references removed and enhanced symbol table integration
 
 import {
   createLiteral,
@@ -16,10 +15,7 @@ import {
 import { Logger, globalLogger as logger } from "../../logger.ts";
 import { TransformError, perform } from "../../common/error-pipeline.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
-import { SymbolTable, SymbolInfo } from "../symbol_table.ts";
-
-// Global symbol table for compile-time symbol/type tracking
-export const globalSymbolTable = new SymbolTable();
+import { SymbolTable, globalSymbolTable } from "../symbol_table.ts";
 
 /**
  * Options for syntax transformation
@@ -66,10 +62,10 @@ export function transformSyntax(
                 }
               }
             }
-            globalSymbolTable.set({ name: `${enumName}.${caseName}`, kind: "enum-case", parent: enumName, scope: "global", associatedValues, node: el });
+            globalSymbolTable.set({ name: `${enumName}.${caseName}`, kind: "enum-case", parent: enumName, scope: "global", associatedValues, definition: el });
           }
         }
-        globalSymbolTable.set({ name: enumName, kind: "enum", cases, associatedValues, scope: "global", node: list });
+        globalSymbolTable.set({ name: enumName, kind: "enum", cases, associatedValues, scope: "global", definition: list });
       }
     }
   }
@@ -96,7 +92,7 @@ export function transformSyntax(
                   fieldType = (el.elements[2] as SSymbol).name;
                 }
                 fields.push({ name: fieldName, type: fieldType });
-                globalSymbolTable.set({ name: `${typeName}.${fieldName}`, kind: "field", parent: typeName, scope: head as any, type: fieldType, node: el });
+                globalSymbolTable.set({ name: `${typeName}.${fieldName}`, kind: "field", parent: typeName, scope: head as any, type: fieldType, definition: el });
               } else if (["fn", "fx", "method"].includes(subHead) && el.elements.length > 1 && isSymbol(el.elements[1])) {
                 const mName = (el.elements[1] as SSymbol).name;
                 let params: { name: string; type?: string }[] = [];
@@ -123,11 +119,11 @@ export function transformSyntax(
                   }
                 }
                 methods.push({ name: mName, params, returnType });
-                globalSymbolTable.set({ name: `${typeName}.${mName}`, kind: "method", parent: typeName, scope: head as any, params, returnType, node: el });
+                globalSymbolTable.set({ name: `${typeName}.${mName}`, kind: "method", parent: typeName, scope: head as any, params, returnType, definition: el });
               }
             }
           }
-          globalSymbolTable.set({ name: typeName, kind: head as any, fields, methods, scope: "global", node: list });
+          globalSymbolTable.set({ name: typeName, kind: head as any, fields, methods, scope: "global", definition: list });
         }
       }
     }
@@ -140,7 +136,7 @@ export function transformSyntax(
       const list = node as SList;
       if (list.elements.length > 0 && isSymbol(list.elements[0])) {
         const head = (list.elements[0] as SSymbol).name;
-        if (["fn", "fx", "macro"].includes(head) && list.elements.length > 1 && isSymbol(list.elements[1])) {
+        if (["fn", "fx", "defmacro"].includes(head) && list.elements.length > 1 && isSymbol(list.elements[1])) {
           const name = (list.elements[1] as SSymbol).name;
           const kind = head === "fn" ? "function" : (head === "fx" ? "fx" : "macro");
           let params: { name: string; type?: string }[] | undefined = undefined;
@@ -166,7 +162,7 @@ export function transformSyntax(
               }
             }
           }
-          globalSymbolTable.set({ name, kind, scope: "global", params, returnType, node: list });
+          globalSymbolTable.set({ name, kind, scope: "global", params, returnType, definition: list });
         }
       }
     }
@@ -194,7 +190,7 @@ export function transformSyntax(
               kind: "variable", 
               type: dataType,
               scope: "local", 
-              node: valueNode 
+              definition: valueNode 
             });
             
             logger.debug(`Registered let binding: ${varName} with type ${dataType}`);
@@ -216,7 +212,7 @@ export function transformSyntax(
                   kind: "variable", 
                   type: dataType,
                   scope: "local", 
-                  node: valueNode 
+                  definition: valueNode 
                 });
                 
                 logger.debug(`Registered let binding: ${varName} with type ${dataType}`);
@@ -238,13 +234,13 @@ export function transformSyntax(
         if (["module", "import", "export", "namespace", "alias"].includes(head)) {
           const name = (list.elements[1] && isSymbol(list.elements[1])) ? (list.elements[1] as SSymbol).name : undefined;
           if (name) {
-            globalSymbolTable.set({ name, kind: head as any, scope: "global", node: list });
+            globalSymbolTable.set({ name, kind: head as any, scope: "global", definition: list });
           }
         }
         if (["operator", "constant", "property", "special-form", "builtin"].includes(head)) {
           const name = (list.elements[1] && isSymbol(list.elements[1])) ? (list.elements[1] as SSymbol).name : undefined;
           if (name) {
-            globalSymbolTable.set({ name, kind: head as any, scope: "global", node: list });
+            globalSymbolTable.set({ name, kind: head as any, scope: "global", definition: list });
           }
         }
       }

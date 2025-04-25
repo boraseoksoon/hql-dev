@@ -167,42 +167,26 @@ export async function transformAST(
       currentFile: currentDir,
     });
     timer.phase("macro expansion");
-  
-    // Import processing (dedupe + inject)
+    
     const withImports = processImports(expanded, env);
     timer.phase("import processing");
-  
-    // Convert legacy exports
+
     const converted = convertExports(withImports as any);
     timer.phase("AST conversion");
-  
-    // Determine source file path - prioritize options.sourceFile if provided
+
     const sourceFilePath = options.sourceFile || currentDir;
     
-    // AST -> IR
-    let ir;
-    try {
-      ir = transformToIR(converted, currentDir);
-      timer.phase("IR transformation");
-    } catch (err) {
-      throw new TransformError(
-        `AST to IR failed: ${err instanceof Error ? err.message : String(err)}`,
-        "AST to IR transformation",
-        {
-          filePath: sourceFilePath
-        }
-      );
-    }
+    const ir = transformToIR(converted, currentDir);
+    
+    timer.phase("IR transformation");
 
-    // IR -> TS code (with source map generation)
     const tsResult = await generateTypeScript(ir, { sourceFilePath: sourceFilePath, currentFilePath: options.currentFile });
     
     const tsCode = tsResult.code;
     const sourceMap = tsResult.sourceMap;
 
     timer.phase("TS code generation");
-  
-    // MODIFIED: Don't prepend runtime functions - use the pure TypeScript code
+
     const finalCode = tsCode;
 
     timer.breakdown();
