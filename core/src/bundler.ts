@@ -1,7 +1,7 @@
 // sourcemap-debug.ts
 import * as esbuild from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
-import { processHql } from "./transpiler/hql-transpiler.ts";
+import { transpileToJavascript } from "./transpiler/hql-transpiler.ts";
 import { formatErrorMessage } from "./common/error-pipeline.ts";
 import {
   isHqlFile,
@@ -136,7 +136,7 @@ async function processHqlImports(
     if (await needsRegeneration(resolvedHqlPath, ".ts") || options.force) {
       logger.debug(`Transpiling HQL import: ${resolvedHqlPath}`);
       const hqlSource = await readFile(resolvedHqlPath);
-      const { code: tsCode } = await processHql(hqlSource, {
+      const { code: tsCode } = await transpileToJavascript(hqlSource, {
         baseDir: dirname(resolvedHqlPath),
         verbose: options.verbose,
         tempDir: options.tempDir,
@@ -244,7 +244,7 @@ async function processHqlEntryFile(
   const source = await readFile(resolvedInputPath);
   logger.log({ text: `Read ${source.length} bytes from ${resolvedInputPath}`, namespace: "bundler" });
   
-  let { code: tsCode, sourceMap } = await processHql(source, {
+  let { code: tsCode, sourceMap } = await transpileToJavascript(source, {
     baseDir: dirname(resolvedInputPath),
     verbose: options.verbose,
     tempDir,
@@ -873,8 +873,8 @@ export async function transpileHqlInJs(hqlPath: string, basePath: string): Promi
     // Read the HQL content
     const hqlContent = await readTextFile(hqlPath);
     
-    // Transpile to TypeScript using the existing processHql function
-    const { code: tsContent } = await processHql(hqlContent, {
+    // Transpile to TypeScript using the existing transpileToJavascript function
+    const { code: tsContent } = await transpileToJavascript(hqlContent, {
       baseDir: dirname(hqlPath),
       sourceDir: basePath,
       currentFile: hqlPath,

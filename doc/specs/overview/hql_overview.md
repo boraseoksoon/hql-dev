@@ -103,8 +103,8 @@ Generates readable JavaScript from the TypeScript AST Uses TypeScript's printer
 for consistent formatting Handles error reporting and recovers from partial
 failures Provides source maps (optional)
 
-Main Entry Point: processHql (src/transpiler/hql-transpiler.ts) This is the
-orchestrator of the entire pipeline: Copyfunction processHql(source, options) {
+Main Entry Point: transpileToJavascript (src/transpiler/hql-transpiler.ts) This is the
+orchestrator of the entire pipeline: Copyfunction transpileToJavascript(source, options) {
 
 1. Parse the HQL source to S-expressions
 2. Initialize the global environment
@@ -218,9 +218,9 @@ Implements module exports and imports Handles hygiene and variable renaming
 Maintains a cache for optimized lookups Tracks processed files to avoid
 redundancy
 
-The Pipeline Orchestrator (src/transpiler/hql-transpiler.ts) The processHql
+The Pipeline Orchestrator (src/transpiler/hql-transpiler.ts) The transpileToJavascript
 function orchestrates the entire pipeline: javascriptCopyexport async function
-processHql(source, options) { // Step 1: Parse source to S-expressions const
+transpileToJavascript(source, options) { // Step 1: Parse source to S-expressions const
 sexps = parse(source);
 
 // Step 2: Get or initialize global environment const env = await

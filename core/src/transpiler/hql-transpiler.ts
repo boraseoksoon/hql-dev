@@ -4,9 +4,8 @@ import { parse } from "./pipeline/parser.ts";
 import { Environment } from "../environment.ts";
 import { expandMacros } from "../s-exp/macro.ts";
 import { processImports } from "../imports.ts";
-import { convertToHqlAst } from "../s-exp/macro-reader.ts";
+import { convertToHqlAst as convert } from "../s-exp/macro-reader.ts";
 import { transformAST } from "../transformer.ts";
-import { Logger } from "../logger.ts";
 import { transformSyntax } from "./pipeline/syntax-transformer.ts";
 import { SExp } from "../s-exp/types.ts";
 import {
@@ -22,6 +21,7 @@ import { globalSymbolTable } from "../transpiler/symbol_table.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
+
 const macroExpressionsCache = new Map<string, any[]>();
 
 interface ProcessOptions {
@@ -36,13 +36,12 @@ interface ProcessOptions {
 /**
  * Process HQL source code and return transpiled JavaScript
  */
-export async function processHql(
-  source: string,
+export async function transpileToJavascript(
+  hqlSource: string,
   options: ProcessOptions = {},
 ): Promise<TranspileResult> {
   logger.debug("Processing HQL source with S-expression layer");
 
-  // Configure logger based on options
   if (options.verbose) {
     logger.setEnabled(true);
   }
@@ -54,49 +53,15 @@ export async function processHql(
 
   const sourceFilename = path.basename(options.baseDir || "unknown");
 
-  // Initialize environment first to set current file
-  if (options.showTiming) logger.startTiming("hql-process", "Environment setup");
-  const env = await getGlobalEnv(options);
-  if (options.baseDir) env.setCurrentFile(options.baseDir);
-  if (options.showTiming) logger.endTiming("hql-process", "Environment setup");
+  const env = await setupEnvironment(options);
+  const sexps = parseSource(hqlSource, options);
+  const canonicalSexps = transform(sexps, options);
+  
+  await handleImports(canonicalSexps, env, options);
 
-  if (options.showTiming) logger.startTiming("hql-process", "Parsing");
-
-  let sexps: SExp[] = [];
-  try {
-    sexps = parse(source, options.currentFile);
-    logger.debug(`Parsed ${sexps.length} S-expressions`);
-    if (options.showTiming) logger.endTiming("hql-process", "Parsing");
-  } catch (error) {
-    reportError(error);
-  }
-  
-  // Only proceed with later stages if parsing succeeded
-  if (options.showTiming) logger.startTiming("hql-process", "Syntax transform");
-  const canonicalSexps = transformSyntax(sexps);
-  if (options.showTiming) logger.endTiming("hql-process", "Syntax transform");
-  
-  if (options.showTiming) logger.startTiming("hql-process", "Import processing");
-  await processImportsWithHandling(canonicalSexps, env, options);
-  if (options.showTiming) logger.endTiming("hql-process", "Import processing");
-  
-  if (options.showTiming) logger.startTiming("hql-process", "Macro expansion");
-  const expanded = expandMacros(canonicalSexps, env, {
-    verbose: options.verbose,
-    currentFile: options.baseDir,
-    useCache: true,
-  });
-  if (options.showTiming) logger.endTiming("hql-process", "Macro expansion");
-  
-  if (options.showTiming) logger.startTiming("hql-process", "AST conversion");
-  const hqlAst = convertToHqlAst(expanded, { verbose: options.verbose });
-  if (options.showTiming) logger.endTiming("hql-process", "AST conversion");
-  
-  if (options.showTiming) logger.startTiming("hql-process", "JS transformation");
-  
-  const { code: jsCode, sourceMap } = await transformAST(hqlAst, options.baseDir || Deno.cwd(), { verbose: options.verbose, currentFile: options.currentFile });
-
-  if (options.showTiming) logger.endTiming("hql-process", "JS transformation");
+  const expanded = expand(canonicalSexps, env, options);
+  const hqlAst = convertToHqlAst(expanded, options);
+  const javascript = await transpile(hqlAst, options);
 
   if (options.baseDir) env.setCurrentFile(null);
 
@@ -105,28 +70,136 @@ export async function processHql(
     logger.logPerformance("hql-process", sourceFilename);
   }
   
-  return { code: jsCode, sourceMap };
+  return javascript;
 }
 
-async function processImportsWithHandling(sexps: any[], env: Environment, options: ProcessOptions) {
+/**
+ * Set up the environment for HQL processing
+ */
+async function setupEnvironment(options: ProcessOptions): Promise<Environment> {
+  if (options.showTiming) logger.startTiming("hql-process", "Environment setup");
+  
+  const env = await getGlobalEnv(options);
+  if (options.baseDir) env.setCurrentFile(options.baseDir);
+  
+  if (options.showTiming) logger.endTiming("hql-process", "Environment setup");
+  return env;
+}
+
+/**
+ * Parse source code into S-expressions
+ */
+function parseSource(source: string, options: ProcessOptions): SExp[] {
+  if (options.showTiming) logger.startTiming("hql-process", "Parsing");
+  
+  const sexps = parse(source, options.currentFile);
+  logger.debug(`Parsed ${sexps.length} S-expressions`);
+  
+  if (options.showTiming) logger.endTiming("hql-process", "Parsing");
+  return sexps;
+}
+
+/**
+ * Transform parsed S-expressions into canonical form
+ */
+function transform(sexps: SExp[], options: ProcessOptions): SExp[] {
+  if (options.showTiming) logger.startTiming("hql-process", "Syntax transform");
+  
+  const canonicalSexps = transformSyntax(sexps);
+  
+  if (options.showTiming) logger.endTiming("hql-process", "Syntax transform");
+  return canonicalSexps;
+}
+
+/**
+ * Process imports with error handling
+ */
+async function handleImports(sexps: SExp[], env: Environment, options: ProcessOptions): Promise<void> {
+  if (options.showTiming) logger.startTiming("hql-process", "Import processing");
+  
+  await processImports(sexps, env, {
+    verbose: options.verbose,
+    baseDir: options.baseDir || Deno.cwd(),
+    tempDir: options.tempDir,
+    currentFile: options.baseDir,
+  });
+  
+  if (options.showTiming) logger.endTiming("hql-process", "Import processing");
+}
+
+/**
+ * Expand macros in the S-expressions
+ */
+function expand(sexps: SExp[], env: Environment, options: ProcessOptions): SExp[] {
+  if (options.showTiming) logger.startTiming("hql-process", "Macro expansion");
+  
   try {
-    await processImports(sexps, env, {
+    const expanded = expandMacros(sexps, env, {
       verbose: options.verbose,
-      baseDir: options.baseDir || Deno.cwd(),
-      tempDir: options.tempDir,
       currentFile: options.baseDir,
+      useCache: true,
     });
-  } catch (error: unknown) {
-    if (error instanceof ImportError) throw error;
     
-    if (error instanceof Error) {
-      throw new ImportError(`Failed to process imports: ${error.message}`, "unknown", options.baseDir, error);
+    if (options.showTiming) logger.endTiming("hql-process", "Macro expansion");
+    return expanded;
+  } catch (error) {
+    if (options.showTiming) logger.endTiming("hql-process", "Macro expansion");
+    
+    // Handle macro errors specifically
+    if (error instanceof MacroError) {
+      reportError(error);
     }
-    
-    throw new ImportError(`Failed to process imports: ${String(error)}`, "unknown", options.baseDir, undefined);
+    throw error;
   }
 }
 
+/**
+ * Convert S-expressions to HQL AST
+ */
+function convertToHqlAst(sexps: SExp[], options: ProcessOptions): any {
+  if (options.showTiming) logger.startTiming("hql-process", "AST conversion");
+  
+  try {
+    const hqlAst = convert(sexps, { verbose: options.verbose });
+    
+    if (options.showTiming) logger.endTiming("hql-process", "AST conversion");
+    return hqlAst;
+  } catch (error) {
+    if (options.showTiming) logger.endTiming("hql-process", "AST conversion");
+    
+    // Handle transform errors
+    if (error instanceof TransformError) {
+      reportError(error);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Transform HQL AST to JavaScript
+ */
+async function transpile(hqlAst: any, options: ProcessOptions): Promise<TranspileResult> {
+  if (options.showTiming) logger.startTiming("hql-process", "JS transformation");
+  
+  try {
+    const result = await transformAST(
+      hqlAst, 
+      options.baseDir || Deno.cwd(), 
+      { verbose: options.verbose, currentFile: options.currentFile }
+    );
+    
+    if (options.showTiming) logger.endTiming("hql-process", "JS transformation");
+    return result;
+  } catch (error) {
+    if (options.showTiming) logger.endTiming("hql-process", "JS transformation");
+    
+    // Handle transform errors
+    if (error instanceof TransformError) {
+      reportError(error);
+    }
+    throw error;
+  }
+}
 
 /**
  * Load built-in system macros from the standard library files

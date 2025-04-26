@@ -1,5 +1,5 @@
 // Core transpiler API entry point
-import { processHql } from "./hql-transpiler.ts";
+import { transpileToJavascript } from "./hql-transpiler.ts";
 
 export interface TranspileOptions {
   /** Enable verbose logging */
@@ -26,7 +26,7 @@ export async function transpile(
   source: string,
   options: TranspileOptions = {}
 ): Promise<TranspileResult> {
-  const { code, sourceMap } = await processHql(source, {
+  const { code, sourceMap } = await transpileToJavascript(source, {
     verbose: options.verbose,
     showTiming: options.showTiming,
     baseDir: options.baseDir,
@@ -37,4 +37,4 @@ export async function transpile(
   return { code, sourceMap };
 }
 
-export { processHql } from "./hql-transpiler.ts";
+export { transpileToJavascript } from "./hql-transpiler.ts";

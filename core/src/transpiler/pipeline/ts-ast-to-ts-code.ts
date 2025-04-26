@@ -5,6 +5,7 @@ import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { CodeGenError, perform } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { makeSourceMap } from "./sourcemap-generator.ts";
+import { globalSymbolTable, SymbolTable } from "@transpiler/symbol_table.ts";
 /**
  * The output of TypeScript code generation, including code and optional source map.
  */
@@ -70,6 +71,8 @@ export async function generateTypeScript(
     const code = printer.printNode(ts.EmitHint.Unspecified, tsAST, resultFile);
 
     const printTime = performance.now() - printStartTime;
+
+    console.log("dump : ", globalSymbolTable.dump())
     
     logger.debug(
       `TS AST printing completed in ${

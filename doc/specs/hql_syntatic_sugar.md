@@ -118,7 +118,7 @@ This function is called in your main transpiler function (e.g., in
 `src/transpiler/hql-transpiler.ts`):
 
 ```typescript
-// In processHql() function
+// In transpileToJavascript() function
 // Step 5: Expand macros in the user code
 expanded = expandMacros(sexps, env, { ... });
 ```

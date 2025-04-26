@@ -20,7 +20,7 @@
         │              │
         ▼              ▼
 ┌────────────┐   ┌───────────────┐
-│ processHql │   │ Process       │
+│ transpileToJavascript │   │ Process       │
 │ (to TS)    │   │ HQL imports   │
 └──────┬─────┘   └───────┬───────┘
        │                 │
@@ -73,7 +73,7 @@ This diagram shows the HQL transpilation and bundling process:
 
 1. `transpileCLI` takes an input file (HQL, TS, or JS)
 2. `processEntryFile` branches based on file type
-3. HQL files are transpiled to TypeScript via `processHql`
+3. HQL files are transpiled to TypeScript via `transpileToJavascript`
 4. JS/TS files have their HQL imports processed
 5. All outputs are cached in the temp file tracker system
 6. When resolving imports, `resolveHqlImport`:
