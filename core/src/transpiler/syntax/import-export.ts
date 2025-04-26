@@ -237,7 +237,7 @@ export function isNamespaceImport(list: ListNode): boolean {
 /**
  * Check if a position in a list of nodes has an 'as' alias following it
  */
-function hasAliasFollowing(elements: any[], position: number): boolean {
+function hasAliasFollowing(elements: (SymbolNode | LiteralNode | ListNode)[], position: number): boolean {
   return (
     position + 2 < elements.length &&
     elements[position + 1].type === "symbol" &&
@@ -278,7 +278,7 @@ function createImportSpecifier(
  */
 export function transformNamespaceImport(
   list: ListNode,
-  currentDir: string,
+  _currentDir: string,
 ): IR.IRNode | null {
   return perform(
     () => {
@@ -323,7 +323,7 @@ export function transformNamespaceImport(
  */
 export function transformVectorExport(
   list: ListNode,
-  currentDir: string,
+  _currentDir: string,
 ): IR.IRNode | null {
   return perform(
     () => {

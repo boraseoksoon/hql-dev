@@ -99,51 +99,6 @@ function processImports(ast: HQLNode[], env: Environment): HQLNode[] {
 }
 
 /**
- * Normalize legacy export declarations into HQL export forms.
- */
-function convertExports(rawAst: any[]): HQLNode[] {
-  return rawAst.map((node) => {
-    if (
-      node.type === "list" &&
-      node.elements.length >= 3 &&
-      node.elements[0].type === "symbol" &&
-      node.elements[0].name === "export"
-    ) {
-      return {
-        type: "list",
-        elements: [
-          { type: "symbol", name: "js-export" },
-          node.elements[1],
-          node.elements[2],
-        ],
-      } as any;
-    }
-
-    if (
-      node.type === "ExportNamedDeclaration" &&
-      Array.isArray((node as any).specifiers)
-    ) {
-      const specs = (node as any).specifiers;
-      const exportsList = specs.map((spec: any) => ({
-        type: "list",
-        elements: [
-          { type: "symbol", name: "js-export" },
-          { type: "literal", value: spec.exported.name },
-          spec.local,
-        ],
-      }));
-      if (exportsList.length === 1) return exportsList[0];
-      return {
-        type: "list",
-        elements: [{ type: "symbol", name: "do" }, ...exportsList],
-      } as any;
-    }
-
-    return node;
-  });
-}
-
-/**
  * Transforms HQL AST nodes through all pipeline phases and outputs TS code.
  */
 // Update transformAST function in transformer.ts
@@ -171,12 +126,9 @@ export async function transformAST(
     const withImports = processImports(expanded, env);
     timer.phase("import processing");
 
-    const converted = convertExports(withImports as any);
-    timer.phase("AST conversion");
-
     const sourceFilePath = options.sourceFile || currentDir;
     
-    const ir = transformToIR(converted, currentDir);
+    const ir = transformToIR(withImports, currentDir);
     
     timer.phase("IR transformation");
 

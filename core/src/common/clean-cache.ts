@@ -5,9 +5,9 @@ import { parse } from "https://deno.land/std@0.170.0/flags/mod.ts";
 
 // Parse command line arguments
 const flags = parse(Deno.args, {
-  boolean: ["help", "stats", "force-cache", "h", "y"],
+  boolean: ["help", "stats", "force-cache", "h"],
   string: ["age"],
-  alias: { h: "help", y: "force-cache" },
+  alias: { h: "help" },
 });
 
 // Get cache directory and stats
@@ -45,20 +45,8 @@ if (flags.age) {
   console.log(`\nCleaning cache entries older than ${ageInDays} days...`);
   // Implement age-based cleaning
   // This would require a more complex cleanup that traverses the cache
-  console.log("Age-based cleaning not yet implemented. Please use --force for full cache cleanup.");
+  console.log("Age-based cleaning not yet implemented. Please use --force-cache for full cache cleanup.");
   Deno.exit(0);
-}
-
-// Confirm cache clearing unless --force-cache is used
-if (!flags["force-cache"]) {
-  console.log("\nAre you sure you want to clean the cache? [y/N] ");
-  const buf = new Uint8Array(1);
-  await Deno.stdin.read(buf);
-  const answer = new TextDecoder().decode(buf).trim().toLowerCase();
-  if (answer !== 'y') {
-    console.log("Cache cleaning cancelled.");
-    Deno.exit(0);
-  }
 }
 
 // Clean the cache

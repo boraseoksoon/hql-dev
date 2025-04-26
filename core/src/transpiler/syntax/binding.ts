@@ -2,7 +2,7 @@
 // Module for handling variable binding expressions (let and var)
 
 import * as IR from "../type/hql_ir.ts";
-import { ListNode, SymbolNode } from "../type/hql_ast.ts";
+import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError, perform } from "../../common/error.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 
@@ -15,7 +15,7 @@ import { sanitizeIdentifier } from "../../common/utils.ts";
 export function transformLet(
   list: ListNode, 
   currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode | null
+  transformNode: (node: ListNode | SymbolNode | LiteralNode, dir: string) => IR.IRNode | null
 ): IR.IRNode {
   // Handle global binding form: (let name value)
   if (list.elements.length === 3 && list.elements[1].type === "symbol") {
@@ -153,7 +153,7 @@ export function transformLet(
 export function transformVar(
   list: ListNode, 
   currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode | null
+  transformNode: (node: ListNode | SymbolNode | LiteralNode, dir: string) => IR.IRNode | null
 ): IR.IRNode {
   // Handle global binding form: (var name value)
   if (list.elements.length === 3 && list.elements[1].type === "symbol") {
@@ -209,9 +209,9 @@ export function transformVar(
  */
 function processBindings(
   bindingsNode: ListNode, 
-  bodyExprs: any[], 
+  bodyExprs: (ListNode | SymbolNode | LiteralNode)[], 
   currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode | null,
+  transformNode: (node: ListNode | SymbolNode | LiteralNode, dir: string) => IR.IRNode | null,
   kind: "const" | "let"
 ): IR.IRNode {
   // Process bindings as pairs
@@ -301,7 +301,7 @@ function processBindings(
 export function transformSet(
   list: ListNode, 
   currentDir: string,
-  transformNode: (node: any, dir: string) => IR.IRNode | null
+  transformNode: (node: ListNode | SymbolNode | LiteralNode, dir: string) => IR.IRNode | null
 ): IR.IRNode {
   return perform(
     () => {

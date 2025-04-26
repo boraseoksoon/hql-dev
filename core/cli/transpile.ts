@@ -35,7 +35,7 @@ function printHelp(): void {
   console.error("  --verbose, -v     Enable verbose logging");
   console.error("  --time            Show timing for each phase");
   console.error("  --print           Print JS to stdout instead of writing to file");
-  console.error("  --force           Force recompilation even if file hasn't changed");
+
   console.error("  --cache-info      Show information about the cache");
   console.error("  --debug           Show detailed error information and stack traces");
   console.error("  --help, -h        Show this help message");
@@ -43,7 +43,7 @@ function printHelp(): void {
   console.error("  deno run -A cli/transpile.ts src/file.hql");
   console.error("  deno run -A cli/transpile.ts src/file.hql dist/file.js --time");
   console.error("  deno run -A cli/transpile.ts src/file.hql --print --run");
-  console.error("  deno run -A cli/transpile.ts src/file.hql --force");
+
   console.error("  deno run -A cli/transpile.ts src/file.hql --debug");
 }
 
@@ -71,8 +71,8 @@ function transpile(
   outputPath: string | undefined,
   opts: CliOptions
 ): Promise<string> {
-  // Map forceCache to force for backward compatibility
-  const force = (opts as any).forceCache || opts.force;
+  // Only use forceCache for controlling recompilation
+  const force = opts.forceCache;
 
   return timed("transpile", "Compile", async () => {
     const resolvedInputPath = resolve(inputPath);

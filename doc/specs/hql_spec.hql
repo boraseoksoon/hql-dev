@@ -115,7 +115,7 @@
 
 (console.log "square : " (square 10))
 
-(export "square" square)
+(export [square])
 
 ;; --- Expression Sequencing with 'do' ---
 (fn calculate-area (radius)
@@ -226,7 +226,7 @@
           (let msg (+ "Factorial of " (+ n " is " fact)))
           (console.log msg)
           (list n fact)))))
-(export "showcase" showcase)
+(export [showcase])
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -384,7 +384,7 @@
   (unless x
     (not x)))
 
-(export "unless" hql-unless)
+(export [hql-unless as unless])
 
 ;; Use 'inc' to compute x+1.
 (let x_plus_one (inc macro_x))

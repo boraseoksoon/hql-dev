@@ -6,7 +6,7 @@ import * as IR from "../type/hql_ir.ts";
 import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../type/hql_ast.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { perform, TransformError } from "../../common/error.ts";  
+import { perform, TransformError, ValidationError } from "../../common/error.ts";  
 import { transformStandardFunctionCall, processFunctionBody, transformNamedArgumentCall, handleFxFunctionCall } from "../syntax/function.ts";
 import {
   isNamespaceImport,
@@ -84,7 +84,6 @@ function initializeTransformFactory(): void {
     transformFactory.set("recur", (list, currentDir) => loopRecurModule.transformRecur(list, currentDir, transformNode));
     transformFactory.set("return", (list, currentDir) => conditionalModule.transformReturn(list, currentDir, transformNode));
     transformFactory.set("js-import", jsInteropModule.transformJsImport);
-    transformFactory.set("js-export", (list, currentDir) => jsInteropModule.transformJsExport(list, currentDir, transformNode));
     transformFactory.set("js-new", (list, currentDir) => jsInteropModule.transformJsNew(list, currentDir, transformNode));
     transformFactory.set("js-get", (list, currentDir) => jsInteropModule.transformJsGet(list, currentDir, transformNode));
     transformFactory.set("js-call", (list, currentDir) => jsInteropModule.transformJsCall(list, currentDir, transformNode));
@@ -99,9 +98,18 @@ function initializeTransformFactory(): void {
     transformFactory.set("js-method", (list: ListNode, currentDir: string) => {
       return transformJsMethod(list, currentDir, transformNode);
     });
-    transformFactory.set("export", (_list, _currentDir) => {
-      logger.debug(`Skipping export transformation for now`);
-      return { type: IR.IRNodeType.NullLiteral } as IR.IRNullLiteral;
+    transformFactory.set("export", (list, currentDir) => {
+      // Only allow vector-based export: (export [name ...])
+      if (isVectorExport(list)) {
+        return importExportModule.transformVectorExport(list, currentDir);
+      }
+      // If it's not a valid vector-based export, throw an error
+      throw new ValidationError(
+        "Only vector-based exports are supported. Use (export [foo bar ...]) or (export [foo as bar ...]) syntax.",
+        "export",
+        "vector-based export (export [name ...])",
+        JSON.stringify(list.elements)
+      );
     });
 
     transformFactory.set("import", (list, currentDir) => {
@@ -178,6 +186,7 @@ export function transformJsMethod(
  * Transform a single HQL node to its IR representation.
  */
 export function transformNode(node: HQLNode, currentDir: string): IR.IRNode | null {
+  logger.debug("transformNode called with node: " + JSON.stringify(node));
   return perform(
     () => {
       if (!node) {
@@ -214,6 +223,7 @@ export function transformNode(node: HQLNode, currentDir: string): IR.IRNode | nu
  * Transform a list node, handling special forms and function calls.
  */
 function transformList(list: ListNode, currentDir: string): IR.IRNode | null {
+  logger.debug("transformList called with list: " + JSON.stringify(list.elements));
   if (list.elements.length === 0) {
     return dataStructureModule.transformEmptyList();
   }

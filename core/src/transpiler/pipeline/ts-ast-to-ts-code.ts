@@ -54,10 +54,10 @@ export async function generateTypeScript(
   const printTime = performance.now() - printStartTime;
   logger.debug(`TS AST printing completed in ${printTime.toFixed(2)}ms with ${code.length} characters`);
 
-  logger.log({
-    text: "dump : " + JSON.stringify(globalSymbolTable.dump(), null, 2),
-    namespace: "symbol-table",
-  });
+  // logger.log({
+  //   text: "dump : " + JSON.stringify(globalSymbolTable.dump(), null, 2),
+  //   namespace: "symbol-table",
+  // });
 
   return { code };
 }

@@ -6,4 +6,4 @@
 (print (module.add2 1000 2000))
 
 (export [add4 as add])
-(export "add10" add4)
+(export [add4 as add10])

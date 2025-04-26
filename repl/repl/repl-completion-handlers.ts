@@ -417,7 +417,7 @@ export class SyntaxCompletionHandler extends CompletionHandler {
     ],
     // Export declaration
     "export": [
-      "(export ",
+      "(export [",
       "(export [",
       "(export [symbols])"
     ],

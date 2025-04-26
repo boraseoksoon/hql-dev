@@ -22,25 +22,21 @@ MODULE IMPORT & EXPORT
 
 (+ x y))
 
-;; Exports are done in a verbose, string-based manner:
+;; Exports are now only done with concise, vector-based syntax:
 
-(export "print" print) ;; Global macro; cannot be exported.
-
-(export "log" log) ;; Global macro; cannot be exported.
-
-(export "add" add)
+(export [print]) ;; Global macro; cannot be exported.
+(export [log])   ;; Global macro; cannot be exported.
+(export [add])   ;; Function export (vector-based, required)
 
 ;; As a result, macros like print and log are available everywhere,
-
 ;; which risks name collisions in larger codebases.
-
 ;;
-
 ;; For functions, we have to import modules as namespaces:
-
 (import moduleA from "./a.hql") ;; New syntax with 'from' is now required
-
 (moduleA.add 3 4) ;; => 7
+
+;; NOTE: String-based exports (e.g. (export "add" add)) are no longer supported. Always use vector syntax: (export [add])
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -133,15 +129,20 @@ cognitive load:
 
 (export [add])
 
-;; alternatively we can do multiple exports:
+;; Multiple exports in a single vector:
+(export [add, subtract])
 
-(export [add])
+;; Aliasing exports is only supported via vector syntax:
+(export [add as sum, subtract as diff])
 
-;; INCORRECT - even if single module, always use vector to be opinionated: ;;
-(export add) => X
+;; INCORRECT - do not use string-based or non-vector exports:
+;; (export "add" add) => X
+;; (export add) => X
 
 ;; We do NOT export 'print', 'log', or 'user-log' here because they are macros
 ;; (defined with macro) which are automatically global.
+
+;; NOTE: Always use the vector form for all exports, including aliases. String-based and non-vector exports are not supported.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -183,11 +184,11 @@ cognitive load:
 
 ;; - Exports use a verbose, string-based syntax, e.g.:
 
-;; (export "print" print)
+;; (export [print])
 
-;; (export "log" log)
+;; (export [log])
 
-;; (export "add" add)
+;; (export [add])
 
 ;; - Imports now enforce the use of 'from':
 
