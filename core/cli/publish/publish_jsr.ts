@@ -2,19 +2,19 @@
 import {
   basename,
   dirname,
-  exit,
   getEnv,
   join,
-  makeTempDir,
   resolve,
   runCmd,
   writeTextFile,
 } from "../../src/platform/platform.ts";
-import { copy, exists } from "jsr:@std/fs@1.0.13";
+import { exists } from "jsr:@std/fs@1.0.13";
 import { buildJsModule } from "./build_js_module.ts";
-import { incrementPatch, prompt, readJSON, writeJSON } from "./utils.ts";
+import { incrementPatch, prompt } from "./utils.ts";
+import { readJSON, writeJSON } from "@core/common/json.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
 import type { PublishSummary } from "./publish_summary.ts";
+import { detectJsrError, handlePublishError } from "./error_handlers.ts";
 
 interface PublishJSROptions {
   what: string;
@@ -24,9 +24,6 @@ interface PublishJSROptions {
   dryRun?: boolean;
 }
 
-/**
- * Load (or create) a jsr.json configuration from distDir.
- */
 async function getJsrConfig(
   distDir: string,
   cliName?: string,
@@ -40,7 +37,6 @@ async function getJsrConfig(
   if (!config.name) {
     jsrUser = await configurePackageName(config, distDir, cliName, jsrUser, dryRun);
   } else if (typeof config.name === "string" && config.name.startsWith("@")) {
-    // Parse jsrUser from the config.name if possible
     const match = config.name.match(/^@([^/]+)\//);
     if (match) {
       jsrUser = match[1];
@@ -53,9 +49,6 @@ async function getJsrConfig(
   return { configPath, config, jsrUser };
 }
 
-/**
- * Configure package name, either from CLI args, prompting user, or auto-generating
- */
 async function configurePackageName(
   config: Record<string, unknown>,
   distDir: string,
@@ -83,7 +76,6 @@ async function configurePackageName(
       : `@${jsrUser}/${enteredName}`;
   }
 
-  // Return possibly updated jsrUser from package name
   if (typeof config.name === "string" && config.name.startsWith("@")) {
     const match = config.name.match(/^@([^/]+)\//);
     if (match) {
@@ -94,9 +86,6 @@ async function configurePackageName(
   return jsrUser || "js-user";
 }
 
-/**
- * Configure package version from CLI args, auto-increment, or default value
- */
 async function configurePackageVersion(
   config: Record<string, unknown>,
   cliVersion?: string,
@@ -121,16 +110,11 @@ async function configurePackageVersion(
   }
 }
 
-/**
- * Set default fields for the package configuration if missing
- */
 function setDefaultConfigFields(config: Record<string, unknown>): void {
-  // Set defaults if missing
   config.exports = config.exports || "./esm/index.js";
   config.publish = config.publish ||
     { include: ["README.md", "esm/**/*", "types/**/*", "jsr.json"] };
 
-  // Add helpful metadata if missing
   if (!config.description) {
     config.description = `HQL module: ${config.name}`;
   }
@@ -140,9 +124,6 @@ function setDefaultConfigFields(config: Record<string, unknown>): void {
   }
 }
 
-/**
- * Ensure README exists or create a default one
- */
 async function ensureReadmeExists(distDir: string, packageName: string): Promise<void> {
   const readmePath = join(distDir, "README.md");
   if (!(await exists(readmePath))) {
@@ -154,95 +135,88 @@ async function ensureReadmeExists(distDir: string, packageName: string): Promise
   }
 }
 
-/**
- * Check if jsr CLI is available in the system
- */
-async function checkJsrCliAvailable(cwd: string): Promise<boolean> {
+async function checkCommandAvailable(cmd: string, cwd: string): Promise<boolean> {
   try {
-    const whichJsr = runCmd({ 
-      cmd: ["which", "jsr"], 
+    const process = runCmd({ 
+      cmd: ["which", cmd], 
       cwd, 
       stdout: "piped", 
       stderr: "piped" 
     });
-    const jsrStatus = await whichJsr.status;
-    return jsrStatus.success;
+    const status = await process.status;
+    return status.success;
   } catch {
     return false;
   }
 }
 
-/**
- * Check if deno is available in the system
- */
-async function checkDenoAvailable(cwd: string): Promise<boolean> {
-  try {
-    const whichDeno = runCmd({ 
-      cmd: ["which", "deno"], 
-      cwd, 
-      stdout: "piped", 
-      stderr: "piped" 
-    });
-    const denoStatus = await whichDeno.status;
-    return denoStatus.success;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Publish using the jsr CLI
- */
-async function publishWithJsrCli(
+async function publishWithCommand(
+  cmd: string,
+  subcommand: string,
   cwd: string, 
   publishFlags: string[]
-): Promise<boolean> {
-  console.log(`  → Running publish command: jsr publish ${publishFlags.join(" ")}`);
-  const jsrProcess = runCmd({
-    cmd: ["jsr", "publish", ...publishFlags],
-    cwd,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const jsrStatus = await jsrProcess.status;
+): Promise<{ success: boolean; errorMessage?: string; authDenied?: boolean }> {
+  console.log(`  → Running publish command: ${cmd} ${subcommand} ${publishFlags.join(" ")}`);
   
-  if (jsrStatus.success) {
-    console.log("  → Published using jsr CLI");
-    return true;
-  } else {
-    console.warn(`  → jsr publish failed with exit code ${jsrStatus.code}`);
-    return false;
-  }
-}
-
-/**
- * Publish using deno publish command
- */
-async function publishWithDeno(
-  cwd: string, 
-  publishFlags: string[]
-): Promise<boolean> {
-  console.log(`  → Running publish command: deno publish ${publishFlags.join(" ")}`);
+  // Capture both output and error for analysis without re-running the command
   const process = runCmd({
-    cmd: ["deno", "publish", ...publishFlags],
+    cmd: [cmd, subcommand, ...publishFlags],
     cwd,
-    stdout: "inherit",
-    stderr: "inherit",
+    stderr: "piped",
+    stdout: "inherit", // Keep stdout visible to user
   });
+  
+  // Collect stderr in chunks
+  const errorChunks: Uint8Array[] = [];
+  if (process.stderr) {
+    for await (const chunk of process.stderr) {
+      errorChunks.push(chunk);
+      
+      // Also write chunk to stderr to maintain visibility to user
+      await Deno.stderr.write(chunk);
+    }
+  }
+  
   const status = await process.status;
+  const errorOutput = errorChunks.length > 0 
+    ? new TextDecoder().decode(concatUint8Arrays(errorChunks)) 
+    : "";
   
   if (status.success) {
-    console.log("  → Published using deno publish");
-    return true;
+    console.log(`  → Published using ${cmd} ${subcommand}`);
+    return { success: true };
   } else {
-    console.error(`\n❌ deno publish failed with exit code ${status.code}`);
-    return false;
+    console.error(`\n❌ ${cmd} ${subcommand} failed with exit code ${status.code}`);
+    
+    // Check for authorization denied error
+    const isAuthDenied = errorOutput.includes("authorization has been denied") || 
+                        errorOutput.includes("authorizationDenied") ||
+                        errorOutput.includes("Failed to exchange authorization");
+    
+    if (isAuthDenied) {
+      const errorMessage = "JSR publish failed: Authorization was denied by the user in the web prompt.";
+      return { 
+        success: false, 
+        errorMessage,
+        authDenied: true
+      };
+    }
+    
+    return { success: false };
   }
 }
 
-/**
- * Install jsr CLI using deno
- */
+function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
+  const totalLength = arrays.reduce((acc, array) => acc + array.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const array of arrays) {
+    result.set(array, offset);
+    offset += array.length;
+  }
+  return result;
+}
+
 async function installJsrCli(cwd: string): Promise<boolean> {
   console.log("  → jsr CLI not found. Attempting to install jsr CLI...");
   const installJsr = runCmd({
@@ -262,23 +236,16 @@ async function installJsrCli(cwd: string): Promise<boolean> {
   }
 }
 
-/**
- * Generate the success link for JSR publishing
- */
 function generateSuccessLink(packageName: string, jsrUser: string, version: string): string {
   const packageNameWithoutPrefix = String(packageName).replace(/^@[^/]+\//, "");
   return `https://jsr.io/@${jsrUser}/${packageNameWithoutPrefix}@${version}`;
 }
 
-/**
- * Main JSR publishing function
- */
 export async function publishJSR(options: PublishJSROptions): Promise<PublishSummary> {
   try {
     console.log("\n📦 Starting JSR package publishing process");
     Deno.env.set("SKIP_LOGIN_CHECK", "1");
 
-    // Setup - resolve paths and build module
     const inputPath = resolve(options.what);
     const baseDir = dirname(inputPath);
     
@@ -287,7 +254,6 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
       logger.debug(`Using base directory: "${baseDir}"`);
     }
 
-    // Build module
     console.log(`\n🔨 Building module from "${inputPath}"...`);
     const distDir = await buildJsModule(inputPath, {
       verbose: options.verbose,
@@ -295,7 +261,6 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
     });
     console.log(`\nℹ️ Module built to "${distDir}"`);
 
-    // Configure JSR package
     console.log(`\n📝 Preparing JSR configuration...`);
     let jsrJsonBefore: Record<string, unknown> = {};
     try {
@@ -309,12 +274,10 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
       options.dryRun
     );
     
-    // Determine published version
     const publishedVersion = typeof jsrJsonBefore.version === "string" 
       ? jsrJsonBefore.version 
       : String(config.version);
 
-    // Apply CLI name override if provided
     if (options.name) {
       config.name = options.name.startsWith("@")
         ? options.name
@@ -322,22 +285,21 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
       console.log(`  → Using package name: "${config.name}"`);
     }
 
-    // Ensure README exists
     await ensureReadmeExists(distDir, String(config.name));
 
-    // Setup publishing flags
     const publishFlags = ["--allow-dirty"];
     if (options.dryRun) publishFlags.push("--dry-run");
     if (options.verbose) publishFlags.push("--verbose");
 
-    // Attempt publishing
-    let published = false;
+    // Try publishing strategies in order
     
-    // Try jsr CLI first
-    const jsrAvailable = await checkJsrCliAvailable(distDir);
+    // 1. Try using jsr CLI if available
+    const jsrAvailable = await checkCommandAvailable("jsr", distDir);
     if (jsrAvailable) {
-      published = await publishWithJsrCli(distDir, publishFlags);
-      if (published) {
+      const jsrResult = await publishWithCommand("jsr", "publish", distDir, publishFlags);
+      
+      // On success, return immediately
+      if (jsrResult.success) {
         await writeJSON(configPath, config);
         console.log(`  → Updated JSR config at "${configPath}"`);
         return {
@@ -347,13 +309,25 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
           link: generateSuccessLink(String(config.name), jsrUser, publishedVersion)
         };
       }
+      
+      // If authorization was denied, don't try other methods - user explicitly said no
+      if (jsrResult.authDenied) {
+        return {
+          registry: "jsr",
+          name: String(config.name),
+          version: publishedVersion,
+          link: `❌ ${jsrResult.errorMessage}`
+        };
+      }
     }
 
-    // Try deno if jsr failed or not available
-    const denoAvailable = await checkDenoAvailable(distDir);
+    // 2. Try using deno publish if jsr isn't available or failed (but not due to auth denial)
+    const denoAvailable = await checkCommandAvailable("deno", distDir);
     if (denoAvailable) {
-      published = await publishWithDeno(distDir, publishFlags);
-      if (published) {
+      const denoResult = await publishWithCommand("deno", "publish", distDir, publishFlags);
+      
+      // On success, return immediately
+      if (denoResult.success) {
         await writeJSON(configPath, config);
         console.log(`  → Updated JSR config at "${configPath}"`);
         return {
@@ -363,14 +337,29 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
           link: generateSuccessLink(String(config.name), jsrUser, publishedVersion)
         };
       }
+      
+      // If authorization was denied, return the error and don't try other methods
+      if (denoResult.authDenied) {
+        return {
+          registry: "jsr",
+          name: String(config.name),
+          version: publishedVersion,
+          link: `❌ ${denoResult.errorMessage}`
+        };
+      }
+      
+      // For other errors, continue to next strategy
+      if (denoResult.errorMessage) {
+        console.warn(`  → ${denoResult.errorMessage}`);
+      }
     }
 
-    // If both jsr and deno aren't available, try to install jsr
-    if (!jsrAvailable && !published && denoAvailable) {
+    // 3. Try installing jsr CLI if neither option worked so far
+    if (!jsrAvailable && denoAvailable) {
       const jsrInstalled = await installJsrCli(distDir);
       if (jsrInstalled) {
-        published = await publishWithJsrCli(distDir, publishFlags);
-        if (published) {
+        const jsrResult = await publishWithCommand("jsr", "publish", distDir, publishFlags);
+        if (jsrResult.success) {
           await writeJSON(configPath, config);
           console.log(`  → Updated JSR config at "${configPath}"`);
           return {
@@ -380,27 +369,34 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
             link: generateSuccessLink(String(config.name), jsrUser, publishedVersion)
           };
         }
+        
+        // If authorization was denied, return the error
+        if (jsrResult.authDenied) {
+          return {
+            registry: "jsr",
+            name: String(config.name),
+            version: publishedVersion,
+            link: `❌ ${jsrResult.errorMessage}`
+          };
+        }
       }
     }
 
-    // If all publishing attempts failed
-    const errorMessage = "JSR publish failed: Neither jsr nor deno is installed or available. Please install jsr (https://jsr.io/cli) or deno (https://deno.com/) to publish to JSR.";
-    console.error(`\n❌ ${errorMessage}`);
+    // If all publishing attempts failed (not due to auth denial)
+    const errorInfo = detectJsrError("Neither jsr nor deno is installed or available");
+    console.error(`\n${errorInfo.message}`);
     return {
       registry: "jsr",
       name: String(config.name),
       version: publishedVersion,
-      link: `❌ ${errorMessage}`
+      link: errorInfo.message
     };
     
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error(`\n❌ JSR publish failed: ${errorMessage}`);
-    return {
+    return handlePublishError(err, {
       registry: "jsr",
-      name: options.name ?? '(auto)',
-      version: options.version ?? '(auto)',
-      link: `❌ ${errorMessage}`
-    };
+      name: options.name,
+      version: options.version
+    });
   }
 }
