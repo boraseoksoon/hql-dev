@@ -132,7 +132,7 @@ function parseExpression(state: ParserState): SExp {
     const lastPos = state.tokens.length > 0
       ? state.tokens[state.tokens.length - 1].position
       : { line: 1, column: 1, offset: 0, filePath: state.filePath };
-    throw new ParseError("Unexpected end of input", lastPos, state.input);
+    throw new ParseError("Unexpected end of input", lastPos);
   }
   const token = state.tokens[state.currentPos++];
   return parseExpressionByTokenType(token, state);
@@ -145,8 +145,7 @@ function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
       const lineContext = getLineContext(state.input, token.position.line);
       throw new ParseError(
         `Unexpected ')' - Check for a missing opening '(' in previous lines.\nContext: ${lineContext}`, 
-        token.position, 
-        state.input
+        token.position
       ); 
     }
     case TokenType.LeftBracket: return parseVector(state);
@@ -154,16 +153,14 @@ function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
       // Improved error message for unexpected closing bracket
       throw new ParseError(
         `Unexpected ']' - Check for a missing opening '[' in previous lines.`, 
-        token.position, 
-        state.input
+        token.position
       );
     case TokenType.LeftBrace: return parseMap(state);
     case TokenType.RightBrace: 
       // Improved error message for unexpected closing brace
       throw new ParseError(
         `Unexpected '}' - Check for a missing opening '{' in previous lines.`, 
-        token.position, 
-        state.input
+        token.position
       );
     case TokenType.HashLeftBracket: return parseSet(state);
     case TokenType.Quote: return createList(createSymbol("quote"), parseExpression(state));
@@ -175,7 +172,7 @@ function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
     case TokenType.String: return parseStringLiteral(token.value);
     case TokenType.Number: return createLiteral(Number(token.value));
     case TokenType.Symbol: return parseSymbol(token.value);
-    default: throw new ParseError(`Unexpected token type: ${token.type}`, token.position, state.input);
+    default: throw new ParseError(`Unexpected token type: ${token.type}`, token.position);
   }
 }
 
@@ -184,8 +181,8 @@ function parseDotAccess(state: ParserState, dotToken: Token): SExp {
     const nextToken = state.tokens[state.currentPos++];
     return createSymbol("." + nextToken.value);
   }
-  throw new ParseError("Expected property name after '.'", dotToken.position, state.input);
-}
+  throw new ParseError("Expected property name after '.'", dotToken.position);
+  }
 
 function parseStringLiteral(tokenValue: string): SExp {
   const str = tokenValue.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
@@ -235,9 +232,8 @@ function parseList(state: ParserState): SList {
     fnKeywordFound = true;
   }
 
-  // Track list starting line and current line to detect missing closing parentheses
-  // across multiple lines
   const listStartLine = listStartPos.line;
+  // currentLine is used
   let currentLine = listStartLine;
 
   while (
@@ -267,8 +263,7 @@ function parseList(state: ParserState): SList {
       } else {
         throw new ParseError(
           "Expected type name after colon in enum declaration", 
-          state.tokens[state.currentPos - 1].position, 
-          state.input
+          state.tokens[state.currentPos - 1].position
         );
       }
     }
@@ -289,8 +284,7 @@ function parseList(state: ParserState): SList {
       } else {
         throw new ParseError(
           `Expected value after parameter name '${state.tokens[state.currentPos-1].value}'`, 
-          state.tokens[state.currentPos-1].position,
-          state.input
+          state.tokens[state.currentPos-1].position
         );
       }
     }
@@ -345,14 +339,14 @@ function parseList(state: ParserState): SList {
         column: lastColumn, // Point to the end of the line
         offset: listStartPos.offset + errorLine.length,
         filePath: state.filePath
-      }, state.input);
+      });
     } else {
       // Fallback to less precise position if input source isn't available
       const lastTokenPos = state.tokens.length > 0 
         ? state.tokens[state.tokens.length - 1].position 
         : listStartPos;
         
-      throw new ParseError(errorMessage, lastTokenPos, state.input);
+      throw new ParseError(errorMessage, lastTokenPos);
     }
   }
   
@@ -411,7 +405,7 @@ function parseVector(state: ParserState): SList {
       state.currentPos++;
   }
   if (state.currentPos >= state.tokens.length)
-    throw new ParseError("Unclosed vector", startPos, state.input);
+    throw new ParseError("Unclosed vector", startPos);
   state.currentPos++;
   return elements.length === 0
     ? createList(createSymbol("empty-array"))
@@ -433,7 +427,7 @@ function parseMap(state: ParserState): SList {
       const errorPos = state.currentPos < state.tokens.length
         ? state.tokens[state.currentPos].position
         : startPos;
-      throw new ParseError("Expected ':' in map literal", errorPos, state.input);
+      throw new ParseError("Expected ':' in map literal", errorPos);
     }
     state.currentPos++;
     const value = parseExpression(state);
@@ -442,7 +436,7 @@ function parseMap(state: ParserState): SList {
       state.currentPos++;
   }
   if (state.currentPos >= state.tokens.length)
-    throw new ParseError("Unclosed map", startPos, state.input);
+    throw new ParseError("Unclosed map", startPos);
   state.currentPos++;
   return entries.length === 0
     ? createList(createSymbol("empty-map"))
@@ -461,7 +455,7 @@ function parseSet(state: ParserState): SList {
       state.currentPos++;
   }
   if (state.currentPos >= state.tokens.length)
-    throw new ParseError("Unclosed set", startPos, state.input);
+    throw new ParseError("Unclosed set", startPos);
   state.currentPos++;
   return elements.length === 0
     ? createList(createSymbol("empty-set"))
@@ -510,14 +504,12 @@ function validateTokenBalance(tokens: Token[], input: string): void {
         if (missingOpeningLocation) {
           throw new ParseError(
             `Missing opening '${expectedOpening}' before '${missingOpeningLocation.context}'. Check for a missing opening parenthesis.`, 
-            missingOpeningLocation.position,
-            input
+            missingOpeningLocation.position
           );
         } else {
           throw new ParseError(
             `Missing opening '${expectedOpening}' for this closing '${bracketChar}'. Check previous lines for balanced parentheses.\nContext: ${lineContext}`, 
-            token.position, 
-            input
+            token.position
           );
         }
       }
@@ -532,8 +524,7 @@ function validateTokenBalance(tokens: Token[], input: string): void {
         
         throw new ParseError(
           `Mismatched brackets: '${openChar}' is closed by '${closeChar}'`, 
-          token.position, 
-          input
+          token.position
         );
       }
     }
@@ -570,8 +561,7 @@ function validateTokenBalance(tokens: Token[], input: string): void {
         column: lastUnclosed.token.position.column,
         offset: lastUnclosed.token.position.offset,
         filePath: lastUnclosed.token.position.filePath
-      }, 
-      input
+      }
     );
   }
 }

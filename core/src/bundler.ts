@@ -868,7 +868,6 @@ async function cacheTranspiledFile(
  * Used by the processHqlImportsInJs function
  */
 export async function transpileHqlInJs(hqlPath: string, basePath: string): Promise<string> {
-
   try {
     // Read the HQL content
     const hqlContent = await readTextFile(hqlPath);

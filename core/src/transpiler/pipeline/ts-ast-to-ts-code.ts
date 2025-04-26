@@ -72,8 +72,6 @@ export async function generateTypeScript(
 
     const printTime = performance.now() - printStartTime;
 
-    console.log("dump : ", globalSymbolTable.dump())
-    
     logger.debug(
       `TS AST printing completed in ${
         printTime.toFixed(2)
@@ -89,6 +87,8 @@ export async function generateTypeScript(
     if (!isStdlib && isHqlFile(currentFilePath)) {
       sourceMap = makeSourceMap(code, currentFilePath!);
     }
+
+    logger.log({ text: "dump : " + JSON.stringify(globalSymbolTable.dump(), null, 2), namespace: "symbol-table" });
     return { code, sourceMap };
   } catch (error) {
     throw new CodeGenError(
