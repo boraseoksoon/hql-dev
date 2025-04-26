@@ -119,6 +119,10 @@ export async function publishNpm(options: PublishNpmOptions): Promise<void> {
     return;
   }
 
+  // Always write package.json before publishing (fix for missing file)
+  await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
+  console.log(`  → Updated package.json with name=${pkg.name} version=${pkg.version}`);
+
   // Actually publish to npm
   console.log(`\n🚀 Publishing package ${pkg.name}@${pkg.version} to npm...`);
   const publishCmd = ["npm", "publish", "--access", "public"];
@@ -138,10 +142,6 @@ export async function publishNpm(options: PublishNpmOptions): Promise<void> {
     console.error(`\n❌ npm publish failed with exit code ${status.code}.`);
     exit(status.code);
   }
-
-  // Only after successful publish, update package.json with the new version
-  await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
-  console.log(`  → Updated package.json with name=${pkg.name} version=${pkg.version}`);
 
   console.log(`\n✅ Package published successfully to npm!`);
   console.log(`📦 View it at: https://www.npmjs.com/package/${pkg.name}`);

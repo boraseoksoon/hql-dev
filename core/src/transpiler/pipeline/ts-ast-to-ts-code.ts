@@ -4,14 +4,12 @@ import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { globalSymbolTable } from "@transpiler/symbol_table.ts";
 
 /**
  * The output of TypeScript code generation, including code and optional source map.
  */
 export interface TypeScriptOutput {
   code: string;
-  sourceMap?: string;
 }
 
 /**

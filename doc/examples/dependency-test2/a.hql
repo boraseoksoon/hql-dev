@@ -5,5 +5,6 @@
 (import module from "./z.hql")
 (print (module.add2 1000 2000))
 
-(export [add4 as add])
-(export [add4 as add10])
+(fn minus (x y) (- x y))
+
+(export [add4 as add10, add4 as add, minus])

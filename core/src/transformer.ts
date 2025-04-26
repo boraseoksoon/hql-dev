@@ -6,10 +6,11 @@
 import { transformToIR } from "./transpiler/pipeline/hql-ast-to-hql-ir.ts";
 import { generateTypeScript } from "./transpiler/pipeline/ts-ast-to-ts-code.ts";
 import { expandMacros } from "./s-exp/macro.ts";
-import { globalLogger as logger, Logger } from "./logger.ts";
+import { globalLogger as logger } from "./logger.ts";
 import { Environment } from "./environment.ts";
-import type { HQLNode } from "./transpiler/type/hql_ast.ts";
 import { TransformError } from "./common/error.ts";
+import { Timer } from "./common/timer.ts";
+import type { HQLNode } from "./transpiler/type/hql_ast.ts";
 import {
   extractImportInfo,
   findExistingImports,
@@ -28,61 +29,25 @@ export interface TransformOptions {
 }
 
 /**
- * Timer helper to measure and log transformation phases.
- */
-class Timer {
-  private start = performance.now();
-  private last = this.start;
-  private logger: Logger;
-
-  constructor(logger: Logger) {
-    this.logger = logger;
-  }
-
-  phase(name: string) {
-    const now = performance.now();
-    const elapsed = now - this.last;
-    this.last = now;
-    this.logger.debug(`${name} completed in ${elapsed.toFixed(2)}ms`);
-  }
-
-  breakdown(label = "Total transformation") {
-    const total = performance.now() - this.start;
-    this.logger.debug(`${label} completed in ${total.toFixed(2)}ms`);
-  }
-}
-
-/**
- * Get or initialize the global Environment.
- */
-async function getGlobalEnvironment() {
-  let env = Environment.getGlobalEnv();
-  if (!env) {
-    env = await Environment.initializeGlobalEnv();
-  }
-  return env;
-}
-
-/**
  * Deduplicate and inject missing imports in AST.
  */
 function processImports(ast: HQLNode[], env: Environment): HQLNode[] {
   const existing = new Map<string, string>(findExistingImports(ast));
-  const refs = findExternalModuleReferences(ast, env);
+  const references = findExternalModuleReferences(ast, env);
   const processed = new Set(existing.keys());
   const importNodes: HQLNode[] = [];
 
-  for (const name of refs) {
-    if (processed.has(name) || !importSourceRegistry.has(name)) continue;
+  for (const reference of references) {
+    if (processed.has(reference) || !importSourceRegistry.has(reference)) continue;
     importNodes.push({
       type: "list",
       elements: [
         { type: "symbol", name: "js-import" },
-        { type: "symbol", name },
-        { type: "literal", value: importSourceRegistry.get(name)! },
+        { type: "symbol", name: reference },
+        { type: "literal", value: importSourceRegistry.get(reference)! },
       ],
     } as any);
-    processed.add(name);
+    processed.add(reference);
   }
 
   const filtered = ast.filter((node) => {
@@ -109,41 +74,35 @@ export async function transformAST(
 ): Promise<{ code: string; sourceMap?: string }> {
   try {
     const timer = new Timer(logger);
+  
     logger.debug(`Starting transformation: ${astNodes.length} nodes`);
     timer.phase("initialization");
   
-    // Initialize or get global environment
-    const env = await getGlobalEnvironment();
+    const env = await Environment.getGlobalEnv() ?? await Environment.initializeGlobalEnv();
+    
     timer.phase("environment init");
   
-    // Macro expansion
-    const expanded = await expandMacros(astNodes, env, {
-      verbose: options.verbose,
-      currentFile: currentDir,
-    });
+    const macroOptions = { verbose: options.verbose, currentFile: currentDir };
+    const expanded = expandMacros(astNodes, env, macroOptions);
+    
     timer.phase("macro expansion");
     
-    const withImports = processImports(expanded, env);
+    const imports = processImports(expanded, env);
+
     timer.phase("import processing");
 
-    const sourceFilePath = options.sourceFile || currentDir;
-    
-    const ir = transformToIR(withImports, currentDir);
+    const ir = transformToIR(imports, currentDir);
     
     timer.phase("IR transformation");
 
-    const tsResult = await generateTypeScript(ir, { sourceFilePath: sourceFilePath, currentFilePath: options.currentFile });
-    
-    const tsCode = tsResult.code;
-    const sourceMap = tsResult.sourceMap;
+    const sourceFilePath = options.sourceFile || currentDir;
+    const typescript = await generateTypeScript(ir, { sourceFilePath: sourceFilePath, currentFilePath: options.currentFile });
 
     timer.phase("TS code generation");
 
-    const finalCode = tsCode;
-
     timer.breakdown();
     
-    return { code: finalCode, sourceMap };
+    return { code: typescript.code };
   } catch (error) {
     throw new TransformError(
       `Transformation failed: ${error instanceof Error ? error.message : String(error)}`,
