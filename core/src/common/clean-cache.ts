@@ -1,6 +1,6 @@
 #!/usr/bin/env deno run -A
 
-import { getCacheDir, getCacheStats, clearCache } from "../src/common/hql-cache-tracker.ts";
+import { getCacheDir, getCacheStats, clearCache } from "./hql-cache-tracker.ts";
 import { parse } from "https://deno.land/std@0.170.0/flags/mod.ts";
 
 // Parse command line arguments
@@ -9,21 +9,6 @@ const flags = parse(Deno.args, {
   string: ["age"],
   alias: { h: "help", y: "force" },
 });
-
-if (flags.help || flags.h) {
-  console.log("Usage: deno run -A core/cli/clean-cache.ts [options]");
-  console.log("\nOptions:");
-  console.log("  --stats         Show cache statistics without cleaning");
-  console.log("  --age <days>    Only clear cache entries older than specified days");
-  console.log("  --force, -y     Force clean without confirmation");
-  console.log("  --help, -h      Show this help message");
-  console.log("\nExamples:");
-  console.log("  deno run -A core/cli/clean-cache.ts              # Clean cache with confirmation");
-  console.log("  deno run -A core/cli/clean-cache.ts --force      # Clean cache without confirmation");
-  console.log("  deno run -A core/cli/clean-cache.ts --age 7      # Clean cache entries older than 7 days");
-  console.log("  deno run -A core/cli/clean-cache.ts --stats      # Show cache statistics");
-  Deno.exit(0);
-}
 
 // Get cache directory and stats
 const cacheDir = await getCacheDir();
