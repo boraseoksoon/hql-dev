@@ -148,13 +148,8 @@ export async function publishJSR(options: PublishJSROptions): Promise<void> {
       : `@${jsrUser}/${options.name}`;
     console.log(`  → Using package name: "${config.name}"`);
   }
-  
-  // Save updated configuration
-  await writeJSON(configPath, config);
-  console.log(`  → Updated JSR config at "${configPath}"`);
-  
 
-  // Ensure README exists.
+  // Ensure README exists BEFORE publish
   const readmePath = join(distDir, "README.md");
   if (!(await exists(readmePath))) {
     console.log(`  → Creating default README.md`);
@@ -188,11 +183,8 @@ export async function publishJSR(options: PublishJSROptions): Promise<void> {
 
   console.log(`  → Running publish command: deno publish ${publishFlags.join(" ")}`);
 
-  let success = false;
+  // Only attempt Deno publish; no fallback methods.
   let errorMessage = "";
-
-  // Try three different publishing methods in sequence
-  // Method 1: Standard Deno publish command
   try {
     const process = runCmd({
       cmd: ["deno", "publish", ...publishFlags],
@@ -200,79 +192,21 @@ export async function publishJSR(options: PublishJSROptions): Promise<void> {
       stdout: "inherit",
       stderr: "inherit",
     });
-
     const status = await process.status;
-    if (status.success) {
-      success = true;
-    } else {
-      errorMessage = `Deno publish failed with exit code ${status.code}`;
-      if (options.verbose) {
-        logger.debug(errorMessage);
-      }
+    if (!status.success) {
+      errorMessage = `deno publish failed with exit code ${status.code}`;
+      console.error(`\n❌ JSR publish failed: ${errorMessage}`);
+      exit(status.code);
     }
   } catch (error) {
-    errorMessage = `Error with primary publish method: ${error instanceof Error ? error.message : String(error)}`;
-    if (options.verbose) {
-      logger.debug(errorMessage);
-    }
-  }
-
-  // Method 2: JSR API endpoint
-  if (!success) {
-    console.log(`\nAttempting alternative publish method...`);
-    try {
-      const process = runCmd({
-        cmd: ["deno", "run", "-A", "https://jsr.io/api/publish", ...publishFlags],
-        cwd: tempDir,
-        stdout: "inherit",
-        stderr: "inherit",
-      });
-
-      const status = await process.status;
-      if (status.success) {
-        success = true;
-      } else {
-        errorMessage = `JSR API publish failed with exit code ${status.code}`;
-        if (options.verbose) {
-          logger.debug(errorMessage);
-        }
-      }
-    } catch (error) {
-      errorMessage = `Error with secondary publish method: ${error instanceof Error ? error.message : String(error)}`;
-      if (options.verbose) {
-        logger.debug(errorMessage);
-      }
-    }
-  }
-
-  // Method 3: NPX JSR command
-  if (!success) {
-    console.log(`\nAttempting fallback publish method...`);
-    try {
-      const process = runCmd({
-        cmd: ["npx", "jsr", "publish", ...publishFlags],
-        cwd: tempDir,
-        stdout: "inherit",
-        stderr: "inherit",
-      });
-
-      const status = await process.status;
-      if (status.success) {
-        success = true;
-      } else {
-        errorMessage = `NPX JSR publish failed with exit code ${status.code}`;
-      }
-    } catch (error) {
-      errorMessage = `Error with tertiary publish method: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  }
-
-  // Handle final result
-  if (!success) {
+    errorMessage = `deno publish error: ${error instanceof Error ? error.message : String(error)}`;
     console.error(`\n❌ JSR publish failed: ${errorMessage}`);
-    console.error(`  → Tried all available publishing methods`);
     exit(1);
   }
+
+  // Only after successful publish, update jsr.json with the new version
+  await writeJSON(configPath, config);
+  console.log(`  → Updated JSR config at "${configPath}"`);
 
   console.log(`\n✅ JSR publish succeeded!`);
   console.log(`📦 View your package at: https://jsr.io/packages/${encodeURIComponent(String(config.name))}`);

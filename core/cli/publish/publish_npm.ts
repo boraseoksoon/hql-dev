@@ -110,12 +110,10 @@ export async function publishNpm(options: PublishNpmOptions): Promise<void> {
     pkg.license = "MIT";
   }
   
-  // Write package.json
-  await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
-  console.log(`  → Updated package.json with name=${pkg.name} version=${pkg.version}`);
-
   // Handle dry run
   if (options.dryRun) {
+    await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
+    console.log(`  → Updated package.json with name=${pkg.name} version=${pkg.version}`);
     console.log(`\n🔍 Dry run mode enabled - package would be published to npm`);
     console.log(`  → Package would be viewable at: https://www.npmjs.com/package/${pkg.name}`);
     return;
@@ -140,6 +138,10 @@ export async function publishNpm(options: PublishNpmOptions): Promise<void> {
     console.error(`\n❌ npm publish failed with exit code ${status.code}.`);
     exit(status.code);
   }
+
+  // Only after successful publish, update package.json with the new version
+  await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
+  console.log(`  → Updated package.json with name=${pkg.name} version=${pkg.version}`);
 
   console.log(`\n✅ Package published successfully to npm!`);
   console.log(`📦 View it at: https://www.npmjs.com/package/${pkg.name}`);

@@ -4,7 +4,7 @@ import { globalLogger } from "../logger.ts";
 export interface CliOptions {
   verbose?: boolean;
   showTiming?: boolean;
-  force?: boolean;
+  forceCache?: boolean;
   debug?: boolean;
 }
 
@@ -15,7 +15,7 @@ export function parseCliOptions(args: string[]): CliOptions {
   return {
     verbose: args.includes("--verbose") || args.includes("-v"),
     showTiming: args.includes("--time"),
-    force: args.includes("--force"),
+    forceCache: args.includes("--force-cache"),
     debug: args.includes("--debug"),
   };
 }

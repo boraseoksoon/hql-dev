@@ -6,7 +6,7 @@ import { globalLogger } from "../../src/logger.ts";
 export interface CliOptions {
   verbose?: boolean;
   showTiming?: boolean;
-  force?: boolean;
+  forceCache?: boolean;
   debug?: boolean;
 }
 

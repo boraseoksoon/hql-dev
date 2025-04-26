@@ -825,7 +825,7 @@ async function cacheTranspiledFile(
     registerImportMapping(pathWithExt, cachedPath);
   }
   
-  logger.debug(`Cached ${originalPath} → ${cachedPath}`);
+  logger.debug(`[CACHE WRITE] Cached ${originalPath} → ${cachedPath}`);
   return cachedPath;
 }
 
@@ -947,6 +947,16 @@ async function writeOutput(
     );
     
     logger.debug(`Written output to cache: ${cachedPath}`);
+    
+    if (await exists(cachedPath)) {
+      const cachedHash = await getContentHash(outputPath);
+      const currentHash = await getContentHash(outputPath);
+      if (cachedHash === currentHash) {
+        logger.debug(`[CACHE HIT] No changes detected, reusing cached file: ${cachedPath}`);
+      } else {
+        logger.debug(`[CACHE MISS] Source changed, regenerating: ${outputPath}`);
+      }
+    }
   } catch (error) {
     throw new TranspilerError(
       `Failed to write output to '${outputPath}': ${

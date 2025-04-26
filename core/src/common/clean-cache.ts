@@ -5,9 +5,9 @@ import { parse } from "https://deno.land/std@0.170.0/flags/mod.ts";
 
 // Parse command line arguments
 const flags = parse(Deno.args, {
-  boolean: ["help", "stats", "force", "h", "y"],
+  boolean: ["help", "stats", "force-cache", "h", "y"],
   string: ["age"],
-  alias: { h: "help", y: "force" },
+  alias: { h: "help", y: "force-cache" },
 });
 
 // Get cache directory and stats
@@ -49,8 +49,8 @@ if (flags.age) {
   Deno.exit(0);
 }
 
-// Confirm cache clearing unless --force is used
-if (!flags.force) {
+// Confirm cache clearing unless --force-cache is used
+if (!flags["force-cache"]) {
   console.log("\nAre you sure you want to clean the cache? [y/N] ");
   const buf = new Uint8Array(1);
   await Deno.stdin.read(buf);

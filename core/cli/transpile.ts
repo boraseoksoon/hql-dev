@@ -71,6 +71,9 @@ function transpile(
   outputPath: string | undefined,
   opts: CliOptions
 ): Promise<string> {
+  // Map forceCache to force for backward compatibility
+  const force = (opts as any).forceCache || opts.force;
+
   return timed("transpile", "Compile", async () => {
     const resolvedInputPath = resolve(inputPath);
 
@@ -78,7 +81,7 @@ function transpile(
     return await transpileCLI(resolvedInputPath, outputPath, {
       verbose: opts.verbose,
       showTiming: opts.showTiming,
-      force: opts.force
+      force: force
     });
   });
 }

@@ -384,7 +384,7 @@ export async function needsRegeneration(
     
     // Always regenerate if output doesn't exist
     if (!await exists(outputPath)) {
-      logger.debug(`Output doesn't exist, regenerating: ${outputPath}`);
+      logger.debug(`[CACHE MISS] Output doesn't exist, regenerating: ${outputPath}`);
       return true;
     }
     
@@ -395,11 +395,11 @@ export async function needsRegeneration(
     const pathParts = outputPath.split('/').filter(Boolean);
     const pathHash = pathParts[pathParts.length - 2]; // Extract hash from path
     if (pathHash !== currentHash.substring(0, 8)) {
-      logger.debug(`Source content changed, regenerating: ${sourcePath}`);
+      logger.debug(`[CACHE MISS] Source content changed, regenerating: ${sourcePath}`);
       return true;
     }
     
-    logger.debug(`No changes detected, reusing: ${outputPath}`);
+    logger.debug(`[CACHE HIT] No changes detected, reusing: ${outputPath}`);
     return false;
   } catch (error) {
     logger.debug(`Error checking regeneration: ${error}`);
@@ -410,13 +410,21 @@ export async function needsRegeneration(
 /**
  * Write content to cache
  */
+// Allowed source language extensions for caching
+const ALLOWED_LANG_EXTENSIONS = ['hql', 'js', 'ts'];
+
 export async function writeToCachedPath(
   sourcePath: string, 
   content: string, 
   targetExt: string,
   options: { preserveRelative?: boolean } = {}
 ): Promise<string> {
-  // Always use preserveRelative for stdlib files
+  // Only allow caching files with allowed extensions
+  const ext = sourcePath.split('.').pop()?.toLowerCase();
+  if (!ext || !ALLOWED_LANG_EXTENSIONS.includes(ext)) {
+    logger.debug(`writeToCachedPath: Skipping cache for unsupported file type: ${sourcePath}`);
+    return sourcePath;
+  }
   const sourceFilename = basename(sourcePath);
   const forcePreserveRelative = sourceFilename === "stdlib.hql" || sourceFilename === "stdlib.ts";
   const usePreserveRelative = forcePreserveRelative || options.preserveRelative;

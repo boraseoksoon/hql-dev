@@ -10,10 +10,6 @@
  */
 
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
-import { globalLogger } from "../logger.ts";
-
-// Direct access to logger (kept for potential future use; no "source-map" namespace remains)
-const logger = globalLogger;
 
 // -----------------------------------------------------------------------------
 // Color utilities
@@ -53,6 +49,111 @@ export function formatErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error !== null) return JSON.stringify(error);
   return String(error);
+}
+
+/**
+ * Format HQL error with proper error message display
+ * Now async to allow for file existence checks (Deno.stat).
+ */
+export async function formatHQLError(error: HQLError, isDebug = false): Promise<string> {
+  const colors = createColorConfig();
+  const output: string[] = [];
+  
+  // ALWAYS show the error message at the top - not just in debug mode
+  const errorType = error.errorType || "Error";
+  const message = error.message || "An unknown error occurred";
+  output.push(`${colors.red(colors.bold(`${errorType}:`))} ${message}`);
+
+  // Display code context with line numbers and column pointer
+  if (error.contextLines?.length > 0) {
+    const maxLineNumber = Math.max(...error.contextLines.map(item => item.line));
+    const lineNumPadding = String(maxLineNumber).length;
+    
+    // Format each context line
+    error.contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
+      const lineNumStr = String(lineNo).padStart(lineNumPadding, ' ');
+      
+      if (isError) {
+        // Error line (purple for SICP style)
+        output.push(` ${colors.purple(lineNumStr)} │ ${text}`);
+        
+        // Add pointer to the opening parenthesis for unclosed parenthesis errors
+        // Use the correct column position from error.column
+        if (column && column > 0) {
+          const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
+          output.push(pointer);
+        }
+      } else {
+        // Context line
+        output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(text)}`);
+      }
+    });
+  }
+  
+  // Add empty line before location
+  output.push('');
+  
+  // Add IDE-friendly location with "Where:" prefix (no question mark as requested)
+  const contextLines: { line: number; content: string; isError: boolean; column?: number }[] = [];
+  if (error.sourceLocation?.filePath) {
+    let filepath = error.sourceLocation.filePath;
+    const line = error.sourceLocation.line || 1;
+    const column = error.sourceLocation.column || 1;
+
+    const projectRoot = path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../../');
+    const resolved = await (await import("./utils.ts")).resolveSourcePath(filepath, projectRoot);
+    filepath = resolved;
+
+    // --- CONTEXT LINES FROM FILE ---
+    const fileContent = await Deno.readTextFile(filepath);
+    const fileLines = fileContent.split(/\r?\n/);
+    const errorIdx = line - 1;
+
+    for (let i = Math.max(0, errorIdx - 1); i <= Math.min(fileLines.length - 1, errorIdx + 1); i++) {
+      contextLines.push({
+        line: i + 1,
+        content: fileLines[i],
+        isError: i === errorIdx,
+        column: i === errorIdx ? column : undefined,
+      });
+    }
+
+    if (contextLines.length > 0) {
+      const maxLineNumber = Math.max(...contextLines.map(item => item.line));
+      const lineNumPadding = String(maxLineNumber).length;
+      contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
+        const lineNumStr = String(lineNo).padStart(lineNumPadding, ' ');
+        if (isError) {
+          output.push(` ${colors.purple(lineNumStr)} │ ${text}`);
+          if (column && column > 0) {
+            const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
+            output.push(pointer);
+          }
+        } else {
+          output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(text)}`);
+        }
+      });
+    }
+
+    const whereStr = `${filepath}:${line}:${column}`;
+    output.push(`${colors.purple(colors.bold("Where:"))} ${colors.white(whereStr)}`);
+  }
+
+  // Add suggestion if available
+  if (error.getSuggestion && typeof error.getSuggestion === 'function') {
+    const suggestion = error.getSuggestion();
+    if (suggestion) {
+      output.push(`${colors.cyan(`Suggestion: ${suggestion}`)}`);
+    }
+  }
+  
+  // Add stack trace only in debug mode
+  if (isDebug && error.originalError?.stack) {
+    output.push('');
+    output.push(colors.gray('Stack trace:'));
+  }
+  
+  return output.join('\n');
 }
 
 // -----------------------------------------------------------------------------

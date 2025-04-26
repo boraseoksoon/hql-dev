@@ -340,17 +340,25 @@ export function transformVectorExport(
       const symbols = processVectorElements((vectorNode as ListNode).elements);
       const exportSpecifiers: IR.IRExportSpecifier[] = [];
 
-      for (const elem of symbols) {
-        if (elem.type !== "symbol") {
-          logger.warn(`Skipping non-symbol export element: ${elem.type}`);
-          continue;
-        }
-        const symbolName = (elem as SymbolNode).name;
-
-        // Removed isUserLevelMacro check
-        // Simply process all symbols now
-        exportSpecifiers.push(createExportSpecifier(symbolName));
-      }
+      let i = 0;
+while (i < symbols.length) {
+  const elem = symbols[i];
+  if (elem.type !== "symbol") {
+    logger.warn(`Skipping non-symbol export element: ${elem.type}`);
+    i++;
+    continue;
+  }
+  const localName = (elem as SymbolNode).name;
+  // Check for alias: [foo as bar]
+  if (hasAliasFollowing(symbols, i)) {
+    const exportedName = (symbols[i + 2] as SymbolNode).name;
+    exportSpecifiers.push(createExportSpecifier(localName, exportedName));
+    i += 3;
+  } else {
+    exportSpecifiers.push(createExportSpecifier(localName, localName));
+    i++;
+  }
+}
 
       if (exportSpecifiers.length === 0) {
         logger.debug("No valid exports found, skipping export declaration");
@@ -371,24 +379,24 @@ export function transformVectorExport(
 /**
  * Create an export specifier
  */
-function createExportSpecifier(symbolName: string): IR.IRExportSpecifier {
+function createExportSpecifier(local: string, exported: string): IR.IRExportSpecifier {
   return perform(
     () => {
       return {
         type: IR.IRNodeType.ExportSpecifier,
         local: {
           type: IR.IRNodeType.Identifier,
-          name: sanitizeIdentifier(symbolName),
+          name: sanitizeIdentifier(local),
         } as IR.IRIdentifier,
         exported: {
           type: IR.IRNodeType.Identifier,
-          name: symbolName,
+          name: exported,
         } as IR.IRIdentifier,
       };
     },
-    `createExportSpecifier '${symbolName}'`,
+    `createExportSpecifier '${local} as ${exported}'`,
     TransformError,
-    [symbolName],
+    [local, exported],
   );
 }
 
