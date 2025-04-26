@@ -14,6 +14,7 @@ import { exists } from "jsr:@std/fs@1.0.13";
 import { buildJsModule } from "./build_js_module.ts";
 import { incrementPatch, prompt } from "./utils.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
+import type { PublishSummary } from "./publish_summary.ts";
 
 interface PublishNpmOptions {
   what: string;
@@ -23,46 +24,44 @@ interface PublishNpmOptions {
   dryRun?: boolean;
 }
 
-import type { PublishSummary } from "./publish_summary.ts";
-
-export async function publishNpm(options: PublishNpmOptions): Promise<PublishSummary> {
-  console.log("\n📦 Starting NPM package publishing process");
-
-  // Resolve the input path (this should already be resolved to a file by resolveEntryPoint)
-  const inputPath = resolve(options.what);
-  const baseDir = dirname(inputPath);
-  
-  if (options.verbose) {
-    logger.debug(`Using input path: "${inputPath}"`);
-    logger.debug(`Using base directory: "${baseDir}"`);
-  }
-
-  // Build the JavaScript module
+/**
+ * Build the JavaScript module
+ */
+async function buildModule(
+  inputPath: string,
+  options: { verbose?: boolean; dryRun?: boolean }
+): Promise<string> {
   console.log(`\n🔨 Building JavaScript module from "${inputPath}"...`);
-  const distDir = await buildJsModule(inputPath, {
-    verbose: options.verbose,
-    dryRun: options.dryRun,
-  });
+  const distDir = await buildJsModule(inputPath, options);
   console.log(`\n✅ Module built successfully to: "${distDir}"`);
+  return distDir;
+}
 
-  // Prepare package configuration
-  console.log(`\n📝 Preparing package configuration...`);
-  const pkgJsonPath = join(distDir, "package.json");
-  let pkg: Record<string, unknown> = {};
-
+/**
+ * Read existing package.json or create empty object
+ */
+async function readPackageJson(pkgJsonPath: string, verbose?: boolean): Promise<Record<string, unknown>> {
   if (await exists(pkgJsonPath)) {
     try {
-      if (options.verbose) logger.debug(`Reading existing package.json`);
-      pkg = JSON.parse(await readTextFile(pkgJsonPath));
+      if (verbose) logger.debug(`Reading existing package.json`);
+      return JSON.parse(await readTextFile(pkgJsonPath));
     } catch (error) {
-      if (options.verbose) {
+      if (verbose) {
         logger.debug(`Error parsing package.json: ${error instanceof Error ? error.message : String(error)}`);
       }
-      pkg = {};
     }
   }
+  return {};
+}
 
-  // Determine package name
+/**
+ * Configure package name from CLI args, existing config, or prompt user
+ */
+async function configurePackageName(
+  pkg: Record<string, unknown>,
+  options: PublishNpmOptions,
+  baseDir: string
+): Promise<void> {
   if (options.name) {
     pkg.name = options.name;
     console.log(`  → Using provided package name: "${pkg.name}"`);
@@ -79,8 +78,15 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
   } else {
     console.log(`  → Using existing package name: "${pkg.name}"`);
   }
+}
 
-  // Determine package version
+/**
+ * Configure package version from CLI args, auto-increment, or prompt user
+ */
+async function configurePackageVersion(
+  pkg: Record<string, unknown>,
+  options: PublishNpmOptions
+): Promise<void> {
   if (options.version) {
     pkg.version = options.version;
     console.log(`  → Using provided version: ${pkg.version}`);
@@ -94,8 +100,12 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
     pkg.version = ver || defaultVersion;
     console.log(`  → Using version: ${pkg.version}`);
   }
+}
 
-  // Set standard package.json fields
+/**
+ * Set standard package.json fields with defaults where needed
+ */
+function setStandardPackageFields(pkg: Record<string, unknown>): void {
   pkg.description = pkg.description || `HQL module: ${pkg.name}`;
   pkg.module = pkg.module || "./esm/index.js";
   pkg.main = pkg.main || "./esm/index.js"; // Also set main for CommonJS compatibility
@@ -111,29 +121,24 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
   if (!pkg.license) {
     pkg.license = "MIT";
   }
-  
-  // Handle dry run
-  if (options.dryRun) {
-    await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
-    console.log(`  → Updated package.json with name=${pkg.name} version=${pkg.version}`);
-    console.log(`\n🔍 Dry run mode enabled - package would be published to npm`);
-    console.log(`  → Package would be viewable at: https://www.npmjs.com/package/${pkg.name}`);
-    return {
-      registry: "npm",
-      name: String(pkg.name),
-      version: String(pkg.version),
-      link: `https://www.npmjs.com/package/${pkg.name}`
-    };
-  }
+}
 
-  // Always write package.json before publishing (fix for missing file)
+/**
+ * Save package.json to disk
+ */
+async function savePackageJson(
+  pkgJsonPath: string,
+  pkg: Record<string, unknown>
+): Promise<void> {
   await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
   console.log(`  → Updated package.json with name=${pkg.name} version=${pkg.version}`);
+}
 
-  // Actually publish to npm
-  console.log(`\n🚀 Publishing package ${pkg.name}@${pkg.version} to npm...`);
+/**
+ * Execute npm publish command
+ */
+async function executeNpmPublish(distDir: string): Promise<{ success: boolean; errorCode?: number }> {
   const publishCmd = ["npm", "publish", "--access", "public"];
-
   console.log(`  → Running: ${publishCmd.join(" ")}`);
 
   const process = runCmd({
@@ -144,23 +149,96 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
   });
 
   const status = await process.status;
+  return { success: status.success, errorCode: status.code };
+}
 
-  if (!status.success) {
-    const errorMsg = `npm publish failed with exit code ${status.code}`;
-    console.error(`\n❌ ${errorMsg}`);
+/**
+ * Generate success or error link for npm package
+ */
+function generatePackageLink(
+  pkg: Record<string, unknown>,
+  publishResult?: { success: boolean; errorCode?: number }
+): string {
+  if (!publishResult || publishResult.success) {
+    return `https://www.npmjs.com/package/${pkg.name}`;
+  } else {
+    return `❌ npm publish failed with exit code ${publishResult.errorCode}`;
+  }
+}
+
+/**
+ * Main NPM publishing function
+ */
+export async function publishNpm(options: PublishNpmOptions): Promise<PublishSummary> {
+  try {
+    console.log("\n📦 Starting NPM package publishing process");
+
+    // Resolve the input path and build the module
+    const inputPath = resolve(options.what);
+    const baseDir = dirname(inputPath);
+    
+    if (options.verbose) {
+      logger.debug(`Using input path: "${inputPath}"`);
+      logger.debug(`Using base directory: "${baseDir}"`);
+    }
+
+    // Build the module
+    const distDir = await buildModule(inputPath, {
+      verbose: options.verbose,
+      dryRun: options.dryRun,
+    });
+
+    // Prepare package configuration
+    console.log(`\n📝 Preparing package configuration...`);
+    const pkgJsonPath = join(distDir, "package.json");
+    const pkg = await readPackageJson(pkgJsonPath, options.verbose);
+
+    // Configure package name and version
+    await configurePackageName(pkg, options, baseDir);
+    await configurePackageVersion(pkg, options);
+    
+    // Set standard fields
+    setStandardPackageFields(pkg);
+    
+    // Save package.json
+    await savePackageJson(pkgJsonPath, pkg);
+    
+    // Handle dry run
+    if (options.dryRun) {
+      console.log(`\n🔍 Dry run mode enabled - package would be published to npm`);
+      console.log(`  → Package would be viewable at: https://www.npmjs.com/package/${pkg.name}`);
+      return {
+        registry: "npm",
+        name: String(pkg.name),
+        version: String(pkg.version),
+        link: `https://www.npmjs.com/package/${pkg.name}`
+      };
+    }
+
+    // Actually publish to npm
+    console.log(`\n🚀 Publishing package ${pkg.name}@${pkg.version} to npm...`);
+    const publishResult = await executeNpmPublish(distDir);
+    
+    if (!publishResult.success) {
+      console.error(`\n❌ npm publish failed with exit code ${publishResult.errorCode}`);
+    }
+
+    // Return publication summary
     return {
       registry: "npm",
       name: String(pkg.name),
       version: String(pkg.version),
-      link: `❌ ${errorMsg}`
+      link: generatePackageLink(pkg, publishResult)
+    };
+    
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`\n❌ NPM publish failed: ${errorMessage}`);
+    return {
+      registry: "npm",
+      name: options.name ?? '(auto)',
+      version: options.version ?? '(auto)',
+      link: `❌ ${errorMessage}`
     };
   }
-
-  // Do not print summary here; return info for centralized summary
-  return {
-    registry: "npm",
-    name: String(pkg.name),
-    version: String(pkg.version),
-    link: `https://www.npmjs.com/package/${pkg.name}`
-  };
 }
