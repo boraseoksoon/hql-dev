@@ -35,6 +35,16 @@ import {
   createTempDirIfNeeded,
 } from "./common/hql-cache-tracker.ts";
 import { transpile, TranspileOptions } from './transpiler/index.ts';
+import {
+  initErrorSystem,
+  registerSourceFile,
+  errorManager,
+  hasErrors,
+  printErrors,
+  rewriteJavaScriptSourceMap,
+  formatError
+} from "./error/index.ts";
+import { HQLError } from "./error/error-types.ts";
 
 let currentBundlePath: string | undefined;
 const DEFAULT_EXTERNAL_PATTERNS = ['npm:', 'jsr:', 'node:', 'https://', 'http://'];
@@ -59,7 +69,6 @@ interface ImportInfo {
   path: string;
 }
 
-// Main API function
 export async function transpileCLI(
   inputPath: string,
   outputPath?: string,
@@ -69,34 +78,201 @@ export async function transpileCLI(
     force?: boolean
   } = {}
 ): Promise<string> {
+  // Initialize error system
+  initErrorSystem({
+    throwImmediately: false,
+    installRuntimeHandler: false
+  });
+  
+  // Configure logger
   configureLogger(options);
+  
+  // Initialize runtime
   await initializeRuntime();
   
+  // Resolve input and output paths
   const resolvedInputPath = resolve(inputPath);
   const outPath = determineOutputPath(resolvedInputPath, outputPath);
   const sourceDir = dirname(resolvedInputPath);
   const bundleOptions = { ...options, sourceDir };
   
-  // Process entry file
-  if (options.showTiming) logger.startTiming("transpile-cli", "Process Entry");
-  const { tsOutputPath } = await processEntryFile(resolvedInputPath, outPath, bundleOptions);
-  if (options.showTiming) logger.endTiming("transpile-cli", "Process Entry");
+  try {
+    // Read the input file
+    const source = await readFile(resolvedInputPath);
+    
+    // Register source file with error system
+    registerSourceFile(resolvedInputPath, source);
+    
+    // Process entry file
+    if (options.showTiming) logger.startTiming("transpile-cli", "Process Entry");
+    const { tsOutputPath } = await processEntryFile(resolvedInputPath, outPath, bundleOptions);
+    if (options.showTiming) logger.endTiming("transpile-cli", "Process Entry");
 
-  // Bundle the processed file
-  if (options.showTiming) logger.startTiming("transpile-cli", "esbuild Bundling");
+    // Bundle the processed file
+    if (options.showTiming) logger.startTiming("transpile-cli", "esbuild Bundling");
 
-  logger.log({ text: `[Bundler] Forcing esbuild to use inline source maps for the bundle.` , namespace: "bundler" });
+    logger.log({ text: `[Bundler] Forcing esbuild to use inline source maps for the bundle.`, namespace: "bundler" });
+    
+    await bundleWithEsbuild(tsOutputPath, outPath, { ...bundleOptions });
+
+    logger.log({ text: `[Bundler] Bundled to ${outPath}`, namespace: "bundler" });
+
+    // Register the bundle path globally for error reporting
+    setCurrentBundlePath(outPath);
+
+    if (options.showTiming) logger.endTiming("transpile-cli", "esbuild Bundling");
+    
+    // Rewrite the JavaScript source map to point back to HQL
+    const jsCode = await Deno.readTextFile(outPath);
+    const enhancedJsCode = rewriteJavaScriptSourceMap(jsCode, outPath);
+    await Deno.writeTextFile(outPath, enhancedJsCode);
+    
+    // Check for errors
+    if (hasErrors()) {
+      printErrors();
+      throw new Error("Compilation failed due to errors");
+    }
+    
+    return outPath;
+  } catch (error: unknown) {
+    // If this is already an HQL error, print it
+    if (error instanceof HQLError) {
+      console.error(formatError(error));
+      throw error;
+    }
+    
+    // Otherwise create a generic error
+    const location = {
+      filePath: resolvedInputPath,
+      line: 1,
+      column: 1
+    };
+    
+    const transpileError = errorManager.createTransformError(
+      `Transpilation failed: ${error instanceof Error ? error.message : String(error)}`,
+      location
+    );
+    
+    console.error(formatError(transpileError));
+    throw transpileError;
+  }
+}
+
+async function bundleWithEsbuild(
+  entryPath: string,
+  outputPath: string,
+  options: BundleOptions = {},
+): Promise<string> {
+  logger.log({ text: `Bundling ${entryPath} to ${outputPath}`, namespace: "bundler" });
+    
+  // Create temp directory if needed
+  const tempDirResult = await createTempDirIfNeeded(options, "hql_bundle_", logger);
+  const tempDir = tempDirResult.tempDir;
+  const cleanupTemp = tempDirResult.created;
   
-  await bundleWithEsbuild(tsOutputPath, outPath, { ...bundleOptions });
+  try {
+    // Create unified plugin for all bundling operations
+    const bundlePlugin = createUnifiedBundlePlugin({
+      verbose: options.verbose,
+      tempDir,
+      sourceDir: options.sourceDir || dirname(entryPath)
+    });
+    
+    // Define build options
+    const buildOptions = {
+      entryPoints: [entryPath],
+      bundle: true,
+      outfile: outputPath,
+      format: 'esm',
+      logLevel: options.verbose ? 'info' : 'silent',
+      minify: false, // options.minify !== false,
+      treeShaking: true,
+      platform: 'neutral',
+      target: ['es2020'],
+      plugins: [bundlePlugin],
+      allowOverwrite: true,
+      metafile: true,
+      write: true,
+      absWorkingDir: Deno.cwd(),
+      nodePaths: [Deno.cwd(), dirname(entryPath)],
+      loader: {
+        '.ts': 'ts',
+        '.js': 'js',
+        '.hql': 'ts'
+      },
+      // Always force inline source maps for the final bundle
+      sourcemap: "inline",
+      // Enable TypeScript processing
+      tsconfig: JSON.stringify({
+        compilerOptions: {
+          target: "es2020",
+          module: "esnext",
+          moduleResolution: "node",
+          esModuleInterop: true,
+          allowSyntheticDefaultImports: true,
+          resolveJsonModule: true,
+          isolatedModules: true,
+          strict: false,
+          skipLibCheck: true,
+          allowJs: true,
+          forceConsistentCasingInFileNames: true,
+          importsNotUsedAsValues: "preserve",
+        }
+      })
+    };
+    
+    // Run the build
+    logger.log({ text: `Starting bundling: ${entryPath}`, namespace: "bundler" });
+    logger.log({ text: `[Bundler] esbuild buildOptions.sourcemap: ${buildOptions.sourcemap}`, namespace: "bundler"});
+    
+    const result = await esbuild.build(buildOptions);
 
-  logger.log({ text: `[Bundler] Bundled to ${outPath}` , namespace: "bundler" });
+    await esbuild.stop();
 
-  // Register the bundle path globally for error reporting
-  setCurrentBundlePath(outPath);
+    // Post-process the output if needed
+    if (result.metafile) {
+      await postProcessBundleOutput(outputPath);
+    }
+    
+    // Add source map to output that maps back to HQL
+    const jsCode = await Deno.readTextFile(outputPath);
+    const enhancedJsCode = rewriteJavaScriptSourceMap(jsCode, outputPath);
+    await Deno.writeTextFile(outputPath, enhancedJsCode);
 
-  if (options.showTiming) logger.endTiming("transpile-cli", "esbuild Bundling");
-
-  return outPath;
+    logger.log({ 
+      text: `Successfully bundled to ${outputPath}`, 
+      namespace: "bundler" 
+    });
+    
+    // Check for any errors during bundling
+    if (hasErrors()) {
+      printErrors();
+      throw new Error("Bundling failed due to errors");
+    }
+    
+    return outputPath;
+  } catch (error: unknown) {
+    // If already a HQL error, just rethrow
+    if (error instanceof HQLError) {
+      throw error;
+    }
+    
+    // Create a bundling error
+    const bundleError = errorManager.createCodeGenError(
+      `Bundling failed: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        filePath: entryPath,
+        line: 1,
+        column: 1
+      },
+      "Check your imports and make sure all dependencies are available."
+    );
+    
+    errorManager.reportError(bundleError);
+    throw bundleError;
+  } finally {
+    await cleanupAfterBundling(tempDir, cleanupTemp);
+  }
 }
 
 export async function processHqlImportsInJs(
@@ -438,98 +614,6 @@ function createUnifiedBundlePlugin(options: {
       });
     },
   };
-}
-
-/**
- * Bundle the entry file and dependencies into a single JavaScript file
- */
-async function bundleWithEsbuild(
-  entryPath: string,
-  outputPath: string,
-  options: BundleOptions = {},
-): Promise<string> {
-  logger.log({ text: `Bundling ${entryPath} to ${outputPath}`, namespace: "bundler" });
-    
-  // Create temp directory if needed
-  const tempDirResult = await createTempDirIfNeeded(options, "hql_bundle_", logger);
-  const tempDir = tempDirResult.tempDir;
-  const cleanupTemp = tempDirResult.created;
-  
-  try {
-    // Create unified plugin for all bundling operations
-    const bundlePlugin = createUnifiedBundlePlugin({
-      verbose: options.verbose,
-      tempDir,
-      sourceDir: options.sourceDir || dirname(entryPath)
-    });
-    
-    // Define build options
-    const buildOptions = {
-      entryPoints: [entryPath],
-      bundle: true,
-      outfile: outputPath,
-      format: 'esm',
-      logLevel: options.verbose ? 'info' : 'silent',
-      minify: false, // options.minify !== false,
-      treeShaking: true,
-      platform: 'neutral',
-      target: ['es2020'],
-      plugins: [bundlePlugin],
-      allowOverwrite: true,
-      metafile: true,
-      write: true,
-      absWorkingDir: Deno.cwd(),
-      nodePaths: [Deno.cwd(), dirname(entryPath)],
-      loader: {
-        '.ts': 'ts',
-        '.js': 'js',
-        '.hql': 'ts'
-      },
-      // Always force inline source maps for the final bundle
-      sourcemap: "inline",
-      // Enable TypeScript processing
-      tsconfig: JSON.stringify({
-        compilerOptions: {
-          target: "es2020",
-          module: "esnext",
-          moduleResolution: "node",
-          esModuleInterop: true,
-          allowSyntheticDefaultImports: true,
-          resolveJsonModule: true,
-          isolatedModules: true,
-          strict: false,
-          skipLibCheck: true,
-          allowJs: true,
-          forceConsistentCasingInFileNames: true,
-          importsNotUsedAsValues: "preserve",
-        }
-      })
-    };
-    
-    // Run the build
-    logger.log({ text: `Starting bundling: ${entryPath}`, namespace: "bundler" });
-    logger.log({ text: `[Bundler] esbuild buildOptions.sourcemap: ${buildOptions.sourcemap}`, namespace: "bundler"});
-    
-    const result = await esbuild.build(buildOptions);
-
-    await esbuild.stop();
-
-    // Post-process the output if needed
-    if (result.metafile) {
-      await postProcessBundleOutput(outputPath);
-    }
-    
-    logger.log({ 
-      text: `Successfully bundled to ${outputPath}`, 
-      namespace: "bundler" 
-    });
-    
-    return outputPath;
-  } catch (error) {
-    throw error;
-  } finally {
-    await cleanupAfterBundling(tempDir, cleanupTemp);
-  }
 }
 
 /**

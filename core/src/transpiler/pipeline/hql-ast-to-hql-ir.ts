@@ -13,7 +13,12 @@ import {
   isVectorExport,
   isVectorImport,
 } from "../type/hql_ast.ts";
-
+import { 
+  errorManager, 
+  getNodeLocation, 
+  trackNode, 
+  safeExecute
+} from "../../error/index.ts";
 // Import syntax modules
 import * as bindingModule from "../syntax/binding.ts";
 import * as classModule from "../syntax/class.ts";
@@ -48,11 +53,75 @@ export function transformToIR(
   }
   
   const body: IR.IRNode[] = [];
-  for (let i = 0; i < nodes.length; i++) {
-    const ir = transformNode(nodes[i], currentDir);
-    if (ir) body.push(ir);
+  
+  try {
+    for (let i = 0; i < nodes.length; i++) {
+      try {
+        const node = nodes[i];
+        if (!node) continue;
+        
+        // Get source location from the node
+        const location = getNodeLocation(node, currentDir);
+        
+        // Transform the node
+        const ir = transformNode(node, currentDir);
+        
+        // If transformation produced a result, add it
+        if (ir) {
+          // Transfer source location to IR node
+          if (location) {
+            (ir as any)._sourceLocation = location;
+          }
+          
+          body.push(ir);
+        }
+      } catch (error: unknown) {
+        // Get the node's location for error reporting
+        const location = getNodeLocation(nodes[i], currentDir);
+        
+        // If it's already a HQL error, just report it
+        if (error instanceof TransformError || 
+            (error instanceof Error && error.name && error.name.endsWith('Error'))) {
+          errorManager.reportError(error as any);
+        } else {
+          // Create and report a transform error
+          const message = error instanceof Error ? error.message : String(error);
+          const transformError = errorManager.createTransformError(
+            `Error transforming node: ${message}`,
+            location,
+            "Check your syntax for this expression"
+          );
+          
+          errorManager.reportError(transformError);
+        }
+        
+        // Continue with the next node unless we're configured to stop
+        if (errorManager.shouldStopOnFirstError()) {
+          throw error;
+        }
+      }
+    }
+    
+    return { type: IR.IRNodeType.Program, body };
+  } catch (error: unknown) {
+    // If it's a HQL error, just rethrow
+    if (error instanceof Error && error.name && error.name.endsWith('Error')) {
+      throw error;
+    }
+    
+    // Create a transform error with the current directory as a fallback location
+    const transformError = errorManager.createTransformError(
+      `Failed to transform AST to IR: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        filePath: currentDir,
+        line: 1,
+        column: 1
+      }
+    );
+    
+    errorManager.reportError(transformError);
+    throw transformError;
   }
-  return { type: IR.IRNodeType.Program, body };
 }
 
 

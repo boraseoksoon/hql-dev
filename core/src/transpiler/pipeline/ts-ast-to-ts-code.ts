@@ -2,10 +2,14 @@
 import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
-import { CodeGenError, perform } from "../../common/error-pipeline.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { makeSourceMap } from "./sourcemap-generator.ts";
-import { globalSymbolTable, SymbolTable } from "@transpiler/symbol_table.ts";
+import { 
+  errorManager, 
+  sourceMapper, 
+  rewriteJavaScriptSourceMap 
+} from "../../error/index.ts";
+import { CodeGenError } from "../../error/error-types.ts";
+
 /**
  * The output of TypeScript code generation, including code and optional source map.
  */
@@ -25,6 +29,7 @@ export async function generateTypeScript(
   options: { sourceFilePath?: string, currentFilePath?: string } = {}
 ): Promise<TypeScriptOutput> {
   const { currentFilePath } = options;  
+  
   try {
     logger.debug(
       `Starting TypeScript code generation from IR with ${ir.body.length} nodes`,
@@ -32,18 +37,26 @@ export async function generateTypeScript(
 
     // Validate the IR input
     if (!ir || !ir.body) {
-      throw new CodeGenError(
+      const location = {
+        filePath: options.sourceFilePath || "unknown",
+        line: 1,
+        column: 1
+      };
+      
+      const codeGenError = errorManager.createCodeGenError(
         "Invalid IR program input: missing or invalid IR structure",
-        "IR validation",
-        ir,
+        location
       );
+      
+      errorManager.reportError(codeGenError);
+      throw codeGenError;
     }
 
     // Convert HQL IR directly to official TS AST
     logger.debug("Converting HQL IR to TypeScript AST");
     const startTime = performance.now();
 
-    const tsAST = await convertHqlIRToTypeScript(ir)
+    const tsAST = await convertHqlIRToTypeScript(ir);
 
     const conversionTime = performance.now() - startTime;
     logger.debug(
@@ -78,173 +91,205 @@ export async function generateTypeScript(
       }ms with ${code.length} characters`,
     );
 
+    // Generate source map for HQL files
+    let sourceMap: string | undefined = undefined;
+    
     const isStdlib = currentFilePath && (
       currentFilePath.includes("/lib/stdlib") ||
       currentFilePath.includes("/lib/macro")
     );
 
-    let sourceMap: string | undefined = undefined;
     if (!isStdlib && isHqlFile(currentFilePath)) {
-      sourceMap = makeSourceMap(code, currentFilePath!);
+      // Create a source map that maps back to HQL
+      sourceMap = sourceMapper.generateSourceMapComment(
+        options.sourceFilePath || "output.ts"
+      );
     }
 
-    logger.log({ text: "dump : " + JSON.stringify(globalSymbolTable.dump(), null, 2), namespace: "symbol-table" });
     return { code, sourceMap };
-  } catch (error) {
-    throw new CodeGenError(
+  } catch (error: unknown) {
+    // Get a default location for the error
+    const location = {
+      filePath: options.sourceFilePath || options.currentFilePath || "unknown",
+      line: 1,
+      column: 1
+    };
+    
+    // If it's already a HQL error, just rethrow
+    if (error instanceof CodeGenError) {
+      throw error;
+    }
+    
+    // Create and report a code generation error
+    const codeGenError = errorManager.createCodeGenError(
       `Failed to generate TypeScript code: ${
         error instanceof Error ? error.message : String(error)
       }`,
-      "TypeScript code generation",
-      ir,
+      location
     );
+    
+    errorManager.reportError(codeGenError);
+    throw codeGenError;
   }
-}
-
-function isHqlFile(filePath?: string): boolean {
-  if (!filePath) return false;
-  return filePath.endsWith('.hql');
 }
 
 /**
  * Converts HQL IR directly to the official TypeScript AST.
- * Enhanced with better error handling and diagnostics using perform utility.
+ * Enhanced with better error handling and diagnostics.
  * @param program - The IR program to convert
  * @returns TypeScript SourceFile
  */
 export async function convertHqlIRToTypeScript(program: IR.IRProgram): Promise<ts.SourceFile> {
-  return await perform(
-    () => {
-      // Validate program input
-      if (!program || program.type !== IR.IRNodeType.Program) {
-        throw new CodeGenError(
-          "Invalid program input: expected IR Program node",
-          "IR program validation",
-          program,
-        );
-      }
-
-      if (!program.body || !Array.isArray(program.body)) {
-        throw new CodeGenError(
-          "Invalid program body: expected array of IR nodes",
-          "IR program body validation",
-          program,
-        );
-      }
-
-      logger.debug(
-        `Converting ${program.body.length} IR nodes to TypeScript statements`,
-      );
-
-      // Store any errors that occur during conversion
-      const conversionErrors: string[] = [];
-
-      // Process each node, collecting statements
-      const statements: ts.Statement[] = [];
-
-      for (let i = 0; i < program.body.length; i++) {
-        const node = program.body[i];
-
-        if (!node) {
-          logger.warn(`Skipping null or undefined node at index ${i}`);
-          continue;
+  try {
+    // Validate program input
+    if (!program || program.type !== IR.IRNodeType.Program) {
+      throw new CodeGenError(
+        "Invalid program input: expected IR Program node",
+        {
+          filePath: "unknown",
+          line: 1,
+          column: 1
         }
+      );
+    }
 
-        try {
-          const statement = perform(
-            () => convertIRNode(node),
-            `Converting node ${i} (${
-              IR.IRNodeType[node.type] || "unknown type"
-            })`,
-            CodeGenError,
-            [node],
-          );
+    if (!program.body || !Array.isArray(program.body)) {
+      throw new CodeGenError(
+        "Invalid program body: expected array of IR nodes",
+        {
+          filePath: "unknown",
+          line: 1,
+          column: 1
+        }
+      );
+    }
 
-          if (Array.isArray(statement)) {
-            if (statement.length > 0) {
-              statements.push(...statement);
-              logger.debug(
-                `Converted node ${i} (${
-                  IR.IRNodeType[node.type]
-                }) to ${statement.length} statements`,
-              );
-            } else {
-              logger.debug(
-                `Node ${i} (${
-                  IR.IRNodeType[node.type]
-                }) produced empty statement array`,
-              );
-            }
-          } else if (statement) {
-            statements.push(statement);
+    logger.debug(
+      `Converting ${program.body.length} IR nodes to TypeScript statements`,
+    );
+
+    // Process each node, collecting statements
+    const statements: ts.Statement[] = [];
+    const conversionErrors: string[] = [];
+
+    for (let i = 0; i < program.body.length; i++) {
+      const node = program.body[i];
+
+      if (!node) {
+        logger.warn(`Skipping null or undefined node at index ${i}`);
+        continue;
+      }
+
+      try {
+        const statement = convertIRNode(node);
+
+        if (Array.isArray(statement)) {
+          if (statement.length > 0) {
+            statements.push(...statement);
             logger.debug(
               `Converted node ${i} (${
                 IR.IRNodeType[node.type]
-              }) to single statement`,
+              }) to ${statement.length} statements`,
             );
           } else {
             logger.debug(
               `Node ${i} (${
                 IR.IRNodeType[node.type]
-              }) produced null or undefined statement`,
+              }) produced empty statement array`,
             );
           }
-        } catch (error) {
-          // Collect errors but continue processing other nodes
-          const errorMessage = error instanceof Error
-            ? error.message
-            : String(error);
-          conversionErrors.push(
-            `Error converting node ${i} (${
-              IR.IRNodeType[node.type] || "unknown type"
-            }): ${errorMessage}`,
-          );
-          logger.error(`Error converting node ${i}: ${errorMessage}`);
-        }
-      }
-
-      // If there were any errors during conversion, log them and throw an error
-      if (conversionErrors.length > 0) {
-        const errorSummary = conversionErrors.join("\n");
-        logger.error(
-          `${conversionErrors.length} errors occurred during IR to TS conversion`,
-        );
-
-        // If all nodes failed, throw an error
-        if (statements.length === 0) {
-          throw new CodeGenError(
-            `Failed to convert any nodes to TypeScript. Errors:\n${errorSummary}`,
-            "IR to TS conversion",
-            program.body,
-          );
-        }
-
-        // Otherwise, warn about the errors but continue
-        logger.warn(
-          `Some nodes failed to convert (${conversionErrors.length} errors), but ${statements.length} statements were generated`,
-        );
-      }
-
-      // Create the source file using the factory
-      return perform(
-        () => {
+        } else if (statement) {
+          statements.push(statement);
           logger.debug(
-            `Creating source file with ${statements.length} statements`,
+            `Converted node ${i} (${
+              IR.IRNodeType[node.type]
+            }) to single statement`,
           );
+        } else {
+          logger.debug(
+            `Node ${i} (${
+              IR.IRNodeType[node.type]
+            }) produced null or undefined statement`,
+          );
+        }
+      } catch (error: unknown) {
+        // Get source location for error reporting
+        const location = (node as any)._sourceLocation || {
+          filePath: "unknown",
+          line: 1,
+          column: 1
+        };
+        
+        // Create and report a code generation error
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const codeGenError = errorManager.createCodeGenError(
+          `Error converting node ${i} (${IR.IRNodeType[node.type] || "unknown"}): ${errorMessage}`,
+          location
+        );
+        
+        errorManager.reportError(codeGenError);
+        
+        // Collect error but continue processing other nodes
+        conversionErrors.push(errorMessage);
+      }
+    }
 
-          return ts.factory.createSourceFile(
-            statements,
-            ts.factory.createToken(ts.SyntaxKind.EndOfFileToken),
-            ts.NodeFlags.None,
-          );
-        },
-        "source file creation",
-        CodeGenError,
-        [statements],
+    // If there were errors during conversion, log them
+    if (conversionErrors.length > 0) {
+      logger.error(
+        `${conversionErrors.length} errors occurred during IR to TS conversion`,
       );
-    },
-    "IR to TS conversion",
-    CodeGenError,
-    [program],
-  );
+
+      // If all nodes failed, throw an error
+      if (statements.length === 0) {
+        throw new CodeGenError(
+          `Failed to convert any nodes to TypeScript. ${conversionErrors.length} errors occurred.`,
+          {
+            filePath: "unknown",
+            line: 1,
+            column: 1
+          }
+        );
+      }
+
+      // Otherwise, warn about the errors but continue
+      logger.warn(
+        `Some nodes failed to convert (${conversionErrors.length} errors), but ${statements.length} statements were generated`,
+      );
+    }
+
+    // Create the source file using the factory
+    logger.debug(
+      `Creating source file with ${statements.length} statements`,
+    );
+
+    return ts.factory.createSourceFile(
+      statements,
+      ts.factory.createToken(ts.SyntaxKind.EndOfFileToken),
+      ts.NodeFlags.None,
+    );
+  } catch (error: unknown) {
+    // If it's already a CodeGenError, just rethrow
+    if (error instanceof CodeGenError) {
+      throw error;
+    }
+    
+    // Otherwise create a new error
+    throw new CodeGenError(
+      `Failed to convert IR to TypeScript: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        filePath: "unknown",
+        line: 1,
+        column: 1
+      }
+    );
+  }
+}
+
+/**
+ * Helper function to check if a file is an HQL file
+ */
+function isHqlFile(filePath?: string): boolean {
+  if (!filePath) return false;
+  return filePath.endsWith('.hql');
 }

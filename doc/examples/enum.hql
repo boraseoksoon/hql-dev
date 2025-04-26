@@ -212,7 +212,7 @@
 (let x 10)
 
 ;; This code should not execute
-(print "Value is" x)
+(print "Value is" x
 
 (print "yo Value is" x) ;; where the intentional error occurs
 (print "Value is" x)

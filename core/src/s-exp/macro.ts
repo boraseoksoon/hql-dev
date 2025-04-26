@@ -16,8 +16,8 @@ import {
 import { Environment } from "../environment.ts";
 import { Logger } from "../logger.ts";
 import { MacroFn } from "../environment.ts";
-import { MacroError, TransformError } from "../common/error-pipeline.ts";
-import { perform } from "../common/error-pipeline.ts";
+import { MacroError } from "../error/error-types.ts";
+import { registerSourceFile, errorManager, getNodeLocation, getMacroName, getFileContentFromEnv } from "../error/index.ts";
 import { gensym } from "../gensym.ts";
 import { LRUCache } from "../common/lru-cache.ts";
 import { globalLogger as logger } from "../logger.ts";
@@ -33,6 +33,182 @@ interface MacroExpanderOptions {
   maxExpandDepth?: number;
   currentFile?: string;
   useCache?: boolean;
+}
+
+/**
+ * Expand all macros in a list of S-expressions
+ */
+export function expandMacros(
+  exprs: SExp[],
+  env: Environment,
+  options: MacroExpanderOptions = {},
+): SExp[] {
+  const currentFile = options.currentFile;
+  const useCache = options.useCache !== false;
+  
+  logger.debug(
+    `Starting macro expansion on ${exprs.length} expressions${currentFile ? ` in ${currentFile}` : ""}`,
+  );
+
+  if (currentFile) {
+    // Register the file with the error system
+    const fileContent = getFileContentFromEnv(env, currentFile);
+    if (fileContent) {
+      registerSourceFile(currentFile, fileContent);
+    }
+    
+    env.setCurrentFile(currentFile);
+    logger.debug(`Setting current file to: ${currentFile}`);
+  }
+
+  // Process macro definitions
+  for (const expr of exprs) {
+    try {
+      if (isDefMacro(expr) && isList(expr)) {
+        defineMacro(expr as SList, env, logger);
+      }
+    } catch (error: unknown) {
+      // Get source location for the expression
+      const location = getNodeLocation(expr, currentFile || "unknown");
+      
+      // If not already a MacroError, create one
+      if (!(error instanceof MacroError)) {
+        const macroName = getMacroName(expr);
+        
+        const macroError = errorManager.createMacroError(
+          `Error defining macro: ${error instanceof Error ? error.message : String(error)}`,
+          location,
+          macroName || "unknown"
+        );
+        
+        errorManager.reportError(macroError);
+        throw macroError;
+      } else {
+        errorManager.reportError(error);
+        throw error;
+      }
+    }
+  }
+
+  let currentExprs = [...exprs];
+  let iteration = 0;
+  let changed = true;
+  
+  try {
+    while (changed && iteration < MAX_EXPANSION_ITERATIONS) {
+      changed = false;
+      iteration++;
+      logger.debug(`Macro expansion iteration ${iteration}`);
+
+      const newExprs = currentExprs.map((expr) => {
+        try {
+          const exprStr = useCache ? sexpToString(expr) : "";
+          if (useCache && macroExpansionCache.has(exprStr)) {
+            logger.debug(`Cache hit for expression: ${exprStr.substring(0, 30)}...`);
+            return macroExpansionCache.get(exprStr)!;
+          }
+          
+          // Expand macros in the expression
+          const expandedExpr = expandMacroExpression(expr, env, options, 0);
+          
+          // Cache the expanded expression
+          if (useCache) {
+            macroExpansionCache.set(exprStr, expandedExpr);
+          }
+          
+          // Transfer source location to expanded expression
+          if ((expr as any)._sourceLocation) {
+            (expandedExpr as any)._sourceLocation = (expr as any)._sourceLocation;
+          }
+          
+          return expandedExpr;
+        } catch (error: unknown) {
+          // Get source location for the expression
+          const location = getNodeLocation(expr, currentFile || "unknown");
+          
+          // If not already a MacroError, create one
+          if (!(error instanceof MacroError)) {
+            const macroName = getMacroName(expr);
+            
+            const macroError = errorManager.createMacroError(
+              `Error expanding macro: ${error instanceof Error ? error.message : String(error)}`,
+              location,
+              macroName || "unknown"
+            );
+            
+            errorManager.reportError(macroError);
+            throw macroError;
+          } else {
+            errorManager.reportError(error);
+            throw error;
+          }
+        }
+      });
+
+      const oldStr = currentExprs.map(sexpToString).join("\n");
+      const newStr = newExprs.map(sexpToString).join("\n");
+      
+      if (oldStr !== newStr) {
+        changed = true;
+        currentExprs = newExprs;
+        logger.debug(`Changes detected in iteration ${iteration}, continuing expansion`);
+      } else {
+        logger.debug(`No changes in iteration ${iteration}, fixed point reached`);
+      }
+    }
+
+    if (iteration >= MAX_EXPANSION_ITERATIONS) {
+      logger.warn(
+        `Macro expansion reached maximum iterations (${MAX_EXPANSION_ITERATIONS}). Check for infinite recursion.`,
+      );
+      
+      // Create a warning in the error system
+      if (currentFile) {
+        const macroError = errorManager.createMacroError(
+          `Macro expansion reached maximum iterations (${MAX_EXPANSION_ITERATIONS}). Possible infinite recursion.`,
+          {
+            filePath: currentFile,
+            line: 1,
+            column: 1
+          },
+          "unknown",
+          "Check for macros that expand to themselves or mutually recursive macros."
+        );
+        
+        errorManager.reportError(macroError);
+      }
+    }
+    
+    logger.debug(`Completed macro expansion after ${iteration} iterations`);
+
+    currentExprs = filterMacroDefinitions(currentExprs, logger);
+    
+    if (currentFile) {
+      env.setCurrentFile(null);
+      logger.debug(`Clearing current file`);
+    }
+    
+    return currentExprs;
+  } catch (error: unknown) {
+    // If already a MacroError, just rethrow
+    if (error instanceof MacroError) {
+      throw error;
+    }
+    
+    // Create a generic macro error
+    const macroError = errorManager.createMacroError(
+      `Macro expansion failed: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        filePath: currentFile || "unknown",
+        line: 1,
+        column: 1
+      },
+      "unknown"
+    );
+    
+    errorManager.reportError(macroError);
+    throw macroError;
+  }
 }
 
 /* Helper: Checks truthiness for S-expression values */
@@ -148,77 +324,6 @@ export function defineMacro(
       error instanceof Error ? error : undefined,
     );
   }
-}
-
-/* Expand all macros in a list of S-expressions */
-export function expandMacros(
-  exprs: SExp[],
-  env: Environment,
-  options: MacroExpanderOptions = {},
-): SExp[] {
-  const currentFile = options.currentFile;
-  const useCache = options.useCache !== false;
-  logger.debug(
-    `Starting macro expansion on ${exprs.length} expressions${currentFile ? ` in ${currentFile}` : ""}`,
-  );
-
-  if (currentFile) {
-    env.setCurrentFile(currentFile);
-    logger.debug(`Setting current file to: ${currentFile}`);
-  }
-
-  // Process macro definitions
-  for (const expr of exprs) {
-    if (isDefMacro(expr) && isList(expr)) {
-      defineMacro(expr as SList, env, logger);
-    }
-  }
-
-  let currentExprs = [...exprs];
-  let iteration = 0;
-  let changed = true;
-  while (changed && iteration < MAX_EXPANSION_ITERATIONS) {
-    changed = false;
-    iteration++;
-    logger.debug(`Macro expansion iteration ${iteration}`);
-
-    const newExprs = currentExprs.map((expr) => {
-      const exprStr = useCache ? sexpToString(expr) : "";
-      if (useCache && macroExpansionCache.has(exprStr)) {
-        logger.debug(`Cache hit for expression: ${exprStr.substring(0, 30)}...`);
-        return macroExpansionCache.get(exprStr)!;
-      }
-      const expandedExpr = expandMacroExpression(expr, env, options, 0);
-      if (useCache) {
-        macroExpansionCache.set(exprStr, expandedExpr);
-      }
-      return expandedExpr;
-    });
-
-    const oldStr = currentExprs.map(sexpToString).join("\n");
-    const newStr = newExprs.map(sexpToString).join("\n");
-    if (oldStr !== newStr) {
-      changed = true;
-      currentExprs = newExprs;
-      logger.debug(`Changes detected in iteration ${iteration}, continuing expansion`);
-    } else {
-      logger.debug(`No changes in iteration ${iteration}, fixed point reached`);
-    }
-  }
-
-  if (iteration >= MAX_EXPANSION_ITERATIONS) {
-    logger.warn(
-      `Macro expansion reached maximum iterations (${MAX_EXPANSION_ITERATIONS}). Check for infinite recursion.`,
-    );
-  }
-  logger.debug(`Completed macro expansion after ${iteration} iterations`);
-
-  currentExprs = filterMacroDefinitions(currentExprs, logger);
-  if (currentFile) {
-    env.setCurrentFile(null);
-    logger.debug(`Clearing current file`);
-  }
-  return currentExprs;
 }
 
 /* Check if a symbol represents a macro with caching. */
