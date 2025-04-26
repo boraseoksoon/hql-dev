@@ -19,6 +19,7 @@ export interface PublishOptions {
   version?: string;
   verbose?: boolean;
   dryRun?: boolean;
+  all?: boolean;
 }
 
 /** Show help information */
@@ -62,7 +63,11 @@ OPTIONS:
  * Flags (--platform, --name, --version) override positional values.
  */
 function parsePublishArgs(args: string[]): PublishOptions {
-  const parsed = parseArgs(args, {
+  // Detect --all flag
+  const isAll = args.includes('--all') || args.includes('-a');
+  // Remove --all/-a from args for further parsing
+  const filteredArgs = args.filter(arg => arg !== '--all' && arg !== '-a');
+  const parsed = parseArgs(filteredArgs, {
     string: ["platform", "name", "version"],
     boolean: ["verbose", "help", "dry-run"],
     alias: {
@@ -130,7 +135,8 @@ function parsePublishArgs(args: string[]): PublishOptions {
     version,
     verbose: !!parsed.verbose,
     dryRun: !!parsed["dry-run"],
-  };
+    all: isAll,
+  } as any;
 }
 
 /**
@@ -215,7 +221,60 @@ async function resolveEntryPoint(path: string): Promise<string> {
 
 /** Main publish function that calls the appropriate publisher. */
 export async function publish(args: string[]): Promise<void> {
+  // --all support: publish to both npm and jsr with auto version bump
+  const hasAll = args.includes('--all') || args.includes('-a');
   const options = parsePublishArgs(args);
+
+  if (options.all) {
+    // --all: publish to both npm and jsr, bump patch version, no prompts
+    // 1. Resolve entry point
+    const entryPoint = await resolveEntryPoint(options.what);
+    // 2. Bump version (auto-increment patch version)
+    // (Assume incrementPatch utility is available from publish_npm or utils)
+    const { incrementPatch } = await import("./utils.ts");
+    let version = options.version;
+    let name = options.name;
+    // Try to get current version from package.json/jsr.json if not given
+    let pkgVersion = version;
+    let pkgName = name;
+    try {
+      const fs = await import("../../src/platform/platform.ts");
+      const distDir = entryPoint.endsWith('.hql') ? entryPoint.replace(/\/[^/]+$/, '/dist') : entryPoint + '/dist';
+      const pkgJsonPath = fs.join(distDir, "package.json");
+      if (await fs.exists(pkgJsonPath)) {
+        const pkg = JSON.parse(await fs.readTextFile(pkgJsonPath));
+        pkgVersion = pkg.version;
+        pkgName = pkg.name;
+      } else {
+        // Try jsr.json
+        const jsrJsonPath = fs.join(distDir, "jsr.json");
+        if (await fs.exists(jsrJsonPath)) {
+          const jsr = JSON.parse(await fs.readTextFile(jsrJsonPath));
+          pkgVersion = jsr.version;
+          pkgName = jsr.name;
+        }
+      }
+    } catch {}
+    const newVersion = incrementPatch(pkgVersion || "0.0.0");
+    // 3. Publish to NPM
+    await publishNpm({
+      ...options,
+      what: entryPoint,
+      version: newVersion,
+      name: pkgName || options.name,
+      dryRun: options.dryRun,
+    });
+    // 4. Publish to JSR
+    await publishJSR({
+      ...options,
+      what: entryPoint,
+      version: newVersion,
+      name: pkgName || options.name,
+      dryRun: options.dryRun,
+    });
+    console.log("\n✅ --all: Published to both NPM and JSR with version " + newVersion);
+    return;
+  }
 
   if (options.verbose) {
     // Enable verbose logging
