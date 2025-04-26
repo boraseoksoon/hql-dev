@@ -8,6 +8,7 @@ import {
 } from "../../src/platform/platform.ts";
 import { publishNpm } from "./publish_npm.ts";
 import { publishJSR } from "./publish_jsr.ts";
+import { printPublishSummary, PublishSummary } from "./publish_summary.ts";
 import { reportError } from "../../src/common/error.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
 import { checkEnvironment } from "./publish_common.ts";
@@ -227,14 +228,10 @@ export async function publish(args: string[]): Promise<void> {
 
   if (options.all) {
     // --all: publish to both npm and jsr, bump patch version, no prompts
-    // 1. Resolve entry point
     const entryPoint = await resolveEntryPoint(options.what);
-    // 2. Bump version (auto-increment patch version)
-    // (Assume incrementPatch utility is available from publish_npm or utils)
     const { incrementPatch } = await import("./utils.ts");
     let version = options.version;
     let name = options.name;
-    // Try to get current version from package.json/jsr.json if not given
     let pkgVersion = version;
     let pkgName = name;
     try {
@@ -246,7 +243,6 @@ export async function publish(args: string[]): Promise<void> {
         pkgVersion = pkg.version;
         pkgName = pkg.name;
       } else {
-        // Try jsr.json
         const jsrJsonPath = fs.join(distDir, "jsr.json");
         if (await fs.exists(jsrJsonPath)) {
           const jsr = JSON.parse(await fs.readTextFile(jsrJsonPath));
@@ -256,23 +252,22 @@ export async function publish(args: string[]): Promise<void> {
       }
     } catch {}
     const newVersion = incrementPatch(pkgVersion || "0.0.0");
-    // 3. Publish to NPM
-    await publishNpm({
+    // Publish to NPM and JSR and collect summaries
+    const npmSummary = await publishNpm({
       ...options,
       what: entryPoint,
       version: newVersion,
       name: pkgName || options.name,
       dryRun: options.dryRun,
     });
-    // 4. Publish to JSR
-    await publishJSR({
+    const jsrSummary = await publishJSR({
       ...options,
       what: entryPoint,
       version: newVersion,
       name: pkgName || options.name,
       dryRun: options.dryRun,
     });
-    console.log("\n✅ --all: Published to both NPM and JSR with version " + newVersion);
+    printPublishSummary([npmSummary, jsrSummary]);
     return;
   }
 
@@ -307,18 +302,19 @@ export async function publish(args: string[]): Promise<void> {
   }
 
   try {
+    let summary: PublishSummary;
     if (options.platform === "npm") {
-      await publishNpm({
+      summary = await publishNpm({
         ...options,
         what: entryPoint,
       });
     } else {
-      await publishJSR({
+      summary = await publishJSR({
         ...options,
         what: entryPoint,
       });
     }
-    console.log("\n✅ Publishing process completed successfully!\nYour HQL module is now live.");
+    printPublishSummary([summary]);
   } catch (error) {
     reportError(error); 
     exit(1);

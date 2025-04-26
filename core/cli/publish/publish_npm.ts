@@ -23,7 +23,9 @@ interface PublishNpmOptions {
   dryRun?: boolean;
 }
 
-export async function publishNpm(options: PublishNpmOptions): Promise<void> {
+import type { PublishSummary } from "./publish_summary.ts";
+
+export async function publishNpm(options: PublishNpmOptions): Promise<PublishSummary> {
   console.log("\n📦 Starting NPM package publishing process");
 
   // Resolve the input path (this should already be resolved to a file by resolveEntryPoint)
@@ -116,7 +118,12 @@ export async function publishNpm(options: PublishNpmOptions): Promise<void> {
     console.log(`  → Updated package.json with name=${pkg.name} version=${pkg.version}`);
     console.log(`\n🔍 Dry run mode enabled - package would be published to npm`);
     console.log(`  → Package would be viewable at: https://www.npmjs.com/package/${pkg.name}`);
-    return;
+    return {
+      registry: "npm",
+      name: String(pkg.name),
+      version: String(pkg.version),
+      link: `https://www.npmjs.com/package/${pkg.name}`
+    };
   }
 
   // Always write package.json before publishing (fix for missing file)
@@ -143,6 +150,11 @@ export async function publishNpm(options: PublishNpmOptions): Promise<void> {
     exit(status.code);
   }
 
-  console.log(`\n✅ Package published successfully to npm!`);
-  console.log(`📦 View it at: https://www.npmjs.com/package/${pkg.name}`);
+  // Do not print summary here; return info for centralized summary
+  return {
+    registry: "npm",
+    name: String(pkg.name),
+    version: String(pkg.version),
+    link: `https://www.npmjs.com/package/${pkg.name}`
+  };
 }
