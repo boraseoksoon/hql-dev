@@ -1,8 +1,8 @@
-// sourcemap-debug.ts
+// bundler.ts
 import * as esbuild from "https://deno.land/x/esbuild@v0.17.19/mod.js";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileToJavascript } from "./transpiler/hql-transpiler.ts";
-import { formatErrorMessage } from "./common/error-pipeline.ts";
+import { formatErrorMessage } from "./common/error.ts";
 import {
   isHqlFile,
   isJsFile,
@@ -24,7 +24,7 @@ import {
 import {
   TranspilerError,
   ValidationError,
-} from "./common/error-pipeline.ts";
+} from "./common/error.ts";
 import { 
   createTempDir, 
   getCachedPath,
@@ -504,8 +504,7 @@ async function bundleWithEsbuild(
     
     // Run the build
     logger.log({ text: `Starting bundling: ${entryPath}`, namespace: "bundler" });
-    logger.log({ text: `[Bundler] esbuild buildOptions.sourcemap: ${buildOptions.sourcemap}`, namespace: "bundler"});
-    
+
     const result = await esbuild.build(buildOptions);
 
     await esbuild.stop();
@@ -523,8 +522,6 @@ async function bundleWithEsbuild(
     return outputPath;
   } catch (error) {
     throw error;
-  } finally {
-    await cleanupAfterBundling(tempDir, cleanupTemp);
   }
 }
 
@@ -749,33 +746,6 @@ export async function transpileHqlFile(
     throw new Error(`Error transpiling HQL for JS import ${hqlFilePath}: ${
       error instanceof Error ? error.message : String(error)
     }`);
-  }
-}
-
-/**
- * Clean up resources after bundling
- */
-async function cleanupAfterBundling(
-  tempDir: string,
-  cleanupTemp: boolean,
-): Promise<void> {
-  try {
-    await esbuild.stop();
-  } catch {
-    logger.warn("Failed to stop esbuild");
-  }
-  
-  if (cleanupTemp) {
-    try {
-      await Deno.remove(tempDir, { recursive: true });
-      logger.log({ text: `Cleaned up temporary directory: ${tempDir}`, namespace: "bundler" });
-    } catch (error) {
-      logger.warn(
-        `Failed to clean up temporary directory: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
   }
 }
 

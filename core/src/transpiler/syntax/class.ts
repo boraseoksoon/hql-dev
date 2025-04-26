@@ -4,7 +4,7 @@
 import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
-import { ValidationError, TransformError, perform } from "../../common/error-pipeline.ts";
+import { ValidationError, TransformError, perform } from "../../common/error.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { execute  } from "../pipeline/hql-ir-to-ts-ast.ts";

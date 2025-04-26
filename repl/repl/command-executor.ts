@@ -1,6 +1,6 @@
 // src/repl/command-executor.ts
 
-import { formatErrorMessage } from "../../core/src/common/error-pipeline.ts";
+import { formatErrorMessage } from "../../core/src/common/error.ts";
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { ReplState, resetReplState } from "./repl-state.ts";
 import { Logger } from "@core/logger.ts";

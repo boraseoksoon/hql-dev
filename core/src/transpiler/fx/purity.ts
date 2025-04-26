@@ -1,7 +1,7 @@
 // src/transpiler/purity.ts
 
 import { HQLNode, ListNode, SymbolNode } from "../type/hql_ast.ts";
-import { ValidationError } from "../../common/error-pipeline.ts"
+import { ValidationError } from "../../common/error.ts" 
 import { globalLogger as logger } from "../../logger.ts";
 
 // Registry to track pure functions

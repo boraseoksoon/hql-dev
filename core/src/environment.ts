@@ -7,7 +7,7 @@ import {
   MacroError,
   TranspilerError,
   ValidationError,
-} from "./common/error-pipeline.ts";
+} from "./common/error.ts";
 import { LRUCache } from "./common/lru-cache.ts";
 import { globalLogger as logger } from "./logger.ts";
 import { globalSymbolTable } from "./transpiler/symbol_table.ts";

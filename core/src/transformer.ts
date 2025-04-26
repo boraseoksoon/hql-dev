@@ -9,7 +9,7 @@ import { expandMacros } from "./s-exp/macro.ts";
 import { globalLogger as logger, Logger } from "./logger.ts";
 import { Environment } from "./environment.ts";
 import type { HQLNode } from "./transpiler/type/hql_ast.ts";
-import { TransformError } from "./common/error-pipeline.ts";
+import { TransformError } from "./common/error.ts";
 import {
   extractImportInfo,
   findExistingImports,

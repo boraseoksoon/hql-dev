@@ -2,7 +2,7 @@
 
 ## Current Status
 
-HQL currently implements a structured error handling system through the `error-pipeline.ts` module, which provides:
+HQL currently implements a structured error handling system through the `error.ts` module, which provides:
 
 1. Standardized error collection, processing, and reporting
 2. Error messages with file path, line, and column information
@@ -285,7 +285,7 @@ Define a standard error format with:
 
 1. Audit the current error handling implementation across the codebase
 2. Implement source map generation in the transpiler
-3. Enhance the error-pipeline.ts to use source maps
+3. Enhance the error.ts to use source maps
 4. Consolidate error handling into a unified system
 5. Improve error messages and suggestions
 6. Add comprehensive tests for error reporting

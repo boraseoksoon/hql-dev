@@ -4,8 +4,7 @@ import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI } from "../src/bundler.ts";
 import { globalLogger as logger } from "../src/logger.ts";
 import { parseCliOptions, applyCliOptions, CliOptions } from "./utils/cli-options.ts";
-import { ErrorPipeline } from "../src/common/error-pipeline.ts";
-import { getCacheDir, getCacheStats } from "../src/common/hql-cache-tracker.ts";
+import { ErrorPipeline } from "../src/common/error.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
 
 /**
@@ -65,21 +64,6 @@ function parsePaths(args: string[]): { inputPath: string; outputPath?: string } 
 }
 
 /**
- * Show cache statistics
- */
-async function showCacheInfo(): Promise<void> {
-  const cacheDir = await getCacheDir();
-  const stats = await getCacheStats();
-  
-  console.log("\nHQL Cache Information:");
-  console.log(`Cache directory: ${cacheDir}`);
-  console.log(`Files in cache: ${stats.files}`);
-  console.log(`Cache size: ${(stats.bytes / 1024).toFixed(2)} KB`);
-  
-  Deno.exit(0);
-}
-
-/**
  * Invoke transpiler with error handling
  */
 function transpile(
@@ -132,12 +116,6 @@ export async function main(): Promise<void> {
   
   // Initialize runtime early - this will prevent redundant initializations later
   await initializeRuntime();
-  
-  // Handle cache info request
-  if (args.includes("--cache-info")) {
-    await showCacheInfo();
-    return;
-  }
   
   // Parse options
   const { inputPath, outputPath } = parsePaths(args);

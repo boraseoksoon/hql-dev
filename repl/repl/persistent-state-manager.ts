@@ -4,7 +4,7 @@
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { ensureDir } from "https://deno.land/std@0.224.0/fs/ensure_dir.ts";
-import { formatErrorMessage } from "../../core/src/common/error-pipeline.ts";
+import { formatErrorMessage } from "../../core/src/common/error.ts";
 import { Logger, globalLogger as logger } from "@core/logger.ts";
 
 // State file name (will be stored directly in the repl directory)

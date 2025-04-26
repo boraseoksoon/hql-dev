@@ -8,7 +8,7 @@ import {
 } from "../../src/platform/platform.ts";
 import { publishNpm } from "./publish_npm.ts";
 import { publishJSR } from "./publish_jsr.ts";
-import { reportError } from "../../src/common/error-pipeline.ts";
+import { reportError } from "../../src/common/error.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
 import { checkEnvironment } from "./publish_common.ts";
 export interface PublishOptions {

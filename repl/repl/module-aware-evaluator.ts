@@ -10,7 +10,7 @@ import { parse } from "@transpiler/pipeline/parser.ts";
 import { processImports, ImportProcessorOptions } from "@core/imports.ts";
 import { SList, isImport, isSymbol, SSymbol, isSExpNamespaceImport, isSExpVectorImport } from "@s-exp/types.ts";
 import { Logger } from "@core/logger.ts";
-import { formatErrorMessage } from "../../core/src/common/error-pipeline.ts";
+import { formatErrorMessage } from "../../core/src/common/error.ts";
 /**
  * Options for the module-aware evaluator
  */

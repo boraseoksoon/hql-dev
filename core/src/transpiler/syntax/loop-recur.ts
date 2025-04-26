@@ -3,7 +3,7 @@
 
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
-import { ValidationError, TransformError } from "../../common/error-pipeline.ts";
+import { ValidationError, TransformError } from "../../common/error.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 
 // Stack to track the current loop context for recur targeting

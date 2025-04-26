@@ -13,9 +13,9 @@ import {
   MacroError,
   TransformError,
   TranspilerError,
-} from "../common/error-pipeline.ts";
+} from "../common/error.ts";
 import { globalLogger as logger } from "../logger.ts";
-import { reportError } from "../common/error-pipeline.ts";
+import { reportError } from "../common/error.ts";
 import { TranspileResult } from "./index.ts";
 import { globalSymbolTable } from "../transpiler/symbol_table.ts";
 import { HQLNode } from "@transpiler/type/hql_ast.ts";

@@ -1,7 +1,7 @@
 // core/src/s-exp/macro-registry.ts - Further cleanup of user-level macro references
 import { Logger } from "../logger.ts";
 import { MacroFn } from "../environment.ts";
-import { MacroError } from "../common/error-pipeline.ts";
+import { MacroError } from "../common/error.ts";
 import { globalSymbolTable } from "../transpiler/symbol_table.ts";
 
 export class MacroRegistry {

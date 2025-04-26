@@ -3,8 +3,8 @@
 
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
-import { TransformError, ValidationError } from "../../common/error-pipeline.ts";
-import { perform } from "../../common/error-pipeline.ts";
+import { TransformError, ValidationError } from "../../common/error.ts";
+import { perform } from "../../common/error.ts";
 
 /**
  * Transform a quoted expression.

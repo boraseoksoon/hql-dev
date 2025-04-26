@@ -12,7 +12,7 @@ import {
 } from "./repl-common.ts";
 import { getDetailedHelp } from "./repl-help.ts";
 import * as colors from "../../core/src/common/colors.ts";
-import { formatErrorMessage } from "../../core/src/common/error-pipeline.ts";
+import { formatErrorMessage } from "../../core/src/common/error.ts";
 
 /**
  * Print the REPL welcome banner with commands and info

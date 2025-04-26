@@ -3,8 +3,7 @@
 
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
-import { ValidationError, TransformError } from "../../common/error-pipeline.ts";
-import { perform } from "../../common/error-pipeline.ts";
+import { ValidationError, TransformError, perform } from "../../common/error.ts";
 import { 
   KERNEL_PRIMITIVES,
   PRIMITIVE_CLASS,

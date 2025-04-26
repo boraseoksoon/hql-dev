@@ -1,7 +1,7 @@
 #!/usr/bin/env deno run -A
 
 import { transpileCLI } from "../src/bundler.ts";
-import { reportError } from "../src/common/error-pipeline.ts";
+import { reportError } from "../src/common/error.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
 import { basename } from "../src/platform/platform.ts";

@@ -1,7 +1,7 @@
 import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
-import { CodeGenError } from "../../common/error-pipeline.ts";
+import { CodeGenError } from "../../common/error.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { convertEnumDeclarationToJsObject } from "../syntax/enum.ts";
 import { convertClassDeclaration, convertNewExpression } from "../syntax/class.ts";

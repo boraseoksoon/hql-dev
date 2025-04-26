@@ -6,7 +6,7 @@ import * as IR from "../type/hql_ir.ts";
 import { HQLNode, ListNode, LiteralNode, SymbolNode } from "../type/hql_ast.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { perform, TransformError } from "../../common/error-pipeline.ts";
+import { perform, TransformError } from "../../common/error.ts";  
 import { transformStandardFunctionCall, processFunctionBody, transformNamedArgumentCall, handleFxFunctionCall } from "../syntax/function.ts";
 import {
   isNamespaceImport,

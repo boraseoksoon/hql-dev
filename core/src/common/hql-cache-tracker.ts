@@ -49,13 +49,6 @@ function registerReverseImportMapping(cached: string, original: string): void {
 }
 
 /**
- * Get original path for a cached path
- */
-export function getOriginalPath(cached: string): string | undefined {
-  return reverseImportPathMap.get(cached);
-}
-
-/**
  * Get cached path for an import
  */
 export function getImportMapping(original: string): string | undefined {
@@ -167,7 +160,7 @@ export async function getCachedPath(
  * 
  * This handles rewriting import paths to work in the cache directory
  */
-export async function processCachedImports(
+async function processCachedImports(
   content: string,
   sourcePath: string, 
 ): Promise<string> {
@@ -445,16 +438,6 @@ export async function writeToCachedPath(
   logger.debug(`Written ${targetExt} output for ${sourcePath} to ${outputPath}`);
   
   return outputPath;
-}
-
-/**
- * Get cached output path
- */
-export function getCachedOutput(
-  sourcePath: string, 
-  targetExt: string
-): string | undefined {
-  return outputPathCache.get(sourcePath)?.get(targetExt);
 }
 
 /**

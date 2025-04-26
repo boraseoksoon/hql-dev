@@ -30,8 +30,8 @@ import {
   isJsFile,
   isTypeScriptFile
 } from "./common/import-utils.ts";
-import { wrapError, formatErrorMessage, ValidationError } from "./common/error-pipeline.ts";
-import { MacroError, ImportError } from "./common/error-pipeline.ts";
+import { wrapError, formatErrorMessage, ValidationError } from "./common/error.ts";
+import { MacroError, ImportError } from "./common/error.ts";
 import { globalSymbolTable } from "./transpiler/symbol_table.ts";
 
 export interface ImportProcessorOptions {

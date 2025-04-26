@@ -3,8 +3,7 @@
 import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
-import { TransformError, ValidationError } from "../../common/error-pipeline.ts";
-import { perform } from "../../common/error-pipeline.ts";
+import { TransformError, ValidationError, perform } from "../../common/error.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { processVectorElements } from "./data-structure.ts";

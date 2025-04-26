@@ -10,7 +10,7 @@ import { globalLogger as logger } from "@core/logger.ts";
 import { historyManager } from "./history-manager.ts";
 import { printBanner, getPrompt, prettyPrintResult } from "./repl-commands.ts";
 import { printError, handleJsEvaluationError, ReplStateHandlers, CommonReplOptions, commandUtils } from "./repl-common.ts";
-import { formatErrorMessage } from "@core/common/error-pipeline.ts"
+import { formatErrorMessage } from "@core/common/error.ts"
 import { executeCommand } from "./command-executor.ts";
 
 /**

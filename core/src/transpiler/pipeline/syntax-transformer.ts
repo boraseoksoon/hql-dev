@@ -12,7 +12,7 @@ import {
   SSymbol,
 } from "../../s-exp/types.ts";
 import { Logger, globalLogger as logger } from "../../logger.ts";
-import { TransformError, perform } from "../../common/error-pipeline.ts";
+import { TransformError, perform } from "../../common/error.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { globalSymbolTable } from "../symbol_table.ts";
 

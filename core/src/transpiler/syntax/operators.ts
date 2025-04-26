@@ -1,7 +1,7 @@
 import * as ts from "npm:typescript";
 import * as IR from "../type/hql_ir.ts";
 import { convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
-import { CodeGenError } from "../../common/error-pipeline.ts";
+import { CodeGenError } from "../../common/error.ts";
 import { execute } from "../pipeline/hql-ir-to-ts-ast.ts";
 
 export function convertAssignmentExpression(node: IR.IRAssignmentExpression): ts.Expression {
