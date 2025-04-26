@@ -13,8 +13,7 @@ import { exists } from "jsr:@std/fs@1.0.13";
 import { buildJsModule } from "./build_js_module.ts";
 import { incrementPatch, prompt } from "./utils.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
-import type { PublishSummary } from "./publish_summary.ts";
-import { detectNpmError, handlePublishError } from "./error_handlers.ts";
+import { getNpmLatestVersion, checkNpmPublishPermission } from "./remote_registry.ts";
 
 interface PublishNpmOptions {
   what: string;
@@ -85,7 +84,20 @@ async function configurePackageVersion(
     pkg.version = ver || defaultVersion;
     console.log(`  → Using version: ${pkg.version}`);
   }
+
+  // Check remote NPM registry for latest version and permissions
+  if (typeof pkg.name === "string" && typeof pkg.version === "string") {
+    const remoteVersion = await getNpmLatestVersion(pkg.name);
+    if (remoteVersion === pkg.version) {
+      throw new Error(`❌ Version ${pkg.version} for package ${pkg.name} is already published on NPM.`);
+    }
+    const canPublish = await checkNpmPublishPermission(pkg.name);
+    if (!canPublish) {
+      throw new Error(`❌ You do not have permission to publish to the NPM package ${pkg.name}.`);
+    }
+  }
 }
+
 
 function setStandardPackageFields(pkg: Record<string, unknown>): void {
   pkg.description = pkg.description || `HQL module: ${pkg.name}`;

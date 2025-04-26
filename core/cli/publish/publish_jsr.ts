@@ -7,6 +7,8 @@ import {
   resolve,
   runCmd,
   writeTextFile,
+  readTextFile,
+  cwd,
 } from "../../src/platform/platform.ts";
 import { exists } from "jsr:@std/fs@1.0.13";
 import { buildJsModule } from "./build_js_module.ts";
@@ -14,7 +16,7 @@ import { incrementPatch, prompt } from "./utils.ts";
 import { readJSON, writeJSON } from "@core/common/json.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
 import type { PublishSummary } from "./publish_summary.ts";
-import { detectJsrError, handlePublishError } from "./error_handlers.ts";
+import { getJsrLatestVersion, checkJsrPublishPermission } from "./remote_registry.ts";
 
 interface PublishJSROptions {
   what: string;
@@ -62,17 +64,31 @@ async function configurePackageName(
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "") || "js-module";
   const defaultName = cliName ? cliName : `@${jsrUser}/${fallbackBase}`;
-  
+
   if (dryRun || Deno.env.get("DRY_RUN_PUBLISH") === "1") {
-    console.log(`  → Using auto-generated package name: "${defaultName}" (dry-run mode)`); 
+    console.log(`  → Using auto-generated package name: "${defaultName}" (dry-run mode)`);
     config.name = defaultName;
   } else {
-    const enteredName = await prompt(
-      `Enter JSR package name (default: "${defaultName}"):`,
-      defaultName
-    );
-    config.name = enteredName.startsWith("@")
-      ? enteredName
+    // Always prompt for project name if cliName is not provided (from scratch)
+    let enteredName = cliName;
+    if (!cliName) {
+      while (true) {
+        enteredName = await prompt(
+          `Enter a project name for your new JSR package (required, e.g. "my-lib"):`,
+          fallbackBase
+        );
+        // Only allow non-empty, non-whitespace project names
+        if (enteredName && enteredName.trim().length > 0) {
+          enteredName = enteredName.trim();
+          break;
+        } else {
+          console.log("  → Project name is required. Please enter a valid name.");
+        }
+      }
+    }
+    // Always scope with jsrUser
+    config.name = (enteredName as string).startsWith("@")
+      ? (enteredName as string)
       : `@${jsrUser}/${enteredName}`;
   }
 
@@ -82,7 +98,6 @@ async function configurePackageName(
       return match[1];
     }
   }
-  
   return jsrUser || "js-user";
 }
 
@@ -108,7 +123,25 @@ async function configurePackageVersion(
       );
     }
   }
+
+  // Check remote JSR registry for latest version and permissions
+  if (typeof config.name === "string" && typeof config.version === "string") {
+    const match = config.name.match(/^@([^/]+)\/(.+)$/);
+    if (match) {
+      const scope = match[1];
+      const name = match[2];
+      const remoteVersion = await getJsrLatestVersion(scope, name);
+      if (remoteVersion === config.version) {
+        throw new Error(`❌ Version ${config.version} for package ${config.name} is already published on JSR.`);
+      }
+      const canPublish = await checkJsrPublishPermission(scope, name);
+      if (!canPublish) {
+        throw new Error(`❌ You do not have permission to publish to the JSR package ${config.name}.`);
+      }
+    }
+  }
 }
+
 
 function setDefaultConfigFields(config: Record<string, unknown>): void {
   config.exports = config.exports || "./esm/index.js";
@@ -259,6 +292,44 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
       verbose: options.verbose,
       dryRun: options.dryRun
     });
+
+    // --- PATCH: Copy deno.json/jsr.json to distDir if present in baseDir ---
+    const configFiles = ["deno.json", "deno.jsonc", "jsr.json", "jsr.jsonc"];
+    let _configFound = false;
+    for (const file of configFiles) {
+      const srcPath = join(baseDir, file);
+      const destPath = join(distDir, file);
+      if (await exists(srcPath)) {
+        await writeTextFile(destPath, await readTextFile(srcPath));
+        _configFound = true;
+        if (options.verbose) {
+          logger.debug(`Copied ${file} to dist directory for JSR publish`);
+        }
+      }
+    }
+    // --- END PATCH ---
+    // --- JIT config generation if missing ---
+    const jsrJsonPath = join(distDir, "jsr.json");
+    const denoJsonPath = join(distDir, "deno.json");
+    if (!(await exists(jsrJsonPath)) && !(await exists(denoJsonPath))) {
+      // Smart defaults
+      const fallbackBase = basename(baseDir).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "js-module";
+      const jsrUser = getEnv("JSR_USER") || getEnv("USER") || getEnv("USERNAME") || "js-user";
+      const smartName = options.name ? (options.name.startsWith("@") ? options.name : `@${jsrUser}/${options.name}`) : `@${jsrUser}/${fallbackBase}`;
+      const smartVersion = options.version || "0.0.1";
+      const jsrConfig = {
+        name: smartName,
+        version: smartVersion,
+        exports: "./esm/index.js",
+        license: "MIT",
+        publish: { include: ["README.md", "esm/**/*", "types/**/*", "jsr.json"] },
+        description: `HQL module: ${smartName}`
+      };
+      await writeTextFile(jsrJsonPath, JSON.stringify(jsrConfig, null, 2));
+      await writeTextFile(denoJsonPath, JSON.stringify(jsrConfig, null, 2));
+      console.log(`  → Auto-generated jsr.json and deno.json in dist directory`);
+    }
+    // --- END JIT config generation ---
     console.log(`\nℹ️ Module built to "${distDir}"`);
 
     console.log(`\n📝 Preparing JSR configuration...`);
@@ -289,14 +360,16 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
 
     const publishFlags = ["--allow-dirty"];
     if (options.dryRun) publishFlags.push("--dry-run");
-    if (options.verbose) publishFlags.push("--verbose");
+    // Only add --verbose for jsr CLI, not deno
+    const jsrPublishFlags = [...publishFlags];
+    if (options.verbose) jsrPublishFlags.push("--verbose");
 
     // Try publishing strategies in order
     
     // 1. Try using jsr CLI if available
     const jsrAvailable = await checkCommandAvailable("jsr", distDir);
     if (jsrAvailable) {
-      const jsrResult = await publishWithCommand("jsr", "publish", distDir, publishFlags);
+      const jsrResult = await publishWithCommand("jsr", "publish", distDir, jsrPublishFlags);
       
       // On success, return immediately
       if (jsrResult.success) {
@@ -355,31 +428,19 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
     }
 
     // 3. Try installing jsr CLI if neither option worked so far
-    if (!jsrAvailable && denoAvailable) {
-      const jsrInstalled = await installJsrCli(distDir);
-      if (jsrInstalled) {
-        const jsrResult = await publishWithCommand("jsr", "publish", distDir, publishFlags);
-        if (jsrResult.success) {
-          await writeJSON(configPath, config);
-          console.log(`  → Updated JSR config at "${configPath}"`);
-          return {
-            registry: "jsr",
-            name: String(config.name),
-            version: publishedVersion,
-            link: generateSuccessLink(String(config.name), jsrUser, publishedVersion)
-          };
-        }
-        
-        // If authorization was denied, return the error
-        if (jsrResult.authDenied) {
-          return {
-            registry: "jsr",
-            name: String(config.name),
-            version: publishedVersion,
-            link: `❌ ${jsrResult.errorMessage}`
-          };
-        }
+    if (!options.dryRun && !await checkCommandAvailable("jsr", cwd)) {
+      const installed = await installJsrCli(cwd);
+      if (!installed) {
+        throw new Error("❌ Failed to install jsr CLI. Please install it manually and try again.");
       }
+      // After install, user should rerun the publish command
+      console.error("jsr CLI was installed. Please rerun your publish command.");
+      return {
+        registry: "jsr",
+        name: String(config.name),
+        version: publishedVersion,
+        link: "jsr CLI was installed. Please rerun your publish command."
+      };
     }
 
     // If all publishing attempts failed (not due to auth denial)
@@ -393,10 +454,13 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
     };
     
   } catch (err) {
-    return handlePublishError(err, {
+    // Fallback error handler if handlePublishError is missing
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return {
       registry: "jsr",
-      name: options.name,
-      version: options.version
-    });
+      name: options.name ?? '(auto)',
+      version: options.version ?? '(auto)',
+      link: `❌ ${errorMsg.split('\n')[0]}`,
+    };
   }
 }

@@ -1,5 +1,43 @@
 # HQL Module Publishing System
 
+## 🚀 Remote Registry-First Design (2025)
+
+**As of April 2025, the HQL CLI always uses the remote registry (NPM or JSR) as the source of truth for package versions and publish permissions.**
+
+- All version and permission checks are performed against the remote registry before publishing.
+- Local registry logic has been removed for simplicity and reliability.
+- The CLI fails early with clear errors if a version is already published or if the user lacks publish permission.
+- All remote registry logic is implemented in `core/cli/publish/remote_registry.ts` and independently tested in `remote_registry.test.ts`.
+
+### How it Works
+1. **Version Check:** Before publishing, the CLI queries the remote registry for the latest version of the package.
+2. **Permission Check:** The CLI checks if the user has permission to publish to the target package (NPM: best effort, JSR: always true for now).
+3. **Early Exit:** If the version is already published or the user lacks permission, the CLI fails with a clear error message.
+4. **Publishing:** If all checks pass, the package is published to the selected registry.
+
+### Example Workflow
+```bash
+hql publish ./my-module npm
+# → Checks latest version and permission on NPM before publishing
+
+hql publish ./my-module jsr
+# → Checks latest version and permission on JSR before publishing
+```
+
+### Technical Appendix
+- **NPM:**
+  - Latest version: `https://registry.npmjs.org/<package-name>`
+  - Permission: Attempts to fetch package metadata and checks publishability
+- **JSR:**
+  - Latest version: `https://jsr.io/api/packages/<scope>/<name>`
+  - Permission: Currently always returns true (no public API)
+
+**Rationale:**
+- Always using the remote registry ensures the CLI is robust, up-to-date, and user-friendly.
+- This approach eliminates the risk of publishing stale or duplicate versions and provides immediate feedback on permission issues.
+
+---
+
 ## Overview
 
 The HQL Module Publishing System provides a robust, user-friendly mechanism for publishing HQL modules to multiple package registries (NPM, JSR) with minimal configuration requirements. The system is designed to intelligently handle various module types, automatically detect entry points, and generate self-contained ESM bundles with proper TypeScript type definitions.

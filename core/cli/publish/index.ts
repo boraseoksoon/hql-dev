@@ -26,14 +26,27 @@ function showHelp() {
 HQL Publish Tool - Publish HQL modules to NPM or JSR
 
 USAGE:
-  hql publish <what> [name] [version]
+  hql publish <what> [platform] [name] [version]
 
 EXAMPLES:
   # Publish to JSR (default) with auto name/version:
   hql publish ./my-module
 
-  # Publish to NPM:
+  # Publish to NPM (all forms accepted):
   hql publish ./my-module npm
+  hql publish ./my-module -npm
+  hql publish ./my-module --npm
+
+  # Publish to JSR (all forms accepted):
+  hql publish ./my-module jsr
+  hql publish ./my-module -jsr
+  hql publish ./my-module --jsr
+
+  # Publish to ALL platforms (all forms accepted):
+  hql publish ./my-module all
+  hql publish ./my-module -all
+  hql publish ./my-module --all
+  hql publish ./my-module -a
 
   # Dry run with verbose logging:
   hql publish ./my-module --dry-run --verbose
@@ -44,20 +57,27 @@ OPTIONS:
   --dry-run                   Test the publishing process without actually publishing
   --verbose                   Enable verbose logging
   -h, --help                  Show this help message
+  [platform]                  Platform to publish to: jsr, npm, all (any of: jsr, -jsr, --jsr, npm, -npm, --npm, all, -all, --all, -a)
 `);
 }
 
 function parsePublishArgs(args: string[]): PublishOptions {
-  // Handle platform selection flags
-  const isAll = args.includes('--all') || args.includes('-a');
-  const isNpm = args.includes('--npm');
-  const isJsr = args.includes('--jsr');
-  
-  // Remove platform flags from args for further parsing
-  const filteredArgs = args.filter(arg => 
-    arg !== '--all' && arg !== '-a' && arg !== '--npm' && arg !== '--jsr'
-  );
-  
+  // Acceptable forms for platform selection
+  const allForms = new Set(['all', '-all', '--all', '-a']);
+  const npmForms = new Set(['npm', '-npm', '--npm']);
+  const jsrForms = new Set(['jsr', '-jsr', '--jsr']);
+
+  // Check for platform flags/args
+  let isAll = false, isNpm = false, isJsr = false;
+  const filteredArgs = [];
+
+  for (const arg of args) {
+    if (allForms.has(arg)) isAll = true;
+    else if (npmForms.has(arg)) isNpm = true;
+    else if (jsrForms.has(arg)) isJsr = true;
+    else filteredArgs.push(arg);
+  }
+
   const parsed = parseArgs(filteredArgs, {
     string: ["name", "version"],
     boolean: ["verbose", "help", "dry-run"],
@@ -68,24 +88,22 @@ function parsePublishArgs(args: string[]): PublishOptions {
     },
   });
 
-  if (parsed.help) {
-    showHelp();
-    exit(0);
-  }
+  let what = parsed._[0] ? String(parsed._[0]) : '.';
+  let name = parsed.name;
+  let version = parsed.version;
 
+  // Support positional name/version for backward compatibility
   const pos = parsed._;
-  let what = pos.length > 0 ? String(pos[0]) : cwd();
-  if (!what) what = cwd();
-
-  let name: string | undefined = parsed.name;
-  let version: string | undefined = parsed.version;
-  
-  if (!name && pos.length > 1) {
-    name = String(pos[1]);
+  // If the positional argument is a platform selection, skip it for name/version
+  let posOffset = 1;
+  if (pos.length > 1 && (allForms.has(pos[1]) || npmForms.has(pos[1]) || jsrForms.has(pos[1]))) {
+    posOffset = 2;
   }
-  
-  if (!version && pos.length > 2) {
-    version = String(pos[2]);
+  if (!name && pos.length > posOffset) {
+    name = String(pos[posOffset]);
+  }
+  if (!version && pos.length > posOffset + 1) {
+    version = String(pos[posOffset + 1]);
   }
 
   if (version && !/^\d+\.\d+\.\d+$/.test(version)) {
@@ -94,7 +112,7 @@ function parsePublishArgs(args: string[]): PublishOptions {
   }
 
   // Determine targets based on flags
-  // If --all or -a is specified, publish to both JSR and NPM
+  // If --all, -all, all, or -a is specified, publish to both JSR and NPM
   let jsr = isAll || isJsr || (!isNpm && !isAll);
   let npm = isAll || isNpm;
 

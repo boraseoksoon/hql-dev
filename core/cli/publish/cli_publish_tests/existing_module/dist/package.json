@@ -1,0 +1,16 @@
+{
+  "name": "existing_module_npm",
+  "version": "1.0.1",
+  "description": "HQL module: existing_module_npm",
+  "module": "./esm/index.js",
+  "main": "./esm/index.js",
+  "types": "./types/index.d.ts",
+  "files": [
+    "esm",
+    "types",
+    "README.md"
+  ],
+  "type": "module",
+  "author": "seoksoonjang",
+  "license": "MIT"
+}
