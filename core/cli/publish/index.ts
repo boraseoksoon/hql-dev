@@ -224,12 +224,23 @@ export async function publish(args: string[]): Promise<void> {
 
   // Resolve the entry point file
   const entryPoint = await resolveEntryPoint(options.what);
-  
-  console.log(`Publishing ${options.platform.toUpperCase()} package:
-  Entry point: "${entryPoint}"
-  Package name: ${options.name ?? "(auto-generated)"}
-  Version: ${options.version ?? "(auto-incremented)"}
-  Mode: ${options.dryRun ? "Dry run (no actual publishing)" : "Live publish"}`);
+
+  // If the user did not specify a file/dir (using default cwd), confirm before proceeding
+  const usingDefault = !args.length || (args.length === 1 && ["-w", "--what"].includes(args[0]));
+  if (usingDefault && !options.dryRun && Deno.isatty(Deno.stdin.rid)) {
+    const defaultFile = entryPoint;
+    const confirmMsg = `\nℹ️  No file or directory specified. This will build and publish \"${defaultFile}\" from the current directory.\nDo you want to continue? [Y/n] `;
+    await Deno.stdout.write(new TextEncoder().encode(confirmMsg));
+    const buf = new Uint8Array(8);
+    const n = await Deno.stdin.read(buf);
+    const answer = n ? new TextDecoder().decode(buf.subarray(0, n)).trim().toLowerCase() : "";
+    if (answer && answer !== "y" && answer !== "yes" && answer !== "") {
+      console.log("Aborted by user.");
+      exit(0);
+    }
+  }
+
+  console.log(`\n🚀 Preparing to publish your HQL module!\n  Target platform: ${options.platform.toUpperCase()}\n  Entry point: \"${entryPoint}\"\n  Package name: ${options.name ?? "(auto-generated)"}\n  Version: ${options.version ?? "(auto-incremented)"}\n  Mode: ${options.dryRun ? "Dry run (no actual publishing)" : "Live publish"}`);
 
   if (!await checkEnvironment(options.platform)) {
     console.error("\n❌ Environment check failed. Please fix the issues before publishing.");
@@ -248,7 +259,7 @@ export async function publish(args: string[]): Promise<void> {
         what: entryPoint,
       });
     }
-    console.log("\n✅ Publishing process completed successfully!");
+    console.log("\n✅ Publishing process completed successfully!\nYour HQL module is now live.");
   } catch (error) {
     reportError(error); 
     exit(1);

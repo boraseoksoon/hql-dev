@@ -56,71 +56,30 @@ export function formatErrorMessage(error: unknown): string {
 }
 
 // -----------------------------------------------------------------------------
-// Source‑location helpers
+// Simple wrappers (flattened – no special logging)
 // -----------------------------------------------------------------------------
 
-export interface SourceLocation {
-  filePath?: string;
-  line?: number;
-  column?: number;
-  source?: string;
+export function wrapError(
+  _context: string,
+  error: unknown,
+  _resource: string,
+  _currentFile?: string,
+): never {
+  // Simply rethrow for now – customization can be added later.
+  throw error as never;
 }
 
-export class SourceLocationInfo implements SourceLocation {
-  filePath?: string;
-  line?: number;
-  column?: number;
-  source?: string;
+export function perform<T>(fn: () => T): T {
+  return fn();
+}
 
-  constructor(opts: SourceLocation = {}) {
-    Object.assign(this, opts);
-  }
+// -----------------------------------------------------------------------------
+// Error pipeline public API
+// -----------------------------------------------------------------------------
 
-  loadSource(): string | undefined {
-    return this.source;
-  }
-
-  toString(): string {
-    if (!this.filePath) return "<unknown location>";
-    const l = this.line ? `:${this.line}` : "";
-    const c = this.line && this.column ? `:${this.column}` : "";
-    return `${this.filePath}${l}${c}`;
-  }
-
-  clone(): SourceLocationInfo {
-    return new SourceLocationInfo(this);
-  }
-
-  extractContextLines(count = 2): { line: number; content: string; isError: boolean; column?: number }[] {
-    const src = this.loadSource();
-    if (!src || !this.line) return [];
-
-    const lines = src.split(/\n/);
-    const start = Math.max(1, this.line - count);
-    const end = Math.min(lines.length, this.line + count);
-    const ctx: { line: number; content: string; isError: boolean; column?: number }[] = [];
-
-    for (let i = start; i <= end; i++) {
-      ctx.push({
-        line: i,
-        content: lines[i - 1],
-        isError: i === this.line,
-        column: i === this.line ? this.column : undefined,
-      });
-    }
-    return ctx;
-  }
-
-  static fromError(err: Error): SourceLocationInfo | undefined {
-    if (!err.stack) return undefined;
-    const match = err.stack.match(/\(?((?:\/|[a-zA-Z]:\\|file:\/\/)[^:)]+):(\d+):(\d+)\)?/);
-    if (!match) return undefined;
-    const [, filePath, lineStr, colStr] = match;
-    const line = Number(lineStr);
-    const column = Number(colStr);
-    if (isNaN(line) || isNaN(column)) return undefined;
-    return new SourceLocationInfo({ filePath, line, column, source: err.stack });
-  }
+export async function reportError(error: unknown, isDebug = false): Promise<void> {
+  const formatted = await formatHQLError(error as HQLError, isDebug);
+  console.error(formatted);
 }
 
 // -----------------------------------------------------------------------------
@@ -196,7 +155,7 @@ export class HQLError extends Error {
 }
 
 // -----------------------------------------------------------------------------
-// Specialized error classes
+// Error classes
 // -----------------------------------------------------------------------------
 
 export class ParseError extends HQLError {
@@ -303,31 +262,73 @@ export class TranspilerError extends HQLError {
   }
 }
 
+
 // -----------------------------------------------------------------------------
-// Simple wrappers (flattened – no special logging)
+// Source‑location helpers
 // -----------------------------------------------------------------------------
 
-export function wrapError(
-  _context: string,
-  error: unknown,
-  _resource: string,
-  _currentFile?: string,
-): never {
-  // Simply rethrow for now – customization can be added later.
-  throw error as never;
+export interface SourceLocation {
+  filePath?: string;
+  line?: number;
+  column?: number;
+  source?: string;
 }
 
-export function perform<T>(fn: () => T): T {
-  return fn();
-}
+export class SourceLocationInfo implements SourceLocation {
+  filePath?: string;
+  line?: number;
+  column?: number;
+  source?: string;
 
-// -----------------------------------------------------------------------------
-// Error pipeline public API
-// -----------------------------------------------------------------------------
+  constructor(opts: SourceLocation = {}) {
+    Object.assign(this, opts);
+  }
 
-export async function reportError(error: unknown, isDebug = false): Promise<void> {
-  const formatted = await formatHQLError(error as HQLError, isDebug);
-  console.error(formatted);
+  loadSource(): string | undefined {
+    return this.source;
+  }
+
+  toString(): string {
+    if (!this.filePath) return "<unknown location>";
+    const l = this.line ? `:${this.line}` : "";
+    const c = this.line && this.column ? `:${this.column}` : "";
+    return `${this.filePath}${l}${c}`;
+  }
+
+  clone(): SourceLocationInfo {
+    return new SourceLocationInfo(this);
+  }
+
+  extractContextLines(count = 2): { line: number; content: string; isError: boolean; column?: number }[] {
+    const src = this.loadSource();
+    if (!src || !this.line) return [];
+
+    const lines = src.split(/\n/);
+    const start = Math.max(1, this.line - count);
+    const end = Math.min(lines.length, this.line + count);
+    const ctx: { line: number; content: string; isError: boolean; column?: number }[] = [];
+
+    for (let i = start; i <= end; i++) {
+      ctx.push({
+        line: i,
+        content: lines[i - 1],
+        isError: i === this.line,
+        column: i === this.line ? this.column : undefined,
+      });
+    }
+    return ctx;
+  }
+
+  static fromError(err: Error): SourceLocationInfo | undefined {
+    if (!err.stack) return undefined;
+    const match = err.stack.match(/\(?((?:\/|[a-zA-Z]:\\|file:\/\/)[^:)]+):(\d+):(\d+)\)?/);
+    if (!match) return undefined;
+    const [, filePath, lineStr, colStr] = match;
+    const line = Number(lineStr);
+    const column = Number(colStr);
+    if (isNaN(line) || isNaN(column)) return undefined;
+    return new SourceLocationInfo({ filePath, line, column, source: err.stack });
+  }
 }
 
 export const ErrorPipeline = {
@@ -349,3 +350,4 @@ export const ErrorPipeline = {
 };
 
 export default ErrorPipeline;
+
