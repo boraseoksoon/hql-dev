@@ -9,7 +9,8 @@ import {
   isTypeScriptFile,
   sanitizeIdentifier,
   readFile,
-  findActualFilePath
+  findActualFilePath,
+  checkForHqlImports
 } from "./common/utils.ts";
 import { initializeRuntime } from "./common/runtime-initializer.ts";
 import { globalLogger as logger } from "./logger.ts";
@@ -34,8 +35,8 @@ import {
   createTempDirIfNeeded,
 } from "./common/hql-cache-tracker.ts";
 import { transpile, TranspileOptions } from './transpiler/index.ts';
-import { setCurrentBundlePath } from "./common/bundle-registry.ts";
 
+let currentBundlePath: string | undefined;
 const DEFAULT_EXTERNAL_PATTERNS = ['npm:', 'jsr:', 'node:', 'https://', 'http://'];
 
 // Interfaces
@@ -78,7 +79,7 @@ export async function transpileCLI(
   
   // Process entry file
   if (options.showTiming) logger.startTiming("transpile-cli", "Process Entry");
-  const { tsOutputPath, sourceMap } = await processEntryFile(resolvedInputPath, outPath, bundleOptions);
+  const { tsOutputPath } = await processEntryFile(resolvedInputPath, outPath, bundleOptions);
   if (options.showTiming) logger.endTiming("transpile-cli", "Process Entry");
 
   // Bundle the processed file
@@ -112,11 +113,6 @@ export async function processHqlImportsInJs(
   }
 }
 
-// File processing functions
-function checkForHqlImports(source: string): boolean {
-  return /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g.test(source);
-}
-
 async function processHqlImports(
   source: string,
   filePath: string,
@@ -140,7 +136,7 @@ async function processHqlImports(
     if (await needsRegeneration(resolvedHqlPath, ".ts") || options.force) {
       logger.debug(`Transpiling HQL import: ${resolvedHqlPath}`);
       const hqlSource = await readFile(resolvedHqlPath);
-      const { code: tsCode, sourceMap } = await processHql(hqlSource, {
+      const { code: tsCode } = await processHql(hqlSource, {
         baseDir: dirname(resolvedHqlPath),
         verbose: options.verbose,
         tempDir: options.tempDir,
@@ -312,13 +308,11 @@ function createUnifiedBundlePlugin(options: {
   verbose?: boolean;
   tempDir?: string;
   sourceDir?: string;
-  externalPatterns?: string[];
 }): any {
   const processedHqlFiles = new Set<string>();
   const processedTsFiles = new Set<string>();
   const filePathMap = new Map<string, string>();
   const circularDependencies = new Map<string, Set<string>>();
-  const externalPatterns = options.externalPatterns || DEFAULT_EXTERNAL_PATTERNS;
   
   return {
     name: "unified-hql-bundle-plugin",
@@ -344,7 +338,7 @@ function createUnifiedBundlePlugin(options: {
       });
       
       // Handle .hql/.js/.ts files with custom resolver
-      build.onResolve({ filter: /\.(hql|js|ts)$/ }, async (args: any) => {
+      build.onResolve({ filter: /\.(hql|js|ts)$/ }, (args: any) => {
         // Track circular dependencies
         if (args.importer) {
           if (!circularDependencies.has(args.importer)) {
@@ -466,8 +460,7 @@ async function bundleWithEsbuild(
     const bundlePlugin = createUnifiedBundlePlugin({
       verbose: options.verbose,
       tempDir,
-      sourceDir: options.sourceDir || dirname(entryPath),
-      externalPatterns: DEFAULT_EXTERNAL_PATTERNS,
+      sourceDir: options.sourceDir || dirname(entryPath)
     });
     
     // Define build options
@@ -875,12 +868,13 @@ async function cacheTranspiledFile(
  * Used by the processHqlImportsInJs function
  */
 export async function transpileHqlInJs(hqlPath: string, basePath: string): Promise<string> {
+
   try {
     // Read the HQL content
     const hqlContent = await readTextFile(hqlPath);
     
     // Transpile to TypeScript using the existing processHql function
-    const { code: tsContent, sourceMap } = await processHql(hqlContent, {
+    const { code: tsContent } = await processHql(hqlContent, {
       baseDir: dirname(hqlPath),
       sourceDir: basePath,
       currentFile: hqlPath,
@@ -888,34 +882,6 @@ export async function transpileHqlInJs(hqlPath: string, basePath: string): Promi
 
     // Process identifiers with hyphens
     let processedContent = tsContent;
-    
-    // Process imported identifiers with hyphens
-    const importIdentifierRegex = /import\s+{\s*([^}]+)\s*}\s+from/g;
-    let importMatch;
-    
-    while ((importMatch = importIdentifierRegex.exec(tsContent)) !== null) {
-      const identifiers = importMatch[1].split(',').map(id => id.trim());
-      let foundHyphen = false;
-      const processedIds = identifiers.map(id => {
-        const parts = id.split(' as ');
-        const baseName = parts[0].trim();
-        
-        if (baseName.includes('-')) {
-          const sanitized = sanitizeIdentifier(baseName);
-          if (parts.length > 1) {
-            return `${sanitized} as ${parts[1].trim()}`;
-          }
-          return sanitized;
-        }
-        return id;
-      });
-      
-      if (foundHyphen) {
-        const oldImport = `{ ${importMatch[1]} }`;
-        const newImport = `{ ${processedIds.join(', ')} }`;
-        processedContent = processedContent.replace(oldImport, newImport);
-      }
-    }
     
     // Process exported identifiers with hyphens
     const exportRegex = /export\s+(const|let|var|function)\s+([a-zA-Z0-9_-]+)/g;
@@ -1023,4 +989,12 @@ async function writeOutput(
       }`,
     );
   }
+}
+
+function setCurrentBundlePath(path: string) {
+  currentBundlePath = path;
+}
+
+export function getCurrentBundlePath(): string | undefined {
+  return currentBundlePath;
 }

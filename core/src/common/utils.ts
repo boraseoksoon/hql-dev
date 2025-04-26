@@ -120,11 +120,9 @@ export function isRemotePath(path: string): boolean {
   );
 }
 
-/**
- * Helper to escape special regex characters
- */
-export function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// File processing functions
+export function checkForHqlImports(source: string): boolean {
+  return /import\s+.*\s+from\s+['"]([^'"]+\.hql)['"]/g.test(source);
 }
 
 /**

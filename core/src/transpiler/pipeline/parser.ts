@@ -57,7 +57,7 @@ const TOKEN_PATTERNS = {
 export function parse(input: string, filePath: string = ""): SExp[] {
   const tokens = tokenize(input, filePath);
   
-  // validateTokenBalance(tokens, input, filePath);
+  // validateTokenBalance(tokens, input);
   
   return parseTokens(tokens, input, filePath);
 }
@@ -234,12 +234,12 @@ function parseList(state: ParserState): SList {
        state.tokens[state.currentPos].value === "fx")) {
     fnKeywordFound = true;
   }
-  
+
   // Track list starting line and current line to detect missing closing parentheses
   // across multiple lines
   const listStartLine = listStartPos.line;
   let currentLine = listStartLine;
-  
+
   while (
     state.currentPos < state.tokens.length &&
     state.tokens[state.currentPos].type !== TokenType.RightParen
@@ -472,7 +472,7 @@ function parseSet(state: ParserState): SList {
  * Validate the balance of parentheses, brackets, and braces in the token stream
  * This helps catch missing opening delimiters before actual parsing
  */
-function validateTokenBalance(tokens: Token[], input: string, filePath: string): void {
+function validateTokenBalance(tokens: Token[], input: string): void {
   const bracketStack: { type: TokenType, token: Token }[] = [];
 
   const closingToOpening = new Map<TokenType, TokenType>([

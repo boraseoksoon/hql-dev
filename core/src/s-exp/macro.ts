@@ -63,8 +63,7 @@ function convertJsValueToSExp(value: any): SExp {
 
 /* Helper: Extract macro definition parts */
 function processMacroDefinition(
-  macroForm: SList,
-  logger: Logger,
+  macroForm: SList
 ): {
   macroName: string;
   params: string[];
@@ -132,7 +131,7 @@ export function defineMacro(
   logger: Logger,
 ): void {
   try {
-    const { macroName, params, restParam, body } = processMacroDefinition(macroForm, logger);
+    const { macroName, params, restParam, body } = processMacroDefinition(macroForm);
     const macroFn = createMacroFunction(macroName, params, restParam, body, logger);
     env.defineMacro(macroName, macroFn);
     logger.debug(`Registered global macro ${macroName}`);
@@ -324,7 +323,7 @@ function evaluateList(expr: SList, env: Environment, logger: Logger): SExp {
     const op = (first as SSymbol).name;
     switch (op) {
       case "quote":
-        return evaluateQuote(expr, env, logger);
+        return evaluateQuote(expr);
       case "quasiquote":
         return evaluateQuasiquote(expr, env, logger);
       case "unquote":
@@ -357,7 +356,7 @@ function evaluateList(expr: SList, env: Environment, logger: Logger): SExp {
 }
 
 /* Evaluate a quoted expression */
-function evaluateQuote(list: SList, env: Environment, logger: Logger): SExp {
+function evaluateQuote(list: SList): SExp {
   if (list.elements.length !== 2) {
     throw new MacroError("quote requires exactly one argument", "quote");
   }

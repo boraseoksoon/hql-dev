@@ -18,8 +18,7 @@ export type Value =
   | boolean
   | null
   | SExp
-  | /* eslint-disable-next-line @typescript-eslint/ban-types */
-  Function
+  | Function
   | Record<string, unknown>
   | unknown[];
 
@@ -45,9 +44,7 @@ export class Environment {
   private currentMacroContext: string | null = null;
   public logger: Logger;
 
-  static initializeGlobalEnv(
-    options: { verbose?: boolean } = {},
-  ): Promise<Environment> {
+  static initializeGlobalEnv(): Promise<Environment> {
     return new Promise((resolve) => {
       logger.debug("Starting global environment initialization");
       if (Environment.globalEnv) {
@@ -148,7 +145,7 @@ export class Environment {
             typeof o[method],
           );
         }
-        return (o[method] as /* eslint-disable-next-line @typescript-eslint/ban-types */ Function)(...args);
+        return (o[method] as Function)(...args);
       });
       this.define("throw", (message: string) => {
         throw new TranspilerError(message);
@@ -486,11 +483,11 @@ export class Environment {
   }
 
   hasMacro(key: string): boolean {
-    return this.macroRegistry.hasMacro(key, this.currentFilePath);
+    return this.macroRegistry.hasMacro(key);
   }
 
   getMacro(key: string): MacroFn | undefined {
-    return this.macroRegistry.getMacro(key, this.currentFilePath);
+    return this.macroRegistry.getMacro(key);
   }
 
   isSystemMacro(symbolName: string): boolean {
@@ -553,7 +550,7 @@ export class Environment {
     
     // Collect symbols from imported modules
     const moduleSymbols: string[] = [];
-    this.moduleExports.forEach((exports, modulePath) => {
+    this.moduleExports.forEach((exports) => {
       Object.keys(exports).forEach(key => {
         moduleSymbols.push(key);
       });
@@ -570,7 +567,7 @@ export class Environment {
     const result = new Map<string, string>();
     
     // Collect module names and their sources
-    Array.from(this.moduleExports.entries()).forEach(([path, exports]) => {
+    Array.from(this.moduleExports.entries()).forEach(([path]) => {
       // Extract module name from path
       const moduleName = path.split('/').pop()?.replace(/\.[^/.]+$/, '') || path;
       result.set(moduleName, path);

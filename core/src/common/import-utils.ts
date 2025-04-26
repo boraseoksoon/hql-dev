@@ -2,10 +2,7 @@
 import { HQLNode, isImportNode } from "../transpiler/type/hql_ast.ts";
 import { Environment } from "../environment.ts";
 import { Logger } from "../logger.ts";
-/**
- * Registry to track import sources and their modules
- * This is used across the codebase to resolve module paths
- */
+
 export const importSourceRegistry = new Map<string, string>();
 
 /**

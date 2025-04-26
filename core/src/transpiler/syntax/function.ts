@@ -370,7 +370,7 @@ export function convertFxFunctionDeclaration(
     ];
     const bodyStatements: ts.Statement[] = [];
     for (const param of node.params) {
-      let defaultExpr: ts.Expression =
+      const defaultExpr: ts.Expression =
         defaultValues.get(param.name) ||
         (() => {
           const paramType = node.paramTypes.find(pt => pt.name === param.name)?.type;

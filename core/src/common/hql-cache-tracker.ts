@@ -10,7 +10,6 @@ import {
   relative
 } from "../platform/platform.ts";
 import { transpileHqlInJs } from "../bundler.ts";
-import { escapeRegExp } from "./utils.ts";
 import { globalLogger as logger } from "../logger.ts";
 
 // Cache directory configuration
@@ -171,7 +170,6 @@ export async function getCachedPath(
 export async function processCachedImports(
   content: string,
   sourcePath: string, 
-  targetExt: string
 ): Promise<string> {
   // Skip processing if no imports
   if (!content.includes('import') || !content.includes('from')) {
@@ -322,10 +320,8 @@ async function joinAndEnsureDirExists(...parts: string[]): Promise<string> {
 async function processFileContent(
   content: string,
   sourcePath: string,
-  targetExt: string
 ): Promise<string> {
-  // Handle all source files consistently by using the cached imports processor
-  return processCachedImports(content, sourcePath, targetExt);
+  return processCachedImports(content, sourcePath);
 }
 
 /**
@@ -433,7 +429,7 @@ export async function writeToCachedPath(
   const usePreserveRelative = forcePreserveRelative || options.preserveRelative;
   
   // Process content if needed
-  const processedContent = await processFileContent(content, sourcePath, targetExt);
+  const processedContent = await processFileContent(content, sourcePath);
   
   // Get cached path with potentially forced preserveRelative option
   const outputPath = await getCachedPath(sourcePath, targetExt, { 

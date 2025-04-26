@@ -1,5 +1,4 @@
 // core/src/s-exp/macro-registry.ts - Further cleanup of user-level macro references
-import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { Logger } from "../logger.ts";
 import { MacroFn } from "../environment.ts";
 import { MacroError } from "../common/error-pipeline.ts";
@@ -155,7 +154,7 @@ export class MacroRegistry {
   /**
    * Check if a macro is defined
    */
-  hasMacro(name: string, currentFile: string | null = null): boolean {
+  hasMacro(name: string): boolean {
     if (!name) return false;
     if (this.systemMacros.has(name)) {
       this.logger.debug(`Found system macro: ${name}`);
@@ -167,7 +166,7 @@ export class MacroRegistry {
   /**
    * Get a macro function by name
    */
-  getMacro(name: string, currentFile: string | null = null): MacroFn | undefined {
+  getMacro(name: string): MacroFn | undefined {
     if (!name) {
       this.logger.warn("Cannot get macro with empty name");
       return undefined;

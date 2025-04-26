@@ -191,8 +191,7 @@ export class REPLEvaluator {
       log("Transforming syntax...");
       currentTime = performance.now();
       
-      // Direct transformation without withErrorHandling wrapper
-      const transformedSexps = await transformSyntax(sexps, { verbose: options.verbose });
+      const transformedSexps = await transformSyntax(sexps);
       
       metrics.syntaxTransformTimeMs = performance.now() - currentTime;
       log(`Transformed to ${transformedSexps.length} expressions`);
@@ -335,7 +334,7 @@ export class REPLEvaluator {
       this.replEnv.hqlEnv.setCurrentFile(this.baseDir);
       
       // Convert sexps to transformedSexps using syntax transformer - direct call
-      const transformedSexps = await transformSyntax(sexps, { verbose: this.logger.isVerbose });
+      const transformedSexps = await transformSyntax(sexps);
       
       // Extract import information before processing
       const importInfo = this.extractImportInfo(transformedSexps[0]);

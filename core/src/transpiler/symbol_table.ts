@@ -3,7 +3,6 @@
 
 import type { HQLNode } from "./type/hql_ast.ts";
 import type { IRNode } from "./type/hql_ir.ts";
-import { isSymbol, isList, SList, SSymbol } from "../s-exp/types.ts";
 import { globalLogger as logger } from "../logger.ts";
 
 // Comprehensive SymbolKind for all HQL constructs

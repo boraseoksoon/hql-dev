@@ -1,7 +1,7 @@
 // consumer.ts - Source map stack trace consumer for HQL -> JS/TS error mapping
 
 import { SourceMapConsumer } from "npm:source-map@0.7.4";
-import { dirname, normalize, relative } from "https://deno.land/std@0.200.0/path/mod.ts";
+import { normalize, relative } from "https://deno.land/std@0.200.0/path/mod.ts";
 import { globalLogger as logger } from "../logger.ts";
 
 /**

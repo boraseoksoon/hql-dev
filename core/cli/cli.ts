@@ -1,5 +1,5 @@
 import { run } from "./run.ts";
-import { parseCliOptions, CliOptions } from "./utils/cli-options.ts";
+import { parseCliOptions } from "./utils/cli-options.ts";
 
 // Version information
 const VERSION = "0.1.0";

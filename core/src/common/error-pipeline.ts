@@ -12,7 +12,7 @@
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { SourceMapConsumer } from "npm:source-map@0.7.3";
 import { globalLogger } from "../logger.ts";
-import { getCurrentBundlePath } from "./bundle-registry.ts";
+import { getCurrentBundlePath } from "../bundler.ts";
 import { mapStackTraceToHql } from "./consumer.ts";
 
 // Direct access to logger
@@ -394,7 +394,7 @@ export class SourceLocationInfo implements SourceLocation {
       const absPath = this.filePath.startsWith('/')
           ? Deno.cwd() + this.filePath
           : this.filePath;
-      // this.source = Deno.readTextFileSync(absPath);
+      this.source = Deno.readTextFileSync(absPath);
     }
     return this.source;
   }
@@ -1150,11 +1150,7 @@ export function formatErrorMessage(error: unknown): string {
     return error.message;
   }
   if (typeof error === 'object' && error !== null) {
-    try {
-      return JSON.stringify(error);
-    } catch (e) {
-      return String(error);
-    }
+    return JSON.stringify(error);
   }
   return String(error);
 }

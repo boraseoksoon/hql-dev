@@ -107,7 +107,7 @@ function initializeTransformFactory(): void {
     transformFactory.set("import", (list, currentDir) => {
   // Try vector import first, fallback to namespace import
   if (isVectorImport(list)) {
-    return importExportModule.transformVectorImport(list, currentDir);
+    return importExportModule.transformVectorImport(list);
   }
   if (importExportModule.isNamespaceImport(list)) {
     return importExportModule.transformNamespaceImport(list, currentDir);
@@ -314,7 +314,7 @@ function transformBasedOnOperator(list: ListNode, op: string, currentDir: string
   }
 
   if (isVectorImport(list)) {
-    return importExportModule.transformVectorImport(list, currentDir);
+    return importExportModule.transformVectorImport(list);
   }
 
   if (isNamespaceImport(list)) {

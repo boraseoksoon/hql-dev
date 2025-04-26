@@ -99,7 +99,6 @@ export function extractStringLiteral(node: any): string {
  */
 export function transformJsImport(
   list: ListNode, 
-  currentDir: string
 ): IR.IRNode {
   return perform(
     () => {

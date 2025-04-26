@@ -34,7 +34,6 @@ export function convertToHqlAst(
   options: ConversionOptions = {},
 ): HQLNode[] {
   logger.debug(`Converting ${sexps.length} S-expressions to HQL AST`);
-
   return sexps.map((sexp) => convertExpr(sexp, logger));
 }
 

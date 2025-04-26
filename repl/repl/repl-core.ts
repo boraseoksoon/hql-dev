@@ -77,7 +77,7 @@ export async function startRepl(): Promise<void> {
   
   try {
     // Initialize environment
-    const env = await Environment.initializeGlobalEnv({ verbose: showVerbose });
+    const env = await Environment.initializeGlobalEnv();
     await loadSystemMacros(env, { verbose: showVerbose, baseDir: Deno.cwd() });
     
     // Create evaluator

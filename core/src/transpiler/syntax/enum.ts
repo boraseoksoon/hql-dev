@@ -540,11 +540,6 @@ function createCaseFactoryMethod(enumCase: IR.IREnumCase, enumName: string): ts.
       ], true)
     );
   } else {
-    // Create a simple property for cases without associated values
-    const valueExpr = enumCase.rawValue 
-      ? convertIRExpr(enumCase.rawValue)
-      : ts.factory.createStringLiteral(caseName);
-      
     return ts.factory.createPropertyDeclaration(
       [
         ts.factory.createModifier(ts.SyntaxKind.StaticKeyword), 

@@ -30,7 +30,7 @@ import {
   isJsFile,
   isTypeScriptFile
 } from "./common/import-utils.ts";
-import { wrapError, formatErrorMessage } from "./common/error-pipeline.ts";
+import { wrapError, formatErrorMessage, ValidationError } from "./common/error-pipeline.ts";
 import { MacroError, ImportError } from "./common/error-pipeline.ts";
 import { globalSymbolTable } from "./transpiler/symbol_table.ts";
 
@@ -444,7 +444,6 @@ async function processVectorBasedImport(
     importSymbols(
       requestedSymbols,
       modulePath,
-      resolvedPath,
       tempModuleName,
       env,
       options.currentFile || "",
@@ -524,7 +523,6 @@ function extractSymbolsAndAliases(vectorElements: SExp[]): Map<string, string | 
 function importSymbols(
   requestedSymbols: Map<string, string | null>,
   modulePath: string,
-  resolvedPath: string,
   tempModuleName: string,
   env: Environment,
   currentFile: string,

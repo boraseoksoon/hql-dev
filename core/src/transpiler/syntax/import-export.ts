@@ -1,15 +1,12 @@
 // src/transpiler/syntax/import-export.ts
 
 import * as ts from "npm:typescript";
-import * as path from "../../platform/platform.ts";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, LiteralNode } from "../type/hql_ast.ts";
 import { TransformError, ValidationError } from "../../common/error-pipeline.ts";
 import { perform } from "../../common/error-pipeline.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
-import { Environment } from "../../environment.ts";
-// Removed: import { isUserLevelMacro } from "../../s-exp/macro.ts";
 import { processVectorElements } from "./data-structure.ts";
 import { execute, convertVariableDeclaration } from "../pipeline/hql-ir-to-ts-ast.ts";
 
@@ -401,7 +398,6 @@ function createExportSpecifier(symbolName: string): IR.IRExportSpecifier {
  */
 export function transformVectorImport(
   list: ListNode,
-  currentDir: string
 ): IR.IRNode | null {
   return perform(
     () => {

@@ -55,10 +55,10 @@ class Timer {
 /**
  * Get or initialize the global Environment.
  */
-async function getGlobalEnvironment(verbose?: boolean) {
+async function getGlobalEnvironment() {
   let env = Environment.getGlobalEnv();
   if (!env) {
-    env = await Environment.initializeGlobalEnv({ verbose });
+    env = await Environment.initializeGlobalEnv();
   }
   return env;
 }
@@ -158,7 +158,7 @@ export async function transformAST(
     timer.phase("initialization");
   
     // Initialize or get global environment
-    const env = await getGlobalEnvironment(options.verbose);
+    const env = await getGlobalEnvironment();
     timer.phase("environment init");
   
     // Macro expansion

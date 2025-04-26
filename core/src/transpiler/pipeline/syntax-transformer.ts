@@ -8,14 +8,13 @@ import {
   isList,
   isSymbol,
   SExp,
-  sexpToString,
   SList,
   SSymbol,
 } from "../../s-exp/types.ts";
 import { Logger, globalLogger as logger } from "../../logger.ts";
 import { TransformError, perform } from "../../common/error-pipeline.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
-import { SymbolTable, globalSymbolTable } from "../symbol_table.ts";
+import { globalSymbolTable } from "../symbol_table.ts";
 
 /**
  * Options for syntax transformation
@@ -27,10 +26,7 @@ interface TransformOptions {
 /**
  * Main entry point - transforms all syntax sugar into canonical S-expressions
  */
-export function transformSyntax(
-  ast: SExp[],
-  options: TransformOptions = {},
-): SExp[] {
+export function transformSyntax(ast: SExp[]): SExp[] {
   // Clear the symbol table at the start if possible
   if (typeof globalSymbolTable.clear === "function") {
     globalSymbolTable.clear();
@@ -496,8 +492,7 @@ function transformEqualityExpression(
       elements: list.elements.map(elem => transformNode(elem, enumDefinitions, logger))
     };
   }
-  
-  const op = (list.elements[0] as SSymbol).name;
+
   const leftExpr = list.elements[1];
   const rightExpr = list.elements[2];
   
@@ -517,8 +512,7 @@ function transformEqualityExpression(
   // If we found a dot expression, transform it
   if (dotExpr) {
     const caseName = dotExpr.name.substring(1); // Remove the dot
-    let foundEnum = false;
-    
+
     // Find an enum that has this case
     for (const [enumName, enumDef] of enumDefinitions.entries()) {
       if (hasCaseNamed(enumDef, caseName)) {
@@ -642,7 +636,6 @@ function transformNamedArguments(
   enumDefinitions: Map<string, SList>,
   logger: Logger
 ): SExp {
-  const funcName = (list.elements[0] as SSymbol).name;
   const transformedElements: SExp[] = [list.elements[0]]; // Keep the function name
 
   // Process each element

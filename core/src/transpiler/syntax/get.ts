@@ -120,13 +120,7 @@ export function convertGetCallExpression(
       const objArg = args[0];
       const keyArg = args[1];
       const obj = convertIRExpr(objArg);
-      const key = convertIRExpr(keyArg);
-      
-      // Get the default value (null if not provided)
-      const notFound = args.length > 2 
-        ? convertIRExpr(args[2])
-        : ts.factory.createNull();
-      
+
       // If the key is a string literal, we can statically determine if this should be
       // property access or not in many cases
       if (keyArg.type === IR.IRNodeType.StringLiteral) {

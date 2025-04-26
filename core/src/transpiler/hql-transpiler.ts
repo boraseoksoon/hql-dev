@@ -8,7 +8,6 @@ import { convertToHqlAst } from "../s-exp/macro-reader.ts";
 import { transformAST } from "../transformer.ts";
 import { Logger } from "../logger.ts";
 import { transformSyntax } from "./pipeline/syntax-transformer.ts";
-import { getSystemMacroPaths } from "../s-exp/system-macros.ts";
 import { SExp } from "../s-exp/types.ts";
 import {
   ImportError,
@@ -74,7 +73,7 @@ export async function processHql(
   
   // Only proceed with later stages if parsing succeeded
   if (options.showTiming) logger.startTiming("hql-process", "Syntax transform");
-  const canonicalSexps = transformWithHandling(sexps, options.verbose, logger);
+  const canonicalSexps = transformSyntax(sexps);
   if (options.showTiming) logger.endTiming("hql-process", "Syntax transform");
   
   if (options.showTiming) logger.startTiming("hql-process", "Import processing");
@@ -82,7 +81,11 @@ export async function processHql(
   if (options.showTiming) logger.endTiming("hql-process", "Import processing");
   
   if (options.showTiming) logger.startTiming("hql-process", "Macro expansion");
-  const expanded = expandWithHandling(canonicalSexps, env, options, logger);
+  const expanded = expandMacros(canonicalSexps, env, {
+    verbose: options.verbose,
+    currentFile: options.baseDir,
+    useCache: true,
+  });
   if (options.showTiming) logger.endTiming("hql-process", "Macro expansion");
   
   if (options.showTiming) logger.startTiming("hql-process", "AST conversion");
@@ -105,22 +108,6 @@ export async function processHql(
   return { code: jsCode, sourceMap };
 }
 
-function transformWithHandling(sexps: any[], verbose: boolean | undefined, logger: Logger) {
-  try {
-    const result = transformSyntax(sexps, { verbose });
-    logger.debug(`Transformed ${result.length} expressions`);
-    return result;
-  } catch (error: unknown) {
-    if (error instanceof TransformError) throw error;
-    
-    if (error instanceof Error) {
-      throw new TransformError(`Failed to transform syntax: ${error.message}`, "syntax transformation", "valid HQL expressions", sexps);
-    }
-    
-    throw new TransformError(`Failed to transform syntax: ${String(error)}`, "syntax transformation", "valid HQL expressions", sexps);
-  }
-}
-
 async function processImportsWithHandling(sexps: any[], env: Environment, options: ProcessOptions) {
   try {
     await processImports(sexps, env, {
@@ -140,23 +127,6 @@ async function processImportsWithHandling(sexps: any[], env: Environment, option
   }
 }
 
-function expandWithHandling(sexps: any[], env: Environment, options: ProcessOptions, logger: Logger) {
-  try {
-    return expandMacros(sexps, env, {
-      verbose: options.verbose,
-      currentFile: options.baseDir,
-      useCache: true,
-    });
-  } catch (error: unknown) {
-    if (error instanceof MacroError) throw error;
-    
-    if (error instanceof Error) {
-      throw new MacroError(`Failed to expand macros: ${error.message}`, "", options.baseDir, error);
-    }
-    
-    throw new MacroError(`Failed to expand macros: ${String(error)}`, "", options.baseDir, undefined);
-  }
-}
 
 /**
  * Load built-in system macros from the standard library files
@@ -179,7 +149,7 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
       const macroExps = macroExpressionsCache.get(macroPath) || parse(macroSource);
       macroExpressionsCache.set(macroPath, macroExps);
 
-      const transformed = transformSyntax(macroExps, { verbose: options.verbose });
+      const transformed = transformSyntax(macroExps);
 
       await processImports(transformed, env, {
         verbose: options.verbose || false,
@@ -224,9 +194,23 @@ async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
 
   const t = performance.now();
   logger.debug("Initializing new global environment");
-  globalEnv = await Environment.initializeGlobalEnv({ verbose: options.verbose });
+  globalEnv = await Environment.initializeGlobalEnv();
   await loadSystemMacros(globalEnv, options);
   logger.debug(`Global environment initialization took ${(performance.now() - t).toFixed(2)}ms`);
 
   return globalEnv;
+}
+
+/**
+ * Get the absolute paths for all system macro files
+ */
+function getSystemMacroPaths(): string[] {
+  const SYSTEM_MACRO_PATHS = [
+    "core/lib/macro/core.hql",
+    "core/lib/macro/loop.hql"
+  ];
+
+  const systemMacrosDir = path.dirname(path.fromFileUrl(import.meta.url));
+  const projectRoot = path.resolve(systemMacrosDir, '../../..');
+  return SYSTEM_MACRO_PATHS.map(macroPath => path.join(projectRoot, macroPath));
 }
