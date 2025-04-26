@@ -216,33 +216,56 @@ export async function publish(args: string[]): Promise<void> {
   console.log(`
 🚀 Preparing to publish your HQL module!\n  Entry point: "${entryPoint}"\n  Package name: ${options.name ?? "(auto-generated)"}\n  Version: ${options.version ?? "(auto-incremented)"}\n  Mode: ${options.dryRun ? "Dry run (no actual publishing)" : "Live publish"}`);
 
+  // Always attempt both JSR and NPM, capturing results/errors for each
+  const summaries: PublishSummary[] = [];
+  let jsrError: any = null;
+  let npmError: any = null;
+  let jsrSummary: PublishSummary | undefined;
+  let npmSummary: PublishSummary | undefined;
+
+  // Try JSR
   try {
-    // Auto-detect registry/platform (prefer JSR if both present)
-    // This logic should be factored into a utility or inside publishJSR/publishNpm.
-    // For now, try JSR first, fallback to NPM if needed (legacy behavior)
-    let summary: PublishSummary | undefined;
-    try {
-      summary = await publishJSR({
-        ...options,
-        what: entryPoint,
-      });
-    } catch (jsrErr) {
-      // If JSR publish fails due to missing config, try NPM
-      try {
-        summary = await publishNpm({
-          ...options,
-          what: entryPoint,
-        });
-      } catch (npmErr) {
-        throw jsrErr; // Show original error if both fail
-      }
-    }
-    if (summary) printPublishSummary([summary]);
-  } catch (error) {
-    reportError(error); 
+    jsrSummary = await publishJSR({
+      ...options,
+      what: entryPoint,
+    });
+    summaries.push(jsrSummary);
+  } catch (err) {
+    jsrError = err;
+    summaries.push({
+      registry: 'jsr',
+      name: options.name ?? '(auto)',
+      version: options.version ?? '(auto)',
+      link: jsrError && jsrError.message ? `❌ ${jsrError.message.split('\n')[0]}` : '❌ Failed',
+    });
+  }
+
+  // Try NPM
+  try {
+    npmSummary = await publishNpm({
+      ...options,
+      what: entryPoint,
+    });
+    summaries.push(npmSummary);
+  } catch (err) {
+    npmError = err;
+    summaries.push({
+      registry: 'npm',
+      name: options.name ?? '(auto)',
+      version: options.version ?? '(auto)',
+      link: npmError && npmError.message ? `❌ ${npmError.message.split('\n')[0]}` : '❌ Failed',
+    });
+  }
+
+  // Always show summary
+  printPublishSummary(summaries);
+
+  // Exit 1 only if both failed
+  if (jsrError && npmError) {
     exit(1);
   }
 }
+
 
 if (import.meta.main) {
   publish(Deno.args)

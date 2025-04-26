@@ -146,8 +146,14 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
   const status = await process.status;
 
   if (!status.success) {
-    console.error(`\n❌ npm publish failed with exit code ${status.code}.`);
-    exit(status.code);
+    const errorMsg = `npm publish failed with exit code ${status.code}`;
+    console.error(`\n❌ ${errorMsg}`);
+    return {
+      registry: "npm",
+      name: String(pkg.name),
+      version: String(pkg.version),
+      link: `❌ ${errorMsg}`
+    };
   }
 
   // Do not print summary here; return info for centralized summary
