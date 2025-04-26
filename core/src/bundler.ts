@@ -36,7 +36,6 @@ import {
 } from "./common/hql-cache-tracker.ts";
 import { transpile, TranspileOptions } from './transpiler/index.ts';
 
-let currentBundlePath: string | undefined;
 const DEFAULT_EXTERNAL_PATTERNS = ['npm:', 'jsr:', 'node:', 'https://', 'http://'];
 
 // Interfaces
@@ -90,9 +89,6 @@ export async function transpileCLI(
   await bundleWithEsbuild(tsOutputPath, outPath, { ...bundleOptions });
 
   logger.log({ text: `[Bundler] Bundled to ${outPath}` , namespace: "bundler" });
-
-  // Register the bundle path globally for error reporting
-  setCurrentBundlePath(outPath);
 
   if (options.showTiming) logger.endTiming("transpile-cli", "esbuild Bundling");
 
@@ -988,12 +984,4 @@ async function writeOutput(
       }`,
     );
   }
-}
-
-function setCurrentBundlePath(path: string) {
-  currentBundlePath = path;
-}
-
-export function getCurrentBundlePath(): string | undefined {
-  return currentBundlePath;
 }

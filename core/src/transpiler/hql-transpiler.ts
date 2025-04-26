@@ -18,6 +18,7 @@ import { globalLogger as logger } from "../logger.ts";
 import { reportError } from "../common/error-pipeline.ts";
 import { TranspileResult } from "./index.ts";
 import { globalSymbolTable } from "../transpiler/symbol_table.ts";
+import { HQLNode } from "@transpiler/type/hql_ast.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
@@ -178,10 +179,10 @@ function convertToHqlAst(sexps: SExp[], options: ProcessOptions): any {
 /**
  * Transform HQL AST to JavaScript
  */
-async function transpile(hqlAst: any, options: ProcessOptions): Promise<TranspileResult> {
+async function transpile(hqlAst: HQLNode[], options: ProcessOptions): Promise<TranspileResult> {
   if (options.showTiming) logger.startTiming("hql-process", "JS transformation");
   
-  try {
+  try { 
     const result = await transformAST(
       hqlAst, 
       options.baseDir || Deno.cwd(), 
