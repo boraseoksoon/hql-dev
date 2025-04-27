@@ -1,4 +1,5 @@
 // remote_registry.ts - Remote registry query utilities for HQL publish CLI
+import { globalLogger as logger } from "../../src/logger.ts";
 
 /**
  * Get the latest published version of a package from the NPM registry.
@@ -7,20 +8,35 @@
  */
 export async function getNpmLatestVersion(name: string): Promise<string | null> {
   try {
+    logger.debug && logger.debug(`Fetching latest version for NPM package: ${name}`);
+    
     const resp = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}`);
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    if (data && data["dist-tags"] && data["dist-tags"].latest) {
-      return data["dist-tags"].latest;
+    if (!resp.ok) {
+      logger.debug && logger.debug(`NPM registry returned status: ${resp.status}`);
+      return null;
     }
+    
+    const data = await resp.json();
+    
+    if (data && data["dist-tags"] && data["dist-tags"].latest) {
+      const version = data["dist-tags"].latest;
+      logger.debug && logger.debug(`Found NPM latest version: ${version}`);
+      return version;
+    }
+    
     // Fallback: get highest version
     if (data && data.versions && typeof data.versions === "object") {
       const versions = Object.keys(data.versions);
       versions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-      return versions[versions.length - 1] || null;
+      const highestVersion = versions[versions.length - 1] || null;
+      logger.debug && logger.debug(`Found NPM highest version: ${highestVersion}`);
+      return highestVersion;
     }
+    
+    logger.debug && logger.debug(`No versions found for NPM package: ${name}`);
     return null;
-  } catch (_err) {
+  } catch (err) {
+    logger.debug && logger.debug(`Error fetching NPM version: ${err}`);
     return null;
   }
 }
@@ -33,43 +49,56 @@ export async function getNpmLatestVersion(name: string): Promise<string | null> 
  */
 export async function getJsrLatestVersion(scope: string, name: string): Promise<string | null> {
   try {
+    logger.debug && logger.debug(`Fetching latest version for JSR package: @${scope}/${name}`);
+    
     const resp = await fetch(`https://jsr.io/api/packages/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`);
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      logger.debug && logger.debug(`JSR registry returned status: ${resp.status}`);
+      return null;
+    }
+    
     const data: { versions?: { version: string }[] } = await resp.json();
+    
     if (data && Array.isArray(data.versions) && data.versions.length > 0) {
       const versions = data.versions.map((v) => v.version);
       versions.sort((a: string, b: string) => a.localeCompare(b, undefined, { numeric: true }));
-      return versions[versions.length - 1] || null;
+      const latestVersion = versions[versions.length - 1] || null;
+      logger.debug && logger.debug(`Found JSR latest version: ${latestVersion}`);
+      return latestVersion;
     }
+    
+    logger.debug && logger.debug(`No versions found for JSR package: @${scope}/${name}`);
     return null;
-  } catch (_err) {
+  } catch (err) {
+    logger.debug && logger.debug(`Error fetching JSR version: ${err}`);
     return null;
   }
 }
 
 /**
- * Check if the current user can publish to the given NPM package name.
- * (Requires user to be logged in; otherwise, will return false.)
- * This implementation attempts to use the NPM API, but for full accuracy, use `npm access` CLI.
- * @param name - The NPM package name
- * @returns true if publish is allowed, false otherwise
+ * Validates a semver version string
+ * @param version Version to validate
+ * @returns true if valid, false otherwise
  */
-export async function checkNpmPublishPermission(name: string): Promise<boolean> {
-  // There is no fully reliable REST API for this; fallback to assuming publish allowed for new packages.
-  // For existing packages, user must be owner/collaborator.
-  // Consider running `npm access ls-collaborators <name>` via child_process for full check.
-  const latest = await getNpmLatestVersion(name);
-  if (!latest) return true; // Package does not exist yet
-  // If package exists, assume user must be owner; real check is via CLI
-  return false; // Let the publish step fail if not owner
+export function isValidVersion(version: string): boolean {
+  const semverRegex = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
+  return semverRegex.test(version);
 }
 
 /**
- * Check if the current user can publish to the given JSR package.
- * (Currently, rely on publish attempt for permission errors.)
- * @returns true if publish is allowed, false otherwise
+ * Compares two semver version strings
+ * @param v1 First version
+ * @param v2 Second version
+ * @returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal
  */
-export async function checkJsrPublishPermission(_scope: string, _name: string): Promise<boolean> {
-  // No public API for this yet; rely on publish error handling
-  return Promise.resolve(true);
+export function compareVersions(v1: string, v2: string): number {
+  const parts1 = v1.split('.').map(Number);
+  const parts2 = v2.split('.').map(Number);
+  
+  for (let i = 0; i < 3; i++) {
+    if (parts1[i] > parts2[i]) return 1;
+    if (parts1[i] < parts2[i]) return -1;
+  }
+  
+  return 0;
 }

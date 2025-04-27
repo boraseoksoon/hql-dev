@@ -1,9 +1,0 @@
-{
-  "name": "@testscope/existing_module",
-  "version": "1.0.0",
-  "exports": "./esm/index.js",
-  "license": "MIT",
-  "publish": {
-    "exclude": ["!esm/index.js", "!esm/index.d.ts"]
-  }
-}

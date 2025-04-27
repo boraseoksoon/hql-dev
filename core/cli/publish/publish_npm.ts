@@ -1,262 +1,320 @@
-// cli/publish/publish_npm.ts - Streamlined NPM publishing implementation
+import { detectNpmError } from "./error_handlers.ts";// publish_npm.ts - NPM-specific publishing implementation
 import {
   basename,
   dirname,
   getEnv,
   join,
-  readTextFile,
   resolve,
   runCmd,
   writeTextFile,
+  readTextFile,
 } from "../../src/platform/platform.ts";
 import { exists } from "jsr:@std/fs@1.0.13";
-import { buildJsModule } from "./build_js_module.ts";
-import { incrementPatch, prompt } from "./utils.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
-import { getNpmLatestVersion, checkNpmPublishPermission } from "./remote_registry.ts";
+import { 
+  MetadataFileType, 
+  promptUser, 
+  readJSONFile, 
+  writeJSONFile,
+  incrementPatchVersion,
+  getCachedBuild
+} from "./metadata_utils.ts";
+import type { PublishSummary } from "./publish_summary.ts";
+import { getNpmLatestVersion } from "./remote_registry.ts";
 
 interface PublishNpmOptions {
-  what: string;
-  name?: string;
+  entryFile: string;
   version?: string;
+  hasMetadata: boolean;
+  metadataType?: MetadataFileType;
   verbose?: boolean;
   dryRun?: boolean;
 }
 
-async function buildModule(inputPath: string, options: { verbose?: boolean; dryRun?: boolean }): Promise<string> {
-  console.log(`\n🔨 Building JavaScript module from "${inputPath}"...`);
-  const distDir = await buildJsModule(inputPath, options);
-  console.log(`\n✅ Module built successfully to: "${distDir}"`);
-  return distDir;
-}
-
-async function readPackageJson(pkgJsonPath: string, verbose?: boolean): Promise<Record<string, unknown>> {
-  if (await exists(pkgJsonPath)) {
-    try {
-      if (verbose) logger.debug(`Reading existing package.json`);
-      return JSON.parse(await readTextFile(pkgJsonPath));
-    } catch (error) {
-      if (verbose) {
-        logger.debug(`Error parsing package.json: ${error instanceof Error ? error.message : String(error)}`);
+/**
+ * Creates or updates NPM package.json metadata file
+ */
+async function configureNpmMetadata(
+  distDir: string,
+  options: PublishNpmOptions
+): Promise<{ packageName: string; packageVersion: string }> {
+  // Load existing config or create a new one
+  let config: Record<string, unknown> = {};
+  let packageName: string;
+  let packageVersion: string;
+  
+  // Determine where to find and save metadata
+  const sourceDir = dirname(options.entryFile);
+  let metadataSourcePath: string;
+  
+  // Check if metadata exists in source directory or dist directory
+  if (options.hasMetadata) {
+    if (await exists(join(sourceDir, "package.json"))) {
+      metadataSourcePath = join(sourceDir, "package.json");
+    } else if (await exists(join(sourceDir, "dist", "package.json"))) {
+      metadataSourcePath = join(sourceDir, "dist", "package.json");
+    } else {
+      // Fallback
+      metadataSourcePath = join(distDir, "package.json");
+    }
+    
+    // Load existing metadata
+    config = await readJSONFile(metadataSourcePath);
+    logger.debug && logger.debug(`Loaded metadata from: ${metadataSourcePath}`);
+  }
+  
+  // Target path for new/updated package.json
+  const packageJsonPath = join(distDir, "package.json");
+  
+  if (options.hasMetadata) {
+    // If metadata exists, load it and use the name from it
+    packageName = String(config.name || "");
+    
+    if (options.version) {
+      // Use explicitly provided version
+      packageVersion = options.version;
+      console.log(`  → Using specified version: ${packageVersion}`);
+    } else {
+      try {
+        // Try to get latest version from NPM registry
+        const latestVersion = await getNpmLatestVersion(packageName);
+        
+        if (latestVersion) {
+          // Increment existing remote version
+          packageVersion = incrementPatchVersion(latestVersion);
+          console.log(`  → Found latest version on NPM: ${latestVersion}`);
+          console.log(`  → Incremented version to: ${packageVersion}`);
+        } else if (config.version) {
+          // Fall back to metadata version + 0.0.1
+          packageVersion = incrementPatchVersion(String(config.version));
+          console.log(`  → Remote version not found, using metadata version + 0.0.1: ${packageVersion}`);
+        } else {
+          // Default for new packages
+          packageVersion = "0.0.1";
+          console.log(`  → Using default initial version: ${packageVersion}`);
+        }
+      } catch (error) {
+        // If anything fails, use metadata version + 0.0.1
+        packageVersion = config.version ? 
+          incrementPatchVersion(String(config.version)) : 
+          "0.0.1";
+        console.log(`  → Error fetching remote version, using: ${packageVersion}`);
       }
     }
-  }
-  return {};
-}
-
-async function configurePackageName(
-  pkg: Record<string, unknown>,
-  options: PublishNpmOptions,
-  baseDir: string
-): Promise<void> {
-  if (options.name) {
-    pkg.name = options.name;
-    console.log(`  → Using provided package name: "${pkg.name}"`);
-  } else if (!pkg.name) {
-    const defaultName = basename(baseDir)
+  } else {
+    // No metadata exists - we need to create it
+    // Get module name from directory or prompt
+    const moduleDir = dirname(options.entryFile);
+    const defaultName = basename(moduleDir)
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, "-")
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "");
-    console.log(`  Enter npm package name (default: "${defaultName}"):`);
-    const userName = await prompt(`Enter name:`, defaultName);
-    pkg.name = userName || defaultName;
-    console.log(`  → Using package name: "${pkg.name}"`);
-  } else {
-    console.log(`  → Using existing package name: "${pkg.name}"`);
-  }
-}
-
-async function configurePackageVersion(
-  pkg: Record<string, unknown>,
-  options: PublishNpmOptions
-): Promise<void> {
-  if (options.version) {
-    pkg.version = options.version;
-    console.log(`  → Using provided version: ${pkg.version}`);
-  } else if (pkg.version) {
-    pkg.version = incrementPatch(String(pkg.version));
-    console.log(`  → Incremented version to: ${pkg.version}`);
-  } else {
-    const defaultVersion = "0.0.1";
-    console.log(`  Enter version (default: "${defaultVersion}"):`);
-    const ver = await prompt(`Enter version:`, defaultVersion);
-    pkg.version = ver || defaultVersion;
-    console.log(`  → Using version: ${pkg.version}`);
-  }
-
-  // Check remote NPM registry for latest version and permissions
-  if (typeof pkg.name === "string" && typeof pkg.version === "string") {
-    const remoteVersion = await getNpmLatestVersion(pkg.name);
-    if (remoteVersion === pkg.version) {
-      throw new Error(`❌ Version ${pkg.version} for package ${pkg.name} is already published on NPM.`);
-    }
-    const canPublish = await checkNpmPublishPermission(pkg.name);
-    if (!canPublish) {
-      throw new Error(`❌ You do not have permission to publish to the NPM package ${pkg.name}.`);
-    }
-  }
-}
-
-
-function setStandardPackageFields(pkg: Record<string, unknown>): void {
-  pkg.description = pkg.description || `HQL module: ${pkg.name}`;
-  pkg.module = pkg.module || "./esm/index.js";
-  pkg.main = pkg.main || "./esm/index.js";
-  pkg.types = pkg.types || "./types/index.d.ts";
-  pkg.files = pkg.files || ["esm", "types", "README.md"];
-  pkg.type = "module";
-  
-  if (!pkg.author) {
-    pkg.author = getEnv("USER") || getEnv("USERNAME") || "HQL User";
-  }
-  
-  if (!pkg.license) {
-    pkg.license = "MIT";
-  }
-}
-
-async function savePackageJson(
-  pkgJsonPath: string,
-  pkg: Record<string, unknown>
-): Promise<void> {
-  await writeTextFile(pkgJsonPath, JSON.stringify(pkg, null, 2));
-  console.log(`  → Updated package.json with name=${pkg.name} version=${pkg.version}`);
-}
-
-async function executeNpmPublish(distDir: string): Promise<{ success: boolean; errorCode?: number; stderr?: string }> {
-  const publishCmd = ["npm", "publish", "--access", "public"];
-  console.log(`  → Running: ${publishCmd.join(" ")}`);
-
-  const process = runCmd({
-    cmd: publishCmd,
-    cwd: distDir,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-
-  const status = await process.status;
-  
-  let stderr = "";
-  if (!status.success) {
-    try {
-      const stderrProcess = runCmd({
-        cmd: publishCmd,
-        cwd: distDir,
-        stdout: "piped",
-        stderr: "piped",
-      });
-      
-      const stderrChunks: Uint8Array[] = [];
-      if (stderrProcess.stderr) {
-        for await (const chunk of stderrProcess.stderr) {
-          stderrChunks.push(chunk);
-        }
-      }
-      
-      await stderrProcess.status;
-      stderr = stderrChunks.length > 0 
-        ? new TextDecoder().decode(concatUint8Arrays(stderrChunks)) 
-        : "";
-    } catch (_err) {
-      stderr = `npm command failed with exit code ${status.code}`;
-    }
-  }
-
-  return { 
-    success: status.success, 
-    errorCode: status.code,
-    stderr: stderr
-  };
-}
-
-function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
-  const totalLength = arrays.reduce((acc, array) => acc + array.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const array of arrays) {
-    result.set(array, offset);
-    offset += array.length;
-  }
-  return result;
-}
-
-function generatePackageLink(
-  pkg: Record<string, unknown>,
-  publishResult?: { success: boolean; errorCode?: number; stderr?: string }
-): string {
-  if (!publishResult || publishResult.success) {
-    return `https://www.npmjs.com/package/${pkg.name}`;
-  } else {
-    if (publishResult.stderr) {
-      const errorInfo = detectNpmError(publishResult.stderr);
-      return errorInfo.message;
-    }
-    return `❌ npm publish failed with exit code ${publishResult.errorCode}`;
-  }
-}
-
-export async function publishNpm(options: PublishNpmOptions): Promise<PublishSummary> {
-  try {
-    console.log("\n📦 Starting NPM package publishing process");
-
-    const inputPath = resolve(options.what);
-    const baseDir = dirname(inputPath);
     
-    if (options.verbose) {
-      logger.debug(`Using input path: "${inputPath}"`);
-      logger.debug(`Using base directory: "${baseDir}"`);
-    }
-
-    const distDir = await buildModule(inputPath, {
-      verbose: options.verbose,
-      dryRun: options.dryRun,
-    });
-
-    console.log(`\n📝 Preparing package configuration...`);
-    const pkgJsonPath = join(distDir, "package.json");
-    const pkg = await readPackageJson(pkgJsonPath, options.verbose);
-
-    await configurePackageName(pkg, options, baseDir);
-    await configurePackageVersion(pkg, options);
-    
-    setStandardPackageFields(pkg);
-    
-    await savePackageJson(pkgJsonPath, pkg);
-    
+    // Always prompt for package name when no metadata exists
     if (options.dryRun) {
-      console.log(`\n🔍 Dry run mode enabled - package would be published to npm`);
-      console.log(`  → Package would be viewable at: https://www.npmjs.com/package/${pkg.name}`);
-      return {
-        registry: "npm",
-        name: String(pkg.name),
-        version: String(pkg.version),
-        link: `https://www.npmjs.com/package/${pkg.name}`
-      };
+      packageName = defaultName;
+      console.log(`  → Using auto-generated package name: ${packageName} (dry-run)`);
+    } else {
+      packageName = await promptUser(
+        `Enter a name for your NPM package`,
+        defaultName
+      );
     }
-
-    console.log(`\n🚀 Publishing package ${pkg.name}@${pkg.version} to npm...`);
-    const publishResult = await executeNpmPublish(distDir);
     
-    if (!publishResult.success) {
-      const errorInfo = publishResult.stderr 
-        ? detectNpmError(publishResult.stderr)
-        : detectNpmError(`npm publish failed with exit code ${publishResult.errorCode}`);
-      console.error(`\n${errorInfo.message}`);
+    // Handle version based on CLI or prompt
+    const defaultVersion = options.version || "0.0.1";
+    if (options.dryRun) {
+      packageVersion = defaultVersion;
+      console.log(`  → Using default version: ${packageVersion} (dry-run)`);
+    } else {
+      // Prompt with defaultVersion (either CLI-provided or 0.0.1)
+      packageVersion = await promptUser(`Enter version`, defaultVersion);
     }
-
-    return {
-      registry: "npm",
-      name: String(pkg.name),
-      version: String(pkg.version),
-      link: generatePackageLink(pkg, publishResult)
+    
+    // Set up basic NPM configuration
+    config = {
+      name: packageName,
+      version: packageVersion,
+      description: `HQL module: ${packageName}`,
+      module: "./esm/index.js",
+      main: "./esm/index.js",
+      types: "./types/index.d.ts",
+      files: ["esm", "types", "README.md"],
+      type: "module",
+      author: getEnv("USER") || getEnv("USERNAME") || "HQL User",
+      license: "MIT"
     };
     
-  } catch (err) {
-    return handlePublishError(err, {
-      registry: "npm",
-      name: options.name,
-      version: options.version
+    console.log(`  → Creating new package.json file`);
+  }
+  
+  // Update the config with final values
+  config.name = packageName;
+  config.version = packageVersion;
+  
+  // Ensure standard fields are set
+  config.description = config.description || `HQL module: ${packageName}`;
+  config.module = config.module || "./esm/index.js";
+  config.main = config.main || "./esm/index.js";
+  config.types = config.types || "./types/index.d.ts";
+  config.files = config.files || ["esm", "types", "README.md"];
+  config.type = "module";
+  config.author = config.author || getEnv("USER") || getEnv("USERNAME") || "HQL User";
+  config.license = config.license || "MIT";
+  
+  // Write the package.json file
+  await writeJSONFile(packageJsonPath, config);
+  console.log(`  → Updated package.json file: ${packageJsonPath}`);
+  
+  return { packageName, packageVersion };
+  
+  // Update the config with final values
+  config.name = packageName;
+  config.version = packageVersion;
+  
+  // Ensure standard fields are set
+  config.description = config.description || `HQL module: ${packageName}`;
+  config.module = config.module || "./esm/index.js";
+  config.main = config.main || "./esm/index.js";
+  config.types = config.types || "./types/index.d.ts";
+  config.files = config.files || ["esm", "types", "README.md"];
+  config.type = "module";
+  config.author = config.author || getEnv("USER") || getEnv("USERNAME") || "HQL User";
+  config.license = config.license || "MIT";
+  
+  // Write the package.json file
+  await writeJSONFile(packageJsonPath, config);
+  console.log(`  → Updated package.json file: ${packageJsonPath}`);
+  
+  return { packageName, packageVersion };
+}
+
+/**
+ * Ensures a README exists for the package
+ */
+async function ensureReadmeExists(distDir: string, packageName: string): Promise<void> {
+  const readmePath = join(distDir, "README.md");
+  if (!(await exists(readmePath))) {
+    console.log(`  → Creating default README.md`);
+    await writeTextFile(
+      readmePath,
+      `# ${packageName}\n\nGenerated HQL module.\n`,
+    );
+  }
+}
+
+/**
+ * Runs NPM publish command
+ */
+async function runNpmPublish(
+  distDir: string,
+  options: { dryRun?: boolean }
+): Promise<{ success: boolean; error?: string }> {
+  if (options.dryRun) {
+    console.log(`  → Skipping actual npm publish in dry-run mode`);
+    return { success: true };
+  }
+  
+  const publishCmd = ["npm", "publish", "--access", "public"];
+  console.log(`  → Running: ${publishCmd.join(" ")}`);
+  
+  try {
+    const process = runCmd({
+      cmd: publishCmd,
+      cwd: distDir,
+      stdout: "inherit",
+      stderr: "piped"
     });
+    
+    // Collect stderr for error analysis
+    const errorChunks: Uint8Array[] = [];
+    if (process.stderr) {
+      for await (const chunk of process.stderr) {
+        errorChunks.push(chunk);
+        // Echo to stderr for visibility
+        await Deno.stderr.write(chunk);
+      }
+    }
+    
+    const status = await process.status;
+    
+    if (status.success) {
+      return { success: true };
+    } else {
+      const errorOutput = new TextDecoder().decode(
+        new Uint8Array(errorChunks.flatMap(arr => [...arr]))
+      );
+      return { success: false, error: errorOutput };
+    }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Main NPM publishing function
+ */
+export async function publishNpm(options: PublishNpmOptions): Promise<PublishSummary> {
+  try {
+    // Build the module from entry file (uses cache if already built by another publisher)
+    console.log(`\n🔨 Building module from "${options.entryFile}"...`);
+    const distDir = await getCachedBuild(options.entryFile, {
+      verbose: options.verbose,
+      dryRun: options.dryRun
+    });
+    console.log(`  → Module built successfully to: ${distDir}`);
+    
+    // Configure package metadata (create or update)
+    console.log(`\n📝 Configuring NPM package...`);
+    const { packageName, packageVersion } = await configureNpmMetadata(distDir, options);
+    
+    // Ensure a README exists
+    await ensureReadmeExists(distDir, packageName);
+    
+    // Skip actual publishing in dry run mode
+    if (options.dryRun) {
+      console.log(`\n🔍 Dry run mode - package ${packageName}@${packageVersion} would be published to NPM`);
+      return {
+        registry: "npm",
+        name: packageName,
+        version: packageVersion,
+        link: `https://www.npmjs.com/package/${packageName}`
+      };
+    }
+    
+    // Publish to NPM
+    console.log(`\n🚀 Publishing ${packageName}@${packageVersion} to NPM...`);
+    const publishResult = await runNpmPublish(distDir, { 
+      dryRun: options.dryRun 
+    });
+    
+    if (publishResult.success) {
+      console.log(`\n✅ Successfully published ${packageName}@${packageVersion} to NPM`);
+      return {
+        registry: "npm",
+        name: packageName,
+        version: packageVersion,
+        link: `https://www.npmjs.com/package/${packageName}`
+      };
+    } else {
+      const errorMessage = publishResult.error || "Unknown error";
+      console.error(`\n❌ NPM publish failed: ${errorMessage}`);
+      return {
+        registry: "npm",
+        name: packageName,
+        version: packageVersion,
+        link: `❌ NPM publish failed: ${errorMessage.split("\n")[0]}`
+      };
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`\n❌ NPM publish failed: ${errorMessage}`);
+    return {
+      registry: "npm",
+      name: options.hasMetadata ? "(from metadata)" : "(unknown)",
+      version: options.version || "(auto)",
+      link: `❌ ${errorMessage}`
+    };
   }
 }

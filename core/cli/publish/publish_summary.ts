@@ -1,9 +1,9 @@
+// publish_summary.ts - HQL publishing results summary formatter
 export interface PublishSummary {
   registry: "npm" | "jsr";
   name: string;
   version: string;
   link: string;
-  footnoteIndex?: number;
 }
 
 export function printPublishSummary(summaries: PublishSummary[]) {
@@ -11,22 +11,15 @@ export function printPublishSummary(summaries: PublishSummary[]) {
   const NAME_WIDTH = 30;
   const VERSION_WIDTH = 9;
   const LINK_WIDTH = 60;
+  const STATUS_WIDTH = 8;
   
-  const footnotes: string[] = [];
-  const safeSummaries = summaries.map((s, index) => {
-    if (s.link.length > LINK_WIDTH) {
-      footnotes.push(s.link);
-      return { ...s, link: s.link.slice(0, LINK_WIDTH - 3) + '...', footnoteIndex: index };
-    }
-    return s;
-  });
-
-  const colWidths = [REGISTRY_WIDTH, NAME_WIDTH, VERSION_WIDTH, LINK_WIDTH];
+  const colWidths = [REGISTRY_WIDTH, NAME_WIDTH, VERSION_WIDTH, STATUS_WIDTH, LINK_WIDTH];
 
   function padCell(content: string, width: number): string {
     return ' ' + content.padEnd(width - 2) + ' ';
   }
 
+  // Table Border Characters
   const top    = '╔' + colWidths.map(w => '═'.repeat(w)).join('╦') + '╗';
   const sep    = '╠' + colWidths.map(w => '═'.repeat(w)).join('╬') + '╣';
   const bottom = '╚' + colWidths.map(w => '═'.repeat(w)).join('╩') + '╝';
@@ -45,28 +38,44 @@ export function printPublishSummary(summaries: PublishSummary[]) {
 
   console.log('\n' + centeredTitle + '\n');
   console.log(top);
-  console.log(row(['Registry', 'Name', 'Version', 'Link']));
+  console.log(row(['Registry', 'Name', 'Version', 'Status', 'Link/Error']));
   console.log(sep);
   
-  for (const s of safeSummaries) {
+  for (const s of summaries) {
+    const status = s.link.startsWith('❌') ? '❌ Failed' : '✅ Success';
+    const link = s.link.startsWith('❌') 
+      ? s.link.substring(2).trim() // Remove the error icon
+      : s.link;
+      
     console.log(row([
       s.registry.toUpperCase(),
       s.name,
       s.version,
-      s.link
+      status,
+      link.length > LINK_WIDTH - 5 ? link.slice(0, LINK_WIDTH - 8) + '...' : link
     ]));
   }
   
   console.log(bottom + '\n');
   
+  // Print full links for easy access and complete error messages
   for (const s of summaries) {
-    console.log(`🔗 ${s.registry.toUpperCase()}: ${s.link}`);
+    if (s.link.startsWith('❌')) {
+      console.log(`❌ ${s.registry.toUpperCase()}: ${s.link.substring(2)}`);
+    } else {
+      console.log(`🔗 ${s.registry.toUpperCase()}: ${s.link}`);
+    }
   }
   
-  if (footnotes.length > 0) {
-    console.log('\n* Full error(s):');
-    for (const note of footnotes) {
-      console.log('* ' + note);
-    }
+  // Add success/failure summary
+  const successCount = summaries.filter(s => !s.link.startsWith('❌')).length;
+  const failCount = summaries.length - successCount;
+  
+  if (successCount > 0 && failCount === 0) {
+    console.log(`\n✅ All publishing operations completed successfully!`);
+  } else if (successCount > 0 && failCount > 0) {
+    console.log(`\n⚠️ ${successCount} operation(s) succeeded, ${failCount} operation(s) failed.`);
+  } else if (successCount === 0 && failCount > 0) {
+    console.log(`\n❌ All publishing operations failed.`);
   }
 }

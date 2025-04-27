@@ -1,24 +1,29 @@
-// cli/publish/publish.ts - HQL module publishing to NPM and JSR
+// cli/publish/index.ts - HQL module publishing to NPM and JSR
 import { parseArgs } from "jsr:@std/cli@1.0.13/parse-args";
 import { 
   cwd, 
   exit, 
   join,
-  exists 
+  exists,
+  dirname,
+  basename,
 } from "../../src/platform/platform.ts";
 import { publishNpm } from "./publish_npm.ts";
 import { publishJSR } from "./publish_jsr.ts";
 import { printPublishSummary, PublishSummary } from "./publish_summary.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
+import { 
+  detectMetadataFiles, 
+  getPlatformsFromArgs, 
+  MetadataFileType 
+} from "./metadata_utils.ts";
 
 export interface PublishOptions {
-  what: string;
-  name?: string;
+  entryFile: string;
+  platforms: ("jsr" | "npm")[];
   version?: string;
   verbose?: boolean;
   dryRun?: boolean;
-  jsr?: boolean;
-  npm?: boolean;
 }
 
 function showHelp() {
@@ -26,242 +31,148 @@ function showHelp() {
 HQL Publish Tool - Publish HQL modules to NPM or JSR
 
 USAGE:
-  hql publish <what> [platform] [name] [version]
+  hql publish <entry-file> [platform] [version] [options]
 
 EXAMPLES:
-  # Publish to JSR (default) with auto name/version:
-  hql publish ./my-module
+  # Publish to JSR (default):
+  hql publish ./my-module/index.hql
 
-  # Publish to NPM (all forms accepted):
-  hql publish ./my-module npm
-  hql publish ./my-module -npm
-  hql publish ./my-module --npm
+  # Publish to NPM:
+  hql publish ./my-module/index.hql npm
 
-  # Publish to JSR (all forms accepted):
-  hql publish ./my-module jsr
-  hql publish ./my-module -jsr
-  hql publish ./my-module --jsr
+  # Publish to JSR with specific version:
+  hql publish ./my-module/index.hql jsr 1.2.3
 
-  # Publish to ALL platforms (all forms accepted):
-  hql publish ./my-module all
-  hql publish ./my-module -all
-  hql publish ./my-module --all
-  hql publish ./my-module -a
+  # Publish to NPM with specific version:
+  hql publish ./my-module/index.hql npm 1.2.3
 
-  # Dry run with verbose logging:
-  hql publish ./my-module --dry-run --verbose
+  # Publish to both JSR and NPM:
+  hql publish ./my-module/index.hql all
+
+  # Publish to both JSR and NPM with specific version:
+  hql publish ./my-module/index.hql all 1.2.3
+
+  # Dry run mode (no actual publishing):
+  hql publish ./my-module/index.hql --dry-run
 
 OPTIONS:
-  -n, --name <name>           Package name (defaults to auto-generated)
-  -v, --version <version>     Package version (defaults to auto-increment or prompt)
   --dry-run                   Test the publishing process without actually publishing
   --verbose                   Enable verbose logging
   -h, --help                  Show this help message
-  [platform]                  Platform to publish to: jsr, npm, all (any of: jsr, -jsr, --jsr, npm, -npm, --npm, all, -all, --all, -a)
+
+ENVIRONMENT VARIABLES:
+  DRY_RUN_PUBLISH=1           Always perform a dry run
+  SKIP_LOGIN_CHECK=1          Skip registry authentication check
 `);
 }
 
 function parsePublishArgs(args: string[]): PublishOptions {
-  // Acceptable forms for platform selection
-  const allForms = new Set(['all', '-all', '--all', '-a']);
-  const npmForms = new Set(['npm', '-npm', '--npm']);
-  const jsrForms = new Set(['jsr', '-jsr', '--jsr']);
-
-  // Check for platform flags/args
-  let isAll = false, isNpm = false, isJsr = false;
-  const filteredArgs = [];
-
-  for (const arg of args) {
-    if (allForms.has(arg)) isAll = true;
-    else if (npmForms.has(arg)) isNpm = true;
-    else if (jsrForms.has(arg)) isJsr = true;
-    else filteredArgs.push(arg);
+  // First, check for help flag
+  if (args.includes("-h") || args.includes("--help")) {
+    showHelp();
+    exit(0);
   }
 
-  const parsed = parseArgs(filteredArgs, {
-    string: ["name", "version"],
+  // Parse basic options first
+  const parsed = parseArgs(args, {
     boolean: ["verbose", "help", "dry-run"],
     alias: {
-      n: "name",
-      v: "version",
       h: "help",
     },
   });
 
-  let what = parsed._[0] ? String(parsed._[0]) : '.';
-  let name = parsed.name;
-  let version = parsed.version;
-
-  // Support positional name/version for backward compatibility
-  const pos = parsed._;
-  // If the positional argument is a platform selection, skip it for name/version
-  let posOffset = 1;
-  if (pos.length > 1 && (allForms.has(pos[1]) || npmForms.has(pos[1]) || jsrForms.has(pos[1]))) {
-    posOffset = 2;
-  }
-  if (!name && pos.length > posOffset) {
-    name = String(pos[posOffset]);
-  }
-  if (!version && pos.length > posOffset + 1) {
-    version = String(pos[posOffset + 1]);
+  // Check if we have an entry file
+  if (parsed._.length === 0) {
+    console.error("\n❌ Error: Missing entry file path. You must specify the module's entry .hql file.");
+    showHelp();
+    exit(1);
   }
 
+  const entryFile = String(parsed._[0]);
+  
+  // Identify platforms (npm/jsr/all) from remaining args
+  const platforms = getPlatformsFromArgs(args);
+  
+  // Check for version parameter - it would be after entry file and platform
+  let version: string | undefined;
+  
+  // Check for a version parameter in any position - more flexible processing
+  for (let i = 1; i < parsed._.length; i++) {
+    const arg = String(parsed._[i]);
+    // If argument is a semver (X.Y.Z) format
+    if (/^\d+\.\d+\.\d+$/.test(arg)) {
+      version = arg;
+      logger.debug && logger.debug(`Found version parameter: ${version} at position ${i}`);
+      break;
+    }
+  }
+
+  // Validate version format if provided
   if (version && !/^\d+\.\d+\.\d+$/.test(version)) {
     console.error(`\n❌ Invalid version format: ${version}. Expected "X.Y.Z"`);
     exit(1);
   }
 
-  // Determine targets based on flags
-  // If --all, -all, all, or -a is specified, publish to both JSR and NPM
-  let jsr = isAll || isJsr || (!isNpm && !isAll);
-  let npm = isAll || isNpm;
-
   return {
-    what,
-    name,
+    entryFile,
+    platforms,
     version,
     verbose: !!parsed.verbose,
-    dryRun: !!parsed["dry-run"],
-    jsr,
-    npm,
+    dryRun: !!parsed["dry-run"] || Deno.env.get("DRY_RUN_PUBLISH") === "1",
   };
 }
 
-async function resolveEntryPoint(path: string): Promise<string> {
-  try {
-    const stat = await Deno.stat(path);
-    if (stat.isFile) {
-      return path;
-    }
-  } catch (error) {
-    console.error(`\n❌ Error accessing path "${path}": ${error instanceof Error ? error.message : String(error)}`);
-    exit(1);
-  }
-
-  return await findEntryPointInDirectory(path);
-}
-
-async function findEntryPointInDirectory(path: string): Promise<string> {
-  const candidates = [
-    join(path, "index.hql"),
-    join(path, "index.js"),
-    join(path, "index.ts"),
-    join(path, "main.hql"),
-    join(path, "main.js"),
-    join(path, "main.ts"),
-  ];
-
-  // Add directory name matching file
-  const dirName = path.split("/").pop() || "";
-  if (dirName) {
-    candidates.push(
-      join(path, `${dirName}.hql`),
-      join(path, `${dirName}.js`),
-      join(path, `${dirName}.ts`),
-    );
-  }
-
-  // Look for any candidate file
-  for (const candidate of candidates) {
-    try {
-      if (await exists(candidate)) {
-        logger.debug(`Found entry point: ${candidate}`);
-        return candidate;
-      }
-    } catch (_) {
-      // Ignore errors checking individual files
-    }
-  }
-
-  // Look for any single source file
-  return await findSingleSourceFile(path);
-}
-
-async function findSingleSourceFile(path: string): Promise<string> {
-  try {
-    const entries = [];
-    for await (const entry of Deno.readDir(path)) {
-      if (entry.isFile && (
-        entry.name.endsWith(".hql") ||
-        entry.name.endsWith(".js") ||
-        entry.name.endsWith(".ts")
-      )) {
-        entries.push(entry.name);
-      }
-    }
-
-    if (entries.length === 1) {
-      const entryPoint = join(path, entries[0]);
-      logger.debug(`Using single file as entry point: ${entryPoint}`);
-      return entryPoint;
-    } else if (entries.length > 1) {
-      console.error(`\n❌ Multiple potential entry points found. Please specify an entry file directly.`);
-    } else {
-      console.error(`\n❌ No HQL, JS, or TS files found in "${path}".`);
-    }
-  } catch (error) {
-    console.error(`\n❌ Error reading directory "${path}": ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  console.error(`\n❌ Could not determine entry point. Please specify a file directly.`);
-  exit(1);
-  return path; // This line is never reached but satisfies TypeScript
-}
-
-async function confirmDefaultDirectory(
-  args: string[],
-  options: PublishOptions,
-  entryPoint: string,
-): Promise<boolean> {
-  const usingDefault = !args.length || (args.length === 1 && ["-w", "--what"].includes(args[0]));
-  if (usingDefault && !options.dryRun && Deno.stdin.isTerminal()) {
-    const confirmMsg =
-      `\nℹ️  No file or directory specified. This will build and publish "${entryPoint}" from the current directory.\nDo you want to continue? [Y/n] `;
-    await Deno.stdout.write(new TextEncoder().encode(confirmMsg));
-
-    const buf = new Uint8Array(8);
-    const n = await Deno.stdin.read(buf);
-    const answer = n
-      ? new TextDecoder().decode(buf.subarray(0, n)).trim().toLowerCase()
-      : "";
-
-    if (answer && answer !== "y" && answer !== "yes" && answer !== "") {
-      console.log("Aborted by user.");
-      return false;
-    }
-  }
-  return true;
-}
-
-function printPublishInfo(entryPoint: string, options: PublishOptions): void {
-  const targets = [];
-  if (options.jsr) targets.push("JSR");
-  if (options.npm) targets.push("NPM");
+function printPublishInfo(entryFile: string, options: PublishOptions, metadataStatus: Record<string, MetadataFileType | null>): void {
+  const targetPlatforms = options.platforms.map(p => p.toUpperCase()).join(", ");
   
+  // Determine metadata status for each platform
+  const jsrMetadataStatus = metadataStatus.jsr ? "Using existing metadata" : "Will create metadata";
+  const npmMetadataStatus = metadataStatus.npm ? "Using existing metadata" : "Will create metadata";
+
   console.log(`
 🚀 Preparing to publish your HQL module!
-  Entry point: "${entryPoint}"
-  Package name: ${options.name ?? "(auto-generated)"}
-  Version: ${options.version ?? "(auto-incremented)"}
-  Target platforms: ${targets.join(", ")}
+  Entry file: "${entryFile}"
+  Version: ${options.version ? options.version : "(auto-determined)"}
+  Target platforms: ${targetPlatforms}
+  JSR: ${jsrMetadataStatus}
+  NPM: ${npmMetadataStatus}
   Mode: ${options.dryRun ? "Dry run (no actual publishing)" : "Live publish"}`);
 }
 
 async function publishToRegistry(
   registry: "jsr" | "npm",
   options: PublishOptions, 
-  entryPoint: string
+  metadataStatus: Record<string, MetadataFileType | null>
 ): Promise<PublishSummary> {
+  console.log(`\n📦 Starting ${registry.toUpperCase()} package publishing process`);
+  
   try {
     return registry === "jsr" 
-      ? await publishJSR({ ...options, what: entryPoint })
-      : await publishNpm({ ...options, what: entryPoint });
+      ? await publishJSR({ 
+          entryFile: options.entryFile,
+          version: options.version,
+          hasMetadata: !!metadataStatus.jsr,
+          metadataType: metadataStatus.jsr || undefined,
+          verbose: options.verbose,
+          dryRun: options.dryRun
+        })
+      : await publishNpm({ 
+          entryFile: options.entryFile,
+          version: options.version,
+          hasMetadata: !!metadataStatus.npm,
+          metadataType: metadataStatus.npm || undefined,
+          verbose: options.verbose,
+          dryRun: options.dryRun
+        });
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`\n❌ ${registry.toUpperCase()} publish failed: ${errorMessage}`);
+    
     return {
       registry,
-      name: options.name ?? '(auto)',
+      name: metadataStatus[registry] ? `(from ${metadataStatus[registry]})` : '(unknown)',
       version: options.version ?? '(auto)',
-      link: err instanceof Error ? `❌ ${err.message.split('\n')[0]}` : '❌ Failed',
+      link: `❌ ${errorMessage}`
     };
   }
 }
@@ -272,38 +183,58 @@ export async function publish(args: string[]): Promise<void> {
     
     if (options.verbose) {
       logger.debug("Running with verbose logging enabled");
+      logger.debug(`Parsed options: ${JSON.stringify(options, null, 2)}`);
     }
 
-    const entryPoint = await resolveEntryPoint(options.what);
-
-    const shouldContinue = await confirmDefaultDirectory(args, options, entryPoint);
-    if (!shouldContinue) {
-      exit(0);
+    // Ensure entry file exists
+    if (!await exists(options.entryFile)) {
+      console.error(`\n❌ Entry file not found: ${options.entryFile}`);
+      exit(1);
     }
 
-    printPublishInfo(entryPoint, options);
-
-    const summaries: PublishSummary[] = [];
+    // Detect metadata files for each platform
+    const moduleDir = dirname(options.entryFile);
+    const metadataStatus = await detectMetadataFiles(moduleDir);
     
-    // Publish to JSR if requested
-    if (options.jsr) {
-      const jsrSummary = await publishToRegistry("jsr", options, entryPoint);
-      summaries.push(jsrSummary);
-    }
-    
-    // Publish to NPM if requested
-    if (options.npm) {
-      const npmSummary = await publishToRegistry("npm", options, entryPoint);
-      summaries.push(npmSummary);
+    if (options.verbose) {
+      logger.debug(`Metadata status: ${JSON.stringify(metadataStatus, null, 2)}`);
     }
 
+    printPublishInfo(options.entryFile, options, metadataStatus);
+
+    // Run all platform publishing operations in parallel
+    const publishPromises: Promise<PublishSummary>[] = [];
+    
+    // Create publish tasks for each platform
+    for (const platform of options.platforms) {
+      const publishTask = publishToRegistry(platform, options, metadataStatus)
+        .catch(err => {
+          // Handle any uncaught errors within each platform task
+          console.error(`\n❌ ${platform.toUpperCase()} publish process encountered an error: ${err}`);
+          return {
+            registry: platform,
+            name: '(unknown)',
+            version: options.version ?? '(auto)',
+            link: `❌ Unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+          };
+        });
+      
+      publishPromises.push(publishTask);
+    }
+    
+    // Wait for all publishing operations to complete
+    const summaries = await Promise.all(publishPromises);
+    
+    // Print the combined summary
     printPublishSummary(summaries);
 
     // Check if all publishing attempts failed
     const allFailed = summaries.every(summary => summary.link.startsWith('❌'));
-    
     if (allFailed) {
       exit(1);
+    } else if (summaries.some(summary => summary.link.startsWith('❌'))) {
+      // Some failures but not all
+      console.log("\n⚠️ Some publishing operations failed. Check the summary for details.");
     }
   } catch (error) {
     console.error(`\n❌ Publish failed: ${error instanceof Error ? error.message : String(error)}`);

@@ -1,4 +1,4 @@
-// cli/publish/publish_jsr.ts - Streamlined JSR publishing implementation
+// publish_jsr.ts - JSR-specific publishing implementation
 import {
   basename,
   dirname,
@@ -8,179 +8,226 @@ import {
   runCmd,
   writeTextFile,
   readTextFile,
-  cwd,
 } from "../../src/platform/platform.ts";
 import { exists } from "jsr:@std/fs@1.0.13";
-import { buildJsModule } from "./build_js_module.ts";
-import { incrementPatch, prompt } from "./utils.ts";
-import { readJSON, writeJSON } from "@core/common/json.ts";
 import { globalLogger as logger } from "../../src/logger.ts";
+import { 
+  MetadataFileType, 
+  promptUser, 
+  readJSONFile, 
+  writeJSONFile,
+  incrementPatchVersion,
+  getCachedBuild
+} from "./metadata_utils.ts";
 import type { PublishSummary } from "./publish_summary.ts";
-import { getJsrLatestVersion, checkJsrPublishPermission } from "./remote_registry.ts";
+import { getJsrLatestVersion } from "./remote_registry.ts";
 
 interface PublishJSROptions {
-  what: string;
-  name?: string;
+  entryFile: string;
   version?: string;
+  hasMetadata: boolean;
+  metadataType?: MetadataFileType;
   verbose?: boolean;
   dryRun?: boolean;
 }
 
-async function getJsrConfig(
+/**
+ * Creates or updates JSR metadata file
+ */
+async function configureJsrMetadata(
   distDir: string,
-  cliName?: string,
-  cliVersion?: string,
-  dryRun?: boolean
-): Promise<{ configPath: string; config: Record<string, unknown>; jsrUser: string }> {
-  const configPath = join(distDir, "jsr.json");
-  const config = await readJSON(configPath);
-  let jsrUser = getEnv("JSR_USER") || getEnv("USER") || getEnv("USERNAME") || "js-user";
-
-  if (!config.name) {
-    jsrUser = await configurePackageName(config, distDir, cliName, jsrUser, dryRun);
-  } else if (typeof config.name === "string" && config.name.startsWith("@")) {
-    const match = config.name.match(/^@([^/]+)\//);
-    if (match) {
-      jsrUser = match[1];
-    }
-  }
-
-  await configurePackageVersion(config, cliVersion, dryRun, distDir);
-  setDefaultConfigFields(config);
-
-  return { configPath, config, jsrUser };
-}
-
-async function configurePackageName(
-  config: Record<string, unknown>,
-  distDir: string,
-  cliName?: string,
-  jsrUser?: string,
-  dryRun?: boolean
-): Promise<string> {
-  const fallbackBase = basename(distDir)
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "") || "js-module";
-  const defaultName = cliName ? cliName : `@${jsrUser}/${fallbackBase}`;
-
-  // Check if a metadata file exists in the directory
-  const hasMetadataFile = await exists(join(distDir, "deno.json")) || 
-                         await exists(join(distDir, "jsr.json")) ||
-                         await exists(join(distDir, "package.json"));
-
-  if (dryRun || Deno.env.get("DRY_RUN_PUBLISH") === "1") {
-    console.log(`  → Using auto-generated package name: "${defaultName}" (dry-run mode)`);
-    config.name = defaultName;
-  } else {
-    // Always prompt for project name if cliName is not provided or no metadata file exists
-    let enteredName = cliName;
-    if (!cliName || !hasMetadataFile) {
-      while (true) {
-        enteredName = await prompt(
-          `Enter a project name for your new JSR package (required, e.g. "my-lib"):`,
-          fallbackBase
-        );
-        // Only allow non-empty, non-whitespace project names
-        if (enteredName && enteredName.trim().length > 0) {
-          enteredName = enteredName.trim();
-          break;
-        } else {
-          console.log("  → Project name is required. Please enter a valid name.");
-        }
-      }
-    }
-    // Always scope with jsrUser
-    config.name = (enteredName as string).startsWith("@")
-      ? (enteredName as string)
-      : `@${jsrUser}/${enteredName}`;
-  }
-
-  if (typeof config.name === "string" && config.name.startsWith("@")) {
-    const match = config.name.match(/^@([^/]+)\//);
-    if (match) {
-      return match[1];
-    }
-  }
-  return jsrUser || "js-user";
-}
-
-async function configurePackageVersion(
-  config: Record<string, unknown>,
-  cliVersion?: string,
-  dryRun?: boolean,
-  distDir?: string
-): Promise<void> {
-  // Check if a metadata file exists in the directory
-  const hasMetadataFile = distDir ? (
-    await exists(join(distDir, "deno.json")) || 
-    await exists(join(distDir, "jsr.json")) ||
-    await exists(join(distDir, "package.json"))
-  ) : false;
+  options: PublishJSROptions
+): Promise<{ packageName: string; packageVersion: string }> {
+  // Load existing config or create a new one
+  let config: Record<string, unknown> = {};
+  let packageName: string;
+  let packageVersion: string;
   
-  if (cliVersion) {
-    config.version = cliVersion;
-  } else if (config.version && hasMetadataFile) {
-    config.version = incrementPatch(String(config.version));
-  } else {
-    const defaultVersion = "0.0.1";
-    
-    if (dryRun || Deno.env.get("DRY_RUN_PUBLISH") === "1") {
-      console.log(`  → Using default version: "${defaultVersion}" (dry-run mode)`);
-      config.version = defaultVersion;
+  // Determine where to find and save metadata
+  const metadataType = options.metadataType || "jsr.json";
+  const sourceDir = dirname(options.entryFile);
+  let metadataSourcePath: string;
+  
+  // Check if metadata exists in source directory or dist directory
+  if (options.hasMetadata) {
+    if (await exists(join(sourceDir, metadataType))) {
+      metadataSourcePath = join(sourceDir, metadataType);
+    } else if (await exists(join(sourceDir, "dist", metadataType))) {
+      metadataSourcePath = join(sourceDir, "dist", metadataType);
     } else {
-      config.version = await prompt(
-        `Enter version (default: "${defaultVersion}"):`,
-        defaultVersion
+      // Fallback
+      metadataSourcePath = metadataType === "deno.json" ? 
+        join(distDir, "deno.json") : join(distDir, "jsr.json");
+    }
+    
+    // Load existing metadata
+    config = await readJSONFile(metadataSourcePath);
+    logger.debug && logger.debug(`Loaded metadata from: ${metadataSourcePath}`);
+  }
+  
+  // Determine target paths for new/updated metadata files
+  const metadataPath = metadataType === "deno.json" ? 
+    join(distDir, "deno.json") : join(distDir, "jsr.json");
+  
+  if (options.hasMetadata) {
+    // If metadata exists, load it and use the name from it
+    packageName = String(config.name || "");
+    
+    // Get user scope from name (format: @scope/name)
+    const jsrUser = packageName.startsWith("@") ? 
+      packageName.substring(1, packageName.indexOf("/")) : 
+      getEnv("USER") || getEnv("USERNAME") || "user";
+
+    if (options.version) {
+      // Use explicitly provided version
+      packageVersion = options.version;
+      console.log(`  → Using specified version: ${packageVersion}`);
+    } else {
+      try {
+        // Try to get latest version from JSR registry
+        let latestVersion: string | null = null;
+        
+        if (packageName.startsWith("@")) {
+          const [_, scope, name] = packageName.match(/^@([^/]+)\/(.+)$/) || [];
+          if (scope && name) {
+            latestVersion = await getJsrLatestVersion(scope, name);
+            if (latestVersion) {
+              console.log(`  → Found latest version on JSR: ${latestVersion}`);
+            }
+          }
+        }
+        
+        if (latestVersion) {
+          // Increment existing remote version
+          packageVersion = incrementPatchVersion(latestVersion);
+          console.log(`  → Incremented version to: ${packageVersion}`);
+        } else if (config.version) {
+          // Fall back to metadata version + 0.0.1
+          packageVersion = incrementPatchVersion(String(config.version));
+          console.log(`  → Remote version not found, using metadata version + 0.0.1: ${packageVersion}`);
+        } else {
+          // Default for new packages
+          packageVersion = "0.0.1";
+          console.log(`  → Using default initial version: ${packageVersion}`);
+        }
+      } catch (error) {
+        // If anything fails, use metadata version + 0.0.1
+        packageVersion = config.version ? 
+          incrementPatchVersion(String(config.version)) : 
+          "0.0.1";
+        console.log(`  → Error fetching remote version, using: ${packageVersion}`);
+      }
+    }
+  } else {
+    // No metadata exists - we need to create it
+    // Get module name from directory or prompt
+    const moduleDir = dirname(options.entryFile);
+    const defaultName = basename(moduleDir)
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+      
+    // Get JSR scope
+    const jsrUser = getEnv("JSR_USER") || getEnv("USER") || getEnv("USERNAME") || "user";
+    
+    // Always prompt for package name when no metadata exists
+    if (options.dryRun) {
+      packageName = `@${jsrUser}/${defaultName}`;
+      console.log(`  → Using auto-generated package name: ${packageName} (dry-run)`);
+    } else {
+      const moduleName = await promptUser(
+        `Enter a project name for your JSR package`,
+        defaultName
       );
+      packageName = `@${jsrUser}/${moduleName}`;
     }
-  }
-
-  // Check remote JSR registry for latest version and permissions
-  if (typeof config.name === "string" && typeof config.version === "string") {
-    const match = config.name.match(/^@([^/]+)\/(.+)$/);
-    if (match) {
-      const scope = match[1];
-      const name = match[2];
-      const remoteVersion = await getJsrLatestVersion(scope, name);
-      if (remoteVersion === config.version) {
-        throw new Error(`❌ Version ${config.version} for package ${config.name} is already published on JSR.`);
-      }
-      const canPublish = await checkJsrPublishPermission(scope, name);
-      if (!canPublish) {
-        throw new Error(`❌ You do not have permission to publish to the JSR package ${config.name}.`);
-      }
+    
+    // Handle version based on CLI or prompt
+    const defaultVersion = options.version || "0.0.1";
+    if (options.dryRun) {
+      packageVersion = defaultVersion;
+      console.log(`  → Using default version: ${packageVersion} (dry-run)`);
+    } else {
+      // Prompt with defaultVersion (either CLI-provided or 0.0.1)
+      packageVersion = await promptUser(`Enter version`, defaultVersion);
     }
+    
+    // Set up basic JSR configuration
+    config = {
+      name: packageName,
+      version: packageVersion,
+      exports: "./esm/index.js",
+      license: "MIT",
+      publish: { include: ["README.md", "esm/**/*", "types/**/*", "jsr.json"] },
+      description: `HQL module: ${packageName}`
+    };
+    
+    console.log(`  → Creating new JSR metadata file: ${metadataPath}`);
   }
-}
-
-
-function setDefaultConfigFields(config: Record<string, unknown>): void {
+  
+  // Update the config with final values
+  config.name = packageName;
+  config.version = packageVersion;
+  
+  // Ensure standard fields are set
   config.exports = config.exports || "./esm/index.js";
-  config.publish = config.publish ||
-    { include: ["README.md", "esm/**/*", "types/**/*", "jsr.json"] };
-
-  if (!config.description) {
-    config.description = `HQL module: ${config.name}`;
+  config.license = config.license || "MIT";
+  config.description = config.description || `HQL module: ${packageName}`;
+  config.publish = config.publish || { 
+    include: ["README.md", "esm/**/*", "types/**/*", "jsr.json"] 
+  };
+  
+  // Write both metadata files for JSR compatibility
+  await writeJSONFile(join(distDir, "jsr.json"), config);
+  await writeJSONFile(join(distDir, "deno.json"), config);
+  
+  console.log(`  → Updated JSR metadata files in dist directory`);
+  
+  return { packageName, packageVersion };
+  
+  // Update the config with final values
+  config.name = packageName;
+  config.version = packageVersion;
+  
+  // Ensure standard fields are set
+  config.exports = config.exports || "./esm/index.js";
+  config.license = config.license || "MIT";
+  config.description = config.description || `HQL module: ${packageName}`;
+  config.publish = config.publish || { 
+    include: ["README.md", "esm/**/*", "types/**/*", "jsr.json"] 
+  };
+  
+  // Write the metadata file
+  await writeJSONFile(metadataPath, config);
+  console.log(`  → Updated JSR metadata file: ${metadataPath}`);
+  
+  // Also write deno.json if we were using jsr.json
+  if (metadataPath.endsWith("jsr.json")) {
+    await writeJSONFile(join(distDir, "deno.json"), config);
+    console.log(`  → Also created deno.json for compatibility`);
   }
-
-  if (!config.license) {
-    config.license = "MIT";
-  }
+  
+  return { packageName, packageVersion };
 }
 
+/**
+ * Ensures a README exists for the package
+ */
 async function ensureReadmeExists(distDir: string, packageName: string): Promise<void> {
   const readmePath = join(distDir, "README.md");
   if (!(await exists(readmePath))) {
     console.log(`  → Creating default README.md`);
     await writeTextFile(
       readmePath,
-      `# ${packageName}\n\nAuto-generated README for JSR package.\n`,
+      `# ${packageName}\n\nGenerated HQL module.\n`,
     );
   }
 }
 
+/**
+ * Checks if command is available in PATH
+ */
 async function checkCommandAvailable(cmd: string, cwd: string): Promise<boolean> {
   try {
     const process = runCmd({ 
@@ -196,284 +243,170 @@ async function checkCommandAvailable(cmd: string, cwd: string): Promise<boolean>
   }
 }
 
-async function publishWithCommand(
-  cmd: string,
-  subcommand: string,
-  cwd: string, 
-  publishFlags: string[]
-): Promise<{ success: boolean; errorMessage?: string; authDenied?: boolean }> {
-  console.log(`  → Running publish command: ${cmd} ${subcommand} ${publishFlags.join(" ")}`);
+/**
+ * Runs JSR publish command
+ */
+async function runJsrPublish(
+  distDir: string,
+  options: { dryRun?: boolean; verbose?: boolean }
+): Promise<{ success: boolean; error?: string }> {
+  const publishFlags = ["--allow-dirty"];
+  if (options.dryRun) publishFlags.push("--dry-run");
+  if (options.verbose) publishFlags.push("--verbose");
   
-  // Capture both output and error for analysis without re-running the command
-  const process = runCmd({
-    cmd: [cmd, subcommand, ...publishFlags],
-    cwd,
-    stderr: "piped",
-    stdout: "inherit", // Keep stdout visible to user
-  });
-  
-  // Collect stderr in chunks
-  const errorChunks: Uint8Array[] = [];
-  if (process.stderr) {
-    for await (const chunk of process.stderr) {
-      errorChunks.push(chunk);
+  // Try to find the best command for publishing
+  // 1. Try jsr command first
+  const jsrAvailable = await checkCommandAvailable("jsr", distDir);
+  if (jsrAvailable) {
+    console.log(`  → Using jsr CLI for publishing`);
+    try {
+      const process = runCmd({
+        cmd: ["jsr", "publish", ...publishFlags],
+        cwd: distDir,
+        stdout: "inherit",
+        stderr: "piped"
+      });
       
-      // Also write chunk to stderr to maintain visibility to user
-      await Deno.stderr.write(chunk);
+      // Collect stderr for error analysis
+      const errorChunks: Uint8Array[] = [];
+      if (process.stderr) {
+        for await (const chunk of process.stderr) {
+          errorChunks.push(chunk);
+          // Echo to stderr for visibility
+          await Deno.stderr.write(chunk);
+        }
+      }
+      
+      const status = await process.status;
+      
+      if (status.success) {
+        return { success: true };
+      } else {
+        const errorOutput = new TextDecoder().decode(
+          new Uint8Array(errorChunks.flatMap(arr => [...arr]))
+        );
+        return { success: false, error: errorOutput };
+      }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
   
-  const status = await process.status;
-  const errorOutput = errorChunks.length > 0 
-    ? new TextDecoder().decode(concatUint8Arrays(errorChunks)) 
-    : "";
-  
-  if (status.success) {
-    console.log(`  → Published using ${cmd} ${subcommand}`);
-    return { success: true };
-  } else {
-    console.error(`\n❌ ${cmd} ${subcommand} failed with exit code ${status.code}`);
+  // 2. Fall back to deno publish
+  console.log(`  → jsr CLI not found, trying deno publish...`);
+  try {
+    const process = runCmd({
+      cmd: ["deno", "publish", ...publishFlags],
+      cwd: distDir,
+      stdout: "inherit",
+      stderr: "piped"
+    });
     
-    // Check for authorization denied error
-    const isAuthDenied = errorOutput.includes("authorization has been denied") || 
-                        errorOutput.includes("authorizationDenied") ||
-                        errorOutput.includes("Failed to exchange authorization");
-    
-    if (isAuthDenied) {
-      const errorMessage = "JSR publish failed: Authorization was denied by the user in the web prompt.";
-      return { 
-        success: false, 
-        errorMessage,
-        authDenied: true
-      };
+    // Collect stderr for error analysis
+    const errorChunks: Uint8Array[] = [];
+    if (process.stderr) {
+      for await (const chunk of process.stderr) {
+        errorChunks.push(chunk);
+        // Echo to stderr for visibility
+        await Deno.stderr.write(chunk);
+      }
     }
     
-    return { success: false };
+    const status = await process.status;
+    
+    if (status.success) {
+      return { success: true };
+    } else {
+      const errorOutput = new TextDecoder().decode(
+        new Uint8Array(errorChunks.flatMap(arr => [...arr]))
+      );
+      return { success: false, error: errorOutput };
+    }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-function concatUint8Arrays(arrays: Uint8Array[]): Uint8Array {
-  const totalLength = arrays.reduce((acc, array) => acc + array.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const array of arrays) {
-    result.set(array, offset);
-    offset += array.length;
+/**
+ * Generates a link to the published package
+ */
+function generatePackageLink(name: string, version: string): string {
+  if (!name.startsWith("@")) {
+    return `https://jsr.io/p/${name}@${version}`;
   }
-  return result;
-}
-
-async function installJsrCli(cwd: string): Promise<boolean> {
-  console.log("  → jsr CLI not found. Attempting to install jsr CLI...");
-  const installJsr = runCmd({
-    cmd: ["deno", "install", "--global", "-A", "-f", "-n", "jsr", "https://deno.land/x/jsr@latest/cli.ts"],
-    cwd,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const installStatus = await installJsr.status;
   
-  if (installStatus.success) {
-    console.log("  → jsr CLI installed successfully.");
-    return true;
-  } else {
-    console.warn("  → Failed to install jsr CLI.");
-    return false;
+  const [_, scope, pkgName] = name.match(/^@([^/]+)\/(.+)$/) || [];
+  if (!scope || !pkgName) {
+    return `https://jsr.io`;
   }
+  
+  return `https://jsr.io/@${scope}/${pkgName}@${version}`;
 }
 
-function generateSuccessLink(packageName: string, jsrUser: string, version: string): string {
-  const packageNameWithoutPrefix = String(packageName).replace(/^@[^/]+\//, "");
-  return `https://jsr.io/@${jsrUser}/${packageNameWithoutPrefix}@${version}`;
-}
-
+/**
+ * Main JSR publishing function
+ */
 export async function publishJSR(options: PublishJSROptions): Promise<PublishSummary> {
   try {
-    console.log("\n📦 Starting JSR package publishing process");
-    Deno.env.set("SKIP_LOGIN_CHECK", "1");
-
-    const inputPath = resolve(options.what);
-    const baseDir = dirname(inputPath);
-    
-    if (options.verbose) {
-      logger.debug(`Using input path: "${inputPath}"`);
-      logger.debug(`Using base directory: "${baseDir}"`);
-    }
-
-    console.log(`\n🔨 Building module from "${inputPath}"...`);
-    const distDir = await buildJsModule(inputPath, {
+    // Build the module from entry file (uses cache if already built by another publisher)
+    console.log(`\n🔨 Building module from "${options.entryFile}"...`);
+    const distDir = await getCachedBuild(options.entryFile, {
       verbose: options.verbose,
       dryRun: options.dryRun
     });
-
-    // --- PATCH: Copy deno.json/jsr.json to distDir if present in baseDir ---
-    const configFiles = ["deno.json", "deno.jsonc", "jsr.json", "jsr.jsonc"];
-    let _configFound = false;
-    for (const file of configFiles) {
-      const srcPath = join(baseDir, file);
-      const destPath = join(distDir, file);
-      if (await exists(srcPath)) {
-        await writeTextFile(destPath, await readTextFile(srcPath));
-        _configFound = true;
-        if (options.verbose) {
-          logger.debug(`Copied ${file} to dist directory for JSR publish`);
-        }
-      }
-    }
-    // --- END PATCH ---
-    // --- JIT config generation if missing ---
-    const jsrJsonPath = join(distDir, "jsr.json");
-    const denoJsonPath = join(distDir, "deno.json");
-    if (!(await exists(jsrJsonPath)) && !(await exists(denoJsonPath))) {
-      // Smart defaults
-      const fallbackBase = basename(baseDir).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "js-module";
-      const jsrUser = getEnv("JSR_USER") || getEnv("USER") || getEnv("USERNAME") || "js-user";
-      const smartName = options.name ? (options.name.startsWith("@") ? options.name : `@${jsrUser}/${options.name}`) : `@${jsrUser}/${fallbackBase}`;
-      const smartVersion = options.version || "0.0.1";
-      const jsrConfig = {
-        name: smartName,
-        version: smartVersion,
-        exports: "./esm/index.js",
-        license: "MIT",
-        publish: { include: ["README.md", "esm/**/*", "types/**/*", "jsr.json"] },
-        description: `HQL module: ${smartName}`
-      };
-      await writeTextFile(jsrJsonPath, JSON.stringify(jsrConfig, null, 2));
-      await writeTextFile(denoJsonPath, JSON.stringify(jsrConfig, null, 2));
-      console.log(`  → Auto-generated jsr.json and deno.json in dist directory`);
-    }
-    // --- END JIT config generation ---
-    console.log(`\nℹ️ Module built to "${distDir}"`);
-
-    console.log(`\n📝 Preparing JSR configuration...`);
-    let jsrJsonBefore: Record<string, unknown> = {};
-    try {
-      jsrJsonBefore = await readJSON(join(distDir, "jsr.json"));
-    } catch {/* ignore file not found or parse error */}
+    console.log(`  → Module built successfully to: ${distDir}`);
     
-    const { configPath, config, jsrUser } = await getJsrConfig(
-      distDir,
-      options.name,
-      options.version,
-      options.dryRun
-    );
+    // Configure package metadata (create or update)
+    console.log(`\n📝 Configuring JSR package...`);
+    const { packageName, packageVersion } = await configureJsrMetadata(distDir, options);
     
-    const publishedVersion = typeof jsrJsonBefore.version === "string" 
-      ? jsrJsonBefore.version 
-      : String(config.version);
-
-    if (options.name) {
-      config.name = options.name.startsWith("@")
-        ? options.name
-        : `@${jsrUser}/${options.name}`;
-      console.log(`  → Using package name: "${config.name}"`);
-    }
-
-    await ensureReadmeExists(distDir, String(config.name));
-
-    const publishFlags = ["--allow-dirty"];
-    if (options.dryRun) publishFlags.push("--dry-run");
-    // Only add --verbose for jsr CLI, not deno
-    const jsrPublishFlags = [...publishFlags];
-    if (options.verbose) jsrPublishFlags.push("--verbose");
-
-    // Try publishing strategies in order
+    // Ensure a README exists
+    await ensureReadmeExists(distDir, packageName);
     
-    // 1. Try using jsr CLI if available
-    const jsrAvailable = await checkCommandAvailable("jsr", distDir);
-    if (jsrAvailable) {
-      const jsrResult = await publishWithCommand("jsr", "publish", distDir, jsrPublishFlags);
-      
-      // On success, return immediately
-      if (jsrResult.success) {
-        await writeJSON(configPath, config);
-        console.log(`  → Updated JSR config at "${configPath}"`);
-        return {
-          registry: "jsr",
-          name: String(config.name),
-          version: publishedVersion,
-          link: generateSuccessLink(String(config.name), jsrUser, publishedVersion)
-        };
-      }
-      
-      // If authorization was denied, don't try other methods - user explicitly said no
-      if (jsrResult.authDenied) {
-        return {
-          registry: "jsr",
-          name: String(config.name),
-          version: publishedVersion,
-          link: `❌ ${jsrResult.errorMessage}`
-        };
-      }
-    }
-
-    // 2. Try using deno publish if jsr isn't available or failed (but not due to auth denial)
-    const denoAvailable = await checkCommandAvailable("deno", distDir);
-    if (denoAvailable) {
-      const denoResult = await publishWithCommand("deno", "publish", distDir, publishFlags);
-      
-      // On success, return immediately
-      if (denoResult.success) {
-        await writeJSON(configPath, config);
-        console.log(`  → Updated JSR config at "${configPath}"`);
-        return {
-          registry: "jsr",
-          name: String(config.name),
-          version: publishedVersion,
-          link: generateSuccessLink(String(config.name), jsrUser, publishedVersion)
-        };
-      }
-      
-      // If authorization was denied, return the error and don't try other methods
-      if (denoResult.authDenied) {
-        return {
-          registry: "jsr",
-          name: String(config.name),
-          version: publishedVersion,
-          link: `❌ ${denoResult.errorMessage}`
-        };
-      }
-      
-      // For other errors, continue to next strategy
-      if (denoResult.errorMessage) {
-        console.warn(`  → ${denoResult.errorMessage}`);
-      }
-    }
-
-    // 3. Try installing jsr CLI if neither option worked so far
-    if (!options.dryRun && !await checkCommandAvailable("jsr", cwd)) {
-      const installed = await installJsrCli(cwd);
-      if (!installed) {
-        throw new Error("❌ Failed to install jsr CLI. Please install it manually and try again.");
-      }
-      // After install, user should rerun the publish command
-      console.error("jsr CLI was installed. Please rerun your publish command.");
+    // Skip actual publishing in dry run mode
+    if (options.dryRun) {
+      console.log(`\n🔍 Dry run mode - package ${packageName}@${packageVersion} would be published to JSR`);
       return {
         registry: "jsr",
-        name: String(config.name),
-        version: publishedVersion,
-        link: "jsr CLI was installed. Please rerun your publish command."
+        name: packageName,
+        version: packageVersion,
+        link: generatePackageLink(packageName, packageVersion)
       };
     }
-
-    // If all publishing attempts failed (not due to auth denial)
-    const errorInfo = detectJsrError("Neither jsr nor deno is installed or available");
-    console.error(`\n${errorInfo.message}`);
-    return {
-      registry: "jsr",
-      name: String(config.name),
-      version: publishedVersion,
-      link: errorInfo.message
-    };
     
-  } catch (err) {
-    // Fallback error handler if handlePublishError is missing
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    // Publish to JSR
+    console.log(`\n🚀 Publishing ${packageName}@${packageVersion} to JSR...`);
+    const publishResult = await runJsrPublish(distDir, { 
+      dryRun: options.dryRun,
+      verbose: options.verbose
+    });
+    
+    if (publishResult.success) {
+      console.log(`\n✅ Successfully published ${packageName}@${packageVersion} to JSR`);
+      return {
+        registry: "jsr",
+        name: packageName,
+        version: packageVersion,
+        link: generatePackageLink(packageName, packageVersion)
+      };
+    } else {
+      const errorMessage = publishResult.error || "Unknown error";
+      console.error(`\n❌ JSR publish failed: ${errorMessage}`);
+      return {
+        registry: "jsr",
+        name: packageName,
+        version: packageVersion,
+        link: `❌ JSR publish failed: ${errorMessage.split("\n")[0]}`
+      };
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`\n❌ JSR publish failed: ${errorMessage}`);
     return {
       registry: "jsr",
-      name: options.name ?? '(auto)',
-      version: options.version ?? '(auto)',
-      link: `❌ ${errorMsg.split('\n')[0]}`,
+      name: options.hasMetadata ? "(from metadata)" : "(unknown)",
+      version: options.version || "(auto)",
+      link: `❌ ${errorMessage}`
     };
   }
 }
