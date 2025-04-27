@@ -144,14 +144,14 @@ export async function promptUser(message: string, defaultValue = ""): Promise<st
     : `${message}:`;
   
   console.log(promptMessage);
-  const buf = new Uint8Array(1024);
-  await Deno.stdout.write(new TextEncoder().encode(`> `));
-  const n = await Deno.stdin.read(buf);
-  const input = n 
-    ? new TextDecoder().decode(buf.subarray(0, n)).trim() 
-    : "";
   
-  return input || defaultValue;
+  // Wrap the prompt in a Promise to maintain async signature while using built-in prompt
+  const input = await new Promise<string>(resolve => {
+    const result = prompt(`> `);
+    resolve(result || "");
+  });
+  
+  return input.trim() || defaultValue;
 }
 
 export async function ensureReadmeExists(distDir: string, packageName: string): Promise<void> {

@@ -183,28 +183,64 @@ async function runJsrPublish(
   options: { dryRun?: boolean; verbose?: boolean }
 ): Promise<{ success: boolean; error?: string }> {
   const publishFlags: string[] = [];
-  
+
   if (options.dryRun) {
     publishFlags.push("--dry-run");
   }
-  
+
   if (options.verbose) {
     publishFlags.push("--verbose");
   }
-  
-  // Check if jsr command is available
+
+  // Try jsr CLI first
   const jsrAvailable = await checkCommandAvailable("jsr", distDir);
-  if (!jsrAvailable) {
-    throw new Error(
-      "JSR CLI not available. Please install it with: deno install -A jsr@0.4.4"
-    );
+  if (jsrAvailable) {
+    return executeCommand({
+      cmd: ["jsr", "publish"],
+      cwd: distDir,
+      extraFlags: publishFlags
+    });
   }
-  
-  return executeCommand({
-    cmd: ["jsr", "publish"],
-    cwd: distDir,
-    extraFlags: publishFlags
-  });
+
+  // Fallback: Try deno publish if jsr is not available
+  const denoAvailable = await checkCommandAvailable("deno", distDir);
+  if (denoAvailable) {
+    return executeCommand({
+      cmd: ["deno", "publish"],
+      cwd: distDir,
+      extraFlags: publishFlags
+    });
+  }
+
+  // Neither jsr nor deno is available: prompt user to install jsr
+  const userInput = await promptUser(
+    "Neither jsr nor deno CLI found. Would you like to install jsr now? (y/n)",
+    "y"
+  );
+  if (userInput.trim().toLowerCase().startsWith("y")) {
+    // Install jsr CLI using deno
+    const installResult = await executeCommand({
+      cmd: ["deno", "install", "-A", "-n", "jsr", "jsr@0.4.4"],
+      cwd: distDir
+    });
+    if (!installResult.success) {
+      return {
+        success: false,
+        error: `Failed to install jsr CLI: ${installResult.error}`
+      };
+    }
+    // Retry jsr publish after install
+    return executeCommand({
+      cmd: ["jsr", "publish"],
+      cwd: distDir,
+      extraFlags: publishFlags
+    });
+  } else {
+    return {
+      success: false,
+      error: "JSR CLI not available. Please install it with: deno install -A jsr@0.4.4"
+    };
+  }
 }
 
 function generatePackageLink(name: string, version: string): string {
@@ -312,6 +348,14 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
 }
 
 function analyzeJsrError(errorOutput: string): { type: ErrorType; message: string } {
+  // Detect uncommitted changes error
+  if (errorOutput.includes("Aborting due to uncommitted changes") || errorOutput.includes("run with --allow-dirty")) {
+    return {
+      type: ErrorType.UNKNOWN,
+      message: "Publish aborted: You have uncommitted changes. Please commit your changes or run with --allow-dirty."
+    };
+  }
+  // Default: fallback to existing error detection
   const errorInfo = detectJsrError(errorOutput);
   return {
     type: errorInfo.type,

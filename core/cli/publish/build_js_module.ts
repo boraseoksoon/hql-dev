@@ -12,6 +12,24 @@ import { exists } from "jsr:@std/fs@1.0.13";
 import { globalLogger as logger } from "../../src/logger.ts";
 import { isHqlFile, isJsFile, isTypeScriptFile, checkForHqlImports } from "../../src/common/utils.ts";
 
+
+/**
+ * Removes the temporary build directory
+ */
+async function removeBuildDirectory(buildDir: string, verbose?: boolean): Promise<void> {
+  try {
+    if (await exists(buildDir)) {
+      if (verbose) {
+        logger.debug(`Removing build directory: ${buildDir}`);
+      }
+      await Deno.remove(buildDir, { recursive: true });
+    }
+  } catch (error) {
+    // Log but don't fail the build process if cleanup fails
+    console.warn(`\n⚠️ Failed to clean up build directory: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 async function checkIsFile(absolutePath: string, verbose?: boolean): Promise<boolean> {
   try {
     const stat = await Deno.stat(absolutePath);
@@ -153,6 +171,7 @@ export async function buildJsModule(
     dryRun?: boolean;
   } = {},
 ): Promise<string> {
+  let buildDir = "";
   try {
     const absoluteInputPath = resolve(inputPath);
     const isFile = await checkIsFile(absoluteInputPath, options.verbose);
@@ -162,7 +181,7 @@ export async function buildJsModule(
       ? basename(absoluteInputPath).replace(/\.(hql|js|ts)$/, "")
       : "index";
 
-    const buildDir = join(baseDir, ".build");
+    buildDir = join(baseDir, ".build");
     const distDir = join(baseDir, "dist");
 
     await createBuildDirectories(buildDir, distDir, options.verbose);
@@ -186,5 +205,10 @@ export async function buildJsModule(
   } catch (error) {
     console.error(`\n❌ Module build failed: ${error instanceof Error ? error.message : String(error)}`);
     throw error;
+  } finally {
+    // Clean up the build directory regardless of success or failure
+    if (buildDir) {
+      await removeBuildDirectory(buildDir, options.verbose);
+    }
   }
 }

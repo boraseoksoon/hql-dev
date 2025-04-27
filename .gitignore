@@ -6,6 +6,7 @@ dist/
 build/
 npm/
 lsp/out/
+.build/
 
 # Log files
 *.log
