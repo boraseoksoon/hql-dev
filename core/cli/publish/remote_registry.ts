@@ -61,15 +61,3 @@ export async function getJsrLatestVersion(scope: string, name: string): Promise<
     return null;
   }
 }
-
-export function compareVersions(v1: string, v2: string): number {
-  const parts1 = v1.split('.').map(Number);
-  const parts2 = v2.split('.').map(Number);
-  
-  for (let i = 0; i < 3; i++) {
-    if (parts1[i] > parts2[i]) return 1;
-    if (parts1[i] < parts2[i]) return -1;
-  }
-  
-  return 0;
-}

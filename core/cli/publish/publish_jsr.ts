@@ -1,3 +1,8 @@
+import type { PublishSummary } from "./publish_summary.ts";
+import { getJsrLatestVersion } from "./remote_registry.ts";
+import { detectJsrError, ErrorType } from "./error_handlers.ts";
+import { exists } from "jsr:@std/fs@1.0.13";
+import { globalLogger as logger } from "../../src/logger.ts";
 import {
   basename,
   dirname,
@@ -5,8 +10,6 @@ import {
   join,
   runCmd,
 } from "../../src/platform/platform.ts";
-import { exists } from "jsr:@std/fs@1.0.13";
-import { globalLogger as logger } from "../../src/logger.ts";
 import { 
   MetadataFileType, 
   promptUser, 
@@ -14,11 +17,9 @@ import {
   writeJSONFile,
   incrementPatchVersion,
   getCachedBuild,
-  ensureReadmeExists
+  ensureReadmeExists,
+  executeCommand
 } from "./utils.ts";
-import type { PublishSummary } from "./publish_summary.ts";
-import { getJsrLatestVersion } from "./remote_registry.ts";
-import { detectJsrError, ErrorType } from "./error_handlers.ts";
 
 interface PublishJSROptions {
   entryFile: string;
@@ -47,8 +48,7 @@ async function determineJsrPackageInfo(
     } else if (await exists(join(sourceDir, "dist", metadataType))) {
       metadataSourcePath = join(sourceDir, "dist", metadataType);
     } else {
-      metadataSourcePath = metadataType === "deno.json" ? 
-        join(distDir, "deno.json") : join(distDir, "jsr.json");
+      metadataSourcePath = metadataType === "deno.json" ?  join(distDir, "deno.json") : join(distDir, "jsr.json");
     }
     
     config = await readJSONFile(metadataSourcePath);
@@ -56,10 +56,6 @@ async function determineJsrPackageInfo(
     
     packageName = String(config.name || "");
     
-    const jsrUser = packageName.startsWith("@") ? 
-      packageName.substring(1, packageName.indexOf("/")) : 
-      getEnv("USER") || getEnv("USERNAME") || "user";
-
     if (options.version) {
       packageVersion = options.version;
       console.log(`  → Using specified version: ${packageVersion}`);
@@ -156,7 +152,6 @@ async function determineJsrPackageInfo(
 
 async function updateJsrMetadata(
   distDir: string, 
-  packageName: string, 
   packageVersion: string, 
   config: Record<string, unknown>
 ): Promise<void> {
@@ -187,74 +182,29 @@ async function runJsrPublish(
   distDir: string,
   options: { dryRun?: boolean; verbose?: boolean }
 ): Promise<{ success: boolean; error?: string }> {
-  const publishFlags = ["--allow-dirty"];
-  if (options.dryRun) publishFlags.push("--dry-run");
-  if (options.verbose) publishFlags.push("--verbose");
+  const publishFlags: string[] = [];
   
+  if (options.dryRun) {
+    publishFlags.push("--dry-run");
+  }
+  
+  if (options.verbose) {
+    publishFlags.push("--verbose");
+  }
+  
+  // Check if jsr command is available
   const jsrAvailable = await checkCommandAvailable("jsr", distDir);
-  if (jsrAvailable) {
-    console.log(`  → Using jsr CLI for publishing`);
-    try {
-      const process = runCmd({
-        cmd: ["jsr", "publish", ...publishFlags],
-        cwd: distDir,
-        stdout: "inherit",
-        stderr: "piped"
-      });
-      
-      const errorChunks: Uint8Array[] = [];
-      if (process.stderr) {
-        for await (const chunk of process.stderr) {
-          errorChunks.push(chunk);
-          await Deno.stderr.write(chunk);
-        }
-      }
-      
-      const status = await process.status;
-      
-      if (status.success) {
-        return { success: true };
-      } else {
-        const errorOutput = new TextDecoder().decode(
-          new Uint8Array(errorChunks.flatMap(arr => [...arr]))
-        );
-        return { success: false, error: errorOutput };
-      }
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
-    }
+  if (!jsrAvailable) {
+    throw new Error(
+      "JSR CLI not available. Please install it with: deno install -A jsr@0.4.4"
+    );
   }
   
-  console.log(`  → jsr CLI not found, trying deno publish...`);
-  try {
-    const process = runCmd({
-      cmd: ["deno", "publish", ...publishFlags],
-      cwd: distDir,
-      stdout: "inherit",
-      stderr: "piped"
-    });
-    
-    const errorChunks: Uint8Array[] = [];
-    if (process.stderr) {
-      for await (const chunk of process.stderr) {
-        errorChunks.push(chunk);
-        await Deno.stderr.write(chunk);
-      }
-    }
-    
-    const status = await process.status;
-    
-    if (status.success) {
-      return { success: true };
-    } else {
-      const errorOutput = new TextDecoder().decode(
-        new Uint8Array(errorChunks.flatMap(arr => [...arr]))
-      );
-      return { success: false, error: errorOutput };
-    }
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : String(error) };
-  }
+  return executeCommand({
+    cmd: ["jsr", "publish"],
+    cwd: distDir,
+    extraFlags: publishFlags
+  });
 }
 
 function generatePackageLink(name: string, version: string): string {
@@ -287,7 +237,7 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
     if (options.dryRun) {
       console.log(`\n🔍 Dry run mode - package ${packageName}@${packageVersion} would be published to JSR`);
       
-      await updateJsrMetadata(distDir, packageName, packageVersion, config);
+      await updateJsrMetadata(distDir, packageVersion, config);
       
       return {
         registry: "jsr",
@@ -300,6 +250,7 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
     let attempt = 0;
     const maxRetries = 3;
     let currentVersion = packageVersion;
+    
     while (attempt <= maxRetries) {
       console.log(`\n🚀 Publishing ${packageName}@${currentVersion} to JSR...`);
       const publishResult = await runJsrPublish(distDir, { 
@@ -308,7 +259,7 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
       });
       if (publishResult.success) {
         console.log(`\n✅ Successfully published ${packageName}@${currentVersion} to JSR`);
-        await updateJsrMetadata(distDir, packageName, currentVersion, config);
+        await updateJsrMetadata(distDir, currentVersion, config);
         return {
           registry: "jsr",
           name: packageName,
@@ -320,13 +271,11 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
         const errorAnalysis = analyzeJsrError(errorOutput);
         if (errorAnalysis.type === ErrorType.VERSION_CONFLICT && attempt < maxRetries) {
           let localVersion = currentVersion;
-          try {
-            const metaPath = join(distDir, options.metadataType || "deno.json");
-            const metaJson = await readJSONFile(metaPath);
-            if (metaJson && typeof metaJson.version === "string") {
-              localVersion = metaJson.version;
-            }
-          } catch {}
+          const metaPath = join(distDir, options.metadataType || "deno.json");
+          const metaJson = await readJSONFile(metaPath);
+          if (metaJson && typeof metaJson.version === "string") {
+            localVersion = metaJson.version;
+          }
           const suggested = incrementPatchVersion(localVersion);
           const userInput = await promptUser(`JSR publish failed: Version ${currentVersion} already exists. Enter a new version to try`, suggested);
           currentVersion = userInput;

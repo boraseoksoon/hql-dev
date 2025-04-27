@@ -1,12 +1,14 @@
+import type { PublishSummary } from "./publish_summary.ts";
+import { getNpmLatestVersion } from "./remote_registry.ts";
+import { detectNpmError, ErrorType } from "./error_handlers.ts";
+import { exists } from "jsr:@std/fs@1.0.13";
+import { globalLogger as logger } from "../../src/logger.ts";
 import {
   basename,
   dirname,
   getEnv,
   join,
-  runCmd,
 } from "../../src/platform/platform.ts";
-import { exists } from "jsr:@std/fs@1.0.13";
-import { globalLogger as logger } from "../../src/logger.ts";
 import { 
   MetadataFileType, 
   promptUser, 
@@ -14,11 +16,9 @@ import {
   writeJSONFile,
   incrementPatchVersion,
   getCachedBuild,
-  ensureReadmeExists
+  ensureReadmeExists,
+  executeCommand
 } from "./utils.ts";
-import type { PublishSummary } from "./publish_summary.ts";
-import { getNpmLatestVersion } from "./remote_registry.ts";
-import { detectNpmError, ErrorType } from "./error_handlers.ts";
 
 interface PublishNpmOptions {
   entryFile: string;
@@ -61,21 +61,22 @@ async function determineNpmPackageInfo(
       let latestVersion: string | null = null;
       let attempts = 0;
       const maxAttempts = 10;
+
       try {
         latestVersion = await getNpmLatestVersion(packageName);
       } catch (error) {
         latestVersion = null;
       }
+      
       let candidateVersion = latestVersion ? incrementPatchVersion(latestVersion) : (config.version ? incrementPatchVersion(String(config.version)) : "0.0.1");
       let foundAvailable = false;
+
       while (attempts < maxAttempts) {
         let existsRemotely = false;
-        try {
-          const remoteLatest = await getNpmLatestVersion(packageName);
-          if (remoteLatest && remoteLatest === candidateVersion) {
-            existsRemotely = true;
-          }
-        } catch {}
+        const remoteLatest = await getNpmLatestVersion(packageName);
+        if (remoteLatest && remoteLatest === candidateVersion) {
+          existsRemotely = true;
+        }
         if (!existsRemotely) {
           foundAvailable = true;
           break;
@@ -83,6 +84,7 @@ async function determineNpmPackageInfo(
         candidateVersion = incrementPatchVersion(candidateVersion);
         attempts++;
       }
+
       if (foundAvailable) {
         packageVersion = candidateVersion;
         if (latestVersion) {
@@ -153,7 +155,6 @@ async function determineNpmPackageInfo(
 
 async function updateNpmMetadata(
   distDir: string, 
-  packageName: string, 
   packageVersion: string, 
   config: Record<string, unknown>
 ): Promise<void> {
@@ -176,35 +177,11 @@ async function runNpmPublish(
   const publishCmd = ["npm", "publish", "--access", "public"];
   console.log(`  → Running: ${publishCmd.join(" ")}`);
   
-  try {
-    const process = runCmd({
-      cmd: publishCmd,
-      cwd: distDir,
-      stdout: "inherit",
-      stderr: "piped"
-    });
-    
-    const errorChunks: Uint8Array[] = [];
-    if (process.stderr) {
-      for await (const chunk of process.stderr) {
-        errorChunks.push(chunk);
-        await Deno.stderr.write(chunk);
-      }
-    }
-    
-    const status = await process.status;
-    
-    if (status.success) {
-      return { success: true };
-    } else {
-      const errorOutput = new TextDecoder().decode(
-        new Uint8Array(errorChunks.flatMap(arr => [...arr]))
-      );
-      return { success: false, error: errorOutput };
-    }
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : String(error) };
-  }
+  return await executeCommand({
+    cmd: ["npm", "publish"],
+    cwd: distDir,
+    extraFlags: ["--access", "public"]
+  });
 }
 
 export async function publishNpm(options: PublishNpmOptions): Promise<PublishSummary> {
@@ -224,7 +201,7 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
     if (options.dryRun) {
       console.log(`\n🔍 Dry run mode - package ${packageName}@${packageVersion} would be published to NPM`);
       
-      await updateNpmMetadata(distDir, packageName, packageVersion, config);
+      await updateNpmMetadata(distDir, packageVersion, config);
       
       return {
         registry: "npm",
@@ -234,20 +211,18 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
       };
     }
     
-    await updateNpmMetadata(distDir, packageName, packageVersion, config);
+    await updateNpmMetadata(distDir, packageVersion, config);
 
     let attempt = 0;
     const maxRetries = 3;
     let currentVersion = packageVersion;
     while (attempt <= maxRetries) {
-      await updateNpmMetadata(distDir, packageName, currentVersion, config);
+      await updateNpmMetadata(distDir, currentVersion, config);
       console.log(`\n🚀 Publishing ${packageName}@${currentVersion} to NPM...`);
-      const publishResult = await runNpmPublish(distDir, { 
-        dryRun: options.dryRun 
-      });
+      const publishResult = await runNpmPublish(distDir, { dryRun: options.dryRun });
       if (publishResult.success) {
         console.log(`\n✅ Successfully published ${packageName}@${currentVersion} to NPM`);
-        await updateNpmMetadata(distDir, packageName, currentVersion, config);
+        await updateNpmMetadata(distDir, currentVersion, config);
         return {
           registry: "npm",
           name: packageName,
