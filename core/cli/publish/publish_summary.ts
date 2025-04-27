@@ -42,7 +42,7 @@ export function printPublishSummary(summaries: PublishSummary[]) {
   console.log(sep);
   
   for (const s of summaries) {
-    const status = s.link.startsWith('❌') ? '❌ Failed' : '✅ Success';
+    const status = s.link.startsWith('❌') ? '❌' : '✅';
     const link = s.link.startsWith('❌') 
       ? s.link.substring(2).trim() // Remove the error icon
       : s.link;
@@ -63,7 +63,7 @@ export function printPublishSummary(summaries: PublishSummary[]) {
     if (s.link.startsWith('❌')) {
       console.log(`❌ ${s.registry.toUpperCase()}: ${s.link.substring(2)}`);
     } else {
-      console.log(`🔗 ${s.registry.toUpperCase()}: ${s.link}`);
+      console.log(`✅ ${s.registry.toUpperCase()}: ${s.link}`);
     }
   }
   

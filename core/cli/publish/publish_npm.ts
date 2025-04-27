@@ -1,13 +1,9 @@
-import { detectNpmError } from "./error_handlers.ts";// publish_npm.ts - NPM-specific publishing implementation
 import {
   basename,
   dirname,
   getEnv,
   join,
-  resolve,
   runCmd,
-  writeTextFile,
-  readTextFile,
 } from "../../src/platform/platform.ts";
 import { exists } from "jsr:@std/fs@1.0.13";
 import { globalLogger as logger } from "../../src/logger.ts";
@@ -17,7 +13,8 @@ import {
   readJSONFile, 
   writeJSONFile,
   incrementPatchVersion,
-  getCachedBuild
+  getCachedBuild,
+  ensureReadmeExists
 } from "./metadata_utils.ts";
 import type { PublishSummary } from "./publish_summary.ts";
 import { getNpmLatestVersion } from "./remote_registry.ts";
@@ -168,40 +165,6 @@ async function configureNpmMetadata(
   console.log(`  → Updated package.json file: ${packageJsonPath}`);
   
   return { packageName, packageVersion };
-  
-  // Update the config with final values
-  config.name = packageName;
-  config.version = packageVersion;
-  
-  // Ensure standard fields are set
-  config.description = config.description || `HQL module: ${packageName}`;
-  config.module = config.module || "./esm/index.js";
-  config.main = config.main || "./esm/index.js";
-  config.types = config.types || "./types/index.d.ts";
-  config.files = config.files || ["esm", "types", "README.md"];
-  config.type = "module";
-  config.author = config.author || getEnv("USER") || getEnv("USERNAME") || "HQL User";
-  config.license = config.license || "MIT";
-  
-  // Write the package.json file
-  await writeJSONFile(packageJsonPath, config);
-  console.log(`  → Updated package.json file: ${packageJsonPath}`);
-  
-  return { packageName, packageVersion };
-}
-
-/**
- * Ensures a README exists for the package
- */
-async function ensureReadmeExists(distDir: string, packageName: string): Promise<void> {
-  const readmePath = join(distDir, "README.md");
-  if (!(await exists(readmePath))) {
-    console.log(`  → Creating default README.md`);
-    await writeTextFile(
-      readmePath,
-      `# ${packageName}\n\nGenerated HQL module.\n`,
-    );
-  }
 }
 
 /**

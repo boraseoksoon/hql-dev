@@ -1,7 +1,7 @@
 // metadata_utils.ts - Utilities for handling metadata files in the HQL publish system
 import { exists } from "jsr:@std/fs@1.0.13";
-import { join, dirname } from "../../src/platform/platform.ts";
-import { globalLogger as logger } from "../../src/logger.ts";
+import { writeTextFile, join, dirname } from "@platform/platform.ts";
+import { globalLogger as logger } from "@core/logger.ts";
 import { buildJsModule } from "./build_js_module.ts";
 
 export type MetadataFileType = "package.json" | "deno.json" | "jsr.json";
@@ -193,4 +193,19 @@ export async function promptUser(message: string, defaultValue = ""): Promise<st
     : "";
   
   return input || defaultValue;
+}
+
+
+/**
+ * Ensures a README exists for the package
+ */
+export async function ensureReadmeExists(distDir: string, packageName: string): Promise<void> {
+  const readmePath = join(distDir, "README.md");
+  if (!(await exists(readmePath))) {
+    console.log(`  → Creating default README.md`);
+    await writeTextFile(
+      readmePath,
+      `# ${packageName}\n\nGenerated HQL module.\n`,
+    );
+  }
 }

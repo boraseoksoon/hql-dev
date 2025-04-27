@@ -4,10 +4,8 @@ import {
   dirname,
   getEnv,
   join,
-  resolve,
   runCmd,
   writeTextFile,
-  readTextFile,
 } from "../../src/platform/platform.ts";
 import { exists } from "jsr:@std/fs@1.0.13";
 import { globalLogger as logger } from "../../src/logger.ts";
@@ -17,7 +15,8 @@ import {
   readJSONFile, 
   writeJSONFile,
   incrementPatchVersion,
-  getCachedBuild
+  getCachedBuild,
+  ensureReadmeExists
 } from "./metadata_utils.ts";
 import type { PublishSummary } from "./publish_summary.ts";
 import { getJsrLatestVersion } from "./remote_registry.ts";
@@ -185,44 +184,6 @@ async function configureJsrMetadata(
   console.log(`  → Updated JSR metadata files in dist directory`);
   
   return { packageName, packageVersion };
-  
-  // Update the config with final values
-  config.name = packageName;
-  config.version = packageVersion;
-  
-  // Ensure standard fields are set
-  config.exports = config.exports || "./esm/index.js";
-  config.license = config.license || "MIT";
-  config.description = config.description || `HQL module: ${packageName}`;
-  config.publish = config.publish || { 
-    include: ["README.md", "esm/**/*", "types/**/*", "jsr.json"] 
-  };
-  
-  // Write the metadata file
-  await writeJSONFile(metadataPath, config);
-  console.log(`  → Updated JSR metadata file: ${metadataPath}`);
-  
-  // Also write deno.json if we were using jsr.json
-  if (metadataPath.endsWith("jsr.json")) {
-    await writeJSONFile(join(distDir, "deno.json"), config);
-    console.log(`  → Also created deno.json for compatibility`);
-  }
-  
-  return { packageName, packageVersion };
-}
-
-/**
- * Ensures a README exists for the package
- */
-async function ensureReadmeExists(distDir: string, packageName: string): Promise<void> {
-  const readmePath = join(distDir, "README.md");
-  if (!(await exists(readmePath))) {
-    console.log(`  → Creating default README.md`);
-    await writeTextFile(
-      readmePath,
-      `# ${packageName}\n\nGenerated HQL module.\n`,
-    );
-  }
 }
 
 /**
