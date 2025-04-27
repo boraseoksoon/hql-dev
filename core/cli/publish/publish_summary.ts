@@ -1,5 +1,7 @@
+export type RegistryType = "npm" | "jsr";
+
 export interface PublishSummary {
-  registry: "npm" | "jsr";
+  registry: RegistryType;
   name: string;
   version: string;
   link: string;
