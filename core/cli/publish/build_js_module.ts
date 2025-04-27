@@ -104,7 +104,6 @@ async function prepareDistributionFiles(
     await ensureDir(esmDir);
     await ensureDir(typesDir);
 
-    // Copy JavaScript output
     if (await exists(jsOutputPath)) {
       const jsContent = await readTextFile(jsOutputPath);
       await writeTextFile(join(esmDir, "index.js"), jsContent);
@@ -115,7 +114,6 @@ async function prepareDistributionFiles(
       console.warn(`\n⚠️ Transpiled output file not found. Package may be incomplete.`);
     }
 
-    // Copy or create TypeScript definitions
     if (await exists(dtsOutputPath)) {
       const dtsContent = await readTextFile(dtsOutputPath);
       await writeTextFile(join(typesDir, "index.d.ts"), dtsContent);
@@ -132,7 +130,6 @@ async function prepareDistributionFiles(
       }
     }
     
-    // Create README if needed
     const readmePath = join(distDir, "README.md");
     if (!await exists(readmePath)) {
       await writeTextFile(

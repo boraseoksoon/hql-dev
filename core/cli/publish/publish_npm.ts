@@ -1,13 +1,9 @@
-// publish_npm.ts - NPM-specific publishing implementation
 import {
   basename,
   dirname,
   getEnv,
   join,
-  resolve,
   runCmd,
-  writeTextFile,
-  readTextFile,
 } from "../../src/platform/platform.ts";
 import { exists } from "jsr:@std/fs@1.0.13";
 import { globalLogger as logger } from "../../src/logger.ts";
@@ -17,8 +13,9 @@ import {
   readJSONFile, 
   writeJSONFile,
   incrementPatchVersion,
-  getCachedBuild
-} from "./metadata_utils.ts";
+  getCachedBuild,
+  ensureReadmeExists
+} from "./utils.ts";
 import type { PublishSummary } from "./publish_summary.ts";
 import { getNpmLatestVersion } from "./remote_registry.ts";
 import { detectNpmError, ErrorType } from "./error_handlers.ts";
@@ -32,47 +29,35 @@ interface PublishNpmOptions {
   dryRun?: boolean;
 }
 
-/**
- * Determines the package name and version for NPM publishing
- * NOTE: Does NOT write to metadata files - that happens only after successful publish
- */
 async function determineNpmPackageInfo(
   distDir: string,
   options: PublishNpmOptions
 ): Promise<{ packageName: string; packageVersion: string; config: Record<string, unknown> }> {
-  // Load existing config or create a new one
   let config: Record<string, unknown> = {};
   let packageName: string;
   let packageVersion: string;
   
-  // Determine where to find metadata
   const sourceDir = dirname(options.entryFile);
   let metadataSourcePath: string;
   
-  // Check if metadata exists in source directory or dist directory
   if (options.hasMetadata) {
     if (await exists(join(sourceDir, "package.json"))) {
       metadataSourcePath = join(sourceDir, "package.json");
     } else if (await exists(join(sourceDir, "dist", "package.json"))) {
       metadataSourcePath = join(sourceDir, "dist", "package.json");
     } else {
-      // Fallback
       metadataSourcePath = join(distDir, "package.json");
     }
     
-    // Load existing metadata
     config = await readJSONFile(metadataSourcePath);
     logger.debug && logger.debug(`Loaded metadata from: ${metadataSourcePath}`);
     
-    // If metadata exists, load it and use the name from it
     packageName = String(config.name || "");
     
     if (options.version) {
-      // Use explicitly provided version
       packageVersion = options.version;
       console.log(`  → Using specified version: ${packageVersion}`);
     } else {
-      // Robust version increment: find next available version
       let latestVersion: string | null = null;
       let attempts = 0;
       const maxAttempts = 10;
@@ -84,7 +69,6 @@ async function determineNpmPackageInfo(
       let candidateVersion = latestVersion ? incrementPatchVersion(latestVersion) : (config.version ? incrementPatchVersion(String(config.version)) : "0.0.1");
       let foundAvailable = false;
       while (attempts < maxAttempts) {
-        // Check if candidateVersion exists in registry
         let existsRemotely = false;
         try {
           const remoteLatest = await getNpmLatestVersion(packageName);
@@ -99,7 +83,6 @@ async function determineNpmPackageInfo(
         candidateVersion = incrementPatchVersion(candidateVersion);
         attempts++;
       }
-      // Always auto-select the version, do not prompt here
       if (foundAvailable) {
         packageVersion = candidateVersion;
         if (latestVersion) {
@@ -107,15 +90,12 @@ async function determineNpmPackageInfo(
         }
         console.log(`  → Using next available version: ${packageVersion}`);
       } else {
-        // Fallback: use local package.json version
         const localVersion = config.version ? String(config.version) : "0.0.1";
         packageVersion = incrementPatchVersion(localVersion);
         console.log(`  → Could not find available version after ${maxAttempts} attempts. Using local package.json version increment: ${packageVersion}`);
       }
     }
   } else {
-    // No metadata exists - we need to create it
-    // Get module name from directory or prompt
     const moduleDir = dirname(options.entryFile);
     const defaultName = basename(moduleDir)
       .toLowerCase()
@@ -123,7 +103,6 @@ async function determineNpmPackageInfo(
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "");
     
-    // Always prompt for package name when no metadata exists
     if (options.dryRun) {
       packageName = defaultName;
       console.log(`  → Using auto-generated package name: ${packageName} (dry-run)`);
@@ -134,17 +113,14 @@ async function determineNpmPackageInfo(
       );
     }
     
-    // Handle version based on CLI or prompt
     const defaultVersion = options.version || "0.0.1";
     if (options.dryRun) {
       packageVersion = defaultVersion;
       console.log(`  → Using default version: ${packageVersion} (dry-run)`);
     } else {
-      // Prompt with defaultVersion (either CLI-provided or 0.0.1)
       packageVersion = await promptUser(`Enter version`, defaultVersion);
     }
     
-    // Set up basic NPM configuration (but don't write it yet)
     config = {
       name: packageName,
       version: packageVersion,
@@ -161,11 +137,8 @@ async function determineNpmPackageInfo(
     console.log(`  → Will create new package.json file after successful publish`);
   }
   
-  // Prepare the config with final values but don't write it yet
   config.name = packageName;
-  // Don't update version yet - that happens after successful publish
   
-  // Ensure standard fields are set
   config.description = config.description || `HQL module: ${packageName}`;
   config.module = config.module || "./esm/index.js";
   config.main = config.main || "./esm/index.js";
@@ -178,41 +151,19 @@ async function determineNpmPackageInfo(
   return { packageName, packageVersion, config };
 }
 
-/**
- * Updates NPM metadata files after successful publish
- */
 async function updateNpmMetadata(
   distDir: string, 
   packageName: string, 
   packageVersion: string, 
   config: Record<string, unknown>
 ): Promise<void> {
-  // Update the config with the successful version
   config.version = packageVersion;
   
-  // Write the package.json file
   const packageJsonPath = join(distDir, "package.json");
   await writeJSONFile(packageJsonPath, config);
   console.log(`  → Updated package.json file with version ${packageVersion}`);
 }
 
-/**
- * Ensures a README exists for the package
- */
-async function ensureReadmeExists(distDir: string, packageName: string): Promise<void> {
-  const readmePath = join(distDir, "README.md");
-  if (!(await exists(readmePath))) {
-    console.log(`  → Creating default README.md`);
-    await writeTextFile(
-      readmePath,
-      `# ${packageName}\n\nGenerated HQL module.\n`,
-    );
-  }
-}
-
-/**
- * Runs NPM publish command
- */
 async function runNpmPublish(
   distDir: string,
   options: { dryRun?: boolean }
@@ -233,12 +184,10 @@ async function runNpmPublish(
       stderr: "piped"
     });
     
-    // Collect stderr for error analysis
     const errorChunks: Uint8Array[] = [];
     if (process.stderr) {
       for await (const chunk of process.stderr) {
         errorChunks.push(chunk);
-        // Echo to stderr for visibility
         await Deno.stderr.write(chunk);
       }
     }
@@ -258,23 +207,8 @@ async function runNpmPublish(
   }
 }
 
-/**
- * Analyzes error output from NPM publish
- */
-function analyzeNpmError(errorOutput: string): { type: ErrorType; message: string } {
-  const errorInfo = detectNpmError(errorOutput);
-  return {
-    type: errorInfo.type,
-    message: errorInfo.message
-  };
-}
-
-/**
- * Main NPM publishing function
- */
 export async function publishNpm(options: PublishNpmOptions): Promise<PublishSummary> {
   try {
-    // Build the module from entry file (uses cache if already built by another publisher)
     console.log(`\n🔨 Building module from "${options.entryFile}"...`);
     const distDir = await getCachedBuild(options.entryFile, {
       verbose: options.verbose,
@@ -282,18 +216,14 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
     });
     console.log(`  → Module built successfully to: ${distDir}`);
     
-    // Determine package info but don't write to metadata files yet
     console.log(`\n📝 Configuring NPM package...`);
     const { packageName, packageVersion, config } = await determineNpmPackageInfo(distDir, options);
     
-    // Ensure a README exists
     await ensureReadmeExists(distDir, packageName);
     
-    // Skip actual publishing in dry run mode
     if (options.dryRun) {
       console.log(`\n🔍 Dry run mode - package ${packageName}@${packageVersion} would be published to NPM`);
       
-      // In dry run, we can update metadata as this won't actually publish
       await updateNpmMetadata(distDir, packageName, packageVersion, config);
       
       return {
@@ -304,15 +234,12 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
       };
     }
     
-    // Write updated package.json before publishing
     await updateNpmMetadata(distDir, packageName, packageVersion, config);
 
     let attempt = 0;
-    let maxRetries = 3;
-    let lastError = null;
+    const maxRetries = 3;
     let currentVersion = packageVersion;
     while (attempt <= maxRetries) {
-      // Write updated package.json before publishing (in case version changed)
       await updateNpmMetadata(distDir, packageName, currentVersion, config);
       console.log(`\n🚀 Publishing ${packageName}@${currentVersion} to NPM...`);
       const publishResult = await runNpmPublish(distDir, { 
@@ -330,17 +257,13 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
       } else {
         const errorOutput = publishResult.error || "Unknown error";
         const errorAnalysis = analyzeNpmError(errorOutput);
-        lastError = errorAnalysis.message;
-        if (errorAnalysis.type === "version_conflict" && attempt < maxRetries) {
-          // Fetch local package.json version and increment it for suggestion
+        if (errorAnalysis.type === ErrorType.VERSION_CONFLICT && attempt < maxRetries) {
           let localVersion = currentVersion;
-          try {
-            const pkgPath = join(distDir, "package.json");
-            const pkgJson = await readJSONFile(pkgPath);
-            if (pkgJson && typeof pkgJson.version === "string") {
-              localVersion = pkgJson.version;
-            }
-          } catch {}
+          const pkgPath = join(distDir, "package.json");
+          const pkgJson = await readJSONFile(pkgPath);
+          if (pkgJson && typeof pkgJson.version === "string") {
+            localVersion = pkgJson.version;
+          }
           const suggested = incrementPatchVersion(localVersion);
           const userInput = await promptUser(`NPM publish failed: Version ${currentVersion} already exists. Enter a new version to try`, suggested);
           currentVersion = userInput;
@@ -357,6 +280,13 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
         }
       }
     }
+    
+    return {
+      registry: "npm",
+      name: packageName,
+      version: currentVersion,
+      link: `❌ Maximum retry attempts reached`
+    };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`\n❌ NPM publish failed: ${errorMessage}`);
@@ -367,4 +297,12 @@ export async function publishNpm(options: PublishNpmOptions): Promise<PublishSum
       link: `❌ ${errorMessage}`
     };
   }
+}
+
+function analyzeNpmError(errorOutput: string): { type: ErrorType; message: string } {
+  const errorInfo = detectNpmError(errorOutput);
+  return {
+    type: errorInfo.type,
+    message: errorInfo.message
+  };
 }

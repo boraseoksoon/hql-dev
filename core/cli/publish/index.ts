@@ -1,4 +1,3 @@
-// cli/publish/index.ts - HQL module publishing to NPM and JSR
 import { parseArgs } from "jsr:@std/cli@1.0.13/parse-args";
 import { 
   exit, 
@@ -13,7 +12,7 @@ import {
   detectMetadataFiles, 
   getPlatformsFromArgs, 
   MetadataFileType 
-} from "./metadata_utils.ts";
+} from "./utils.ts";
 
 export interface PublishOptions {
   entryFile: string;
@@ -64,13 +63,11 @@ ENVIRONMENT VARIABLES:
 }
 
 function parsePublishArgs(args: string[]): PublishOptions {
-  // First, check for help flag
   if (args.includes("-h") || args.includes("--help")) {
     showHelp();
     exit(0);
   }
 
-  // Parse basic options first
   const parsed = parseArgs(args, {
     boolean: ["verbose", "help", "dry-run"],
     alias: {
@@ -78,7 +75,6 @@ function parsePublishArgs(args: string[]): PublishOptions {
     },
   });
 
-  // Check if we have an entry file
   if (parsed._.length === 0) {
     console.error("\n❌ Error: Missing entry file path. You must specify the module's entry .hql file.");
     showHelp();
@@ -86,17 +82,12 @@ function parsePublishArgs(args: string[]): PublishOptions {
   }
 
   const entryFile = String(parsed._[0]);
-  
-  // Identify platforms (npm/jsr/all) from remaining args
   const platforms = getPlatformsFromArgs(args);
   
-  // Check for version parameter - it would be after entry file and platform
   let version: string | undefined;
   
-  // Check for a version parameter in any position - more flexible processing
   for (let i = 1; i < parsed._.length; i++) {
     const arg = String(parsed._[i]);
-    // If argument is a semver (X.Y.Z) format
     if (/^\d+\.\d+\.\d+$/.test(arg)) {
       version = arg;
       logger.debug && logger.debug(`Found version parameter: ${version} at position ${i}`);
@@ -104,7 +95,6 @@ function parsePublishArgs(args: string[]): PublishOptions {
     }
   }
 
-  // Validate version format if provided
   if (version && !/^\d+\.\d+\.\d+$/.test(version)) {
     console.error(`\n❌ Invalid version format: ${version}. Expected "X.Y.Z"`);
     exit(1);
@@ -122,7 +112,6 @@ function parsePublishArgs(args: string[]): PublishOptions {
 function printPublishInfo(entryFile: string, options: PublishOptions, metadataStatus: Record<string, MetadataFileType | null>): void {
   const targetPlatforms = options.platforms.map(p => p.toUpperCase()).join(", ");
   
-  // Determine metadata status for each platform
   const jsrMetadataStatus = metadataStatus.jsr ? "Using existing metadata" : "Will create metadata";
   const npmMetadataStatus = metadataStatus.npm ? "Using existing metadata" : "Will create metadata";
 
@@ -183,13 +172,11 @@ export async function publish(args: string[]): Promise<void> {
       logger.debug(`Parsed options: ${JSON.stringify(options, null, 2)}`);
     }
 
-    // Ensure entry file exists
     if (!await exists(options.entryFile)) {
       console.error(`\n❌ Entry file not found: ${options.entryFile}`);
       exit(1);
     }
 
-    // Detect metadata files for each platform, but pass only the relevant info to each publish task
     const moduleDir = dirname(options.entryFile);
     const metadataStatus = await detectMetadataFiles(moduleDir);
     
@@ -199,42 +186,64 @@ export async function publish(args: string[]): Promise<void> {
 
     printPublishInfo(options.entryFile, options, metadataStatus);
 
-    // Run all platform publishing operations in parallel
-    const publishPromises: Promise<PublishSummary>[] = [];
-    
-    // Each platform only receives its own metadata status
+    // Determine if all selected platforms have metadata
+    let allHaveMetadata = true;
     for (const platform of options.platforms) {
-      // Always provide both keys to match expected Record<string, MetadataFileType | null> type
-      const platformMetadataStatus = platform === "jsr"
-        ? { jsr: metadataStatus.jsr, npm: null }
-        : { jsr: null, npm: metadataStatus.npm };
-      const publishTask = publishToRegistry(platform, options, platformMetadataStatus)
-        .catch(err => {
-          // Handle any uncaught errors within each platform task
+      if ((platform === "jsr" && !metadataStatus.jsr) || (platform === "npm" && !metadataStatus.npm)) {
+        allHaveMetadata = false;
+        break;
+      }
+    }
+
+    let summaries: PublishSummary[];
+    if (allHaveMetadata) {
+      // Run publishes in parallel if all metadata exists
+      const publishPromises: Promise<PublishSummary>[] = [];
+      for (const platform of options.platforms) {
+        const platformMetadataStatus = platform === "jsr"
+          ? { jsr: metadataStatus.jsr, npm: null }
+          : { jsr: null, npm: metadataStatus.npm };
+        const publishTask = publishToRegistry(platform, options, platformMetadataStatus)
+          .catch(err => {
+            console.error(`\n❌ ${platform.toUpperCase()} publish process encountered an error: ${err}`);
+            return {
+              registry: platform,
+              name: '(unknown)',
+              version: options.version ?? '(auto)',
+              link: `❌ Unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+            };
+          });
+        publishPromises.push(publishTask);
+      }
+      summaries = await Promise.all(publishPromises);
+    } else {
+      // Run publishes sequentially if any metadata is missing
+      summaries = [];
+      for (const platform of options.platforms) {
+        const platformMetadataStatus = platform === "jsr"
+          ? { jsr: metadataStatus.jsr, npm: null }
+          : { jsr: null, npm: metadataStatus.npm };
+        try {
+          const summary = await publishToRegistry(platform, options, platformMetadataStatus);
+          summaries.push(summary);
+        } catch (err) {
           console.error(`\n❌ ${platform.toUpperCase()} publish process encountered an error: ${err}`);
-          return {
+          summaries.push({
             registry: platform,
             name: '(unknown)',
             version: options.version ?? '(auto)',
             link: `❌ Unexpected error: ${err instanceof Error ? err.message : String(err)}`,
-          };
-        });
-      
-      publishPromises.push(publishTask);
+          });
+        }
+      }
     }
-    
-    // Wait for all publishing operations to complete
-    const summaries = await Promise.all(publishPromises);
-    
-    // Print the combined summary
+
     printPublishSummary(summaries);
 
-    // Check if all publishing attempts failed
     const allFailed = summaries.every(summary => summary.link.startsWith('❌'));
     if (allFailed) {
       exit(1);
     } else if (summaries.some(summary => summary.link.startsWith('❌'))) {
-      // Some failures but not all
       console.log("\n⚠️ Some publishing operations failed. Check the summary for details.");
     }
   } catch (error) {

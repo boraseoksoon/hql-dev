@@ -1,4 +1,3 @@
-// publish_summary.ts - HQL publishing results summary formatter
 export interface PublishSummary {
   registry: "npm" | "jsr";
   name: string;
@@ -19,7 +18,6 @@ export function printPublishSummary(summaries: PublishSummary[]) {
     return ' ' + content.padEnd(width - 2) + ' ';
   }
 
-  // Table Border Characters
   const top    = '╔' + colWidths.map(w => '═'.repeat(w)).join('╦') + '╗';
   const sep    = '╠' + colWidths.map(w => '═'.repeat(w)).join('╬') + '╣';
   const bottom = '╚' + colWidths.map(w => '═'.repeat(w)).join('╩') + '╝';
@@ -44,7 +42,7 @@ export function printPublishSummary(summaries: PublishSummary[]) {
   for (const s of summaries) {
     const status = s.link.startsWith('❌') ? '❌' : '✅';
     const link = s.link.startsWith('❌') 
-      ? s.link.substring(2).trim() // Remove the error icon
+      ? s.link.substring(2).trim() 
       : s.link;
       
     console.log(row([
@@ -58,7 +56,6 @@ export function printPublishSummary(summaries: PublishSummary[]) {
   
   console.log(bottom + '\n');
   
-  // Print full links for easy access and complete error messages
   for (const s of summaries) {
     if (s.link.startsWith('❌')) {
       console.log(`❌ ${s.registry.toUpperCase()}: ${s.link.substring(2)}`);
@@ -67,7 +64,6 @@ export function printPublishSummary(summaries: PublishSummary[]) {
     }
   }
   
-  // Add success/failure summary
   const successCount = summaries.filter(s => !s.link.startsWith('❌')).length;
   const failCount = summaries.length - successCount;
   

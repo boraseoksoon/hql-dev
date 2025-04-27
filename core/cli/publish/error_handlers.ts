@@ -1,4 +1,3 @@
-// cli/publish/error_handlers.ts - Centralized error handling for publishing
 import { globalLogger as logger } from "../../src/logger.ts";
 
 export enum ErrorType {
@@ -15,7 +14,7 @@ export enum ErrorType {
   DISK_SPACE = "disk_space",
   TIMEOUT = "timeout",
   SERVER = "server",
-  USER_DENIAL = "user_denial",  // New type for explicit user denials
+  USER_DENIAL = "user_denial",
   UNKNOWN = "unknown"
 }
 
@@ -43,7 +42,7 @@ const errorPatterns = {
         "web prompt was closed",
         "web prompt was canceled",
         "browser authentication was canceled",
-        "Checking for slow types",  // This pattern is observed when user denies in web prompt
+        "Checking for slow types",
         "authorization was canceled in browser"
       ] 
     },
@@ -495,7 +494,6 @@ function detectError(errorMessage: string, registry: "npm" | "jsr"): ErrorInfo {
   
   const patterns = errorPatterns[registry];
   
-  // Check for common patterns
   for (const { type, patterns: typePatterns } of patterns) {
     if (typePatterns.some(pattern => errorMessage.toLowerCase().includes(pattern.toLowerCase()))) {
       return {
@@ -507,8 +505,6 @@ function detectError(errorMessage: string, registry: "npm" | "jsr"): ErrorInfo {
     }
   }
   
-  // Special handling for JSR web prompt denial
-  // This is a specific case where the error message might not contain explicit denial text
   if (registry === "jsr" && 
       (errorMessage.includes("Checking for slow types") || 
        errorMessage.includes("authorization denied"))) {
@@ -534,24 +530,4 @@ export function detectJsrError(errorMessage: string): ErrorInfo {
 
 export function detectNpmError(errorMessage: string): ErrorInfo {
   return detectError(errorMessage, "npm");
-}
-
-export function handlePublishError(
-  err: unknown, 
-  options: { registry: "npm" | "jsr"; name?: string; version?: string; }
-): { link: string; name: string; version: string; registry: "npm" | "jsr" } {
-  const errorMessage = err instanceof Error ? err.message : String(err);
-  
-  const errorInfo = options.registry === "jsr" 
-    ? detectJsrError(errorMessage)
-    : detectNpmError(errorMessage);
-  
-  console.error(`\n${errorInfo.message}`);
-  
-  return {
-    registry: options.registry,
-    name: options.name ?? '(auto)',
-    version: options.version ?? '(auto)',
-    link: errorInfo.message
-  };
 }
