@@ -147,7 +147,7 @@ async function determineJsrPackageInfo(
       packageVersion = await promptUser(`Enter version`, defaultVersion);
     }
     
-    // Set up basic JSR configuration (but don't write it yet)
+    // Set up basic JSR configuration and WRITE IT IMMEDIATELY (before publish)
     config = {
       name: packageName,
       version: packageVersion,
@@ -156,8 +156,10 @@ async function determineJsrPackageInfo(
       publish: { include: ["README.md", "esm/**/*", "types/**/*", "jsr.json"] },
       description: `HQL module: ${packageName}`
     };
-    
-    console.log(`  → Will create new JSR metadata after successful publish`);
+    // Write jsr.json and deno.json now
+    await writeJSONFile(join(distDir, "jsr.json"), config);
+    await writeJSONFile(join(distDir, "deno.json"), config);
+    console.log(`  → Created new JSR metadata files (jsr.json, deno.json)`);
   }
   
   // Prepare the config with final values but don't write it yet
@@ -376,8 +378,7 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
     const maxRetries = 3;
     let currentVersion = packageVersion;
     while (attempt <= maxRetries) {
-      // Write updated metadata before publishing (in case version changed)
-      await updateJsrMetadata(distDir, packageName, currentVersion, config);
+      // DO NOT update metadata before publishing!
       console.log(`\n🚀 Publishing ${packageName}@${currentVersion} to JSR...`);
       const publishResult = await runJsrPublish(distDir, { 
         dryRun: options.dryRun,
@@ -385,6 +386,7 @@ export async function publishJSR(options: PublishJSROptions): Promise<PublishSum
       });
       if (publishResult.success) {
         console.log(`\n✅ Successfully published ${packageName}@${currentVersion} to JSR`);
+        // Only update metadata after successful publish
         await updateJsrMetadata(distDir, packageName, currentVersion, config);
         return {
           registry: "jsr",

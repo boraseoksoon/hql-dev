@@ -1,12 +1,9 @@
 // cli/publish/index.ts - HQL module publishing to NPM and JSR
 import { parseArgs } from "jsr:@std/cli@1.0.13/parse-args";
 import { 
-  cwd, 
   exit, 
-  join,
   exists,
   dirname,
-  basename,
 } from "../../src/platform/platform.ts";
 import { publishNpm } from "./publish_npm.ts";
 import { publishJSR } from "./publish_jsr.ts";
@@ -192,7 +189,7 @@ export async function publish(args: string[]): Promise<void> {
       exit(1);
     }
 
-    // Detect metadata files for each platform
+    // Detect metadata files for each platform, but pass only the relevant info to each publish task
     const moduleDir = dirname(options.entryFile);
     const metadataStatus = await detectMetadataFiles(moduleDir);
     
@@ -205,9 +202,13 @@ export async function publish(args: string[]): Promise<void> {
     // Run all platform publishing operations in parallel
     const publishPromises: Promise<PublishSummary>[] = [];
     
-    // Create publish tasks for each platform
+    // Each platform only receives its own metadata status
     for (const platform of options.platforms) {
-      const publishTask = publishToRegistry(platform, options, metadataStatus)
+      // Always provide both keys to match expected Record<string, MetadataFileType | null> type
+      const platformMetadataStatus = platform === "jsr"
+        ? { jsr: metadataStatus.jsr, npm: null }
+        : { jsr: null, npm: metadataStatus.npm };
+      const publishTask = publishToRegistry(platform, options, platformMetadataStatus)
         .catch(err => {
           // Handle any uncaught errors within each platform task
           console.error(`\n❌ ${platform.toUpperCase()} publish process encountered an error: ${err}`);
