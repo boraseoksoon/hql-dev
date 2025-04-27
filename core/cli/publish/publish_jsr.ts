@@ -12,11 +12,13 @@ import {
   runCmd
 } from "../../src/platform/platform.ts";
 import { 
-  promptUser, 
+  promptUser,   
   readJSONFile, 
   writeJSONFile,
   incrementPatchVersion,
-  executeCommand
+  executeCommand,
+  updateSourceMetadataFiles,
+  resolveNextPublishVersion
 } from "./utils.ts";
 import {
   PublishOptions,
@@ -73,16 +75,15 @@ const jsrPublisher: RegistryPublisher = {
             }
           }
           
-          if (latestVersion) {
-            packageVersion = incrementPatchVersion(latestVersion);
-            console.log(`  → Incremented version to: ${packageVersion}`);
-          } else if (config.version) {
-            packageVersion = incrementPatchVersion(String(config.version));
-            console.log(`  → Remote version not found, incrementing local metadata version to: ${packageVersion}`);
-          } else {
-            packageVersion = "0.0.1";
-            console.log(`  → Using default initial version: ${packageVersion}`);
-          }
+          const candidateVersion = await resolveNextPublishVersion(
+            latestVersion,
+            config.version ? String(config.version) : null,
+            promptUser,
+            incrementPatchVersion,
+            "JSR"
+          );
+          packageVersion = candidateVersion;
+          console.log(`  → Using next available version: ${packageVersion}`);
         } catch (error) {
           packageVersion = config.version ? String(config.version) : "0.0.1";
           console.log(`  → Error fetching remote version, using: ${packageVersion}`);
@@ -147,11 +148,12 @@ const jsrPublisher: RegistryPublisher = {
   // Update JSR metadata files
   async updateMetadata(distDir, packageVersion, config) {
     config.version = packageVersion;
-    
+
     await writeJSONFile(join(distDir, "jsr.json"), config);
     await writeJSONFile(join(distDir, "deno.json"), config);
-    
-    console.log(`  → Updated JSR metadata files with version ${packageVersion}`);
+    console.log(`  → Updated dist/jsr.json and dist/deno.json with version ${packageVersion}`);
+
+    updateSourceMetadataFiles(distDir, ["jsr.json", "deno.json"], packageVersion)
   },
   
   // Run JSR publish command

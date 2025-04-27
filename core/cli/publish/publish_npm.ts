@@ -11,12 +11,13 @@ import {
   join,
 } from "../../src/platform/platform.ts";
 import { 
-  MetadataFileType, 
   promptUser, 
   readJSONFile, 
   writeJSONFile,
   incrementPatchVersion,
-  executeCommand
+  executeCommand,
+  updateSourceMetadataFiles,
+  resolveNextPublishVersion
 } from "./utils.ts";
 import {
   PublishOptions,
@@ -59,8 +60,7 @@ const npmPublisher: RegistryPublisher = {
         console.log(`  → Using specified version: ${packageVersion}`);
       } else {
         let latestVersion: string | null = null;
-        let attempts = 0;
-        const maxAttempts = 10;
+        let localVersion: string | null = config.version ? String(config.version) : null;
 
         try {
           latestVersion = await getNpmLatestVersion(packageName);
@@ -68,37 +68,21 @@ const npmPublisher: RegistryPublisher = {
           latestVersion = null;
         }
         
-        let candidateVersion = latestVersion ? 
-          incrementPatchVersion(latestVersion) : 
-          (config.version ? incrementPatchVersion(String(config.version)) : "0.0.1");
-        
-        let foundAvailable = false;
-
-        while (attempts < maxAttempts) {
-          let existsRemotely = false;
-          const remoteLatest = await getNpmLatestVersion(packageName);
-          if (remoteLatest && remoteLatest === candidateVersion) {
-            existsRemotely = true;
-          }
-          if (!existsRemotely) {
-            foundAvailable = true;
-            break;
-          }
-          candidateVersion = incrementPatchVersion(candidateVersion);
-          attempts++;
+        const candidateVersion = await resolveNextPublishVersion(
+          latestVersion,
+          localVersion,
+          promptUser,
+          incrementPatchVersion,
+          "NPM"
+        );
+        packageVersion = candidateVersion;
+        if (latestVersion) {
+          console.log(`  → Found latest version on NPM: ${latestVersion}`);
         }
-
-        if (foundAvailable) {
-          packageVersion = candidateVersion;
-          if (latestVersion) {
-            console.log(`  → Found latest version on NPM: ${latestVersion}`);
-          }
-          console.log(`  → Using next available version: ${packageVersion}`);
-        } else {
-          const localVersion = config.version ? String(config.version) : "0.0.1";
-          packageVersion = incrementPatchVersion(localVersion);
-          console.log(`  → Could not find available version after ${maxAttempts} attempts. Using local package.json version increment: ${packageVersion}`);
+        if (localVersion) {
+          console.log(`  → Local package.json version: ${localVersion}`);
         }
+        console.log(`  → Using next available version: ${packageVersion}`);
       }
     } else {
       const moduleDir = dirname(options.entryFile);
@@ -150,10 +134,13 @@ const npmPublisher: RegistryPublisher = {
   // Update NPM metadata files
   async updateMetadata(distDir, packageVersion, config) {
     config.version = packageVersion;
-    
+
     const packageJsonPath = join(distDir, "package.json");
     await writeJSONFile(packageJsonPath, config);
-    console.log(`  → Updated package.json file with version ${packageVersion}`);
+    console.log(`  → Updated dist/package.json file with version ${packageVersion}`);
+
+    // Also update the source package.json if it exists (for local version tracking)
+    await updateSourceMetadataFiles(distDir, ["package.json"], packageVersion);
   },
   
   // Run NPM publish command

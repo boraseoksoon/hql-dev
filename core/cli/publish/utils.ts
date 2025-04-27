@@ -154,6 +154,89 @@ export async function promptUser(message: string, defaultValue = ""): Promise<st
   return input.trim() || defaultValue;
 }
 
+/**
+ * Updates the version field in source metadata files (e.g., jsr.json, deno.json, package.json) if they exist.
+ * @param distDir The distribution directory (used to find the source dir)
+ * @param metaFiles Array of metadata filenames to update
+ * @param version The version string to set
+ */
+/**
+ * Compare two semver version strings (e.g., "1.2.3").
+ * Returns -1 if a < b, 1 if a > b, 0 if equal.
+ */
+/**
+ * Resolves the next version to publish by comparing remote and local versions.
+ * If the remote version is lower than local, prompts the user to confirm the next version.
+ * @param remoteVersion Version string from the registry (may be null)
+ * @param localVersion Version string from local metadata (may be null)
+ * @param promptUserFn Function to prompt the user (message, defaultValue) => Promise<string>
+ * @param incrementPatchVersionFn Function to increment a version string (semver)
+ * @param registryName Name of the registry (for messages)
+ * @returns The version string to use for publish
+ */
+export async function resolveNextPublishVersion(
+  remoteVersion: string | null,
+  localVersion: string | null,
+  promptUserFn: (msg: string, def: string) => Promise<string>,
+  incrementPatchVersionFn: (v: string) => string,
+  registryName: string
+): Promise<string> {
+  let candidateVersion: string;
+  if (remoteVersion && localVersion) {
+    if (compareVersions(remoteVersion, localVersion) < 0) {
+      const suggested = incrementPatchVersionFn(
+        compareVersions(remoteVersion, localVersion) > 0 ? remoteVersion : localVersion
+      );
+      console.warn(
+        `  → Warning: Remote ${registryName} version (${remoteVersion}) is lower than local version (${localVersion}).`
+      );
+      candidateVersion = await promptUserFn(
+        `Remote ${registryName} version (${remoteVersion}) is lower than your local metadata version (${localVersion}).\nPlease confirm the version to publish`,
+        suggested
+      );
+    } else {
+      candidateVersion = incrementPatchVersionFn(remoteVersion);
+    }
+  } else if (remoteVersion) {
+    candidateVersion = incrementPatchVersionFn(remoteVersion);
+  } else if (localVersion) {
+    candidateVersion = incrementPatchVersionFn(localVersion);
+  } else {
+    candidateVersion = "0.0.1";
+  }
+  return candidateVersion;
+}
+
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+  }
+  return 0;
+}
+
+export async function updateSourceMetadataFiles(distDir: string, metaFiles: string[], version: string): Promise<void> {
+  const { dirname, join } = await import("../../src/platform/platform.ts");
+  const { exists } = await import("jsr:@std/fs@1.0.13");
+  const { readJSONFile, writeJSONFile } = await import("./utils.ts");
+  const sourceDir = dirname(distDir);
+  for (const metaFile of metaFiles) {
+    const sourceMetaPath = join(sourceDir, metaFile);
+    if (await exists(sourceMetaPath)) {
+      try {
+        const sourceConfig = await readJSONFile(sourceMetaPath);
+        sourceConfig.version = version;
+        await writeJSONFile(sourceMetaPath, sourceConfig);
+        console.log(`  → Updated source ${metaFile} file with version ${version}`);
+      } catch (e) {
+        console.warn(`  → Warning: Could not update source ${metaFile}: ${e}`);
+      }
+    }
+  }
+}
+
 export async function ensureReadmeExists(distDir: string, packageName: string): Promise<void> {
   const readmePath = join(distDir, "README.md");
   if (!(await exists(readmePath))) {
