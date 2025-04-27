@@ -10,7 +10,7 @@ import { convertCallExpression, convertMemberExpression, convertCallMemberExpres
 import { createExpressionStatement, expressionStatement, convertExpressionStatement } from "../syntax/expression.ts";
 import { convertBinaryExpression, convertUnaryExpression, convertAssignmentExpression } from "../syntax/operators.ts";
 import { convertFunctionDeclaration, convertFxFunctionDeclaration, convertFnFunctionDeclaration, convertFunctionExpression } from "../syntax/function.ts";
-import { convertImportDeclaration, convertExportNamedDeclaration, convertExportVariableDeclaration, convertJsImportReference } from "../syntax/import-export.ts";
+import { convertImportDeclaration, convertExportNamedDeclaration, convertExportVariableDeclaration } from "../syntax/import-export.ts";
 import { convertInteropIIFE } from "../syntax/js-interop.ts";
 import { isExpressionNode } from "../syntax/expression.ts";
 import { convertGetCallExpression, convertNumericCallExpression } from "../syntax/get.ts";
@@ -83,6 +83,12 @@ export function convertIRExpr(node: IR.IRNode): ts.Expression {
           []
         );
       }
+      case IR.IRNodeType.NamespaceImport:
+        throw new CodeGenError(
+          `Namespace import statements (import * as foo from ...) are not expressions and should be handled at the statement level`,
+          `IR node NamespaceImport`,
+          node
+        );
       default:
         throw new CodeGenError(
           `Cannot convert node of type ${IR.IRNodeType[node.type] || node.type} to expression`,
@@ -154,8 +160,7 @@ export function convertIRNode(
         return expressionStatement(node as IR.IRInteropIIFE, convertInteropIIFE);
       case IR.IRNodeType.AssignmentExpression:
         return expressionStatement(node as IR.IRAssignmentExpression, convertAssignmentExpression);
-      case IR.IRNodeType.JsImportReference:
-        return convertJsImportReference(node as IR.IRJsImportReference);
+
       case IR.IRNodeType.CommentBlock:
         return convertCommentBlock(node as IR.IRCommentBlock);
       case IR.IRNodeType.Raw:
@@ -177,6 +182,8 @@ export function convertIRNode(
       case IR.IRNodeType.EnumCase:
         logger.warn(`EnumCase node encountered outside EnumDeclaration. This should not happen.`);
         return null;
+      case IR.IRNodeType.NamespaceImport:
+        return convertNamespaceImport(node as IR.IRNamespaceImport);
       default:
         logger.warn(
           `Cannot convert node of type ${node.type} (${IR.IRNodeType[node.type]}) to expression`
@@ -550,4 +557,18 @@ export function execute<T>(node: IR.IRNode | any, context: string, fn: () => T):
       node,
     );
   }
+}
+
+function convertNamespaceImport(node: IR.IRNamespaceImport): ts.ImportDeclaration {
+  // import * as name from "source"
+  return ts.factory.createImportDeclaration(
+    undefined,
+    ts.factory.createImportClause(
+      false,
+      undefined,
+      ts.factory.createNamespaceImport(ts.factory.createIdentifier(node.name))
+    ),
+    ts.factory.createStringLiteral(node.source),
+    undefined
+  );
 }
