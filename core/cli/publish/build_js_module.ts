@@ -12,7 +12,6 @@ import { exists } from "jsr:@std/fs@1.0.13";
 import { globalLogger as logger } from "../../src/logger.ts";
 import { isHqlFile, isJsFile, isTypeScriptFile, checkForHqlImports } from "../../src/common/utils.ts";
 
-
 /**
  * Removes the temporary build directory
  */
@@ -181,17 +180,17 @@ export async function buildJsModule(
       ? basename(absoluteInputPath).replace(/\.(hql|js|ts)$/, "")
       : "index";
 
+    const packageName = fileName !== "index" ? fileName : basename(baseDir);
+    const jsOutputPath = join(buildDir, `${fileName}.js`);
+    const dtsOutputPath = join(buildDir, `${fileName}.d.ts`);
+
     buildDir = join(baseDir, ".build");
     const distDir = join(baseDir, "dist");
 
     await createBuildDirectories(buildDir, distDir, options.verbose);
 
-    const jsOutputPath = join(buildDir, `${fileName}.js`);
-    const dtsOutputPath = join(buildDir, `${fileName}.d.ts`);
-
     await bundleSourceFile(absoluteInputPath, jsOutputPath, options.verbose);
 
-    const packageName = fileName !== "index" ? fileName : basename(baseDir);
     await prepareDistributionFiles(
       jsOutputPath,
       dtsOutputPath,
@@ -201,6 +200,7 @@ export async function buildJsModule(
     );
 
     console.log(`\n✅ Module build completed successfully in ${distDir}`);
+
     return distDir;
   } catch (error) {
     console.error(`\n❌ Module build failed: ${error instanceof Error ? error.message : String(error)}`);

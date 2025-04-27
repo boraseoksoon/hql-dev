@@ -155,12 +155,6 @@ export async function promptUser(message: string, defaultValue = ""): Promise<st
 }
 
 /**
- * Updates the version field in source metadata files (e.g., jsr.json, deno.json, package.json) if they exist.
- * @param distDir The distribution directory (used to find the source dir)
- * @param metaFiles Array of metadata filenames to update
- * @param version The version string to set
- */
-/**
  * Compare two semver version strings (e.g., "1.2.3").
  * Returns -1 if a < b, 1 if a > b, 0 if equal.
  */

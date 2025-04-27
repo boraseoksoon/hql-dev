@@ -1,7 +1,7 @@
 // publish_npm.ts
 import type { PublishSummary } from "./publish_summary.ts";
 import { getNpmLatestVersion } from "./remote_registry.ts";
-import { detectNpmError, ErrorType } from "./error_handlers.ts";
+import { detectNpmError } from "./error_handlers.ts";
 import { exists } from "jsr:@std/fs@1.0.13";
 import { globalLogger as logger } from "../../src/logger.ts";
 import {
@@ -28,11 +28,9 @@ import {
 
 export interface PublishNpmOptions extends PublishOptions {}
 
-// Implementation of NPM-specific publishing functions
 const npmPublisher: RegistryPublisher = {
   registryName: "npm",
   
-  // Determine package info for NPM
   async determinePackageInfo(distDir: string, options: PublishNpmOptions) {
     let config: Record<string, unknown> = {};
     let packageName: string;
@@ -114,7 +112,6 @@ const npmPublisher: RegistryPublisher = {
       console.log(`  → Will create new package.json file after successful publish`);
     }
     
-    // Ensure required properties
     config.name = packageName;
     config.description = config.description || `HQL module: ${packageName}`;
     config.module = config.module || "./esm/index.js";
@@ -125,13 +122,11 @@ const npmPublisher: RegistryPublisher = {
     config.author = config.author || getEnv("USER") || getEnv("USERNAME") || "HQL User";
     config.license = config.license || "MIT";
     
-    // Always update config.version to the resolved version
     config.version = packageVersion;
     
     return { packageName, packageVersion, config };
   },
   
-  // Update NPM metadata files
   async updateMetadata(distDir, packageVersion, config) {
     config.version = packageVersion;
 
@@ -139,11 +134,9 @@ const npmPublisher: RegistryPublisher = {
     await writeJSONFile(packageJsonPath, config);
     console.log(`  → Updated dist/package.json file with version ${packageVersion}`);
 
-    // Also update the source package.json if it exists (for local version tracking)
     await updateSourceMetadataFiles(distDir, ["package.json"], packageVersion);
   },
   
-  // Run NPM publish command
   async runPublish(distDir, options) {
     if (options.dryRun) {
       console.log(`  → Skipping actual npm publish in dry-run mode`);
@@ -159,14 +152,15 @@ const npmPublisher: RegistryPublisher = {
       extraFlags: ["--access", "public"]
     });
   },
-  
-  // Analyze NPM-specific errors
+
   analyzeError(errorOutput) {
     return detectNpmError(errorOutput);
   },
   
-  // Generate NPM package link
-  generateLink(name, version) {
+  generateLink(name: string, version?: string) {
+    if (version) {
+      return `https://www.npmjs.com/package/${name}/v/${version}`;
+    }
     return `https://www.npmjs.com/package/${name}`;
   }
 };

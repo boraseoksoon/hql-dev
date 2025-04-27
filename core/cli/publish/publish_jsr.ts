@@ -29,11 +29,9 @@ import {
 
 export interface PublishJSROptions extends PublishOptions {}
 
-// Implementation of JSR-specific publishing functions
 const jsrPublisher: RegistryPublisher = {
   registryName: "jsr",
   
-  // Determine package info for JSR
   async determinePackageInfo(distDir: string, options: PublishJSROptions) {
     let config: Record<string, unknown> = {};
     let packageName: string;
@@ -145,7 +143,6 @@ const jsrPublisher: RegistryPublisher = {
     return { packageName, packageVersion, config };
   },
   
-  // Update JSR metadata files
   async updateMetadata(distDir, packageVersion, config) {
     config.version = packageVersion;
 
@@ -156,7 +153,6 @@ const jsrPublisher: RegistryPublisher = {
     updateSourceMetadataFiles(distDir, ["jsr.json", "deno.json"], packageVersion)
   },
   
-  // Run JSR publish command
   async runPublish(distDir, options) {
     const publishFlags: string[] = [];
 
@@ -168,7 +164,6 @@ const jsrPublisher: RegistryPublisher = {
       publishFlags.push("--verbose");
     }
 
-    // Try jsr CLI first
     const jsrAvailable = await checkCommandAvailable("jsr", distDir);
     if (jsrAvailable) {
       return executeCommand({
@@ -178,7 +173,6 @@ const jsrPublisher: RegistryPublisher = {
       });
     }
 
-    // Fallback: Try deno publish if jsr is not available
     const denoAvailable = await checkCommandAvailable("deno", distDir);
     if (denoAvailable) {
       return executeCommand({
@@ -188,13 +182,11 @@ const jsrPublisher: RegistryPublisher = {
       });
     }
 
-    // Neither jsr nor deno is available: prompt user to install jsr
     const userInput = await promptUser(
       "Neither jsr nor deno CLI found. Would you like to install jsr now? (y/n)",
       "y"
     );
     if (userInput.trim().toLowerCase().startsWith("y")) {
-      // Install jsr CLI using deno
       const installResult = await executeCommand({
         cmd: ["deno", "install", "-A", "-n", "jsr", "jsr@0.4.4"],
         cwd: distDir
@@ -205,7 +197,6 @@ const jsrPublisher: RegistryPublisher = {
           error: `Failed to install jsr CLI: ${installResult.error}`
         };
       }
-      // Retry jsr publish after install
       return executeCommand({
         cmd: ["jsr", "publish"],
         cwd: distDir,
@@ -219,20 +210,16 @@ const jsrPublisher: RegistryPublisher = {
     }
   },
   
-  // Analyze JSR-specific errors
   analyzeError(errorOutput) {
-    // Detect uncommitted changes error
     if (errorOutput.includes("Aborting due to uncommitted changes") || errorOutput.includes("run with --allow-dirty")) {
       return {
         type: ErrorType.UNKNOWN,
         message: "Publish aborted: You have uncommitted changes. Please commit your changes or run with --allow-dirty."
       };
     }
-    // Default: fallback to existing error detection
     return detectJsrError(errorOutput);
   },
   
-  // Generate JSR package link
   generateLink(name, version) {
     if (!name.startsWith("@")) {
       return `https://jsr.io/p/${name}@${version}`;
@@ -262,7 +249,6 @@ async function checkCommandAvailable(cmd: string, cwd: string): Promise<boolean>
   }
 }
 
-// Main export function for JSR publishing
 export function publishJSR(options: PublishJSROptions): Promise<PublishSummary> {
   return publishPackage(options, jsrPublisher);
 }
