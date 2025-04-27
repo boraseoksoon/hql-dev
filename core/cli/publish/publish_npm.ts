@@ -137,7 +137,7 @@ const npmPublisher: RegistryPublisher = {
     await updateSourceMetadataFiles(distDir, ["package.json"], packageVersion);
   },
   
-  async runPublish(distDir, options) {
+  async runPublish(distDir, options: { dryRun?: boolean; verbose?: boolean; allowDirty?: boolean }) {
     if (options.dryRun) {
       console.log(`  → Skipping actual npm publish in dry-run mode`);
       return { success: true };
@@ -146,10 +146,14 @@ const npmPublisher: RegistryPublisher = {
     const publishCmd = ["npm", "publish", "--access", "public"];
     console.log(`  → Running: ${publishCmd.join(" ")}`);
     
+    const extraFlags = ["--access", "public"];
+    if (options.allowDirty) {
+      extraFlags.push("--allow-dirty");
+    }
     return await executeCommand({
       cmd: ["npm", "publish"],
       cwd: distDir,
-      extraFlags: ["--access", "public"]
+      extraFlags
     });
   },
 

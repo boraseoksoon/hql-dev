@@ -1,9 +1,8 @@
-import { exists } from "jsr:@std/fs@1.0.13";
+import { exists, walk } from "jsr:@std/fs@1.0.13";
 import { writeTextFile, join, dirname } from "@platform/platform.ts";
 import { globalLogger as logger } from "@core/logger.ts";
 import { buildJsModule } from "./build_js_module.ts";
 import { runCmd } from "../../src/platform/platform.ts";
-
 export interface RunCommandOptions {
   cmd: string[];
   cwd: string;
@@ -282,4 +281,63 @@ export async function executeCommand(
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+// ANSI color codes for production-ready formatting
+const colors = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  blue: "\x1b[34m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  cyan: "\x1b[36m",
+};
+
+function colorize(text: string, color: keyof typeof colors) {
+  return `${colors[color]}${text}${colors.reset}`;
+}
+
+export async function visualizeTree(
+  distDir: string,
+  highlightFiles: string[] = []
+): Promise<string> {
+  if (!(await exists(distDir))) {
+    return colorize(`(No build output at ${distDir})`, "yellow");
+  }
+  const treeLines: string[] = [];
+  const base = distDir.endsWith("/") ? distDir.slice(0, -1) : distDir;
+  const baseLen = base.length + 1;
+
+  // Gather all files/dirs
+  const entries: { path: string; isFile: boolean }[] = [];
+  for await (const entry of walk(distDir, { includeDirs: true, includeFiles: true, followSymlinks: false })) {
+    if (entry.path === distDir) continue;
+    entries.push({ path: entry.path, isFile: entry.isFile });
+  }
+
+  // Sort by directory depth then alphabetically
+  entries.sort((a, b) => a.path.localeCompare(b.path));
+
+  // Build tree
+  for (let i = 0; i < entries.length; ++i) {
+    const { path, isFile } = entries[i];
+    const relPath = path.slice(baseLen);
+    const parts = relPath.split("/");
+    let prefix = "";
+    for (let j = 0; j < parts.length - 1; ++j) {
+      prefix += (j === 0 ? "" : "  ") + "│ ";
+    }
+    const isLast =
+      i === entries.length - 1 ||
+      (entries[i + 1].path.slice(0, path.length + 1) !== path + "/");
+    const branch = isLast ? "└─" : "├─";
+    let display = `${prefix}${branch} ${parts[parts.length - 1]}`;
+    if (highlightFiles.some(hf => relPath.endsWith(hf))) {
+      display = colorize(display, "green") + colorize(" ← bundled", "cyan");
+    } else if (!isFile) {
+      display = colorize(display, "blue") + "/";
+    }
+    treeLines.push(display);
+  }
+  return colorize(`\nFiles to be published from ${distDir}:\n`, "bold") + treeLines.join("\n");
 }

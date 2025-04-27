@@ -153,7 +153,7 @@ const jsrPublisher: RegistryPublisher = {
     updateSourceMetadataFiles(distDir, ["jsr.json", "deno.json"], packageVersion)
   },
   
-  async runPublish(distDir, options) {
+  async runPublish(distDir, options: { dryRun?: boolean; verbose?: boolean; allowDirty?: boolean }) {
     const publishFlags: string[] = [];
 
     if (options.dryRun) {
@@ -162,6 +162,10 @@ const jsrPublisher: RegistryPublisher = {
 
     if (options.verbose) {
       publishFlags.push("--verbose");
+    }
+
+    if (options.allowDirty) {
+      publishFlags.push("--allow-dirty");
     }
 
     const jsrAvailable = await checkCommandAvailable("jsr", distDir);

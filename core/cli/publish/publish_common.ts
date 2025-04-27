@@ -1,5 +1,6 @@
 // publish_common.ts
 import type { PublishSummary, RegistryType } from "./publish_summary.ts";
+import { confirmAllowDirtyPublish } from "./dirty_publish_prompt.ts";
 import { ErrorType } from "./error_handlers.ts";
 import {
   getEnv,
@@ -12,6 +13,7 @@ import {
   incrementPatchVersion,
   getCachedBuild,
   ensureReadmeExists,
+  visualizeTree
 } from "./utils.ts";
 
 // Common interfaces for publishing options
@@ -42,7 +44,7 @@ export interface RegistryPublisher {
     config: Record<string, unknown> 
   }>;
   updateMetadata: (distDir: string, version: string, config: Record<string, unknown>) => Promise<void>;
-  runPublish: (distDir: string, options: { dryRun?: boolean; verbose?: boolean }) => Promise<{ 
+  runPublish: (distDir: string, options: { dryRun?: boolean; verbose?: boolean; allowDirty?: boolean }) => Promise<{ 
     success: boolean; 
     error?: string 
   }>;
@@ -98,8 +100,27 @@ export async function attemptPublish(
     await publisher.updateMetadata(distDir, currentVersion, config);
   }
   
-  const publishResult = await publisher.runPublish(distDir, { dryRun, verbose });
+  // Visualize the files to be published
+  const highlightFiles = ["esm/index.js", "types/index.d.ts"];
+  const tree = await visualizeTree(distDir, highlightFiles);
+  console.log(tree);
+
+  let publishResult = await publisher.runPublish(distDir, { dryRun, verbose });
   
+  // If uncommitted changes error, prompt for --allow-dirty and retry if confirmed
+  if (
+    publishResult.error &&
+    typeof publishResult.error === "string" &&
+    publishResult.error.includes("uncommitted changes")
+  ) {
+    const details = publishResult.error.match(/Uncommitted changes: ([^\n]+)/)?.[1] || "";
+    const allowDirty = await confirmAllowDirtyPublish(details);
+    if (allowDirty) {
+      // Try again with --allow-dirty (do not show tree again)
+      publishResult = await publisher.runPublish(distDir, { dryRun, verbose, allowDirty: true });
+    }
+  }
+
   if (publishResult.success) {
     console.log(`\n✅ Successfully published ${packageName}@${currentVersion} to ${publisher.registryName}`);
     await publisher.updateMetadata(distDir, currentVersion, config);
