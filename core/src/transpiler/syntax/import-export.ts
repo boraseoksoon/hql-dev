@@ -38,6 +38,124 @@ export function convertImportDeclaration(node: IR.IRImportDeclaration): ts.Impor
   });
 }
 
+export function convertJsImportReference(node: IR.IRJsImportReference): ts.Statement[] {
+  return execute(node, "JS import reference", () => {
+    const importName = sanitizeIdentifier(node.name);
+    const internalModuleName = `${importName}Module`;
+    const importDecl = ts.factory.createImportDeclaration(
+      undefined,
+      ts.factory.createImportClause(
+        false,
+        undefined,
+        ts.factory.createNamespaceImport(ts.factory.createIdentifier(internalModuleName))
+      ),
+      ts.factory.createStringLiteral(node.source)
+    );
+    const functionBody = ts.factory.createBlock(
+      [
+        ts.factory.createVariableStatement(
+          undefined,
+          ts.factory.createVariableDeclarationList(
+            [
+              ts.factory.createVariableDeclaration(
+                ts.factory.createIdentifier("wrapper"),
+                undefined,
+                undefined,
+                ts.factory.createConditionalExpression(
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createPropertyAccessExpression(
+                      ts.factory.createIdentifier(internalModuleName),
+                      ts.factory.createIdentifier("default")
+                    ),
+                    ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                    ts.factory.createIdentifier("undefined")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier(internalModuleName),
+                    ts.factory.createIdentifier("default")
+                  ),
+                  ts.factory.createToken(ts.SyntaxKind.ColonToken),
+                  ts.factory.createObjectLiteralExpression([], false)
+                )
+              ),
+            ],
+            ts.NodeFlags.Const
+          )
+        ),
+        ts.factory.createForOfStatement(
+          undefined,
+          ts.factory.createVariableDeclarationList(
+            [
+              ts.factory.createVariableDeclaration(
+                ts.factory.createArrayBindingPattern([
+                  ts.factory.createBindingElement(undefined, undefined, ts.factory.createIdentifier("key")),
+                  ts.factory.createBindingElement(undefined, undefined, ts.factory.createIdentifier("value")),
+                ]),
+                undefined,
+                undefined,
+                undefined
+              ),
+            ],
+            ts.NodeFlags.Const
+          ),
+          ts.factory.createCallExpression(
+            ts.factory.createPropertyAccessExpression(
+              ts.factory.createIdentifier("Object"),
+              ts.factory.createIdentifier("entries")
+            ),
+            undefined,
+            [ts.factory.createIdentifier(internalModuleName)]
+          ),
+          ts.factory.createBlock(
+            [
+              ts.factory.createIfStatement(
+                ts.factory.createBinaryExpression(
+                  ts.factory.createIdentifier("key"),
+                  ts.factory.createToken(ts.SyntaxKind.ExclamationEqualsEqualsToken),
+                  ts.factory.createStringLiteral("default")
+                ),
+                ts.factory.createExpressionStatement(
+                  ts.factory.createBinaryExpression(
+                    ts.factory.createElementAccessExpression(ts.factory.createIdentifier("wrapper"), ts.factory.createIdentifier("key")),
+                    ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+                    ts.factory.createIdentifier("value")
+                  )
+                )
+              ),
+            ],
+            true
+          )
+        ),
+        ts.factory.createReturnStatement(ts.factory.createIdentifier("wrapper")),
+      ],
+      true
+    );
+    const iife = ts.factory.createCallExpression(
+      ts.factory.createParenthesizedExpression(
+        ts.factory.createFunctionExpression(undefined, undefined, undefined, undefined, [], undefined, functionBody)
+      ),
+      undefined,
+      []
+    );
+    const defaultAssignment = ts.factory.createVariableStatement(
+      undefined,
+      ts.factory.createVariableDeclarationList(
+        [
+          ts.factory.createVariableDeclaration(
+            ts.factory.createIdentifier(importName),
+            undefined,
+            undefined,
+            iife
+          ),
+        ],
+        ts.NodeFlags.Const
+      )
+    );
+    return [importDecl, defaultAssignment];
+  });
+}
+
 export function convertExportNamedDeclaration(node: IR.IRExportNamedDeclaration): ts.ExportDeclaration {
   return execute(node, "export named declaration", () => {
     const specifiers = node.specifiers.map(spec =>
@@ -189,10 +307,10 @@ export function transformNamespaceImport(
       const pathVal = String((pathNode as LiteralNode).value);
 
       return {
-        type: IR.IRNodeType.NamespaceImport,
+        type: IR.IRNodeType.JsImportReference,
         name,
         source: pathVal,
-      };
+      } as IR.IRJsImportReference;
     },
     "transformNamespaceImport",
     TransformError,

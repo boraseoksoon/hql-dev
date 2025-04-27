@@ -44,8 +44,7 @@ export enum IRNodeType {
   Raw = 30,
 
 
-
-  NamespaceImport = 31,
+  JsImportReference = 31,
   AssignmentExpression = 32,
   SpreadAssignment = 33,
   ExpressionStatement = 34,
@@ -260,12 +259,8 @@ export interface IRInteropIIFE extends IRNode {
 }
 
 // IR node for JS import references
-
-/**
- * IR node for namespace imports (import * as foo from "bar")
- */
-export interface IRNamespaceImport extends IRNode {
-  type: IRNodeType.NamespaceImport;
+export interface IRJsImportReference extends IRNode {
+  type: IRNodeType.JsImportReference;
   name: string;
   source: string;
 }
