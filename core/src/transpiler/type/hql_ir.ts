@@ -43,7 +43,7 @@ export enum IRNodeType {
   CommentBlock = 29,
   Raw = 30,
 
-  // For representing a JS import reference from (js-import "module")
+
   JsImportReference = 31,
   AssignmentExpression = 32,
   SpreadAssignment = 33,

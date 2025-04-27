@@ -16,7 +16,7 @@ export const PRIMITIVE_OPS = new Set([
   "<=",
   ">=",
   "eq?",
-  "js-import",
+
   "js-get",
   "js-call",
   "return",

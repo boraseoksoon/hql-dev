@@ -42,7 +42,7 @@ function processImports(ast: HQLNode[], env: Environment): HQLNode[] {
     importNodes.push({
       type: "list",
       elements: [
-        { type: "symbol", name: "js-import" },
+
         { type: "symbol", name: reference },
         { type: "literal", value: importSourceRegistry.get(reference)! },
       ],

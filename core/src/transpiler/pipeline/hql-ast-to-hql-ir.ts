@@ -83,7 +83,7 @@ function initializeTransformFactory(): void {
     transformFactory.set("loop", (list, currentDir) => loopRecurModule.transformLoop(list, currentDir, transformNode));
     transformFactory.set("recur", (list, currentDir) => loopRecurModule.transformRecur(list, currentDir, transformNode));
     transformFactory.set("return", (list, currentDir) => conditionalModule.transformReturn(list, currentDir, transformNode));
-    transformFactory.set("js-import", jsInteropModule.transformJsImport);
+
     transformFactory.set("js-new", (list, currentDir) => jsInteropModule.transformJsNew(list, currentDir, transformNode));
     transformFactory.set("js-get", (list, currentDir) => jsInteropModule.transformJsGet(list, currentDir, transformNode));
     transformFactory.set("js-call", (list, currentDir) => jsInteropModule.transformJsCall(list, currentDir, transformNode));

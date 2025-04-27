@@ -95,61 +95,6 @@ export function extractStringLiteral(node: any): string {
 }
 
 /**
- * Transform JavaScript imports
- */
-export function transformJsImport(
-  list: ListNode, 
-): IR.IRNode {
-  return perform(
-    () => {
-      if (list.elements.length === 3) {
-        const nameNode = list.elements[1];
-        if (nameNode.type !== "symbol") {
-          throw new ValidationError(
-            "js-import module name must be a symbol",
-            "js-import",
-            "symbol",
-            nameNode.type,
-          );
-        }
-
-        const name = (nameNode as SymbolNode).name;
-        const source = extractStringLiteral(list.elements[2]);
-        return {
-          type: IR.IRNodeType.JsImportReference,
-          name,
-          source,
-        } as IR.IRJsImportReference;
-      } else if (list.elements.length === 2) {
-        const source = extractStringLiteral(list.elements[1]);
-        const moduleParts = source.split("/");
-        let defaultName = moduleParts[moduleParts.length - 1].replace(
-          /\.(js|ts|mjs|cjs)$/,
-          "",
-        );
-        defaultName = defaultName.replace(/[^a-zA-Z0-9_$]/g, "_");
-
-        return {
-          type: IR.IRNodeType.JsImportReference,
-          name: defaultName,
-          source,
-        } as IR.IRJsImportReference;
-      }
-
-      throw new ValidationError(
-        `js-import requires 1 or 2 arguments, got ${list.elements.length - 1}`,
-        "js-import",
-        "1 or 2 arguments",
-        `${list.elements.length - 1} arguments`,
-      );
-    },
-    "transformJsImport",
-    TransformError,
-    [list],
-  );
-}
-
-/**
  * Transform JavaScript "new" expressions
  */
 export function transformJsNew(

@@ -45,7 +45,7 @@ of nested S-expressions
 
 Supports vector-based imports: (import [symbol1, symbol2] from "./module.hql")
 Supports legacy imports: (import name "./module.hql") Handles JS interop:
-(js-import fs "npm:fs") Resolves module paths (local, absolute, npm, jsr, http)
+
 Prevents circular dependencies Allows importing and exporting macros between
 modules
 

@@ -1,4 +1,4 @@
-;; direct-js-import.hql - Direct import from JS
+
 ;; Import directly from a JS module
 (import jsModule from "./base.js")
 

@@ -24,8 +24,7 @@ export function isImportNode(node: HQLNode): boolean {
     node.type === "list" &&
     node.elements.length >= 3 &&
     node.elements[0].type === "symbol" &&
-    ((node.elements[0] as SymbolNode).name === "import" ||
-      (node.elements[0] as SymbolNode).name === "js-import")
+    ((node.elements[0] as SymbolNode).name === "import")
   );
 }
 

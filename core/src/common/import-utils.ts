@@ -73,15 +73,7 @@ export function extractImportInfo(
         return [node.elements[1].name, node.elements[3].value as string];
       }
 
-      // Handle JS imports: (js-import name "path")
-      if (
-        node.elements[0].name === "js-import" &&
-        node.elements.length === 3 &&
-        node.elements[1].type === "symbol" &&
-        node.elements[2].type === "literal"
-      ) {
-        return [node.elements[1].name, node.elements[2].value as string];
-      }
+
     }
   } catch {
     // If anything fails, return null values

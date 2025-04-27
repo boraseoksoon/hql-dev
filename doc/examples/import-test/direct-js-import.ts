@@ -31,7 +31,7 @@ var require_base = __commonJS({
   }
 });
 
-// .hql-cache/doc/examples/import-test/direct-js-import.ts
+
 var jsModuleModule = __toESM(require_base());
 var jsModule = function() {
   const wrapper = jsModuleModule.default !== void 0 ? jsModuleModule.default : {};
