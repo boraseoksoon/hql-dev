@@ -15,6 +15,7 @@ export enum ErrorType {
   DISK_SPACE = "disk_space",
   TIMEOUT = "timeout",
   SERVER = "server",
+  USER_DENIAL = "user_denial",  // New type for explicit user denials
   UNKNOWN = "unknown"
 }
 
@@ -27,6 +28,25 @@ export interface ErrorInfo {
 
 const errorPatterns = {
   jsr: [
+    { 
+      type: ErrorType.USER_DENIAL, 
+      patterns: [
+        "Attention: Authorization has been denied",
+        "authorization denied by user",
+        "user denied authorization",
+        "Authorization was denied in web prompt",
+        "denied by the user in web prompt",
+        "denied authorization in the browser",
+        "authorization has been denied by the user",
+        "Authentication was denied by the user",
+        "web prompt was dismissed",
+        "web prompt was closed",
+        "web prompt was canceled",
+        "browser authentication was canceled",
+        "Checking for slow types",  // This pattern is observed when user denies in web prompt
+        "authorization was canceled in browser"
+      ] 
+    },
     { 
       type: ErrorType.AUTHORIZATION, 
       patterns: [
@@ -192,6 +212,22 @@ const errorPatterns = {
     }
   ],
   npm: [
+    { 
+      type: ErrorType.USER_DENIAL, 
+      patterns: [
+        "cancelled by user",
+        "canceled by user", 
+        "operation cancelled",
+        "operation canceled",
+        "user aborted",
+        "prompt dismissed",
+        "authentication cancelled",
+        "authentication canceled",
+        "operation aborted by user",
+        "user rejected authentication",
+        "user declined"
+      ] 
+    },
     { 
       type: ErrorType.AUTHORIZATION, 
       patterns: [
@@ -421,12 +457,16 @@ function getUserErrorMessage(type: ErrorType, registry: "npm" | "jsr"): string {
   const prefix = `❌ ${registry.toUpperCase()} publish failed: `;
   
   const messages = {
+    [ErrorType.USER_DENIAL]: {
+      jsr: `${prefix}Authentication was denied by the user in the web prompt. Please complete the authentication process in the browser window.`,
+      npm: `${prefix}Authentication process was canceled by the user. Please run npm login and try again.`
+    },
     [ErrorType.AUTHORIZATION]: {
-      jsr: `${prefix}Authorization was denied by the user in the web prompt. Please try the login process again.`,
+      jsr: `${prefix}Authorization failed. Please run 'deno login' or 'jsr login' and try again.`,
       npm: `${prefix}Authentication failed. Please ensure you are logged in to npm (run: npm login).`
     },
     [ErrorType.NETWORK]: `${prefix}Network error encountered. Please check your internet connection and try again.`,
-    [ErrorType.VERSION_CONFLICT]: `${prefix}Version already exists. Try incrementing the version number or use --force flag if appropriate.`,
+    [ErrorType.VERSION_CONFLICT]: `${prefix}Version already exists. Try incrementing the version number or use a different version.`,
     [ErrorType.NOT_FOUND]: `${prefix}Package or resource not found. Please check the package name and path.`,
     [ErrorType.PERMISSIONS]: `${prefix}Insufficient permissions to publish this package. Please verify you have the correct access rights.`,
     [ErrorType.INSTALLATION]: {
@@ -455,6 +495,7 @@ function detectError(errorMessage: string, registry: "npm" | "jsr"): ErrorInfo {
   
   const patterns = errorPatterns[registry];
   
+  // Check for common patterns
   for (const { type, patterns: typePatterns } of patterns) {
     if (typePatterns.some(pattern => errorMessage.toLowerCase().includes(pattern.toLowerCase()))) {
       return {
@@ -464,6 +505,19 @@ function detectError(errorMessage: string, registry: "npm" | "jsr"): ErrorInfo {
         registry
       };
     }
+  }
+  
+  // Special handling for JSR web prompt denial
+  // This is a specific case where the error message might not contain explicit denial text
+  if (registry === "jsr" && 
+      (errorMessage.includes("Checking for slow types") || 
+       errorMessage.includes("authorization denied"))) {
+    return {
+      type: ErrorType.USER_DENIAL,
+      message: getUserErrorMessage(ErrorType.USER_DENIAL, registry),
+      originalError: errorMessage,
+      registry
+    };
   }
   
   return {
