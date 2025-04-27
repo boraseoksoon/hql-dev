@@ -187,54 +187,23 @@ export async function publish(args: string[]): Promise<void> {
     printPublishInfo(options.entryFile, options, metadataStatus);
 
     // Determine if all selected platforms have metadata
-    let allHaveMetadata = true;
+    // Always run publishes sequentially, regardless of metadata state
+    const summaries: PublishSummary[] = [];
     for (const platform of options.platforms) {
-      if ((platform === "jsr" && !metadataStatus.jsr) || (platform === "npm" && !metadataStatus.npm)) {
-        allHaveMetadata = false;
-        break;
-      }
-    }
-
-    let summaries: PublishSummary[];
-    if (allHaveMetadata) {
-      // Run publishes in parallel if all metadata exists
-      const publishPromises: Promise<PublishSummary>[] = [];
-      for (const platform of options.platforms) {
-        const platformMetadataStatus = platform === "jsr"
-          ? { jsr: metadataStatus.jsr, npm: null }
-          : { jsr: null, npm: metadataStatus.npm };
-        const publishTask = publishToRegistry(platform, options, platformMetadataStatus)
-          .catch(err => {
-            console.error(`\n❌ ${platform.toUpperCase()} publish process encountered an error: ${err}`);
-            return {
-              registry: platform,
-              name: '(unknown)',
-              version: options.version ?? '(auto)',
-              link: `❌ Unexpected error: ${err instanceof Error ? err.message : String(err)}`,
-            };
-          });
-        publishPromises.push(publishTask);
-      }
-      summaries = await Promise.all(publishPromises);
-    } else {
-      // Run publishes sequentially if any metadata is missing
-      summaries = [];
-      for (const platform of options.platforms) {
-        const platformMetadataStatus = platform === "jsr"
-          ? { jsr: metadataStatus.jsr, npm: null }
-          : { jsr: null, npm: metadataStatus.npm };
-        try {
-          const summary = await publishToRegistry(platform, options, platformMetadataStatus);
-          summaries.push(summary);
-        } catch (err) {
-          console.error(`\n❌ ${platform.toUpperCase()} publish process encountered an error: ${err}`);
-          summaries.push({
-            registry: platform,
-            name: '(unknown)',
-            version: options.version ?? '(auto)',
-            link: `❌ Unexpected error: ${err instanceof Error ? err.message : String(err)}`,
-          });
-        }
+      const platformMetadataStatus = platform === "jsr"
+        ? { jsr: metadataStatus.jsr, npm: null }
+        : { jsr: null, npm: metadataStatus.npm };
+      try {
+        const summary = await publishToRegistry(platform, options, platformMetadataStatus);
+        summaries.push(summary);
+      } catch (err) {
+        console.error(`\n❌ ${platform.toUpperCase()} publish process encountered an error: ${err}`);
+        summaries.push({
+          registry: platform,
+          name: '(unknown)',
+          version: options.version ?? '(auto)',
+          link: `❌ Unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+        });
       }
     }
 
