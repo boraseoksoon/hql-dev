@@ -45,7 +45,7 @@ async function getJsrConfig(
     }
   }
 
-  await configurePackageVersion(config, cliVersion, dryRun);
+  await configurePackageVersion(config, cliVersion, dryRun, distDir);
   setDefaultConfigFields(config);
 
   return { configPath, config, jsrUser };
@@ -65,13 +65,18 @@ async function configurePackageName(
     .replace(/^-|-$/g, "") || "js-module";
   const defaultName = cliName ? cliName : `@${jsrUser}/${fallbackBase}`;
 
+  // Check if a metadata file exists in the directory
+  const hasMetadataFile = await exists(join(distDir, "deno.json")) || 
+                         await exists(join(distDir, "jsr.json")) ||
+                         await exists(join(distDir, "package.json"));
+
   if (dryRun || Deno.env.get("DRY_RUN_PUBLISH") === "1") {
     console.log(`  → Using auto-generated package name: "${defaultName}" (dry-run mode)`);
     config.name = defaultName;
   } else {
-    // Always prompt for project name if cliName is not provided (from scratch)
+    // Always prompt for project name if cliName is not provided or no metadata file exists
     let enteredName = cliName;
-    if (!cliName) {
+    if (!cliName || !hasMetadataFile) {
       while (true) {
         enteredName = await prompt(
           `Enter a project name for your new JSR package (required, e.g. "my-lib"):`,
@@ -104,11 +109,19 @@ async function configurePackageName(
 async function configurePackageVersion(
   config: Record<string, unknown>,
   cliVersion?: string,
-  dryRun?: boolean
+  dryRun?: boolean,
+  distDir?: string
 ): Promise<void> {
+  // Check if a metadata file exists in the directory
+  const hasMetadataFile = distDir ? (
+    await exists(join(distDir, "deno.json")) || 
+    await exists(join(distDir, "jsr.json")) ||
+    await exists(join(distDir, "package.json"))
+  ) : false;
+  
   if (cliVersion) {
     config.version = cliVersion;
-  } else if (config.version) {
+  } else if (config.version && hasMetadataFile) {
     config.version = incrementPatch(String(config.version));
   } else {
     const defaultVersion = "0.0.1";
