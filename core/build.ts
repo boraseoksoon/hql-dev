@@ -59,7 +59,7 @@ Options:
   --platform, -p <platform>   Target platform [default: current OS]
   --arch, -a <architecture>   Target architecture [default: current arch]
   --output, -o <directory>    Output directory [default: ./bin]
-  --all                       Build all supported targets
+  --all, -all, all            Build all supported targets (all forms are equivalent)
   --version, -v <version>     Append version suffix to output folder
   --help, -h                  Show this help message
 `);
@@ -88,12 +88,33 @@ const getCurrentArch = (): string => {
 };
 
 // Parse CLI arguments
-const args = parseArgs(Deno.args, {
+const rawArgs = [...Deno.args];
+
+// Detect 'all' as positional argument (case-insensitive)
+let allPositional = false;
+if (rawArgs.length && typeof rawArgs[0] === "string" && rawArgs[0].toLowerCase() === "all") {
+  allPositional = true;
+  rawArgs.shift(); // Remove 'all' from positional args
+}
+
+// Detect '-all' (single dash) anywhere in the arguments
+let allSingleDash = false;
+const dashAllIndex = rawArgs.indexOf('-all');
+if (dashAllIndex !== -1) {
+  allSingleDash = true;
+  rawArgs.splice(dashAllIndex, 1); // Remove '-all' from args
+}
+
+const args = parseArgs(rawArgs, {
   string: ["platform", "arch", "output", "version"],
   boolean: ["all", "help", "check"],
   alias: { p: "platform", a: "arch", o: "output", v: "version", h: "help" },
   default: { output: "./bin", all: false, help: false, check: false },
 }) as unknown as Options;
+
+if (allSingleDash || allPositional) {
+  args.all = true;
+}
 
 // Show help and exit
 if (args.help) {
