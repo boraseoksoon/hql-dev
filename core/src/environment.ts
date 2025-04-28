@@ -10,7 +10,8 @@ import {
 } from "./common/error.ts";
 import { LRUCache } from "./common/lru-cache.ts";
 import { globalLogger as logger } from "./logger.ts";
-import { globalSymbolTable, SymbolInfo } from "./transpiler/symbol_table.ts";
+import { globalSymbolTable } from "./transpiler/symbol_table.ts";
+import { createBasicSymbolInfo, enrichSymbolInfoWithValueType } from "./transpiler/utils/symbol_info_utils.ts";
 
 export type Value =
   | string
@@ -188,99 +189,16 @@ export class Environment {
         Object.defineProperty(value, "isDefFunction", { value: true });
       }
       
-      // Create a SymbolInfo object with required properties
-      const symbolInfo: SymbolInfo = {
-        name: key,
-        kind: 'variable', // Default kind, will be updated based on value type
-        scope: this.currentFilePath ? 'local' : 'global',
-        meta: { definedInFile: this.currentFilePath || 'global' }
-      };
+      // Create a basic symbol info and enrich it with type information
+      const scope = this.currentFilePath ? 'local' : 'global';
+      const filePath = this.currentFilePath || undefined; // Convert null to undefined
+      const symbolInfo = createBasicSymbolInfo(key, scope, filePath);
       
-      // Determine proper kind and type information based on value
-      if (typeof value === 'function') {
-        // For functions, capture a more specific kind rather than just 'variable'
-        symbolInfo.kind = 'function';
-        symbolInfo.type = 'Function';
-        
-        // Try to detect special function types
-        const functionValue = value as Function & Record<string, unknown>;
-        if ('isUserMacro' in functionValue && functionValue.isUserMacro) {
-          symbolInfo.kind = 'macro';
-        } else if ('isSystemMacro' in functionValue && functionValue.isSystemMacro) {
-          // Use 'macro' for system macros too, with a meta flag
-          symbolInfo.kind = 'macro';
-          if (!symbolInfo.meta) symbolInfo.meta = {};
-          symbolInfo.meta.isSystem = true;
-        } else if ('isHqlConstructor' in functionValue && functionValue.isHqlConstructor) {
-          // Use 'function' for constructors with a meta flag
-          if (!symbolInfo.meta) symbolInfo.meta = {};
-          symbolInfo.meta.isConstructor = true;
-        }
-        
-        // Try to extract function signature information
-        try {
-          const funcStr = functionValue.toString();
-          const paramMatch = funcStr.match(/^\s*function\s*[^(]*\(([^)]*)\)/s) || 
-                            funcStr.match(/^\s*\(([^)]*)\)\s*=>/s);
-          
-          if (paramMatch && paramMatch[1]) {
-            const params = paramMatch[1].split(',').map(p => p.trim()).filter(Boolean);
-            symbolInfo.params = params.map(p => ({ name: p }));
-          }
-        } catch (_e) {
-          // Ignore signature extraction failures
-        }
-        
-        symbolInfo.definition = { type: 'symbol', name: key, nodeType: 'function' } as any;
-      } else if (typeof value === 'object') {
-        // All objects are still 'variable' kind, but with rich type info in meta
-        symbolInfo.kind = 'variable';
-        
-        if (value === null) {
-          symbolInfo.type = 'Null';
-        } else if (Array.isArray(value)) {
-          symbolInfo.type = 'Array';
-          
-          // Store collection info in meta
-          if (!symbolInfo.meta) symbolInfo.meta = {};
-          symbolInfo.meta.isCollection = true;
-          symbolInfo.meta.length = value.length;
-          
-          // Infer element type if array is not empty
-          if (value.length > 0) {
-            const firstType = typeof value[0];
-            symbolInfo.meta.elementType = firstType.charAt(0).toUpperCase() + firstType.slice(1);
-          }
-        } else {
-          // Object type
-          if (!symbolInfo.meta) symbolInfo.meta = {};
-          
-          if (value.constructor && value.constructor.name !== 'Object') {
-            symbolInfo.type = value.constructor.name;
-            symbolInfo.meta.isCustomType = true;
-          } else {
-            symbolInfo.type = 'Object';
-            // Add property count to meta
-            symbolInfo.meta.propertyCount = Object.keys(value).length;
-          }
-        }
-        
-        symbolInfo.definition = { type: 'symbol', name: key, nodeType: 'variable' } as any;
-      } else {
-        // For primitives, keep using 'variable' kind but with specific type
-        symbolInfo.kind = 'variable';
-        symbolInfo.type = typeof value;
-        symbolInfo.type = symbolInfo.type.charAt(0).toUpperCase() + symbolInfo.type.slice(1);
-        symbolInfo.definition = { type: 'symbol', name: key, nodeType: 'variable' } as any;
-        
-        // Add primitive-specific info to meta if needed
-        if (!symbolInfo.meta) symbolInfo.meta = {};
-        symbolInfo.meta.isPrimitive = true;
-        symbolInfo.meta.primitiveType = typeof value;
-      }
+      // Use the utility function to enrich with value type information
+      const enrichedSymbolInfo = enrichSymbolInfoWithValueType(symbolInfo, value);
       
       // Pass the properly typed SymbolInfo object to the symbol table
-      globalSymbolTable.set(symbolInfo);
+      globalSymbolTable.set(enrichedSymbolInfo);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       throw new ValidationError(`Failed to define symbol ${key}: ${msg}`, "environment");

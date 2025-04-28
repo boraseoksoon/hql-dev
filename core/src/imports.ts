@@ -32,7 +32,8 @@ import {
 } from "./common/import-utils.ts";
 import { wrapError, formatErrorMessage, ValidationError } from "./common/error.ts";
 import { MacroError, ImportError } from "./common/error.ts";
-import { globalSymbolTable, SymbolInfo } from "./transpiler/symbol_table.ts";
+import { globalSymbolTable } from "./transpiler/symbol_table.ts";
+import { createBasicSymbolInfo, enrichImportedSymbolInfo } from "./transpiler/utils/symbol_info_utils.ts";
 
 export interface ImportProcessorOptions {
   verbose?: boolean;
@@ -467,77 +468,43 @@ async function processVectorBasedImport(
         importedValue = undefined;
       }
       
-      // Create a properly structured symbol info object
-      const symbolInfo: Record<string, unknown> = {
-        name: finalName,
-        kind: isMacro ? 'macro' : 'variable',
-        scope: 'local',
-        isImported: true,
-        sourceModule: modulePath,
-        aliasOf: aliasName ? symbolName : undefined,
-        meta: { 
-          importedInFile: options.currentFile,
-          originalName: symbolName
-        } as Record<string, unknown>
-      };
+      // Create basic symbol info
+      const basicSymbolInfo = createBasicSymbolInfo(finalName, 'local', options.currentFile);
       
-      // Add rich type information if the value exists
-      if (importedValue !== undefined) {
-        // Determine actual JavaScript type
-        const valueType = typeof importedValue;
-        symbolInfo.type = valueType.charAt(0).toUpperCase() + valueType.slice(1);
-        
-        if (valueType === 'function') {
-          symbolInfo.kind = 'function';
-          (symbolInfo.meta as Record<string, unknown>).isJsFunction = true;
-          
-          // Try to extract parameter information
-          try {
-            const funcStr = importedValue.toString();
-            const paramMatch = funcStr.match(/^\s*function\s*[^(]*\(([^)]*)\)/s) || 
-                            funcStr.match(/^\s*\(([^)]*)\)\s*=>/s);
-            
-            if (paramMatch && paramMatch[1]) {
-              const params = paramMatch[1].split(',').map(p => p.trim()).filter(Boolean);
-              symbolInfo.params = params.map(p => ({ name: p }));
-            }
-          } catch (_e) {
-            // Ignore signature extraction failures
-          }
-        } else if (valueType === 'object') {
-          if (importedValue === null) {
-            symbolInfo.type = 'Null';
-          } else if (Array.isArray(importedValue)) {
-            symbolInfo.type = 'Array';
-            (symbolInfo.meta as Record<string, unknown>).isCollection = true;
-            (symbolInfo.meta as Record<string, unknown>).length = importedValue.length;
-            
-            // Get element type if array is not empty
-            if (importedValue.length > 0) {
-              const firstType = typeof importedValue[0];
-              (symbolInfo.meta as Record<string, unknown>).elementType = firstType.charAt(0).toUpperCase() + firstType.slice(1);
-            }
-          } else {
-            // Handle regular objects
-            if (importedValue.constructor && importedValue.constructor.name !== 'Object') {
-              symbolInfo.type = importedValue.constructor.name;
-              (symbolInfo.meta as Record<string, unknown>).isCustomType = true;
-            } else {
-              symbolInfo.type = 'Object';
-              (symbolInfo.meta as Record<string, unknown>).isJsObject = true;
-              (symbolInfo.meta as Record<string, unknown>).propertyCount = Object.keys(importedValue).length;
-              
-              // For small objects, capture property names to help with type checking
-              if (Object.keys(importedValue).length <= 10) {
-                (symbolInfo.meta as Record<string, unknown>).properties = Object.keys(importedValue);
-              }
-            }
-          }
+      // Add macro type if detected
+      if (isMacro) {
+        basicSymbolInfo.kind = 'macro';
+      }
+      
+      // Use the utility function to create properly enriched import symbol info
+      const enrichedSymbolInfo = enrichImportedSymbolInfo(
+        basicSymbolInfo,
+        importedValue,
+        symbolName,
+        modulePath,
+        aliasName || undefined // Convert null to undefined
+      );
+      
+      // Add import-specific metadata
+      if (!enrichedSymbolInfo.meta) enrichedSymbolInfo.meta = {};
+      enrichedSymbolInfo.meta.importedInFile = options.currentFile;
+      enrichedSymbolInfo.meta.originalName = symbolName;
+      
+      // For functions, mark as JS function for better code generation
+      if (enrichedSymbolInfo.kind === 'function') {
+        enrichedSymbolInfo.meta.isJsFunction = true;
+      }
+      
+      // For object types with properties, add property information
+      if (importedValue !== undefined && typeof importedValue === 'object' && importedValue !== null) {
+        // For small objects, capture property names to help with type checking
+        if (!Array.isArray(importedValue) && Object.keys(importedValue).length <= 10) {
+          enrichedSymbolInfo.meta.properties = Object.keys(importedValue);
         }
       }
       
       // Cast to proper SymbolInfo type when setting in table
-      globalSymbolTable.set(symbolInfo as unknown as SymbolInfo);
+      globalSymbolTable.set(enrichedSymbolInfo);
     }
   } catch (error) {
     const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
@@ -675,7 +642,12 @@ async function loadModule(
     } else if (isJsFile(modulePath)) {
       await loadJavaScriptModule(moduleName, modulePath, resolvedPath, env, processedFiles);
     } else if (isTypeScriptFile(modulePath)) {
-      await loadTypeScriptModule(moduleName, modulePath, resolvedPath, env, processedFiles);
+      try {
+        await loadTypeScriptModule(moduleName, modulePath, resolvedPath, env, processedFiles);
+      } catch (_error) {
+        logger.error(`Error loading module: ${_error}`);
+        throw new ImportError(`Failed to load module: ${modulePath}\nDetails: ${_error}`);
+      }
     } else {
       throw new ImportError(`Unsupported import file type: ${modulePath}`, modulePath);
     }
