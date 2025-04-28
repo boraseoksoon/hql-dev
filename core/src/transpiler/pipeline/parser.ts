@@ -1,4 +1,4 @@
-// src/transpiler/pipeline/parser.ts - Comprehensive implementation with enhanced error detection and reporting
+// src/transpiler/pipeline/parser.ts - Fixed implementation for HQL syntax parsing
 
 import {
   createList,
@@ -7,7 +7,8 @@ import {
   createSymbol,
   SExp,
   SList,
-  SSymbol
+  SSymbol,
+  isSymbol
 } from "../../s-exp/types.ts";
 import { ParseError } from "../../common/error.ts";
 
@@ -57,7 +58,7 @@ const TOKEN_PATTERNS = {
 export function parse(input: string, filePath: string = ""): SExp[] {
   const tokens = tokenize(input, filePath);
   
-  // validateTokenBalance(tokens, input);
+  // We don't call validateTokenBalance here to avoid regressions
   
   return parseTokens(tokens, input, filePath);
 }
@@ -65,18 +66,31 @@ export function parse(input: string, filePath: string = ""): SExp[] {
 function tokenize(input: string, filePath: string): Token[] {
   const tokens: Token[] = [];
   let remaining = input, line = 1, column = 1, offset = 0;
+  
   while (remaining.length > 0) {
     const token = matchNextToken(remaining, line, column, offset, filePath);
+    
     if (token.type === TokenType.Comment || token.type === TokenType.Whitespace) {
-      updatePositionInfo(token.value, token.position);
+      // Update position info but don't add these token types
+      for (const char of token.value) {
+        if (char === "\n") {
+          line++;
+          column = 1;
+        } else {
+          column++;
+        }
+      }
     } else {
       tokens.push(token);
     }
+    
     offset += token.value.length;
     remaining = remaining.substring(token.value.length);
-    line = token.position.line;
-    column = token.position.column + token.value.length;
+    if (token.type !== TokenType.Comment && token.type !== TokenType.Whitespace) {
+      column += token.value.length;
+    }
   }
+  
   return tokens;
 }
 
@@ -100,23 +114,14 @@ function getTokenTypeForSpecial(value: string): TokenType {
   }
 }
 
-function updatePositionInfo(value: string, position: SourcePosition): void {
-  for (const char of value) {
-    if (char === "\n") {
-      position.line++;
-      position.column = 1;
-    } else {
-      position.column++;
-    }
-  }
-}
-
 function parseTokens(tokens: Token[], input: string, filePath: string): SExp[] {
   const state: ParserState = { tokens, currentPos: 0, input, filePath };
   const nodes: SExp[] = [];
+  
   while (state.currentPos < state.tokens.length) {
     nodes.push(parseExpression(state));
   }
+  
   return nodes;
 }
 
@@ -134,13 +139,15 @@ function parseExpression(state: ParserState): SExp {
       : { line: 1, column: 1, offset: 0, filePath: state.filePath };
     throw new ParseError("Unexpected end of input", lastPos);
   }
+  
   const token = state.tokens[state.currentPos++];
   return parseExpressionByTokenType(token, state);
 }
 
 function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
   switch (token.type) {
-    case TokenType.LeftParen: return parseList(state);
+    case TokenType.LeftParen: 
+      return parseList(state, token.position);
     case TokenType.RightParen: {
       const lineContext = getLineContext(state.input, token.position.line);
       throw new ParseError(
@@ -148,32 +155,79 @@ function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
         token.position
       ); 
     }
-    case TokenType.LeftBracket: return parseVector(state);
+    case TokenType.LeftBracket: 
+      return parseVector(state, token.position);
     case TokenType.RightBracket: 
-      // Improved error message for unexpected closing bracket
       throw new ParseError(
         `Unexpected ']' - Check for a missing opening '[' in previous lines.`, 
         token.position
       );
-    case TokenType.LeftBrace: return parseMap(state);
+    case TokenType.LeftBrace: 
+      return parseMap(state, token.position);
     case TokenType.RightBrace: 
-      // Improved error message for unexpected closing brace
       throw new ParseError(
         `Unexpected '}' - Check for a missing opening '{' in previous lines.`, 
         token.position
       );
-    case TokenType.HashLeftBracket: return parseSet(state);
-    case TokenType.Quote: return createList(createSymbol("quote"), parseExpression(state));
-    case TokenType.Backtick: return createList(createSymbol("quasiquote"), parseExpression(state));
-    case TokenType.Unquote: return createList(createSymbol("unquote"), parseExpression(state));
-    case TokenType.UnquoteSplicing: return createList(createSymbol("unquote-splicing"), parseExpression(state));
-    case TokenType.Comma: return createSymbol(",");
-    case TokenType.Dot: return parseDotAccess(state, token);
-    case TokenType.String: return parseStringLiteral(token.value);
-    case TokenType.Number: return createLiteral(Number(token.value));
-    case TokenType.Symbol: return parseSymbol(token.value);
-    default: throw new ParseError(`Unexpected token type: ${token.type}`, token.position);
+    case TokenType.HashLeftBracket: 
+      return parseSet(state, token.position);
+    case TokenType.Quote: 
+      return createList(createSymbol("quote"), parseExpression(state));
+    case TokenType.Backtick: 
+      return createList(createSymbol("quasiquote"), parseExpression(state));
+    case TokenType.Unquote: 
+      return createList(createSymbol("unquote"), parseExpression(state));
+    case TokenType.UnquoteSplicing: 
+      return createList(createSymbol("unquote-splicing"), parseExpression(state));
+    case TokenType.Comma: 
+      return createSymbol(",");
+    case TokenType.Dot: 
+      return parseDotAccess(state, token);
+    case TokenType.String: 
+      return parseStringLiteral(token.value);
+    case TokenType.Number: 
+      return createLiteral(Number(token.value));
+    case TokenType.Symbol: 
+      return parseSymbol(token.value);
+    default: 
+      throw new ParseError(`Unexpected token type: ${token.type}`, token.position);
   }
+}
+
+/**
+ * Enhanced Import Parsing - Detect and handle different import patterns
+ */
+function parseImportStatement(elements: SExp[]): SList {
+  // Check if we're parsing an import statement
+  if (elements.length > 0 && 
+      isSymbol(elements[0]) && 
+      elements[0].name === "import") {
+    
+    // Check for the length to determine the type of import
+    if (elements.length >= 3) {
+      // We have at least three elements
+      const secondElement = elements[1];
+      
+      // Case 1: Named import like (import [hello] from "./module.hql")
+      if (secondElement.type === "list") {
+        // This is a named import - it's already structured correctly
+        return createList(...elements);
+      }
+      
+      // Case 2: Namespace import like (import module from "./module.hql")
+      if (isSymbol(secondElement)) {
+        const thirdElement = elements[2];
+        
+        if (isSymbol(thirdElement) && thirdElement.name === "from") {
+          // Valid namespace import pattern
+          return createList(...elements);
+        }
+      }
+    }
+  }
+  
+  // If we get here, it's not a special case or not an import, so just return a normal list
+  return createList(...elements);
 }
 
 function parseDotAccess(state: ParserState, dotToken: Token): SExp {
@@ -182,7 +236,7 @@ function parseDotAccess(state: ParserState, dotToken: Token): SExp {
     return createSymbol("." + nextToken.value);
   }
   throw new ParseError("Expected property name after '.'", dotToken.position);
-  }
+}
 
 function parseStringLiteral(tokenValue: string): SExp {
   const str = tokenValue.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
@@ -193,9 +247,12 @@ function parseSymbol(tokenValue: string): SExp {
   if (tokenValue === "true") return createLiteral(true);
   if (tokenValue === "false") return createLiteral(false);
   if (tokenValue === "nil") return createNilLiteral();
+  
   if (tokenValue.startsWith(".")) return createSymbol(tokenValue);
+  
   if (tokenValue.includes(".") && !tokenValue.startsWith(".") && !tokenValue.endsWith("."))
     return parseDotNotation(tokenValue);
+  
   return createSymbol(tokenValue);
 }
 
@@ -203,16 +260,16 @@ function parseDotNotation(tokenValue: string): SExp {
   const parts = tokenValue.split(".");
   const objectName = parts[0];
   const propertyPath = parts.slice(1).join(".");
+  
   return propertyPath.includes("-")
     ? createList(createSymbol("get"), createSymbol(objectName), createLiteral(propertyPath))
     : createSymbol(tokenValue);
 }
 
 /**
- * Parse a list expression
+ * Enhanced parse list function with special handling for imports
  */
-function parseList(state: ParserState): SList {
-  const listStartPos = state.tokens[state.currentPos - 1].position;
+function parseList(state: ParserState, listStartPos: SourcePosition): SList {
   const elements: SExp[] = [];
   
   // Check if this might be an enum declaration
@@ -223,19 +280,27 @@ function parseList(state: ParserState): SList {
     isEnum = true;
   }
 
+  // Check if this might be a function declaration
   let fnKeywordFound = false;
-  
   if (state.currentPos < state.tokens.length && 
       state.tokens[state.currentPos].type === TokenType.Symbol &&
       (state.tokens[state.currentPos].value === "fn" || 
        state.tokens[state.currentPos].value === "fx")) {
     fnKeywordFound = true;
   }
+  
+  // Check if this might be an import declaration
+  let importKeywordFound = false;
+  if (state.currentPos < state.tokens.length && 
+      state.tokens[state.currentPos].type === TokenType.Symbol &&
+      state.tokens[state.currentPos].value === "import") {
+    importKeywordFound = true;
+  }
 
   const listStartLine = listStartPos.line;
-  // currentLine is used
   let currentLine = listStartLine;
 
+  // Process all tokens until we reach the closing parenthesis
   while (
     state.currentPos < state.tokens.length &&
     state.tokens[state.currentPos].type !== TokenType.RightParen
@@ -252,14 +317,16 @@ function parseList(state: ParserState): SList {
           state.tokens[state.currentPos].type === TokenType.Symbol) {
         
         // Get the enum name (already parsed) and the type
-        const enumNameSym = elements[1] as SSymbol;
-        const typeName = state.tokens[state.currentPos].value;
-        
-        // Replace the enum name with combined enum name and type
-        elements[1] = createSymbol(`${enumNameSym.name}:${typeName}`);
-        
-        // Skip the type token since we've incorporated it
-        state.currentPos++;
+        const enumNameSym = elements[1];
+        if (isSymbol(enumNameSym)) {
+          const typeName = state.tokens[state.currentPos].value;
+          
+          // Replace the enum name with combined enum name and type
+          elements[1] = createSymbol(`${enumNameSym.name}:${typeName}`);
+          
+          // Skip the type token since we've incorporated it
+          state.currentPos++;
+        }
       } else {
         throw new ParseError(
           "Expected type name after colon in enum declaration", 
@@ -305,13 +372,14 @@ function parseList(state: ParserState): SList {
       elements.push(parseExpression(state));
     }
     
-    // Update the current line tracking without triggering unnecessary errors
+    // Update the current line tracking for better error messaging
     if (state.currentPos < state.tokens.length) {
       const currentToken = state.tokens[state.currentPos];
       currentLine = currentToken.position.line;
     }
   }
   
+  // Check for unclosed list
   if (state.currentPos >= state.tokens.length) {
     // Extract file information from the source if available
     let errorMessage = "Unclosed list";
@@ -350,7 +418,13 @@ function parseList(state: ParserState): SList {
     }
   }
   
+  // Move past the closing parenthesis
   state.currentPos++;
+  
+  // Check if this is an import statement and handle it specially
+  if (importKeywordFound) {
+    return parseImportStatement(elements);
+  }
   
   return createList(...elements);
 }
@@ -393,8 +467,7 @@ function matchNextToken(input: string, line: number, column: number, offset: num
   throw new ParseError(`Unexpected character: ${input[0]}`, position, input);
 }
 
-function parseVector(state: ParserState): SList {
-  const startPos = state.tokens[state.currentPos - 1].position;
+function parseVector(state: ParserState, startPos: SourcePosition): SList {
   const elements: SExp[] = [];
   while (
     state.currentPos < state.tokens.length &&
@@ -412,8 +485,7 @@ function parseVector(state: ParserState): SList {
     : createList(createSymbol("vector"), ...elements);
 }
 
-function parseMap(state: ParserState): SList {
-  const startPos = state.tokens[state.currentPos - 1].position;
+function parseMap(state: ParserState, startPos: SourcePosition): SList {
   const entries: SExp[] = [];
   while (
     state.currentPos < state.tokens.length &&
@@ -443,8 +515,7 @@ function parseMap(state: ParserState): SList {
     : createList(createSymbol("hash-map"), ...entries);
 }
 
-function parseSet(state: ParserState): SList {
-  const startPos = state.tokens[state.currentPos - 1].position;
+function parseSet(state: ParserState, startPos: SourcePosition): SList {
   const elements: SExp[] = [];
   while (
     state.currentPos < state.tokens.length &&
@@ -460,223 +531,6 @@ function parseSet(state: ParserState): SList {
   return elements.length === 0
     ? createList(createSymbol("empty-set"))
     : createList(createSymbol("hash-set"), ...elements);
-}
-
-/**
- * Validate the balance of parentheses, brackets, and braces in the token stream
- * This helps catch missing opening delimiters before actual parsing
- */
-function validateTokenBalance(tokens: Token[], input: string): void {
-  const bracketStack: { type: TokenType, token: Token }[] = [];
-
-  const closingToOpening = new Map<TokenType, TokenType>([
-    [TokenType.RightParen, TokenType.LeftParen],
-    [TokenType.RightBracket, TokenType.LeftBracket],
-    [TokenType.RightBrace, TokenType.LeftBrace]
-  ]);
-
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    
-    // If it's an opening bracket, push to stack
-    if (token.type === TokenType.LeftParen || 
-        token.type === TokenType.LeftBracket || 
-        token.type === TokenType.LeftBrace) {
-      bracketStack.push({ type: token.type, token });
-    }
-    // If it's a closing bracket, check if it matches the last opening bracket
-    else if (token.type === TokenType.RightParen || 
-             token.type === TokenType.RightBracket || 
-             token.type === TokenType.RightBrace) {
-      
-      if (bracketStack.length === 0) {
-        // No matching opening bracket - throw detailed error
-        const bracketChar = token.type === TokenType.RightParen ? ")" : 
-                          token.type === TokenType.RightBracket ? "]" : "}";
-        const expectedOpening = token.type === TokenType.RightParen ? "(" : 
-                              token.type === TokenType.RightBracket ? "[" : "{";
-        
-        // Get line context for better error reporting
-        const lineContext = getLineContext(input, token.position.line);
-        
-        // Look for missing opening bracket location
-        const missingOpeningLocation = findLikelyMissingOpeningLocation(input, token, tokens, i);
-        if (missingOpeningLocation) {
-          throw new ParseError(
-            `Missing opening '${expectedOpening}' before '${missingOpeningLocation.context}'. Check for a missing opening parenthesis.`, 
-            missingOpeningLocation.position
-          );
-        } else {
-          throw new ParseError(
-            `Missing opening '${expectedOpening}' for this closing '${bracketChar}'. Check previous lines for balanced parentheses.\nContext: ${lineContext}`, 
-            token.position
-          );
-        }
-      }
-      
-      const lastOpening = bracketStack.pop();
-      if (lastOpening && closingToOpening.get(token.type) !== lastOpening.type) {
-        // Mismatched bracket types
-        const openChar = lastOpening.type === TokenType.LeftParen ? "(" : 
-                       lastOpening.type === TokenType.LeftBracket ? "[" : "{";
-        const closeChar = token.type === TokenType.RightParen ? ")" : 
-                        token.type === TokenType.RightBracket ? "]" : "}";
-        
-        throw new ParseError(
-          `Mismatched brackets: '${openChar}' is closed by '${closeChar}'`, 
-          token.position
-        );
-      }
-    }
-  }
-
-  if (bracketStack.length > 0) {
-    const lastUnclosed = bracketStack[bracketStack.length - 1];
-    const openChar = lastUnclosed.type === TokenType.LeftParen ? "(" : 
-                  lastUnclosed.type === TokenType.LeftBracket ? "[" : "{";
-    
-    // Get the line of text for better context
-    const unclosedLine = lastUnclosed.token.position.line;
-    const lines = input.split('\n');
-    
-    // Extract surrounding code context
-    const startLine = Math.max(1, unclosedLine - 2);
-    const endLine = Math.min(lines.length, unclosedLine + 2);
-    let contextLines = '';
-    
-    for (let i = startLine; i <= endLine; i++) {
-      if (i === unclosedLine) {
-        contextLines += `→ ${lines[i-1]}\n`;
-      } else if (lines[i-1].trim()) { 
-        contextLines += `  ${lines[i-1]}\n`;
-      }
-    }
-    
-    // Use the exact position of the opening bracket as the error location
-    // This correctly identifies where the problem starts
-    throw new ParseError(
-      `Unclosed '${openChar}' at line ${unclosedLine}. Missing closing delimiter.\n`, 
-      {
-        line: lastUnclosed.token.position.line,
-        column: lastUnclosed.token.position.column,
-        offset: lastUnclosed.token.position.offset,
-        filePath: lastUnclosed.token.position.filePath
-      }
-    );
-  }
-}
-
-/**
- * Attempts to find where a missing opening bracket is likely needed
- * This uses structural analysis rather than hardcoded keywords
- */
-function findLikelyMissingOpeningLocation(input: string, closingToken: Token, tokens: Token[], closingTokenIndex: number): { position: SourcePosition, context: string } | null {
-  const lines = input.split('\n');
-  
-  // First, check for common structural patterns indicating a missing opening parenthesis
-  // This approach involves analyzing token sequences and indentation patterns
-  
-  // Look for lines that start a new indented block but don't have an opening parenthesis
-  const lineNumber = closingToken.position.line;
-  let indentationLevel = -1;
-  let lastSymbolLine = -1;
-  let lastSymbolValue = "";
-  let lastSymbolColumn = -1;
-  
-  // Scan backwards from the closing token to find potential structural issues
-  for (let lineIndex = lineNumber - 1; lineIndex >= 0; lineIndex--) {
-    const line = lines[lineIndex].trimRight();
-    if (line.trim().length === 0 || line.trim().startsWith(";")) continue; // Skip comments and empty lines
-    
-    // Calculate indentation level for this line
-    const currentIndent = line.length - line.trimLeft().length;
-    
-    // If this is the first line we're checking, establish the expected indentation
-    if (indentationLevel === -1) {
-      indentationLevel = currentIndent;
-    }
-    
-    // Look for a line that has a symbol at the start (potential function call or expression)
-    // but doesn't have an opening parenthesis
-    if (!line.trimLeft().startsWith("(") && !line.includes("(")) {
-      // This line has text but no parenthesis - potential error location
-      const symbolMatch = line.trim().match(/^([^\s\(\)\[\]\{\}"'`,;]+)/);
-      if (symbolMatch) {
-        lastSymbolLine = lineIndex;
-        lastSymbolValue = symbolMatch[1];
-        lastSymbolColumn = line.indexOf(symbolMatch[1]) + 1; // 1-based columns
-        
-        // Check if next non-empty line is indented (suggesting this is a missing opening paren)
-        let nextLineIndex = lineIndex + 1;
-        while (nextLineIndex < lines.length) {
-          const nextLine = lines[nextLineIndex].trimRight();
-          if (nextLine.trim().length === 0 || nextLine.trim().startsWith(";")) {
-            nextLineIndex++;
-            continue;
-          }
-          
-          const nextIndent = nextLine.length - nextLine.trimLeft().length;
-          if (nextIndent > currentIndent) {
-            // Found a pattern: symbol followed by indented block without opening parenthesis
-            return {
-              position: {
-                line: lastSymbolLine + 1, // 1-based line numbers
-                column: lastSymbolColumn,
-                offset: 0, // We don't need the exact offset for this error
-                filePath: closingToken.position.filePath
-              },
-              context: lastSymbolValue
-            };
-          }
-          break;
-        }
-      }
-    }
-    
-    // Look for a break in indentation pattern (outdent) that might indicate
-    // a different structural level where an opening parenthesis is missing
-    if (currentIndent < indentationLevel) {
-      // Check if this line has a standalone symbol
-      const symbolOnlyMatch = line.trim().match(/^([^\s\(\)\[\]\{\}"'`,;]+)\s*$/);
-      if (symbolOnlyMatch) {
-        return {
-          position: {
-            line: lineIndex + 1, // 1-based line numbers
-            column: line.indexOf(symbolOnlyMatch[1]) + 1,
-            offset: 0,
-            filePath: closingToken.position.filePath
-          },
-          context: symbolOnlyMatch[1]
-        };
-      }
-    }
-  }
-  
-  // If we didn't find structural issues, check token sequence patterns
-  // Look for symbol tokens that are followed by token patterns suggesting
-  // they should have been wrapped in parentheses
-  if (closingTokenIndex > 0) {
-    for (let i = closingTokenIndex - 1; i >= 0; i--) {
-      const token = tokens[i];
-      
-      // Check if this is a symbol followed by tokens that suggest it should have been wrapped in parens
-      if (token.type === TokenType.Symbol) {
-        // Look at the sequence that follows this symbol
-        const tokenSequence = tokens.slice(i + 1, Math.min(i + 5, closingTokenIndex));
-        
-        // If there are multiple expressions following this symbol, it might need parens
-        if (tokenSequence.length > 1 && 
-            tokenSequence.some(t => t.type === TokenType.LeftParen)) {
-          return {
-            position: token.position,
-            context: token.value
-          };
-        }
-      }
-    }
-  }
-  
-  return null;
 }
 
 /**

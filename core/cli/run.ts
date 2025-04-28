@@ -1,7 +1,6 @@
 #!/usr/bin/env deno run -A
 
 import { transpileCLI } from "../src/bundler.ts";
-import { reportError } from "../src/common/error.ts";
 import { globalLogger as logger, Logger } from "../src/logger.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
 import { basename } from "../src/platform/platform.ts";
@@ -12,6 +11,14 @@ import {
   applyCliOptions,
   CliOptions
 } from "./utils/cli-options.ts";
+
+// Import the new error handling system
+import {
+  initializeErrorSystem,
+  runWithErrorHandling,
+  setErrorContext,
+  updateErrorConfig
+} from "../src/common/error-system.ts";
 
 /**
  * Show help flags
@@ -31,6 +38,7 @@ function printHelp(): void {
   console.error("  --time                Show performance timing information");
   console.error("  --log <namespaces>    Filter logging to specified namespaces");
   console.error("  --print               Print final JS output without executing");
+  console.error("  --debug               Show detailed debug information and stack traces");
   console.error("  --help, -h            Display this help message");
 }
 
@@ -55,6 +63,9 @@ async function transpileAndExecute(
   
   const jsOutputPath = `${runDir}/${basename(inputPath)}.js`;
 
+  // Register the current context for error reporting
+  setErrorContext(inputPath, jsOutputPath);
+
   await transpileCLI(inputPath, jsOutputPath, {
     verbose: options.verbose,
     showTiming: options.showTiming,
@@ -65,6 +76,7 @@ async function transpileAndExecute(
   
   const importUrl = `file://${jsOutputPath}`;
   
+  // Import and run with error handling
   const module = await import(importUrl);
   
   if (module.default && typeof module.default === "function") {
@@ -79,52 +91,61 @@ async function transpileAndExecute(
  * Main entry point for the HQL CLI
  */
 export async function run(args: string[] = Deno.args): Promise<number> {
-  await initializeRuntime();
-    
-  if (shouldShowHelp(args)) {
-    printHelp();
-    return 0;
-  }
-
-  const namespaces = parseLogNamespaces(args);
-
-  if (namespaces.length) {
-    Logger.allowedNamespaces = namespaces;
-    console.log(`Logging restricted to namespaces: ${namespaces.join(", ")}`);
-  }
-
-  const positional = parseNonOptionArgs(args);
-  if (!positional.length) {
-    printHelp();
-    return 1;
-  }
+  // Parse options early to configure error system
   const cliOptions = parseCliOptions(args);
   
-  applyCliOptions(cliOptions);
-
-  // Handle debug mode
-  if (args.includes("--debug")) {
-    cliOptions.debug = true;
-    console.log("Debug mode enabled - showing extended error information");
-  }
-
-  logger.startTiming("run", "Total Processing");
-
-  const runDir = await createTempDir("run");
+  // Initialize error system with debug flag if present
+  initializeErrorSystem({
+    debug: cliOptions.debug,
+    verboseErrors: cliOptions.verbose
+  });
   
-  logger.log({ text: `Created temporary directory: ${runDir}`, namespace: "cli" });
-
-  const inputPath = positional[0]
-  await transpileAndExecute(cliOptions, inputPath, runDir);
+  // Run the main function with error handling
+  return await runWithErrorHandling(async () => {
+    await initializeRuntime();
+      
+    if (shouldShowHelp(args)) {
+      printHelp();
+      return 0;
+    }
   
-  return 0;
+    const namespaces = parseLogNamespaces(args);
+  
+    if (namespaces.length) {
+      Logger.allowedNamespaces = namespaces;
+      console.log(`Logging restricted to namespaces: ${namespaces.join(", ")}`);
+    }
+  
+    const positional = parseNonOptionArgs(args);
+    if (!positional.length) {
+      printHelp();
+      return 1;
+    }
+    
+    applyCliOptions(cliOptions);
+  
+    // Update error config based on debug flag
+    if (args.includes("--debug")) {
+      cliOptions.debug = true;
+      updateErrorConfig({ debug: true, showInternalErrors: true });
+      console.log("Debug mode enabled - showing extended error information");
+    }
+  
+    logger.startTiming("run", "Total Processing");
+  
+    const runDir = await createTempDir("run");
+    
+    logger.log({ text: `Created temporary directory: ${runDir}`, namespace: "cli" });
+  
+    const inputPath = positional[0];
+    await transpileAndExecute(cliOptions, inputPath, runDir);
+    
+    logger.endTiming("run", "Total Processing");
+    
+    return 0;
+  }, { debug: cliOptions.debug, exitOnError: true });
 }
 
 if (import.meta.main) {
-  try {
-    run();
-  } catch (error) {
-    reportError(error);
-    Deno.exit(1); 
-  }
+  run();
 }
