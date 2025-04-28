@@ -203,6 +203,7 @@ export function transformSyntax(ast: SExp[]): SExp[] {
                 
                 // Register variable and detect its type
                 const dataType = inferDataType(valueNode);
+
                 globalSymbolTable.set({ 
                   name: varName, 
                   kind: "variable", 

@@ -26,6 +26,7 @@ import * as jsInteropModule from "../syntax/js-interop.ts";
 import * as loopRecurModule from "../syntax/loop-recur.ts";
 import * as primitiveModule from "../syntax/primitive.ts";
 import * as quoteModule from "../syntax/quote.ts";
+import { globalSymbolTable } from "@transpiler/symbol_table.ts";
 
 /**
  * Transform factory to map operators to handler functions
@@ -456,8 +457,11 @@ function determineCallOrAccess(
 
   // Handle special patterns for (obj arg) expressions
   if (elements.length === 2) {
-    // firstElement is used in the string literal check below
-    const _firstElement = elements[0];
+    const symbolInfo = globalSymbolTable.get((firstTransformed as IR.IRIdentifier).name);
+    if (symbolInfo?.kind == "function") {
+      return createCallExpression(list, currentDir, transformNode, firstTransformed);
+    }
+
     const secondElement = elements[1];
     
     // Special case 1: Property access with string literals (person "hobbies") -> get(person, "hobbies")
