@@ -35,6 +35,12 @@ import { MacroError, ImportError } from "./common/error.ts";
 import { globalSymbolTable } from "./transpiler/symbol_table.ts";
 import { createBasicSymbolInfo, enrichImportedSymbolInfo } from "./transpiler/utils/symbol_info_utils.ts";
 
+// Generate a consistent internal module name from a path
+function generateModuleId(modulePath: string): string {
+  // Clean up path to create a valid identifier
+  return `__module_${modulePath.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+}
+
 export interface ImportProcessorOptions {
   verbose?: boolean;
   baseDir?: string;
@@ -398,7 +404,20 @@ async function processNamespaceImport(
     logger.debug(`Processing namespace import with "from": ${moduleName} from ${modulePath}`);
     
     const resolvedPath = path.resolve(baseDir, modulePath);
-    await loadModule(moduleName, modulePath, resolvedPath, env, options);
+    // First load the module with a consistent internal ID
+    const moduleId = generateModuleId(modulePath);
+    await loadModule(moduleId, modulePath, resolvedPath, env, options);
+    
+    // Then create an alias with the user-provided name
+    // This allows both naming schemes to point to the same module
+    if (moduleId !== moduleName) {
+      // Copy module exports from the internal ID to the user-facing name
+      if (env.moduleExports.has(moduleId)) {
+        const exports = env.moduleExports.get(moduleId)!;
+        env.importModule(moduleName, exports);
+        logger.debug(`Created module alias: ${moduleName} → ${moduleId}`);
+      }
+    }
     
     // Register in symbol table
     globalSymbolTable.set({
@@ -435,9 +454,10 @@ async function processVectorBasedImport(
     
     const modulePath = elements[3].value as string;
     const resolvedPath = path.resolve(baseDir, modulePath);
-    const tempModuleName = `__temp_module_${modulePath.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+    // Use a consistent module ID for all import styles
+    const moduleId = generateModuleId(modulePath);
     
-    await loadModule(tempModuleName, modulePath, resolvedPath, env, options);
+    await loadModule(moduleId, modulePath, resolvedPath, env, options);
     
     const vectorElements = processVectorElements(symbolsVector.elements);
     const requestedSymbols = extractSymbolsAndAliases(vectorElements);
@@ -445,7 +465,7 @@ async function processVectorBasedImport(
     importSymbols(
       requestedSymbols,
       modulePath,
-      tempModuleName,
+      moduleId,
       env,
       options.currentFile || "",
     );
