@@ -81,36 +81,34 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
     const maxLineNumber = Math.max(...error.contextLines.map(item => item.line));
     const lineNumPadding = String(maxLineNumber).length;
     
-    // Format each context line
-    error.contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
+    // Print each line number only once: error line highlighted, others gray
+    const lineMap = new Map<number, {content: string, isError: boolean, column?: number}>();
+    error.contextLines.forEach(({line, content, isError, column}) => {
+      if (!lineMap.has(line)) {
+        lineMap.set(line, {content, isError, column});
+      } else if (isError) {
+        // If duplicate, prefer error line
+        lineMap.set(line, {content, isError, column});
+      }
+    });
+    const errorLineObj = error.contextLines.find(({isError}) => isError);
+    const errorLineNo = errorLineObj ? errorLineObj.line : -1;
+    for (const [lineNo, {content: text, isError, column}] of Array.from(lineMap.entries()).sort((a, b) => a[0] - b[0])) {
       const lineNumStr = String(lineNo).padStart(lineNumPadding, ' ');
-      
-      if (isError) {
-        // Error line (purple for SICP style)
+      if (isError || lineNo === errorLineNo) {
         output.push(` ${colors.purple(lineNumStr)} │ ${text}`);
-        
-        // Add pointer to the error position - improved to handle Unicode and tabs
         if (column && column > 0) {
-          // Calculate accurate column position accounting for tabs and Unicode
           let effectiveColumn = column;
-          
-          // If text has tabs or Unicode chars before the error position,
-          // adjust the pointer position
           const textBefore = text.substring(0, column - 1);
           const tabCount = (textBefore.match(/\t/g) || []).length;
-          
-          // Each tab adds extra spaces (assume tab width is 4)
-          effectiveColumn += tabCount * 3; // 3 extra spaces per tab
-          
-          // Create the pointer
+          effectiveColumn += tabCount * 3;
           const pointer = ' '.repeat(lineNumPadding + 3) + ' '.repeat(effectiveColumn - 1) + colors.red(colors.bold('^'));
           output.push(pointer);
         }
       } else {
-        // Context line
         output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(text)}`);
       }
-    });
+    }
   }
   // Try to load context lines if they don't exist but we have source location
   else if (error.sourceLocation?.filePath && error.sourceLocation.line) {
@@ -496,7 +494,18 @@ export class ErrorReporter {
     this.formatter = new ErrorFormatter(this.logger);
   }
 
+  // Symbol to mark errors that have already been reported
+  private static readonly reportedSymbol = Symbol.for("__hql_error_reported__");
+
   async reportError(error: Error | HQLError, isDebug = false): Promise<void> {
+    // Prevent double reporting: if already reported, do nothing
+    if (typeof error === 'object' && error !== null && (error as any)[ErrorReporter.reportedSymbol]) {
+      return;
+    }
+    // Mark as reported
+    if (typeof error === 'object' && error !== null) {
+      (error as any)[ErrorReporter.reportedSymbol] = true;
+    }
     try {
       const formattedError = await this.formatter.formatError(error, isDebug);
       console.error(formattedError);

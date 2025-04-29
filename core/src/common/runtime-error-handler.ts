@@ -793,9 +793,11 @@ export function installGlobalErrorHandler(): void {
     
     if (error instanceof Error) {
       await handleRuntimeError(error);
+      // Prevent double printing: do not call the original console.error for Error instances
+      return;
     }
     
-    // Call the original console.error
+    // For non-Error arguments, call the original console.error
     originalConsoleError.apply(console, args);
   };
   
@@ -944,6 +946,17 @@ export async function handleRuntimeError(error: Error): Promise<void> {
     }
     
     // If we found a location, create a RuntimeError with it
+    // Prevent double reporting: if already reported, skip
+    const reportedSymbol = Symbol.for("__hql_error_reported__");
+    if (typeof error === 'object' && error !== null && (error as Record<string, unknown>)[reportedSymbol]) {
+      return;
+    }
+
+    // Mark the original error as reported before any reporting
+    if (typeof error === 'object' && error !== null) {
+      (error as Record<string, unknown>)[reportedSymbol] = true;
+    }
+
     if (hqlLocation) {
       // Read context lines from the HQL file
       const contextLines = await readContextLines(hqlLocation.hqlFile, hqlLocation.line);
@@ -973,11 +986,15 @@ export async function handleRuntimeError(error: Error): Promise<void> {
       if (suggestion) {
         hqlError.getSuggestion = () => suggestion;
       }
-      
+      // Mark the enhanced error as reported as well (for completeness)
+      (hqlError as Record<string, unknown>)[reportedSymbol] = true;
       // Report the error with the enhanced HQL information
       await globalErrorReporter.reportError(hqlError, true);
     } else {
-      // If we couldn't enhance the error, just report it as is
+      // If we couldn't enhance the error, only report if not already reported
+      if (typeof error === 'object' && error !== null && (error as Record<string, unknown>)[reportedSymbol]) {
+        return;
+      }
       await globalErrorReporter.reportError(error);
     }
   } catch (handlerError) {
