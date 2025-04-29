@@ -1,5 +1,5 @@
 (import b from "./b.hql")
-(import [hello] from "./b.hql")
+(import [fuck] from "./b.hql")
 
-(b.helo "world")
+(b.hello "world")
 (hello "world")

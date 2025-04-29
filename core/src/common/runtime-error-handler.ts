@@ -4,7 +4,7 @@
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { RuntimeError, ValidationError } from "./error.ts";
 import { globalLogger as logger } from "../logger.ts";
-import { globalErrorReporter } from "./error-handler.ts";
+import { globalErrorReporter } from "./error.ts";
 
 /**
  * Mapping from generated JS file to original HQL file

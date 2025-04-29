@@ -7,9 +7,12 @@
  * 3. Separation of core error info and debug details
  * 4. Support for specialized error types (Parse, Import, Validation, etc.)
  * 5. Source map support for accurate error reporting in HQL code
+ * 
+ * All logic from error-handler.ts has been merged into error.ts. See below for details.
  */
 
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import { Logger, globalLogger as logger } from "../logger.ts";
 
 // -----------------------------------------------------------------------------
 // Color utilities
@@ -56,6 +59,7 @@ export function formatErrorMessage(error: unknown): string {
  * Now async to allow for file existence checks (Deno.stat).
  */
 export async function formatHQLError(error: HQLError, isDebug = false): Promise<string> {
+  console.log("error : ", error);
   const colors = createColorConfig();
   const output: string[] = [];
   
@@ -167,20 +171,11 @@ export function wrapError(
   _currentFile?: string,
 ): never {
   // Simply rethrow for now – customization can be added later.
-  throw error as never;
+  throw error
 }
 
 export function perform<T>(fn: () => T): T {
   return fn();
-}
-
-// -----------------------------------------------------------------------------
-// Error pipeline public API
-// -----------------------------------------------------------------------------
-
-export async function reportError(error: unknown, isDebug = false): Promise<void> {
-  const formatted = await formatHQLError(error as HQLError, isDebug);
-  console.error(formatted);
 }
 
 // -----------------------------------------------------------------------------
@@ -363,7 +358,6 @@ export class TranspilerError extends HQLError {
   }
 }
 
-
 // -----------------------------------------------------------------------------
 // Source‑location helpers
 // -----------------------------------------------------------------------------
@@ -430,6 +424,92 @@ export class SourceLocationInfo implements SourceLocation {
     if (isNaN(line) || isNaN(column)) return undefined;
     return new SourceLocationInfo({ filePath, line, column, source: err.stack });
   }
+}
+
+// -----------------------------------------------------------------------------
+// Error reporter
+// -----------------------------------------------------------------------------
+
+class ErrorFormatter {
+  private logger: Logger;
+
+  constructor(logger: Logger) {
+    this.logger = logger;
+  }
+
+  async formatError(error: Error | HQLError, isDebug = false): Promise<string> {
+    if (error instanceof HQLError) {
+      return await formatHQLError(error, isDebug);
+    } else {
+      return formatErrorMessage(error);
+    }
+  }
+}
+
+export class ErrorReporter {
+  private formatter: ErrorFormatter;
+  private logger: Logger;
+
+  constructor(logger?: Logger) {
+    this.logger = logger || new Logger(false);
+    this.formatter = new ErrorFormatter(this.logger);
+  }
+
+  async reportError(error: Error | HQLError, isDebug = false): Promise<void> {
+    try {
+      const formattedError = await this.formatter.formatError(error, isDebug);
+      console.error(formattedError);
+    } catch (formatError) {
+      // Fallback in case formatting itself fails
+      console.error(`Error: ${error.message}`);
+      if (isDebug) {
+        console.error(error.stack);
+      }
+    }
+  }
+
+  createParseError(
+    message: string,
+    line: number,
+    column: number,
+    filePath: string,
+    source?: string
+  ): ParseError {
+    return new ParseError(message, { line, column, filePath, source });
+  }
+
+  createValidationError(
+    message: string,
+    context: string,
+    expectedType?: string,
+    actualType?: string,
+    filePath?: string,
+    line?: number,
+    column?: number
+  ): ValidationError {
+    return new ValidationError(message, context, {
+      expectedType,
+      actualType,
+      filePath,
+      line,
+      column,
+    });
+  }
+
+  createRuntimeError(
+    message: string,
+    filePath?: string,
+    line?: number,
+    column?: number
+  ): RuntimeError {
+    return new RuntimeError(message, { filePath, line, column });
+  }
+}
+
+export const globalErrorReporter = new ErrorReporter(logger);
+
+export async function reportError(error: Error | HQLError, isDebug = false): Promise<void> {
+  await globalErrorReporter.reportError(error, isDebug);
 }
 
 export const ErrorPipeline = {

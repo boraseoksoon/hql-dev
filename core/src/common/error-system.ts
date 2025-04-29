@@ -3,7 +3,7 @@
 
 import { HQLError, ParseError, ValidationError, RuntimeError } from "./error.ts";
 import { globalLogger as logger } from "../logger.ts";
-import { globalErrorReporter, reportError } from "./error-handler.ts";
+import { globalErrorReporter, reportError } from "./error.ts";
 import { initializeErrorHandling, handleRuntimeError, setRuntimeContext } from "./runtime-error-handler.ts";
 
 /**
