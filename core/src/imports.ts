@@ -144,6 +144,16 @@ function wrapImportError(
   currentFile?: string,
   lineInfo?: { line: number; column: number }
 ): never {
+  // If error is already an HQLError with a filePath different from the importer, preserve it
+  if (
+    error instanceof Error &&
+    (error as any).sourceLocation &&
+    (error as any).sourceLocation.filePath &&
+    currentFile &&
+    (error as any).sourceLocation.filePath !== currentFile
+  ) {
+    throw error;
+  }
   // For validation errors related to imports, enhance with location info
   if (error instanceof ValidationError) {
     if (error.message.includes("not found in module") || 
@@ -477,6 +487,16 @@ async function processImport(
       );
     }
   } catch (error) {
+    // If the error is already an HQLError with a different filePath, preserve it
+    if (
+      error instanceof Error &&
+      (error as any).sourceLocation &&
+      (error as any).sourceLocation.filePath &&
+      options.currentFile &&
+      (error as any).sourceLocation.filePath !== options.currentFile
+    ) {
+      throw error;
+    }
     const modulePath = getModulePathFromImport(importExpr);
     const line = findImportLineInfo(importExpr, options.currentFile);
     wrapImportError("Processing import", error, modulePath, options.currentFile, line);
@@ -567,8 +587,17 @@ async function processNamespaceImport(
       meta: { importedInFile: options.currentFile }
     });
   } catch (error) {
+    // If the error is already an HQLError with a different filePath, preserve it
+    if (
+      error instanceof Error &&
+      (error as any).sourceLocation &&
+      (error as any).sourceLocation.filePath &&
+      options.currentFile &&
+      (error as any).sourceLocation.filePath !== options.currentFile
+    ) {
+      throw error;
+    }
     const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
-    
     // Try to get line information
     let line = undefined;
     if (options.currentFile) {
@@ -585,7 +614,6 @@ async function processNamespaceImport(
         // Ignore errors reading the file
       }
     }
-    
     wrapImportError("Processing namespace import", error, modulePath, options.currentFile, line);
   }
 }
@@ -691,18 +719,25 @@ async function processVectorBasedImport(
       globalSymbolTable.set(enrichedSymbolInfo);
     }
   } catch (error) {
+    // If the error is already an HQLError with a different filePath, preserve it
+    if (
+      error instanceof Error &&
+      (error as any).sourceLocation &&
+      (error as any).sourceLocation.filePath &&
+      options.currentFile &&
+      (error as any).sourceLocation.filePath !== options.currentFile
+    ) {
+      throw error;
+    }
     const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
-    
     // Try to find the import position
     let lineInfo = undefined;
     if (options.currentFile) {
       const symbolsVector = elements[1] as SList;
       const vectorElements = processVectorElements(symbolsVector.elements);
       const symbols = Array.from(extractSymbolsAndAliases(vectorElements).keys());
-      
       lineInfo = findImportVectorPosition(options.currentFile, modulePath, symbols);
     }
-    
     wrapImportError("Processing vector import", error, modulePath, options.currentFile, lineInfo);
   }
 }
@@ -855,6 +890,16 @@ function importSymbols(
         }
       }
     } catch (error) {
+      // If the error is already an HQLError with a different filePath, preserve it
+      if (
+        error instanceof Error &&
+        (error as any).sourceLocation &&
+        (error as any).sourceLocation.filePath &&
+        currentFile &&
+        (error as any).sourceLocation.filePath !== currentFile
+      ) {
+        throw error;
+      }
       // Determine if this is an import error (we want specific line info)
       if (error instanceof ValidationError || error instanceof ImportError) {
         // Create a source location with the correct information
@@ -863,7 +908,6 @@ function importSymbols(
           line: lineInfo?.line,
           column: lineInfo?.column
         });
-        
         throw new ImportError(
           `Importing '${symbolName}' from '${modulePath}': ${error.message}`,
           modulePath,
@@ -871,7 +915,6 @@ function importSymbols(
           error
         );
       }
-      
       wrapImportError(
         `Importing symbol '${symbolName}' from '${modulePath}'`,
         error,
@@ -1005,7 +1048,7 @@ async function loadHqlModule(
   try {
     // Read and parse the HQL file
     const fileContent = await readFile(resolvedPath, options.currentFile);
-    const importedExprs = parse(fileContent);
+    const importedExprs = parse(fileContent, resolvedPath);
     
     // Set context for processing
     env.setCurrentFile(resolvedPath);
@@ -1033,6 +1076,16 @@ async function loadHqlModule(
     
     logger.debug(`Imported HQL module: ${moduleName}`);
   } catch (error) {
+    // If the error is a ParseError or HQLError with a different filePath, preserve it
+    if (
+      (error instanceof Error &&
+        (error.name === "ParseError" || error.name === "HQLError") &&
+        (error as any).sourceLocation &&
+        (error as any).sourceLocation.filePath &&
+        (error as any).sourceLocation.filePath !== options.currentFile)
+    ) {
+      throw error;
+    }
     wrapError(`Importing HQL module ${moduleName}`, error, modulePath, options.currentFile);
   } finally {
     env.setCurrentFile(previousCurrentFile);
