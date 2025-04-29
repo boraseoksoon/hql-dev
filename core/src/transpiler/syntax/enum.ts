@@ -8,6 +8,7 @@ import { perform } from "../../common/error.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { globalLogger as logger } from "../../logger.ts";
 import { execute } from "../pipeline/hql-ir-to-ts-ast.ts";
+import { withSourceLocationOpts } from "../utils/source_location_utils.ts";
 import { HQLNode } from "../type/hql_ast.ts";
 
 export function parseEnumCase(
@@ -24,11 +25,10 @@ export function parseEnumCase(
         (caseList.elements[0] as SymbolNode).name !== "case" ||
         caseList.elements[1].type !== "symbol"
       ) {
-        throw new ValidationError(
+        throw new TransformError(
           "Invalid enum case format. Expected (case CaseName ...)",
           "enum case format",
-          "(case CaseName)",
-          `invalid format: ${JSON.stringify(caseList)}`,
+          withSourceLocationOpts({ phase: "case parse" }, caseList)
         );
       }
 

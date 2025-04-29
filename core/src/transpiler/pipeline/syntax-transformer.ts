@@ -13,6 +13,7 @@ import {
 } from "../../s-exp/types.ts";
 import { Logger, globalLogger as logger } from "../../logger.ts";
 import { TransformError, perform } from "../../common/error.ts";
+import { withSourceLocationOpts } from "../utils/source_location_utils.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { globalSymbolTable } from "../symbol_table.ts";
 
@@ -791,8 +792,7 @@ function transformFxSyntax(list: SList, enumDefinitions: Map<string, SList>, log
         throw new TransformError(
           "Invalid fx syntax: requires at least a name, parameter list, return type and body",
           "fx syntax transformation",
-          "valid fx form",
-          list,
+          withSourceLocationOpts({ phase: "valid fx form" }, list)
         );
       }
 
@@ -807,8 +807,7 @@ function transformFxSyntax(list: SList, enumDefinitions: Map<string, SList>, log
         throw new TransformError(
           "Invalid fx syntax: parameter list must be a list",
           "fx parameter list",
-          "list",
-          paramsList,
+          withSourceLocationOpts({ phase: "list" }, paramsList)
         );
       }
 
@@ -817,8 +816,7 @@ function transformFxSyntax(list: SList, enumDefinitions: Map<string, SList>, log
         throw new TransformError(
           "Invalid fx syntax: return type must be a list starting with ->",
           "fx return type",
-          "list with ->",
-          returnTypeList,
+          withSourceLocationOpts({ phase: "list with ->" }, returnTypeList)
         );
       }
 
@@ -830,8 +828,7 @@ function transformFxSyntax(list: SList, enumDefinitions: Map<string, SList>, log
         throw new TransformError(
           "Invalid fx syntax: return type must be a list starting with ->",
           "fx return type",
-          "(-> Type)",
-          returnTypeList,
+          withSourceLocationOpts({ phase: "(-> Type)" }, returnTypeList)
         );
       }
 
@@ -903,8 +900,7 @@ function transformFnSyntax(list: SList, enumDefinitions: Map<string, SList>, log
         throw new TransformError(
           "Invalid fn syntax: parameter list must be a list",
           "fn parameter list",
-          "list",
-          paramsList.type,
+          withSourceLocationOpts({ phase: "list" }, paramsList)
         );
       }
 
@@ -918,8 +914,7 @@ function transformFnSyntax(list: SList, enumDefinitions: Map<string, SList>, log
         throw new TransformError(
           "Invalid fn syntax: function name must be a symbol",
           "fn name",
-          "symbol",
-          name,
+          withSourceLocationOpts({ phase: "symbol" }, name)
         );
       }
 

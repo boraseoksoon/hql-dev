@@ -6,6 +6,7 @@ import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError, perform } from "../../common/error.ts"
 import { convertIRExpr, execute, convertReturnStatement, convertBlockStatement } from "../pipeline/hql-ir-to-ts-ast.ts";
+import { withSourceLocationOpts } from "../utils/source_location_utils.ts";
 
 export function convertIfStatement(node: IR.IRIfStatement): ts.IfStatement {
   return execute(node, "if statement", () => {
@@ -115,8 +116,7 @@ export function transformIf(
     throw new TransformError(
       `Failed to transform if: ${error instanceof Error ? error.message : String(error)}`,
       "if transformation",
-      "valid if expression",
-      list
+      withSourceLocationOpts({ phase: "valid if expression" }, list)
     );
   }
 }

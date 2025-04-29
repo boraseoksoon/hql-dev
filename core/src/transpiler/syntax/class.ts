@@ -263,8 +263,7 @@ export function transformClass(
         error instanceof Error ? error.message : String(error)
       }`,
       "class declaration",
-      "transformation",
-      list,
+      withSourceLocationOpts({ phase: "transformation" }, list)
     );
   }
 }
