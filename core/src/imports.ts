@@ -1,4 +1,4 @@
-// core/src/imports.ts - Modified to remove user-level macro support
+// core/src/imports.ts - Enhanced error handling for imports
 
 import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
 import { globalLogger as logger } from "./logger.ts";
@@ -30,7 +30,12 @@ import {
   isJsFile,
   isTypeScriptFile
 } from "./common/import-utils.ts";
-import { wrapError, formatErrorMessage, ValidationError } from "./common/error.ts";
+import { 
+  wrapError, 
+  formatErrorMessage, 
+  ValidationError, 
+  SourceLocationInfo
+} from "./common/error.ts";
 import { MacroError, ImportError } from "./common/error.ts";
 import { globalSymbolTable } from "./transpiler/symbol_table.ts";
 import { createBasicSymbolInfo, enrichImportedSymbolInfo } from "./transpiler/utils/symbol_info_utils.ts";
@@ -125,7 +130,63 @@ export async function processImports(
       logger.debug(`Completed processing imports for: ${options.currentFile}`);
     }
   } catch (error) {
-    wrapError("Processing file exports and definitions", error, options.currentFile || "unknown", options.currentFile);
+    wrapImportError("Processing file exports and definitions", error, options.currentFile || "unknown", options.currentFile);
+  }
+}
+
+/**
+ * Enhanced error wrapping with source location information
+ */
+function wrapImportError(
+  context: string,
+  error: unknown,
+  resource: string,
+  currentFile?: string,
+  lineInfo?: { line: number; column: number }
+): never {
+  // For validation errors related to imports, enhance with location info
+  if (error instanceof ValidationError) {
+    if (error.message.includes("not found in module") || 
+        error.message.includes("Symbol not found") ||
+        error.message.includes("Property") || 
+        error.message.includes("Cannot access")) {
+      
+      // Extract the symbol or property name from the error message
+      const symbolMatch = error.message.match(/['"]([^'"]+)['"]/);
+      const symbol = symbolMatch ? symbolMatch[1] : "";
+      
+      if (currentFile) {
+        let sourceLoc: SourceLocationInfo;
+        if (lineInfo) {
+          // Use provided line info
+          sourceLoc = new SourceLocationInfo({
+            filePath: currentFile,
+            line: lineInfo.line,
+            column: lineInfo.column
+          });
+        } else {
+          // Create location info without line/column
+          sourceLoc = new SourceLocationInfo({
+            filePath: currentFile
+          });
+        }
+        
+        // Enhanced error with context information
+        throw new ImportError(
+          `Failed to import symbol '${symbol}' from '${resource}':\n  ${error.message}`,
+          resource,
+          sourceLoc,
+          error
+        );
+      }
+    }
+  }
+  
+  // Use the original error for other cases
+  if (error instanceof Error) {
+    throw error;
+  } else {
+    throw new Error(`${context}: ${String(error)}`);
   }
 }
 
@@ -224,10 +285,79 @@ async function processImportsInParallel(
         await processImport(importExpr, env, baseDir, options);
       } catch (error) {
         const modulePath = getModulePathFromImport(importExpr);
-        wrapError("Error processing import", error, modulePath, options.currentFile);
+        // Keep the original line information if available
+        const importLine = findImportLineInfo(importExpr, options.currentFile);
+        wrapImportError("Error processing import", error, modulePath, options.currentFile, importLine);
       }
     }),
   );
+}
+
+/**
+ * Find line information for an import expression
+ */
+function findImportLineInfo(importExpr: SList, currentFile?: string): { line: number; column: number } | undefined {
+  if (!currentFile) return undefined;
+  
+  try {
+    // Read the file and look for the import expression
+    const fileContent = Deno.readTextFileSync(currentFile);
+    const lines = fileContent.split('\n');
+    
+    // Get the import module path to search for
+    const modulePath = getModulePathFromImport(importExpr);
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Look for vector imports [name1 name2] from "./path"
+      if (line.includes('import') && line.includes('[') && line.includes('from') && line.includes(modulePath)) {
+        // Find the specific symbol in the import vector
+        const openBracketPos = line.indexOf('[');
+        const closeBracketPos = line.indexOf(']');
+        
+        if (openBracketPos > 0 && closeBracketPos > openBracketPos) {
+          const importVector = line.substring(openBracketPos + 1, closeBracketPos);
+          
+          // If we're dealing with a vector import that has a non-existent symbol
+          if (isSExpVectorImport(importExpr)) {
+            for (const elem of (importExpr.elements[1] as SList).elements) {
+              if (isSymbol(elem)) {
+                const symbolName = (elem as SSymbol).name;
+                const symbolPos = importVector.indexOf(symbolName);
+                
+                if (symbolPos >= 0) {
+                  // Return the position of the symbol in the import vector
+                  return {
+                    line: i + 1,
+                    column: openBracketPos + 1 + symbolPos
+                  };
+                }
+              }
+            }
+          }
+        }
+        
+        // If we didn't find the specific symbol but found the import line
+        return {
+          line: i + 1,
+          column: line.indexOf('import') + 1
+        };
+      }
+      
+      // Look for namespace imports: import name from "./path"
+      if (line.includes('import') && line.includes('from') && line.includes(modulePath)) {
+        return {
+          line: i + 1,
+          column: line.indexOf('import') + 1
+        };
+      }
+    }
+  } catch (error) {
+    logger.debug(`Error finding import line info: ${error.message}`);
+  }
+  
+  return undefined;
 }
 
 /**
@@ -245,7 +375,8 @@ async function processImportsSequentially(
       await processImport(importExpr, env, baseDir, options);
     } catch (error) {
       const modulePath = getModulePathFromImport(importExpr);
-      wrapError("Processing sequential import", error, modulePath, options.currentFile);
+      const importLine = findImportLineInfo(importExpr, options.currentFile);
+      wrapImportError("Processing sequential import", error, modulePath, options.currentFile, importLine);
     }
   }
 }
@@ -269,7 +400,7 @@ function processFileContent(
     }
   } catch (error) {
     if (error instanceof MacroError) throw error;
-    wrapError(
+    wrapImportError(
       "Processing file definitions and exports",
       error,
       options.currentFile || "unknown",
@@ -334,14 +465,21 @@ async function processImport(
     } else if (isSExpVectorImport(elements)) {
       await processVectorBasedImport(elements, env, baseDir, options);
     } else {
+      const line = findImportLineInfo(importExpr, options.currentFile);
       throw new ImportError(
         `Invalid import statement format: ${JSON.stringify(importExpr)}`,
         "syntax-error",
+        { 
+          filePath: options.currentFile, 
+          line: line?.line, 
+          column: line?.column 
+        }
       );
     }
   } catch (error) {
     const modulePath = getModulePathFromImport(importExpr);
-    wrapError("Processing import", error, modulePath);
+    const line = findImportLineInfo(importExpr, options.currentFile);
+    wrapImportError("Processing import", error, modulePath, options.currentFile, line);
   }
 }
 
@@ -430,7 +568,25 @@ async function processNamespaceImport(
     });
   } catch (error) {
     const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
-    wrapError("Processing namespace import", error, modulePath);
+    
+    // Try to get line information
+    let line = undefined;
+    if (options.currentFile) {
+      try {
+        const content = Deno.readTextFileSync(options.currentFile);
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes('import') && lines[i].includes('from') && lines[i].includes(modulePath)) {
+            line = { line: i + 1, column: lines[i].indexOf('import') + 1 };
+            break;
+          }
+        }
+      } catch (_) {
+        // Ignore errors reading the file
+      }
+    }
+    
+    wrapImportError("Processing namespace import", error, modulePath, options.currentFile, line);
   }
 }
 
@@ -462,12 +618,20 @@ async function processVectorBasedImport(
     const vectorElements = processVectorElements(symbolsVector.elements);
     const requestedSymbols = extractSymbolsAndAliases(vectorElements);
     
+    // Find line and column information before importing symbols
+    const lineInfo = options.currentFile ? findImportVectorPosition(
+      options.currentFile, 
+      modulePath, 
+      Array.from(requestedSymbols.keys())
+    ) : undefined;
+    
     importSymbols(
       requestedSymbols,
       modulePath,
       moduleId,
       env,
       options.currentFile || "",
+      lineInfo
     );
     
     // Register in symbol table for each imported symbol
@@ -484,7 +648,7 @@ async function processVectorBasedImport(
         importedValue = env.lookup(symbolName);
       } catch (_e) {
         // If symbol is not found, we'll proceed with minimal type information
-        console.log(`Warning: Symbol ${symbolName} not fully resolved during import. Using basic type information.`);
+        logger.debug(`Warning: Symbol ${symbolName} not fully resolved during import. Using basic type information.`);
         importedValue = undefined;
       }
       
@@ -528,8 +692,60 @@ async function processVectorBasedImport(
     }
   } catch (error) {
     const modulePath = elements[3]?.type === "literal" ? String(elements[3].value) : "unknown";
-    wrapError("Processing vector import", error, modulePath);
+    
+    // Try to find the import position
+    let lineInfo = undefined;
+    if (options.currentFile) {
+      const symbolsVector = elements[1] as SList;
+      const vectorElements = processVectorElements(symbolsVector.elements);
+      const symbols = Array.from(extractSymbolsAndAliases(vectorElements).keys());
+      
+      lineInfo = findImportVectorPosition(options.currentFile, modulePath, symbols);
+    }
+    
+    wrapImportError("Processing vector import", error, modulePath, options.currentFile, lineInfo);
   }
+}
+
+/**
+ * Find the position of a symbol in an import vector
+ */
+function findImportVectorPosition(
+  filePath: string, 
+  modulePath: string, 
+  symbols: string[]
+): { line: number; column: number } | undefined {
+  try {
+    const content = Deno.readTextFileSync(filePath);
+    const lines = content.split('\n');
+    
+    // Find the import statement with both vector and module path
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.includes('[') && line.includes('from') && line.includes(modulePath)) {
+        // First check if any of the symbols are in this line
+        for (const symbol of symbols) {
+          const symbolPos = line.indexOf(symbol);
+          if (symbolPos >= 0) {
+            return { line: i + 1, column: symbolPos + 1 };
+          }
+        }
+        
+        // If no specific symbol found, return position of the vector
+        const vectorPos = line.indexOf('[');
+        if (vectorPos >= 0) {
+          return { line: i + 1, column: vectorPos + 1 };
+        }
+        
+        // Fallback to import keyword position
+        return { line: i + 1, column: line.indexOf('import') + 1 };
+      }
+    }
+  } catch (error) {
+    logger.debug(`Error finding import vector position: ${error.message}`);
+  }
+  
+  return undefined;
 }
 
 /**
@@ -578,7 +794,7 @@ function extractSymbolsAndAliases(vectorElements: SExp[]): Map<string, string | 
 }
 
 /**
- * Import symbols from a module
+ * Import symbols from a module with enhanced error context
  */
 function importSymbols(
   requestedSymbols: Map<string, string | null>,
@@ -586,6 +802,7 @@ function importSymbols(
   tempModuleName: string,
   env: Environment,
   currentFile: string,
+  lineInfo?: { line: number; column: number },
 ): void {
   for (const [symbolName, aliasName] of requestedSymbols.entries()) {
     try {
@@ -609,20 +826,58 @@ function importSymbols(
         // Only throw for non-macros
         if (!env.isSystemMacro(symbolName)) {
           logger.debug(`Symbol not found in module: ${symbolName}`);
-          wrapError(
-            `Symbol '${symbolName}' not found in module '${modulePath}'`,
-            lookupError,
-            modulePath,
-            currentFile,
+          
+          // Create a validation error with precise information
+          let errorMessage = `Symbol '${symbolName}' not found in module '${modulePath}'`;
+          
+          // Try to get a list of available exports
+          const availableExports = env.moduleExports.get(tempModuleName);
+          if (availableExports) {
+            const exportsList = Object.keys(availableExports).join(", ");
+            if (exportsList) {
+              errorMessage += `\nAvailable exports: ${exportsList}`;
+            }
+          }
+          
+          const error = new ValidationError(
+            errorMessage,
+            "import symbol lookup",
+            "defined symbol",
+            "undefined symbol",
+            {
+              filePath: currentFile,
+              line: lineInfo?.line,
+              column: lineInfo?.column
+            }
           );
+          
+          throw error;
         }
       }
     } catch (error) {
-      wrapError(
+      // Determine if this is an import error (we want specific line info)
+      if (error instanceof ValidationError || error instanceof ImportError) {
+        // Create a source location with the correct information
+        const loc = new SourceLocationInfo({
+          filePath: currentFile,
+          line: lineInfo?.line,
+          column: lineInfo?.column
+        });
+        
+        throw new ImportError(
+          `Importing '${symbolName}' from '${modulePath}': ${error.message}`,
+          modulePath,
+          loc,
+          error
+        );
+      }
+      
+      wrapImportError(
         `Importing symbol '${symbolName}' from '${modulePath}'`,
         error,
         modulePath,
         currentFile,
+        lineInfo
       );
     }
   }

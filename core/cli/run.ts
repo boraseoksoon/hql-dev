@@ -12,12 +12,13 @@ import {
   CliOptions
 } from "./utils/cli-options.ts";
 
-// Import the new error handling system
+// Import the enhanced error handling system
 import {
   initializeErrorSystem,
   runWithErrorHandling,
   setErrorContext,
-  updateErrorConfig
+  updateErrorConfig,
+  enrichErrorWithContext
 } from "../src/common/error-system.ts";
 
 /**
@@ -66,24 +67,30 @@ async function transpileAndExecute(
   // Register the current context for error reporting
   setErrorContext(inputPath, jsOutputPath);
 
-  await transpileCLI(inputPath, jsOutputPath, {
-    verbose: options.verbose,
-    showTiming: options.showTiming,
-    force: true, // Always regenerate to ensure latest code is used
-  });
-  
-  logger.debug(`Running transpiled code from: ${jsOutputPath}`);
-  
-  const importUrl = `file://${jsOutputPath}`;
-  
-  // Import and run with error handling
-  const module = await import(importUrl);
-  
-  if (module.default && typeof module.default === "function") {
-    logger.debug("Found default export function, executing it");
-    await module.default();
-  } else {
-    logger.debug("Module imported successfully");
+  try {
+    await transpileCLI(inputPath, jsOutputPath, {
+      verbose: options.verbose,
+      showTiming: options.showTiming,
+      force: true, // Always regenerate to ensure latest code is used
+    });
+    
+    logger.debug(`Running transpiled code from: ${jsOutputPath}`);
+    
+    const importUrl = `file://${jsOutputPath}`;
+    
+    // Import and run with error handling
+    const module = await import(importUrl);
+    
+    if (module.default && typeof module.default === "function") {
+      logger.debug("Found default export function, executing it");
+      await module.default();
+    } else {
+      logger.debug("Module imported successfully");
+    }
+  } catch (error) {
+    // Use the enhanced error enrichment before throwing
+    const enrichedError = await enrichErrorWithContext(error, inputPath);
+    throw enrichedError;
   }
 }
 
@@ -100,7 +107,7 @@ export async function run(args: string[] = Deno.args): Promise<number> {
     verboseErrors: cliOptions.verbose
   });
   
-  // Run the main function with error handling
+  // Run the main function with enhanced error handling
   return await runWithErrorHandling(async () => {
     await initializeRuntime();
       
@@ -143,7 +150,11 @@ export async function run(args: string[] = Deno.args): Promise<number> {
     logger.endTiming("run", "Total Processing");
     
     return 0;
-  }, { debug: cliOptions.debug, exitOnError: true });
+  }, { 
+    debug: cliOptions.debug, 
+    exitOnError: true,
+    currentFile: parseNonOptionArgs(args)[0] // Pass the current file for context
+  });
 }
 
 if (import.meta.main) {

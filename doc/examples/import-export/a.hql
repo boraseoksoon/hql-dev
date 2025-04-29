@@ -1,5 +1,15 @@
 (import b from "./b.hql")
-(import [fuck] from "./b.hql")
+(import [hello] from "./b.hql")
 
 (b.hello "world")
 (hello "world")
+
+(let numbers (new Array2))
+(numbers.push 1)
+(numbers.push 2)
+(numbers.push 3)
+(numbers.push 4)
+(numbers.push 5)
+(numbers.push 6)
+(numbers.push 7)
+(print numbers)

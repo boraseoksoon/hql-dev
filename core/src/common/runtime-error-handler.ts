@@ -1,5 +1,5 @@
 // core/src/common/runtime-error-handler.ts
-// Maps JavaScript runtime errors back to HQL source locations
+// Maps JavaScript runtime errors back to HQL source locations with improved accuracy
 
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { RuntimeError, ValidationError } from "./error.ts";
@@ -93,6 +93,170 @@ export function setRuntimeContext(hqlFile?: string, jsFile?: string): void {
 }
 
 /**
+ * Find HQL location for property access error
+ * This function analyzes the error message and identifies the correct line and column
+ */
+function findPropertyAccessErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
+  try {
+    // Property access errors often contain the property name
+    // Example: "b.hell is not a function" or "Cannot read property 'hell' of undefined"
+    const propertyMatch = error.message.match(/([a-zA-Z0-9_$]+)\.([a-zA-Z0-9_$]+)/);
+    if (!propertyMatch && !error.message.includes("property")) {
+      return null;
+    }
+    
+    // Get object and property names
+    const objName = propertyMatch ? propertyMatch[1] : null;
+    const propName = propertyMatch ? propertyMatch[2] : null;
+    
+    // Read the file and scan for the property access pattern
+    const fileContent = Deno.readTextFileSync(hqlFile);
+    const lines = fileContent.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // If we found both object and property names, look for the exact pattern
+      if (objName && propName) {
+        const pattern = `${objName}.${propName}`;
+        const colIndex = line.indexOf(pattern);
+        if (colIndex >= 0) {
+          return {
+            line: i + 1,
+            column: colIndex + objName.length + 1 // Point to the dot or the property
+          };
+        }
+      }
+      
+      // If we only have partial info, try to find any property access
+      // that matches words in the error message
+      const words = error.message.split(/\s+/);
+      for (const word of words) {
+        if (word.includes('.') && line.includes(word)) {
+          const colIndex = line.indexOf(word);
+          if (colIndex >= 0) {
+            const dotIndex = word.indexOf('.');
+            return {
+              line: i + 1,
+              column: colIndex + dotIndex // Point to the dot
+            };
+          }
+        }
+      }
+    }
+  } catch (e) {
+    logger.debug(`Error finding property access location: ${e.message}`);
+  }
+  
+  return null;
+}
+
+/**
+ * Find HQL location for import errors
+ * This function analyzes import statements to find the location of a symbol
+ */
+function findImportErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
+  try {
+    // Import errors often mention the symbol that wasn't found
+    // Example: "Symbol 'fuck' not found in module './b.hql'" 
+    const symbolMatch = error.message.match(/['"](.*?)['"] not found/);
+    const symbolName = symbolMatch ? symbolMatch[1] : null;
+    
+    if (!symbolName) {
+      return null;
+    }
+    
+    // Read the file and scan for import statements containing the symbol
+    const fileContent = Deno.readTextFileSync(hqlFile);
+    const lines = fileContent.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Look for vector imports like (import [xyz] from "./path.hql")
+      if (line.includes('import') && line.includes('[') && line.includes(symbolName)) {
+        const bracketStart = line.indexOf('[');
+        const bracketEnd = line.indexOf(']');
+        
+        if (bracketStart >= 0 && bracketEnd > bracketStart) {
+          // Search for the symbol within the brackets
+          const importVector = line.substring(bracketStart, bracketEnd);
+          const symbolPos = importVector.indexOf(symbolName);
+          
+          if (symbolPos >= 0) {
+            return {
+              line: i + 1,
+              column: bracketStart + symbolPos + 1
+            };
+          }
+        }
+        
+        // If we found an import line but couldn't pinpoint the symbol,
+        // at least return the line and approximate column
+        return {
+          line: i + 1,
+          column: line.indexOf(symbolName) >= 0 ? line.indexOf(symbolName) + 1 : line.indexOf('[') + 1
+        };
+      }
+    }
+  } catch (e) {
+    logger.debug(`Error finding import error location: ${e.message}`);
+  }
+  
+  return null;
+}
+
+/**
+ * Find HQL location for function call errors
+ * This function analyzes function calls to find the location
+ */
+function findFunctionCallErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
+  try {
+    // Function errors often mention the function name
+    // Example: "hello is not a function" or "Cannot read property 'call' of undefined"
+    const functionMatch = error.message.match(/([a-zA-Z0-9_$]+) is not a function/);
+    const functionName = functionMatch ? functionMatch[1] : null;
+    
+    if (!functionName) {
+      return null;
+    }
+    
+    // Read the file and scan for function calls
+    const fileContent = Deno.readTextFileSync(hqlFile);
+    const lines = fileContent.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Look for function call pattern (name args...)
+      const match = line.match(new RegExp(`\\(${functionName}\\s+`, 'g'));
+      if (match) {
+        const callIndex = line.indexOf(`(${functionName}`);
+        return {
+          line: i + 1,
+          column: callIndex + 1 // Point to the function name
+        };
+      }
+      
+      // Also check for property access method calls like obj.method()
+      if (functionName.includes('.')) {
+        const callIndex = line.indexOf(functionName);
+        if (callIndex >= 0) {
+          return {
+            line: i + 1,
+            column: callIndex + 1
+          };
+        }
+      }
+    }
+  } catch (e) {
+    logger.debug(`Error finding function call location: ${e.message}`);
+  }
+  
+  return null;
+}
+
+/**
  * Get the HQL file path from a JavaScript file path
  */
 function getHqlFileFromJs(jsFile: string): string | undefined {
@@ -112,19 +276,30 @@ function getHqlFileFromJs(jsFile: string): string | undefined {
     const searchPaths = [
       Deno.cwd(),
       path.join(Deno.cwd(), "src"),
-      path.join(Deno.cwd(), "lib")
+      path.join(Deno.cwd(), "lib"),
+      path.join(Deno.cwd(), "doc", "examples")
     ];
     
     for (const searchPath of searchPaths) {
-      const possiblePath = path.join(searchPath, possibleHqlName);
       try {
-        const stat = Deno.statSync(possiblePath);
-        if (stat.isFile) {
-          logger.debug(`Inferred HQL file ${possiblePath} from JS file ${jsFile}`);
-          return possiblePath;
+        for (const entry of Deno.readDirSync(searchPath)) {
+          if (entry.isDirectory) {
+            // Check subdirectories as well
+            const subdir = path.join(searchPath, entry.name);
+            const subdirFile = path.join(subdir, possibleHqlName);
+            try {
+              const stat = Deno.statSync(subdirFile);
+              if (stat.isFile) {
+                logger.debug(`Inferred HQL file ${subdirFile} from JS file ${jsFile}`);
+                return subdirFile;
+              }
+            } catch (_e) {
+              // Ignore errors
+            }
+          }
         }
       } catch (_e) {
-        // File doesn't exist, continue to next search path
+        // Directory doesn't exist, continue to next search path
       }
     }
   }
@@ -284,7 +459,8 @@ async function findClosestHqlFiles(
   const searchDirs = [
     Deno.cwd(),
     path.join(Deno.cwd(), "src"),
-    path.join(Deno.cwd(), "lib")
+    path.join(Deno.cwd(), "lib"),
+    path.join(Deno.cwd(), "doc", "examples")
   ];
   
   for (const dir of searchDirs) {
@@ -296,6 +472,22 @@ async function findClosestHqlFiles(
             line: errorLocation.line,
             column: errorLocation.column
           });
+        } else if (entry.isDirectory) {
+          // Also check subdirectories
+          try {
+            const subdir = path.join(dir, entry.name);
+            for await (const subEntry of Deno.readDir(subdir)) {
+              if (subEntry.isFile && subEntry.name.endsWith(".hql")) {
+                candidates.push({
+                  hqlFile: path.join(subdir, subEntry.name),
+                  line: errorLocation.line,
+                  column: errorLocation.column
+                });
+              }
+            }
+          } catch (_e) {
+            // Ignore errors in subdirectories
+          }
         }
       }
     } catch (_e) {
@@ -329,7 +521,17 @@ function createSuggestionForError(error: Error): string | undefined {
   
   // TypeError: X is not a function
   if (errorMessage.includes("is not a function")) {
-    return "Verify that you're calling a valid function and check for typos in the function name.";
+    return "Verify that you're calling a valid function and check for typos in the function name or property name.";
+  }
+  
+  // Import errors
+  if (errorMessage.includes("not found in module")) {
+    return "Check the imported file for exported symbols, or fix the property name.";
+  }
+  
+  // Property doesn't exist
+  if (errorMessage.includes("property") && errorMessage.includes("not found")) {
+    return "Verify the property name and check if you have a typo or if the property exists on the object.";
   }
   
   // SyntaxError: Unexpected token
@@ -395,50 +597,109 @@ export async function handleRuntimeError(error: Error): Promise<void> {
     
     // Extract location from stack trace
     const jsLocation = extractLocationFromStack(error.stack);
-    if (!jsLocation) {
-      // If we can't extract a location, just report the error as is
-      await globalErrorReporter.reportError(error);
-      return;
-    }
+    let hqlLocation: { hqlFile: string; line: number; column: number } | null = null;
     
-    // Find relevant HQL files
-    const hqlCandidates = await findClosestHqlFiles(jsLocation);
-    
-    if (hqlCandidates.length === 0) {
-      // If no HQL candidates found, report with JS location
-      await globalErrorReporter.reportError(error);
-      return;
-    }
-    
-    // Use the first HQL candidate (most likely match)
-    const hqlLocation = hqlCandidates[0];
-    
-    // Read context lines from the HQL file
-    const contextLines = await readContextLines(hqlLocation.hqlFile, hqlLocation.line);
-    
-    // Create a suggestion
-    const suggestion = createSuggestionForError(error);
-    
-    // Create a RuntimeError with HQL source location
-    const hqlError = new RuntimeError(
-      error.message,
-      {
-        filePath: hqlLocation.hqlFile,
-        line: hqlLocation.line,
-        column: hqlLocation.column,
+    // If we have a current HQL file context, try to find specific error locations
+    if (runtimeContext.currentHqlFile) {
+      // Try to find the specific location based on error type
+      
+      // Property access errors (e.g., b.hell is not a function)
+      if (error.message.includes("not a function") || 
+          error.message.includes("property") || 
+          error.message.includes("undefined")) {
+        const propLocation = findPropertyAccessErrorLocation(error, runtimeContext.currentHqlFile);
+        if (propLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: propLocation.line, 
+            column: propLocation.column 
+          };
+        }
       }
-    );
-    
-    // Set the context lines
-    hqlError.contextLines = contextLines;
-    
-    // Override the suggestion method
-    if (suggestion) {
-      hqlError.getSuggestion = () => suggestion;
+      
+      // Import errors
+      else if (error.message.includes("not found in module") || 
+               error.message.includes("Symbol") || 
+               error.message.includes("import")) {
+        const importLocation = findImportErrorLocation(error, runtimeContext.currentHqlFile);
+        if (importLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: importLocation.line, 
+            column: importLocation.column 
+          };
+        }
+      }
+      
+      // Function call errors
+      else if (error.message.includes("is not a function")) {
+        const funcLocation = findFunctionCallErrorLocation(error, runtimeContext.currentHqlFile);
+        if (funcLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: funcLocation.line, 
+            column: funcLocation.column 
+          };
+        }
+      }
     }
     
-    // Report the error with the enhanced HQL information
-    await globalErrorReporter.reportError(hqlError, true);
+    // If we didn't find a location, but we have JS location, try mappings
+    if (!hqlLocation && jsLocation) {
+      const candidates = await findClosestHqlFiles(jsLocation);
+      
+      if (candidates.length > 0) {
+        // If we found candidates, use the first one
+        hqlLocation = candidates[0];
+      }
+    }
+    
+    // If we still don't have a location but have a current file, use defaults
+    if (!hqlLocation && runtimeContext.currentHqlFile) {
+      hqlLocation = {
+        hqlFile: runtimeContext.currentHqlFile,
+        line: 1,  // Default to line 1
+        column: 1 // Default to column 1
+      };
+    }
+    
+    // If we found a location, create a RuntimeError with it
+    if (hqlLocation) {
+      // Read context lines from the HQL file
+      const contextLines = await readContextLines(hqlLocation.hqlFile, hqlLocation.line);
+      
+      // Create a suggestion
+      const suggestion = createSuggestionForError(error);
+      
+      // Create a RuntimeError with HQL source location
+      const hqlError = new RuntimeError(
+        error.message,
+        {
+          filePath: hqlLocation.hqlFile,
+          line: hqlLocation.line,
+          column: hqlLocation.column,
+        }
+      );
+      
+      // Set the context lines
+      hqlError.contextLines = contextLines.map(line => {
+        if (line.isError) {
+          return { ...line, column: hqlLocation!.column };
+        }
+        return line;
+      });
+      
+      // Override the suggestion method
+      if (suggestion) {
+        hqlError.getSuggestion = () => suggestion;
+      }
+      
+      // Report the error with the enhanced HQL information
+      await globalErrorReporter.reportError(hqlError, true);
+    } else {
+      // If we couldn't enhance the error, just report it as is
+      await globalErrorReporter.reportError(error);
+    }
   } catch (handlerError) {
     // If our error handler fails, log it and fallback to reporting the original error
     logger.error(`Error in runtime error handler: ${handlerError.message}`);

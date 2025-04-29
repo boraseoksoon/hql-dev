@@ -1,21 +1,32 @@
-// core/src/s-exp/types.ts
-// Remove references to isUserMacro and macro form
+// core/src/s-exp/types.ts - Modified to support source location metadata
 
 export type SExp = SSymbol | SList | SLiteral;
+
+export interface SExpMeta {
+  filePath?: string;
+  line?: number;
+  column?: number;
+  endLine?: number;
+  endColumn?: number;
+  _meta?: SExpMeta;  // Allow nested metadata
+}
 
 export interface SSymbol {
   type: "symbol";
   name: string;
+  _meta?: SExpMeta;  // Optional metadata for source location
 }
 
 export interface SList {
   type: "list";
   elements: SExp[];
+  _meta?: SExpMeta;  // Optional metadata for source location
 }
 
 export interface SLiteral {
   type: "literal";
   value: string | number | boolean | null;
+  _meta?: SExpMeta;  // Optional metadata for source location
 }
 
 /**
@@ -98,11 +109,20 @@ export function sexpToString(exp: SExp): string {
  */
 export function cloneSExp(exp: SExp): SExp {
   if (isSymbol(exp)) {
-    return createSymbol(exp.name);
+    const result = createSymbol(exp.name);
+    // Copy metadata if present
+    if (exp._meta) result._meta = {...exp._meta};
+    return result;
   } else if (isLiteral(exp)) {
-    return createLiteral(exp.value);
+    const result = createLiteral(exp.value);
+    // Copy metadata if present
+    if (exp._meta) result._meta = {...exp._meta};
+    return result;
   } else if (isList(exp)) {
-    return createList(...exp.elements.map(cloneSExp));
+    const result = createList(...exp.elements.map(cloneSExp));
+    // Copy metadata if present
+    if (exp._meta) result._meta = {...exp._meta};
+    return result;
   } else {
     throw new Error(`Unknown expression type: ${JSON.stringify(exp)}`);
   }
@@ -129,4 +149,41 @@ export function isSExpNamespaceImport(elements: SExp[]): boolean {
     elements[2].name === "from" &&
     isLiteral(elements[3]) &&
     typeof elements[3].value === "string";
+}
+
+/**
+ * Get source location from an S-expression, if available
+ */
+export function getSExpLocation(exp: SExp): { filePath?: string; line?: number; column?: number } {
+  if (!exp._meta) return {};
+  
+  return {
+    filePath: exp._meta.filePath,
+    line: exp._meta.line,
+    column: exp._meta.column
+  };
+}
+
+/**
+ * Set source location for an S-expression
+ */
+export function setSExpLocation(
+  exp: SExp, 
+  filePath: string, 
+  line?: number, 
+  column?: number, 
+  endLine?: number, 
+  endColumn?: number
+): SExp {
+  if (!exp._meta) {
+    exp._meta = {};
+  }
+  
+  exp._meta.filePath = filePath;
+  if (line !== undefined) exp._meta.line = line;
+  if (column !== undefined) exp._meta.column = column;
+  if (endLine !== undefined) exp._meta.endLine = endLine;
+  if (endColumn !== undefined) exp._meta.endColumn = endColumn;
+  
+  return exp;
 }

@@ -1,10 +1,11 @@
-// core/src/common/error-system.ts
-// Central integration point for the HQL error system
+// core/src/common/error-system.ts - Improved error reporting
 
 import { HQLError, ParseError, ValidationError, RuntimeError } from "./error.ts";
 import { globalLogger as logger } from "../logger.ts";
 import { globalErrorReporter, reportError } from "./error.ts";
 import { initializeErrorHandling, handleRuntimeError, setRuntimeContext } from "./runtime-error-handler.ts";
+import { dirname, readTextFile } from "../platform/platform.ts";
+import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 
 /**
  * Error system configuration options
@@ -107,116 +108,188 @@ export async function formatErrorForCLI(error: Error | HQLError): Promise<string
 }
 
 /**
- * Generate examples of different error types for testing
+ * Enhanced error enrichment function that tries to add source context
+ * This is especially useful for validation errors that lack source location
  */
-export function generateExampleErrors(): { [key: string]: HQLError } {
-  const examples: { [key: string]: HQLError } = {};
-  
-  // Parse error example
-  examples.parseError = new ParseError(
-    "Unexpected token in app.hql:23:8",
-    {
-      line: 23,
-      column: 8,
-      filePath: "app.hql",
-      source: `(fn calculate (x y)
-  (let (result (+ x y))
-    (if result = 0
-      "Zero"
-      result)))`
-    }
-  );
-  
-  // Add context lines to parse error
-  examples.parseError.contextLines = [
-    { line: 21, content: "(fn calculate (x y)", isError: false },
-    { line: 22, content: "  (let (result (+ x y))", isError: false },
-    { line: 23, content: "    (if result = 0", isError: true, column: 8 },
-    { line: 24, content: '      "Zero"', isError: false },
-    { line: 25, content: "      result)))", isError: false }
-  ];
-  
-  // Add suggested fix
-  examples.parseError.getSuggestion = () => "Use '===' for equality comparison: (if (=== result 0) ...)";
-  
-  // Runtime error example
-  examples.runtimeError = new RuntimeError(
-    "Cannot read property 'value' of undefined",
-    {
-      filePath: "user-service.hql",
-      line: 25,
-      column: 18
-    }
-  );
-  
-  // Add context lines to runtime error
-  examples.runtimeError.contextLines = [
-    { line: 23, content: "(fn process-user (user)", isError: false },
-    { line: 24, content: "  (let (score (get user \"score\")", isError: false },
-    { line: 25, content: "        total (calculate score \"bonus\"))", isError: true, column: 18 },
-    { line: 26, content: "    total))", isError: false },
-    { line: 27, content: "", isError: false }
-  ];
-  
-  // Add suggested fix
-  examples.runtimeError.getSuggestion = () => "Check that 'score' is defined before passing it to calculate. Consider adding a default value: (calculate (or score 0) \"bonus\")";
-  
-  // Validation error example
-  examples.validationError = new ValidationError(
-    "Type error: Expected number but got string",
-    "function argument",
-    {
-      expectedType: "number",
-      actualType: "string",
-      filePath: "math.hql",
-      line: 15,
-      column: 10
-    }
-  );
-  
-  // Add context lines to validation error
-  examples.validationError.contextLines = [
-    { line: 13, content: "(fn multiply (a b)", isError: false },
-    { line: 14, content: "  (if (and (number? a) (number? b))", isError: false },
-    { line: 15, content: "    (* a b)", isError: true, column: 10 },
-    { line: 16, content: "    (throw \"Both arguments must be numbers\")))", isError: false }
-  ];
-  
-  // Add suggested fix
-  examples.validationError.getSuggestion = () => "Convert string values to numbers before multiplication: (fn multiply (a b) (let (numA (Number a) numB (Number b)) (* numA numB)))";
-  
-  return examples;
-}
-
-/**
- * Display an example error to demonstrate the formatting
- */
-export async function displayExampleError(errorType: string = 'parseError'): Promise<void> {
-  const examples = generateExampleErrors();
-  
-  if (errorType in examples) {
-    await reportError(examples[errorType], errorConfig.debug);
-  } else {
-    console.error(`Unknown error type: ${errorType}`);
-    console.error(`Available error types: ${Object.keys(examples).join(', ')}`);
+export async function enrichErrorWithContext(error: Error | HQLError, filePath?: string): Promise<Error | HQLError> {
+  // If it's already an HQLError with context, don't modify it
+  if (error instanceof HQLError && error.contextLines && error.contextLines.length > 0) {
+    return error;
   }
+  
+  // If it's an HQLError but missing source location info, try to add it
+  if (error instanceof HQLError) {
+    // Always set filePath if it's not already set
+    if (!error.sourceLocation.filePath && filePath) {
+      error.sourceLocation.filePath = filePath;
+    }
+  }
+  
+  // Extract the source file path from the error or use provided filePath
+  const sourcePath = error instanceof HQLError ? 
+    error.sourceLocation.filePath || filePath : 
+    filePath;
+  
+  // Can't add context without a source file
+  if (!sourcePath) {
+    return error;
+  }
+  
+  try {
+    // Try to read the source file
+    const content = await readTextFile(sourcePath);
+    const lines = content.split('\n');
+    
+    if (error instanceof HQLError) {
+      // If we have line info, use it
+      if (error.sourceLocation.line) {
+        const line = error.sourceLocation.line;
+        const contextLines = [];
+        
+        // Add context lines before the error line
+        for (let i = Math.max(0, line - 2); i < line; i++) {
+          contextLines.push({
+            line: i + 1,
+            content: lines[i] || "",
+            isError: false
+          });
+        }
+        
+        // Add the error line
+        contextLines.push({
+          line: line,
+          content: lines[line - 1] || "",
+          isError: true,
+          column: error.sourceLocation.column
+        });
+        
+        // Add context lines after the error line
+        for (let i = line; i < Math.min(lines.length, line + 2); i++) {
+          contextLines.push({
+            line: i + 1,
+            content: lines[i] || "",
+            isError: false
+          });
+        }
+        
+        error.contextLines = contextLines;
+      } else {
+        // If we don't have line info, look for potential error pattern in the error message
+        const errorMsg = error.message.toLowerCase();
+        
+        // Try to match patterns like 'property x not found', 'symbol x not found', etc.
+        let errorPattern: RegExp | null = null;
+        let errorEntity: string | null = null;
+        
+        if (errorMsg.includes('property') && errorMsg.includes('not found')) {
+          errorPattern = /'([^']+)'/g; // Match 'property_name'
+          errorEntity = "property";
+        } else if (errorMsg.includes('symbol') && errorMsg.includes('not found')) {
+          errorPattern = /'([^']+)'/g; // Match 'symbol_name'
+          errorEntity = "symbol";
+        } else if (errorMsg.includes('undefined') || errorMsg.includes('null')) {
+          errorPattern = /([a-zA-Z0-9_\-\.]+) is undefined|null/i;
+          errorEntity = "reference";
+        }
+        
+        if (errorPattern && errorEntity) {
+          const matches = [...error.message.matchAll(errorPattern)];
+          if (matches.length > 0) {
+            const entityName = matches[0][1];
+            
+            // Scan the file for the entity name
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i].includes(entityName)) {
+                const column = lines[i].indexOf(entityName) + 1;
+                
+                // Create context lines around this location
+                const contextLines = [];
+                for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 1); j++) {
+                  contextLines.push({
+                    line: j + 1,
+                    content: lines[j],
+                    isError: j === i,
+                    column: j === i ? column : undefined
+                  });
+                }
+                
+                error.contextLines = contextLines;
+                error.sourceLocation.line = i + 1;
+                error.sourceLocation.column = column;
+                
+                // Update the message to include more specific information
+                error.message = `${error.errorType}: ${errorEntity} '${entityName}' not found in ${path.basename(sourcePath)}:${i + 1}:${column}`;
+                break;
+              }
+            }
+          }
+        }
+      }
+    } else {
+      // Convert regular Error to HQLError with context
+      const newError = new HQLError(error.message, {
+        errorType: "Error",
+        originalError: error,
+        sourceLocation: { filePath: sourcePath }
+      });
+      
+      // Scan for error indicators like keywords from the error message
+      const errorWords = error.message.toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
+        .split(' ')
+        .filter(word => word.length > 3);
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].toLowerCase();
+        const matchCount = errorWords.filter(word => line.includes(word)).length;
+        
+        if (matchCount >= 2 || (errorWords.length === 1 && matchCount === 1)) {
+          // Found a line that contains multiple error-related words
+          const contextLines = [];
+          for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 1); j++) {
+            contextLines.push({
+              line: j + 1,
+              content: lines[j],
+              isError: j === i,
+              column: j === i ? line.indexOf(errorWords[0]) + 1 : undefined
+            });
+          }
+          
+          newError.contextLines = contextLines;
+          newError.sourceLocation.line = i + 1;
+          newError.sourceLocation.column = line.indexOf(errorWords[0]) + 1;
+          break;
+        }
+      }
+      
+      return newError;
+    }
+  } catch (readError) {
+    logger.debug(`Failed to read source file for context: ${readError}`);
+  }
+  
+  return error;
 }
 
 /**
- * Run a CLI command with error handling
+ * Run a CLI command with enhanced error handling
  */
 export async function runWithErrorHandling(
-  command: () => Promise<void>, 
-  options: { debug?: boolean; exitOnError?: boolean } = {}
-): Promise<void> {
+  command: () => Promise<number | void>,
+  options: { debug?: boolean; exitOnError?: boolean; currentFile?: string } = {}
+): Promise<number> {
   try {
-    await command();
+    const result = await command();
+    return typeof result === 'number' ? result : 0;
   } catch (error) {
     // Configure error reporting based on options
     const debug = options.debug ?? errorConfig.debug;
     
-    if (error instanceof Error) {
-      await reportError(error, debug);
+    // Try to enrich the error with context
+    const enrichedError = await enrichErrorWithContext(error, options.currentFile);
+    
+    if (enrichedError instanceof Error) {
+      await reportError(enrichedError, debug);
     } else {
       console.error(`Unknown error: ${error}`);
     }
@@ -225,6 +298,8 @@ export async function runWithErrorHandling(
     if (options.exitOnError !== false) {
       Deno.exit(1);
     }
+    
+    return 1;
   }
 }
 

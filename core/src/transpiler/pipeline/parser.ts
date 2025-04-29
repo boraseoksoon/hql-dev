@@ -1,4 +1,4 @@
-// src/transpiler/pipeline/parser.ts - Fixed implementation for HQL syntax parsing
+// Modify core/src/transpiler/pipeline/parser.ts to track source location
 
 import {
   createList,
@@ -11,6 +11,7 @@ import {
   isSymbol
 } from "../../s-exp/types.ts";
 import { ParseError } from "../../common/error.ts";
+import { attachSourceLocation } from "../../common/syntax-error-handler.ts";
 
 enum TokenType {
   LeftParen,
@@ -145,9 +146,12 @@ function parseExpression(state: ParserState): SExp {
 }
 
 function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
+  let result: SExp;
+  
   switch (token.type) {
     case TokenType.LeftParen: 
-      return parseList(state, token.position);
+      result = parseList(state, token.position);
+      break;
     case TokenType.RightParen: {
       const lineContext = getLineContext(state.input, token.position.line);
       throw new ParseError(
@@ -156,42 +160,67 @@ function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
       ); 
     }
     case TokenType.LeftBracket: 
-      return parseVector(state, token.position);
+      result = parseVector(state, token.position);
+      break;
     case TokenType.RightBracket: 
       throw new ParseError(
         `Unexpected ']' - Check for a missing opening '[' in previous lines.`, 
         token.position
       );
     case TokenType.LeftBrace: 
-      return parseMap(state, token.position);
+      result = parseMap(state, token.position);
+      break;
     case TokenType.RightBrace: 
       throw new ParseError(
         `Unexpected '}' - Check for a missing opening '{' in previous lines.`, 
         token.position
       );
     case TokenType.HashLeftBracket: 
-      return parseSet(state, token.position);
-    case TokenType.Quote: 
-      return createList(createSymbol("quote"), parseExpression(state));
-    case TokenType.Backtick: 
-      return createList(createSymbol("quasiquote"), parseExpression(state));
-    case TokenType.Unquote: 
-      return createList(createSymbol("unquote"), parseExpression(state));
-    case TokenType.UnquoteSplicing: 
-      return createList(createSymbol("unquote-splicing"), parseExpression(state));
+      result = parseSet(state, token.position);
+      break;
+    case TokenType.Quote: {
+      const quotedExpr = parseExpression(state);
+      result = createList(createSymbol("quote"), quotedExpr);
+      break;
+    }
+    case TokenType.Backtick: {
+      const expr = parseExpression(state);
+      result = createList(createSymbol("quasiquote"), expr);
+      break;
+    }
+    case TokenType.Unquote: {
+      const expr = parseExpression(state);
+      result = createList(createSymbol("unquote"), expr);
+      break;
+    }
+    case TokenType.UnquoteSplicing: {
+      const expr = parseExpression(state);
+      result = createList(createSymbol("unquote-splicing"), expr);
+      break;
+    }
     case TokenType.Comma: 
-      return createSymbol(",");
+      result = createSymbol(",");
+      break;
     case TokenType.Dot: 
-      return parseDotAccess(state, token);
+      result = parseDotAccess(state, token);
+      break;
     case TokenType.String: 
-      return parseStringLiteral(token.value);
+      result = parseStringLiteral(token.value);
+      break;
     case TokenType.Number: 
-      return createLiteral(Number(token.value));
+      result = createLiteral(Number(token.value));
+      break;
     case TokenType.Symbol: 
-      return parseSymbol(token.value);
+      result = parseSymbol(token.value);
+      break;
     default: 
       throw new ParseError(`Unexpected token type: ${token.type}`, token.position);
   }
+  
+  // Attach source location to result
+  attachSourceLocation(result, state.filePath, token.position.line, token.position.column);
+  
+  return result;
 }
 
 /**
@@ -233,7 +262,12 @@ function parseImportStatement(elements: SExp[]): SList {
 function parseDotAccess(state: ParserState, dotToken: Token): SExp {
   if (state.currentPos < state.tokens.length) {
     const nextToken = state.tokens[state.currentPos++];
-    return createSymbol("." + nextToken.value);
+    const result = createSymbol("." + nextToken.value);
+    
+    // Attach location info - for dot access, use the dot's position
+    attachSourceLocation(result, state.filePath, dotToken.position.line, dotToken.position.column);
+    
+    return result;
   }
   throw new ParseError("Expected property name after '.'", dotToken.position);
 }
@@ -261,9 +295,13 @@ function parseDotNotation(tokenValue: string): SExp {
   const objectName = parts[0];
   const propertyPath = parts.slice(1).join(".");
   
-  return propertyPath.includes("-")
-    ? createList(createSymbol("get"), createSymbol(objectName), createLiteral(propertyPath))
-    : createSymbol(tokenValue);
+  // For property access with dashes, use get function
+  if (propertyPath.includes("-")) {
+    return createList(createSymbol("get"), createSymbol(objectName), createLiteral(propertyPath));
+  }
+  
+  // Otherwise use normal dot notation
+  return createSymbol(tokenValue);
 }
 
 /**
@@ -341,8 +379,21 @@ function parseList(state: ParserState, listStartPos: SourcePosition): SList {
              state.tokens[state.currentPos].type === TokenType.Symbol && 
              state.tokens[state.currentPos].value.endsWith(":")) {
       
+      // Get the token position for better error location
+      const paramNamePos = state.tokens[state.currentPos].position;
+      
       // Create a parameter name symbol (with the colon)
-      elements.push(createSymbol(state.tokens[state.currentPos].value));
+      const paramSymbol = createSymbol(state.tokens[state.currentPos].value);
+      
+      // Attach location information 
+      attachSourceLocation(
+        paramSymbol, 
+        state.filePath, 
+        paramNamePos.line, 
+        paramNamePos.column
+      );
+      
+      elements.push(paramSymbol);
       state.currentPos++;
       
       // Parse the expression that follows the parameter name
@@ -362,11 +413,25 @@ function parseList(state: ParserState, listStartPos: SourcePosition): SList {
              state.currentPos < state.tokens.length && 
              state.tokens[state.currentPos].type === TokenType.Symbol && 
              state.tokens[state.currentPos].value === "->") {
+      // Get position for better error location
+      const arrowPos = state.tokens[state.currentPos].position;
+      
+      // Create arrow symbol with location
+      const arrowSymbol = createSymbol("->");
+      attachSourceLocation(
+        arrowSymbol,
+        state.filePath,
+        arrowPos.line,
+        arrowPos.column
+      );
+      
       // Skip the -> token
       state.currentPos++;
       
+      // Add the arrow symbol
+      elements.push(arrowSymbol);
+      
       // Parse the return type (which follows the arrow)
-      elements.push(createSymbol("->"));
       elements.push(parseExpression(state));
     } else {
       elements.push(parseExpression(state));
@@ -418,15 +483,29 @@ function parseList(state: ParserState, listStartPos: SourcePosition): SList {
     }
   }
   
+  // Get the closing position for better error location
+  const closePos = state.tokens[state.currentPos].position;
+  
   // Move past the closing parenthesis
   state.currentPos++;
   
   // Check if this is an import statement and handle it specially
+  let result: SList;
   if (importKeywordFound) {
-    return parseImportStatement(elements);
+    result = parseImportStatement(elements);
+  } else {
+    result = createList(...elements);
   }
   
-  return createList(...elements);
+  // Attach source location (using both start and end positions)
+  attachSourceLocation(
+    result,
+    state.filePath,
+    listStartPos.line,
+    listStartPos.column
+  );
+  
+  return result;
 }
 
 /**
@@ -479,10 +558,29 @@ function parseVector(state: ParserState, startPos: SourcePosition): SList {
   }
   if (state.currentPos >= state.tokens.length)
     throw new ParseError("Unclosed vector", startPos);
+  
+  // Get end position for better error location
+  const endPos = state.tokens[state.currentPos].position;
+  
+  // Move past the closing bracket
   state.currentPos++;
-  return elements.length === 0
-    ? createList(createSymbol("empty-array"))
-    : createList(createSymbol("vector"), ...elements);
+  
+  let result: SList;
+  if (elements.length === 0) {
+    result = createList(createSymbol("empty-array"));
+  } else {
+    result = createList(createSymbol("vector"), ...elements);
+  }
+  
+  // Attach source location
+  attachSourceLocation(
+    result,
+    state.filePath,
+    startPos.line,
+    startPos.column
+  );
+  
+  return result;
 }
 
 function parseMap(state: ParserState, startPos: SourcePosition): SList {
@@ -509,10 +607,29 @@ function parseMap(state: ParserState, startPos: SourcePosition): SList {
   }
   if (state.currentPos >= state.tokens.length)
     throw new ParseError("Unclosed map", startPos);
+  
+  // Get end position
+  const endPos = state.tokens[state.currentPos].position;
+  
+  // Move past the closing brace
   state.currentPos++;
-  return entries.length === 0
-    ? createList(createSymbol("empty-map"))
-    : createList(createSymbol("hash-map"), ...entries);
+  
+  let result: SList;
+  if (entries.length === 0) {
+    result = createList(createSymbol("empty-map"));
+  } else {
+    result = createList(createSymbol("hash-map"), ...entries);
+  }
+  
+  // Attach source location
+  attachSourceLocation(
+    result,
+    state.filePath,
+    startPos.line,
+    startPos.column
+  );
+  
+  return result;
 }
 
 function parseSet(state: ParserState, startPos: SourcePosition): SList {
@@ -527,10 +644,29 @@ function parseSet(state: ParserState, startPos: SourcePosition): SList {
   }
   if (state.currentPos >= state.tokens.length)
     throw new ParseError("Unclosed set", startPos);
+  
+  // Get end position
+  const endPos = state.tokens[state.currentPos].position;
+  
+  // Move past the closing bracket
   state.currentPos++;
-  return elements.length === 0
-    ? createList(createSymbol("empty-set"))
-    : createList(createSymbol("hash-set"), ...elements);
+  
+  let result: SList;
+  if (elements.length === 0) {
+    result = createList(createSymbol("empty-set"));
+  } else {
+    result = createList(createSymbol("hash-set"), ...elements);
+  }
+  
+  // Attach source location
+  attachSourceLocation(
+    result,
+    state.filePath,
+    startPos.line,
+    startPos.column
+  );
+  
+  return result;
 }
 
 /**

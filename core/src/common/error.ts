@@ -54,12 +54,14 @@ export function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
+// core/src/common/error.ts - Enhanced formatHQLError function
+// Only showing the modified function - the rest of the file remains the same
+
 /**
  * Format HQL error with proper error message display
  * Now async to allow for file existence checks (Deno.stat).
  */
 export async function formatHQLError(error: HQLError, isDebug = false): Promise<string> {
-  console.log("error : ", error);
   const colors = createColorConfig();
   const output: string[] = [];
   
@@ -68,8 +70,11 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
   const message = error.message || "An unknown error occurred";
   output.push(`${colors.red(colors.bold(`${errorType}:`))} ${message}`);
 
-  // Display code context with line numbers and column pointer
+  // Display code context with line numbers and column pointer if available
   if (error.contextLines?.length > 0) {
+    // Add empty line before context
+    output.push('');
+    
     const maxLineNumber = Math.max(...error.contextLines.map(item => item.line));
     const lineNumPadding = String(maxLineNumber).length;
     
@@ -81,8 +86,7 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
         // Error line (purple for SICP style)
         output.push(` ${colors.purple(lineNumStr)} │ ${text}`);
         
-        // Add pointer to the opening parenthesis for unclosed parenthesis errors
-        // Use the correct column position from error.column
+        // Add pointer to the error position
         if (column && column > 0) {
           const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
           output.push(pointer);
@@ -93,52 +97,61 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
       }
     });
   }
-  
-  // Add empty line before location
+  // Try to load context lines if they don't exist but we have source location
+  else if (error.sourceLocation?.filePath && error.sourceLocation.line) {
+    try {
+      const filepath = error.sourceLocation.filePath;
+      const line = error.sourceLocation.line;
+      const column = error.sourceLocation.column || 1;
+      
+      // Add empty line before context
+      output.push('');
+      
+      // Read file and extract context lines
+      const fileContent = await Deno.readTextFile(filepath);
+      const fileLines = fileContent.split(/\r?\n/);
+      const errorIdx = line - 1;
+      
+      // Determine line number padding
+      const maxLine = Math.min(fileLines.length, errorIdx + 2);
+      const lineNumPadding = String(maxLine).length;
+      
+      // Add context lines before the error
+      for (let i = Math.max(0, errorIdx - 2); i < errorIdx; i++) {
+        const lineNumStr = String(i + 1).padStart(lineNumPadding, ' ');
+        output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(fileLines[i])}`);
+      }
+      
+      // Add error line
+      const lineNumStr = String(line).padStart(lineNumPadding, ' ');
+      output.push(` ${colors.purple(lineNumStr)} │ ${fileLines[errorIdx]}`);
+      
+      // Add pointer to the error position
+      if (column > 0) {
+        const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
+        output.push(pointer);
+      }
+      
+      // Add context lines after the error
+      for (let i = errorIdx + 1; i <= Math.min(fileLines.length - 1, errorIdx + 2); i++) {
+        const lineNumStr = String(i + 1).padStart(lineNumPadding, ' ');
+        output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(fileLines[i])}`);
+      }
+    } catch (readError) {
+      // If file can't be read, add a note about the location without context
+      output.push('');
+      output.push(`${colors.gray(`Could not read source file: ${error.sourceLocation.filePath}`)}`);
+    }
+  }
+
+  // Add empty line before location info
   output.push('');
   
-  // Add IDE-friendly location with "Where:" prefix (no question mark as requested)
-  const contextLines: { line: number; content: string; isError: boolean; column?: number }[] = [];
+  // Add IDE-friendly location info with "Where:" prefix
   if (error.sourceLocation?.filePath) {
-    let filepath = error.sourceLocation.filePath;
+    const filepath = error.sourceLocation.filePath;
     const line = error.sourceLocation.line || 1;
     const column = error.sourceLocation.column || 1;
-
-    const projectRoot = path.resolve(path.dirname(path.fromFileUrl(import.meta.url)), '../../../');
-    const resolved = await (await import("./utils.ts")).resolveSourcePath(filepath, projectRoot);
-    filepath = resolved;
-
-    // --- CONTEXT LINES FROM FILE ---
-    const fileContent = await Deno.readTextFile(filepath);
-    const fileLines = fileContent.split(/\r?\n/);
-    const errorIdx = line - 1;
-
-    for (let i = Math.max(0, errorIdx - 1); i <= Math.min(fileLines.length - 1, errorIdx + 1); i++) {
-      contextLines.push({
-        line: i + 1,
-        content: fileLines[i],
-        isError: i === errorIdx,
-        column: i === errorIdx ? column : undefined,
-      });
-    }
-
-    if (contextLines.length > 0) {
-      const maxLineNumber = Math.max(...contextLines.map(item => item.line));
-      const lineNumPadding = String(maxLineNumber).length;
-      contextLines.forEach(({line: lineNo, content: text, isError, column}) => {
-        const lineNumStr = String(lineNo).padStart(lineNumPadding, ' ');
-        if (isError) {
-          output.push(` ${colors.purple(lineNumStr)} │ ${text}`);
-          if (column && column > 0) {
-            const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
-            output.push(pointer);
-          }
-        } else {
-          output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(text)}`);
-        }
-      });
-    }
-
     const whereStr = `${filepath}:${line}:${column}`;
     output.push(`${colors.purple(colors.bold("Where:"))} ${colors.white(whereStr)}`);
   }
@@ -155,6 +168,7 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
   if (isDebug && error.originalError?.stack) {
     output.push('');
     output.push(colors.gray('Stack trace:'));
+    output.push(colors.gray(error.originalError.stack));
   }
   
   return output.join('\n');
