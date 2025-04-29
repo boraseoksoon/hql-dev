@@ -11,6 +11,7 @@ import {
   applyCliOptions,
   CliOptions
 } from "./utils/cli-options.ts";
+import { handleRuntimeError } from "../src/common/runtime-error-handler.ts";
 
 // Import the enhanced error handling system
 import {
@@ -53,6 +54,9 @@ function parseNonOptionArgs(args: string[]): string[] {
 /**
  * Function to transpile and execute an HQL file
  */
+/**
+ * Function to transpile and execute an HQL file with enhanced error handling
+ */
 async function transpileAndExecute(
   options: CliOptions,
   inputPath: string,
@@ -64,20 +68,19 @@ async function transpileAndExecute(
   
   const jsOutputPath = `${runDir}/${basename(inputPath)}.js`;
 
-  // Register the current context for error reporting
   setErrorContext(inputPath, jsOutputPath);
 
+  await transpileCLI(inputPath, jsOutputPath, {
+    verbose: options.verbose,
+    showTiming: options.showTiming,
+    force: true, // Always regenerate to ensure latest code is used
+  });
+  
+  logger.debug(`Running transpiled code from: ${jsOutputPath}`);
+  
+  const importUrl = `file://${jsOutputPath}`;
+  
   try {
-    await transpileCLI(inputPath, jsOutputPath, {
-      verbose: options.verbose,
-      showTiming: options.showTiming,
-      force: true, // Always regenerate to ensure latest code is used
-    });
-    
-    logger.debug(`Running transpiled code from: ${jsOutputPath}`);
-    
-    const importUrl = `file://${jsOutputPath}`;
-    
     // Import and run with error handling
     const module = await import(importUrl);
     
@@ -87,10 +90,16 @@ async function transpileAndExecute(
     } else {
       logger.debug("Module imported successfully");
     }
-  } catch (error) {
-    // Use the enhanced error enrichment before throwing
-    const enrichedError = await enrichErrorWithContext(error, inputPath);
-    throw enrichedError;
+  } catch (runtimeError) {
+    // This is likely a runtime error in the user's code
+    // Add better context and rethrow
+    logger.debug(`Runtime error occurred: ${runtimeError.message}`);
+    
+    // Let the runtime error handler handle this - we enrich errors there
+    await handleRuntimeError(runtimeError);
+    
+    // If handleRuntimeError doesn't exit, we'll still throw the error
+    throw runtimeError;
   }
 }
 

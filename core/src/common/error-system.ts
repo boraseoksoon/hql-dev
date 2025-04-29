@@ -190,6 +190,18 @@ export async function enrichErrorWithContext(error: Error | HQLError, filePath?:
         } else if (errorMsg.includes('undefined') || errorMsg.includes('null')) {
           errorPattern = /([a-zA-Z0-9_\-\.]+) is undefined|null/i;
           errorEntity = "reference";
+        } else if (errorMsg.includes('is not defined')) {
+          // Handle "X is not defined" errors
+          errorPattern = /([a-zA-Z0-9_$]+) is not defined/;
+          errorEntity = "variable";
+        } else if (errorMsg.includes('is not a function')) {
+          // Handle "X is not a function" errors
+          errorPattern = /([a-zA-Z0-9_$]+) is not a function/;
+          errorEntity = "function";
+        } else if (errorMsg.includes('unexpected token')) {
+          // Handle syntax errors with tokens
+          errorPattern = /unexpected token ['"]?([^'"]+)['"]?/i;
+          errorEntity = "token";
         }
         
         if (errorPattern && errorEntity) {
@@ -197,29 +209,69 @@ export async function enrichErrorWithContext(error: Error | HQLError, filePath?:
           if (matches.length > 0) {
             const entityName = matches[0][1];
             
-            // Scan the file for the entity name
+            // Enhanced scanning: look for the entity in different forms
+            const patterns = [
+              new RegExp(`\\b${entityName}\\b`),  // Exact match 
+              new RegExp(`\\.${entityName}\\b`),  // Property access
+              new RegExp(`\\(\\s*${entityName}\\s`), // Function call
+              new RegExp(`\\[['"]?${entityName}['"]?\\]`), // Array/Map access
+            ];
+            
+            // Scan the file for the entity name using different patterns
             for (let i = 0; i < lines.length; i++) {
-              if (lines[i].includes(entityName)) {
-                const column = lines[i].indexOf(entityName) + 1;
-                
-                // Create context lines around this location
-                const contextLines = [];
-                for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 1); j++) {
-                  contextLines.push({
-                    line: j + 1,
-                    content: lines[j],
-                    isError: j === i,
-                    column: j === i ? column : undefined
-                  });
+              // Try each pattern
+              for (const pattern of patterns) {
+                if (pattern.test(lines[i])) {
+                  const match = pattern.exec(lines[i]);
+                  const column = match ? match.index + 1 : lines[i].indexOf(entityName) + 1;
+                  
+                  // Create context lines around this location
+                  const contextLines = [];
+                  for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 1); j++) {
+                    contextLines.push({
+                      line: j + 1,
+                      content: lines[j],
+                      isError: j === i,
+                      column: j === i ? column : undefined
+                    });
+                  }
+                  
+                  error.contextLines = contextLines;
+                  error.sourceLocation.line = i + 1;
+                  error.sourceLocation.column = column;
+                  
+                  // Update the message to include more specific information
+                  error.message = `${error.errorType}: ${errorEntity} '${entityName}' ${error.message.includes('not found') ? 'not found' : 'error'} in ${path.basename(sourcePath)}:${i + 1}:${column}`;
+                  break;
                 }
-                
-                error.contextLines = contextLines;
-                error.sourceLocation.line = i + 1;
-                error.sourceLocation.column = column;
-                
-                // Update the message to include more specific information
-                error.message = `${error.errorType}: ${errorEntity} '${entityName}' not found in ${path.basename(sourcePath)}:${i + 1}:${column}`;
-                break;
+              }
+              
+              // If we found location, stop searching
+              if (error.contextLines) break;
+            }
+            
+            // If exact search didn't work, do a more relaxed search for the entity
+            if (!error.contextLines) {
+              for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes(entityName)) {
+                  const column = lines[i].indexOf(entityName) + 1;
+                  
+                  // Create context lines around this location
+                  const contextLines = [];
+                  for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 1); j++) {
+                    contextLines.push({
+                      line: j + 1,
+                      content: lines[j],
+                      isError: j === i,
+                      column: j === i ? column : undefined
+                    });
+                  }
+                  
+                  error.contextLines = contextLines;
+                  error.sourceLocation.line = i + 1;
+                  error.sourceLocation.column = column;
+                  break;
+                }
               }
             }
           }
@@ -233,32 +285,97 @@ export async function enrichErrorWithContext(error: Error | HQLError, filePath?:
         sourceLocation: { filePath: sourcePath }
       });
       
-      // Scan for error indicators like keywords from the error message
-      const errorWords = error.message.toLowerCase()
-        .replace(/[^\w\s]/g, ' ')
-        .split(' ')
-        .filter(word => word.length > 3);
-      
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].toLowerCase();
-        const matchCount = errorWords.filter(word => line.includes(word)).length;
-        
-        if (matchCount >= 2 || (errorWords.length === 1 && matchCount === 1)) {
-          // Found a line that contains multiple error-related words
-          const contextLines = [];
-          for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 1); j++) {
-            contextLines.push({
-              line: j + 1,
-              content: lines[j],
-              isError: j === i,
-              column: j === i ? line.indexOf(errorWords[0]) + 1 : undefined
-            });
-          }
+      // Enhanced detection for common error patterns in non-HQLErrors
+      if (error.message.includes("is not defined")) {
+        const match = error.message.match(/([a-zA-Z0-9_$]+) is not defined/);
+        if (match) {
+          const varName = match[1];
           
-          newError.contextLines = contextLines;
-          newError.sourceLocation.line = i + 1;
-          newError.sourceLocation.column = line.indexOf(errorWords[0]) + 1;
-          break;
+          // Scan for the variable reference
+          for (let i = 0; i < lines.length; i++) {
+            // Match the variable as a word boundary to avoid partial matches
+            const pattern = new RegExp(`\\b${varName}\\b`);
+            if (pattern.test(lines[i])) {
+              // Calculate the column position of the variable
+              const column = lines[i].search(pattern) + 1;
+              
+              // Create context lines
+              const contextLines = [];
+              for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 1); j++) {
+                contextLines.push({
+                  line: j + 1,
+                  content: lines[j],
+                  isError: j === i,
+                  column: j === i ? column : undefined
+                });
+              }
+              
+              newError.contextLines = contextLines;
+              newError.sourceLocation.line = i + 1;
+              newError.sourceLocation.column = column;
+              
+              // Update message
+              newError.message = `Variable '${varName}' is not defined in ${path.basename(sourcePath)}:${i + 1}:${column}`;
+              break;
+            }
+          }
+        }
+      } else if (error.message.includes("is not a function")) {
+        const match = error.message.match(/([a-zA-Z0-9_$.]+) is not a function/);
+        if (match) {
+          const fnName = match[1];
+          
+          // Scan for the function call
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes(fnName)) {
+              const column = lines[i].indexOf(fnName) + 1;
+              
+              // Create context lines
+              const contextLines = [];
+              for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 1); j++) {
+                contextLines.push({
+                  line: j + 1,
+                  content: lines[j],
+                  isError: j === i,
+                  column: j === i ? column : undefined
+                });
+              }
+              
+              newError.contextLines = contextLines;
+              newError.sourceLocation.line = i + 1;
+              newError.sourceLocation.column = column;
+              break;
+            }
+          }
+        }
+      } else {
+        // Scan for error indicators like keywords from the error message
+        const errorWords = error.message.toLowerCase()
+          .replace(/[^\w\s]/g, ' ')
+          .split(' ')
+          .filter(word => word.length > 3);
+        
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].toLowerCase();
+          const matchCount = errorWords.filter(word => line.includes(word)).length;
+          
+          if (matchCount >= 2 || (errorWords.length === 1 && matchCount === 1)) {
+            // Found a line that contains multiple error-related words
+            const contextLines = [];
+            for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 1); j++) {
+              contextLines.push({
+                line: j + 1,
+                content: lines[j],
+                isError: j === i,
+                column: j === i ? line.indexOf(errorWords[0]) + 1 : undefined
+              });
+            }
+            
+            newError.contextLines = contextLines;
+            newError.sourceLocation.line = i + 1;
+            newError.sourceLocation.column = line.indexOf(errorWords[0]) + 1;
+            break;
+          }
         }
       }
       

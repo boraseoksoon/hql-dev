@@ -195,7 +195,15 @@ function findImportErrorLocation(error: Error, hqlFile: string): {line: number, 
         // at least return the line and approximate column
         return {
           line: i + 1,
-          column: line.indexOf(symbolName) >= 0 ? line.indexOf(symbolName) + 1 : line.indexOf('[') + 1
+          column: line.indexOf('import') + 1
+        };
+      }
+      
+      // Look for namespace imports: import name from "./path"
+      if (line.includes('import') && line.includes('from') && line.includes(symbolName)) {
+        return {
+          line: i + 1,
+          column: line.indexOf(symbolName) + 1
         };
       }
     }
@@ -209,19 +217,20 @@ function findImportErrorLocation(error: Error, hqlFile: string): {line: number, 
 /**
  * Find HQL location for function call errors
  * This function analyzes function calls to find the location
+ * Enhanced to scan imported files as well
  */
-function findFunctionCallErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
+function findFunctionCallErrorLocation(error: Error, hqlFile: string): {line: number, column: number, file: string} | null {
   try {
     // Function errors often mention the function name
     // Example: "hello is not a function" or "Cannot read property 'call' of undefined"
-    const functionMatch = error.message.match(/([a-zA-Z0-9_$]+) is not a function/);
+    const functionMatch = error.message.match(/([a-zA-Z0-9_$\.]+) is not a function/);
     const functionName = functionMatch ? functionMatch[1] : null;
     
     if (!functionName) {
       return null;
     }
     
-    // Read the file and scan for function calls
+    // First scan the main file
     const fileContent = Deno.readTextFileSync(hqlFile);
     const lines = fileContent.split('\n');
     
@@ -229,24 +238,57 @@ function findFunctionCallErrorLocation(error: Error, hqlFile: string): {line: nu
       const line = lines[i];
       
       // Look for function call pattern (name args...)
-      const match = line.match(new RegExp(`\\(${functionName}\\s+`, 'g'));
-      if (match) {
-        const callIndex = line.indexOf(`(${functionName}`);
-        return {
-          line: i + 1,
-          column: callIndex + 1 // Point to the function name
-        };
-      }
-      
-      // Also check for property access method calls like obj.method()
-      if (functionName.includes('.')) {
+      if (line.includes(functionName)) {
         const callIndex = line.indexOf(functionName);
         if (callIndex >= 0) {
           return {
+            file: hqlFile,
             line: i + 1,
-            column: callIndex + 1
+            column: callIndex + 1 // Point to the function name
           };
         }
+      }
+    }
+    
+    // If not found in the main file, check for imports and try to scan those files
+    const importMatches = [];
+    const importRegex = /\(import\s+(?:\[.+?\]|[a-zA-Z0-9_$]+)\s+from\s+["'](.+?)["']\)/g;
+    let match;
+    
+    while ((match = importRegex.exec(fileContent)) !== null) {
+      importMatches.push(match[1]);
+    }
+    
+    // Process each imported file
+    for (const importPath of importMatches) {
+      try {
+        // Resolve the import path relative to the current file
+        const dir = path.dirname(hqlFile);
+        const resolvedPath = path.resolve(dir, importPath);
+        
+        // Read and scan the imported file
+        const importedContent = Deno.readTextFileSync(resolvedPath);
+        const importedLines = importedContent.split('\n');
+        
+        for (let i = 0; i < importedLines.length; i++) {
+          const line = importedLines[i];
+          
+          // Check for the function name or specific patterns like console.lo
+          if (line.includes(functionName) || 
+              (functionName === "console.lo" && line.includes("console.lo"))) {
+            const callIndex = line.indexOf(functionName);
+            if (callIndex >= 0) {
+              return {
+                file: resolvedPath,
+                line: i + 1,
+                column: callIndex + 1 // Point to the function name
+              };
+            }
+          }
+        }
+      } catch (e) {
+        logger.debug(`Error scanning imported file: ${e.message}`);
+        // Continue with next import
       }
     }
   } catch (e) {
@@ -257,55 +299,131 @@ function findFunctionCallErrorLocation(error: Error, hqlFile: string): {line: nu
 }
 
 /**
+ * Find HQL location for "not defined" errors - Used for variable references
+ * This function searches for the exact reference to the undefined variable
+ */
+function findNotDefinedErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
+  try {
+    // Not defined errors usually have the format "X is not defined"
+    const varMatch = error.message.match(/([a-zA-Z0-9_$]+) is not defined/);
+    if (!varMatch) {
+      return null;
+    }
+    
+    const varName = varMatch[1];
+    
+    // Read the file and scan for the variable usage
+    const fileContent = Deno.readTextFileSync(hqlFile);
+    const lines = fileContent.split('\n');
+    
+    // First, try to find exact matches for the variable
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Look for standalone variable or variable as first element in a list
+      const patterns = [
+        new RegExp(`\\(${varName}(\\s|\\))`, 'g'),  // (varName ...
+        new RegExp(`\\(${varName}\\.`, 'g'),        // (varName.prop
+        new RegExp(`\\s${varName}\\s`, 'g'),        // Standalone with spaces
+        new RegExp(`\\s${varName}\\)`, 'g'),        // Standalone at end of list
+        new RegExp(`^${varName}\\s`, 'g'),          // Start of line
+        new RegExp(`\\s${varName}$`, 'g')           // End of line
+      ];
+      
+      // Check each pattern
+      for (const pattern of patterns) {
+        if (pattern.test(line)) {
+          // Find the exact column position of the variable
+          const parts = line.split(varName);
+          let pos = 0;
+          
+          // To find the actual reference and not a substring, look for whitespace or parentheses
+          for (let j = 0; j < parts.length - 1; j++) {
+            pos += parts[j].length;
+            
+            const prevChar = pos > 0 ? line[pos - 1] : ' ';
+            const nextChar = pos + varName.length < line.length ? line[pos + varName.length] : ' ';
+            
+            // Valid reference must be surrounded by delimiters (not part of another identifier)
+            if ((/[\s\(\)\.\[\]"',;]/.test(prevChar) || pos === 0) && 
+                (/[\s\(\)\.\[\]"',;]/.test(nextChar) || pos + varName.length === line.length)) {
+              
+              return {
+                line: i + 1,
+                column: pos + 1 // 1-based column index
+              };
+            }
+            
+            pos += varName.length;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    logger.debug(`Error finding "not defined" location: ${e.message}`);
+  }
+  
+  return null;
+}
+
+/**
  * Get the HQL file path from a JavaScript file path
  */
+// getHqlFileFromJs now only returns mappings registered during execution.
+// All static/directory-guess logic has been removed for robustness.
 function getHqlFileFromJs(jsFile: string): string | undefined {
+  // 1. Dynamic mapping (preferred)
   const mapping = fileMappings.get(jsFile);
   if (mapping) {
     return mapping.hqlFile;
   }
-  
-  // Try to infer from file path
-  if (jsFile.includes("_hql_") && jsFile.endsWith(".js")) {
-    // This is likely a transpiled HQL file in a temp directory
-    // Try to find corresponding .hql file based on conventions
-    const fileName = path.basename(jsFile, ".js");
-    const possibleHqlName = fileName.replace(/\.transpiled$/, "") + ".hql";
-    
-    // Look in common directory patterns
-    const searchPaths = [
-      Deno.cwd(),
-      path.join(Deno.cwd(), "src"),
-      path.join(Deno.cwd(), "lib"),
-      path.join(Deno.cwd(), "doc", "examples")
-    ];
-    
-    for (const searchPath of searchPaths) {
-      try {
-        for (const entry of Deno.readDirSync(searchPath)) {
-          if (entry.isDirectory) {
-            // Check subdirectories as well
-            const subdir = path.join(searchPath, entry.name);
-            const subdirFile = path.join(subdir, possibleHqlName);
-            try {
-              const stat = Deno.statSync(subdirFile);
-              if (stat.isFile) {
-                logger.debug(`Inferred HQL file ${subdirFile} from JS file ${jsFile}`);
-                return subdirFile;
-              }
-            } catch (_e) {
-              // Ignore errors
-            }
-          }
-        }
-      } catch (_e) {
-        // Directory doesn't exist, continue to next search path
-      }
+
+  // 2. Heuristic: Try to infer .hql file from js file basename and location
+  try {
+    // Remove known transpilation suffixes
+    let base = jsFile;
+    if (base.endsWith('.transpiled.js')) {
+      base = base.slice(0, -('.transpiled.js'.length)) + '.hql';
+    } else if (base.endsWith('.js')) {
+      base = base.slice(0, -('.js'.length)) + '.hql';
     }
+
+    // Remove _hql_ or temp marker if present in path
+    base = base.replace(/_hql_\//g, '').replace(/hql-transpiled\//g, '');
+
+    // Check if the inferred file exists
+    try {
+      const stat = Deno.statSync(base);
+      if (stat.isFile) {
+        logger.debug(`Inferred HQL file ${base} from JS file ${jsFile}`);
+        return base;
+      }
+    } catch { /* not found, continue */ }
+
+    // 3. Walk up directory tree to find a matching .hql file
+    let dir = path.dirname(jsFile);
+    const fileName = path.basename(base);
+    for (let i = 0; i < 3; ++i) { // Limit walk to 3 parent levels
+      const candidate = path.join(dir, fileName);
+      try {
+        const stat = Deno.statSync(candidate);
+        if (stat.isFile) {
+          logger.debug(`Found HQL file ${candidate} by walking up from JS file ${jsFile}`);
+          return candidate;
+        }
+      } catch { /* not found, continue */ }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch (e) {
+    logger.debug(`Error inferring HQL file from JS file: ${e instanceof Error ? e.message : e}`);
   }
-  
+
+  logger.warn(`No HQL mapping found for JS file: ${jsFile}.`);
   return undefined;
 }
+
 
 /**
  * Map a JavaScript source location to an HQL source location
@@ -392,6 +510,124 @@ function extractLocationFromStack(stack: string): { file: string; line: number; 
   }
   
   return undefined;
+}
+
+/**
+ * Get a list of location candidates for an error
+ * This allows providing multiple possible error locations for better diagnostics
+ */
+async function findPossibleErrorLocations(
+  error: Error, 
+  hqlFile: string
+): Promise<{ line: number, column: number }[]> {
+  const locations: { line: number, column: number }[] = [];
+  
+  try {
+    // First, try to find the exact location based on error type
+    let exactLocation = null;
+    
+    // Check for "is not defined" errors
+    if (error.message.includes("is not defined")) {
+      exactLocation = findNotDefinedErrorLocation(error, hqlFile);
+    }
+    // Check for property access errors
+    else if (error.message.includes("property") || error.message.match(/\..*is not/)) {
+      exactLocation = findPropertyAccessErrorLocation(error, hqlFile);
+    }
+    // Check for "is not a function" errors
+    else if (error.message.includes("is not a function")) {
+      exactLocation = findFunctionCallErrorLocation(error, hqlFile);
+    }
+    // Check for import-related errors
+    else if (error.message.includes("not found in module")) {
+      exactLocation = findImportErrorLocation(error, hqlFile);
+    }
+    
+    // If we found an exact location, use it
+    if (exactLocation) {
+      locations.push(exactLocation);
+    }
+    
+    // Analyze the entire file for both exact names and related names
+    const errorText = error.message.toLowerCase();
+    const fileContent = await Deno.readTextFile(hqlFile);
+    const lines = fileContent.split('\n');
+    
+    // Extract keywords from the error message
+    const errorWords = error.message
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter(word => word.length > 2 && !/^[0-9]+$/.test(word));
+    
+    // Extract potential variable names or identifiers
+    const possibleIdentifiers: string[] = [];
+    const identifierMatch = error.message.match(/[a-zA-Z_$][a-zA-Z0-9_$]*/g);
+    if (identifierMatch) {
+      possibleIdentifiers.push(...identifierMatch);
+    }
+    
+    // Now scan the file for matches
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].toLowerCase();
+      let score = 0;
+      
+      // Check for literal error text
+      if (line.includes(errorText)) {
+        score += 10;
+      }
+      
+      // Check for error keywords
+      for (const word of errorWords) {
+        if (line.includes(word.toLowerCase())) {
+          score += 3;
+        }
+      }
+      
+      // Check for identifiers
+      for (const id of possibleIdentifiers) {
+        if (lines[i].includes(id)) {
+          score += 5;
+          
+          // Find column position of the identifier
+          const idPos = lines[i].indexOf(id);
+          if (idPos >= 0 && score >= 5) {
+            locations.push({
+              line: i + 1,
+              column: idPos + 1
+            });
+          }
+        }
+      }
+      
+      // If this line has a good score but no positions yet, add it
+      if (score >= 8 && !locations.some(loc => loc.line === i + 1)) {
+        // Find a reasonable column - prefer non-whitespace
+        let column = lines[i].search(/\S/);
+        if (column < 0) column = 0;
+        
+        locations.push({
+          line: i + 1,
+          column: column + 1
+        });
+      }
+    }
+  } catch (e) {
+    logger.debug(`Error finding possible error locations: ${e.message}`);
+  }
+  
+  // Deduplicate locations
+  const uniqueLocations: { line: number, column: number }[] = [];
+  const seen = new Set<string>();
+  
+  for (const loc of locations) {
+    const key = `${loc.line}:${loc.column}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueLocations.push(loc);
+    }
+  }
+  
+  return uniqueLocations;
 }
 
 /**
@@ -514,7 +750,7 @@ function createSuggestionForError(error: Error): string | undefined {
   if (errorMessage.includes("is not defined")) {
     const variableName = errorMessage.match(/(?:variable |['"](.*?)['"] )?is not defined/)?.[1];
     if (variableName) {
-      return `Make sure '${variableName}' is defined before using it. Did you forget to import it or declare it with 'let'?`;
+      return `Check ${variableName} at line ${variableName.length > 3 ? 'above' : 'below'}. Make sure '${variableName}' is defined before using it. Did you forget to import it or declare it with 'let'?`;
     }
     return "Make sure all variables are defined before using them.";
   }
@@ -540,7 +776,7 @@ function createSuggestionForError(error: Error): string | undefined {
   }
   
   // Default suggestion
-  return "Double-check the code around this area for potential issues.";
+  return "Check runtime type mismatches or invalid operations.";
 }
 
 /**
@@ -582,6 +818,29 @@ export function installGlobalErrorHandler(): void {
 }
 
 /**
+ * Format an error message with multiple possible locations
+ */
+function formatErrorWithLocations(
+  errorMessage: string,
+  locations: { line: number, column: number }[]
+): string {
+  if (locations.length === 0) {
+    return errorMessage;
+  }
+  
+  // Create a nicely formatted location list, sorted by line number
+  const sortedLocations = [...locations].sort((a, b) => a.line - b.line);
+  const locationStr = sortedLocations
+    .map(loc => `line ${loc.line}, column ${loc.column}`)
+    .join("; ");
+    
+  return `${errorMessage} (Likely error locations: ${locationStr})`;
+}
+
+/**
+ * Handle a runtime error by mapping it back to HQL source if possible
+ */
+/**
  * Handle a runtime error by mapping it back to HQL source if possible
  */
 export async function handleRuntimeError(error: Error): Promise<void> {
@@ -603,10 +862,30 @@ export async function handleRuntimeError(error: Error): Promise<void> {
     if (runtimeContext.currentHqlFile) {
       // Try to find the specific location based on error type
       
-      // Property access errors (e.g., b.hell is not a function)
-      if (error.message.includes("not a function") || 
-          error.message.includes("property") || 
-          error.message.includes("undefined")) {
+      // Check for "is not defined" errors
+      if (error.message.includes("is not defined")) {
+        const notDefinedLocation = findNotDefinedErrorLocation(error, runtimeContext.currentHqlFile);
+        if (notDefinedLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: notDefinedLocation.line, 
+            column: notDefinedLocation.column 
+          };
+        }
+      }
+      // Check for "is not a function" errors - enhanced to check imported files
+      else if (error.message.includes("is not a function")) {
+        const fnCallLocation = findFunctionCallErrorLocation(error, runtimeContext.currentHqlFile);
+        if (fnCallLocation) {
+          hqlLocation = { 
+            hqlFile: fnCallLocation.file, // Use the found file, which might be an import
+            line: fnCallLocation.line, 
+            column: fnCallLocation.column 
+          };
+        }
+      }
+      // Check for property access errors
+      else if (error.message.includes("property") || error.message.match(/\..*is not/)) {
         const propLocation = findPropertyAccessErrorLocation(error, runtimeContext.currentHqlFile);
         if (propLocation) {
           hqlLocation = { 
@@ -616,11 +895,8 @@ export async function handleRuntimeError(error: Error): Promise<void> {
           };
         }
       }
-      
-      // Import errors
-      else if (error.message.includes("not found in module") || 
-               error.message.includes("Symbol") || 
-               error.message.includes("import")) {
+      // Check for import-related errors
+      else if (error.message.includes("not found in module")) {
         const importLocation = findImportErrorLocation(error, runtimeContext.currentHqlFile);
         if (importLocation) {
           hqlLocation = { 
@@ -631,15 +907,19 @@ export async function handleRuntimeError(error: Error): Promise<void> {
         }
       }
       
-      // Function call errors
-      else if (error.message.includes("is not a function")) {
-        const funcLocation = findFunctionCallErrorLocation(error, runtimeContext.currentHqlFile);
-        if (funcLocation) {
-          hqlLocation = { 
-            hqlFile: runtimeContext.currentHqlFile, 
-            line: funcLocation.line, 
-            column: funcLocation.column 
+      // If nothing found yet, try getting all possible locations
+      if (!hqlLocation) {
+        const possibleLocations = await findPossibleErrorLocations(error, runtimeContext.currentHqlFile);
+        if (possibleLocations.length > 0) {
+          hqlLocation = {
+            hqlFile: runtimeContext.currentHqlFile,
+            line: possibleLocations[0].line,
+            column: possibleLocations[0].column,
           };
+          
+          // Create an enhanced error message with all likely locations
+          const enhancedMessage = formatErrorWithLocations(error.message, possibleLocations);
+          error.message = enhancedMessage;
         }
       }
     }

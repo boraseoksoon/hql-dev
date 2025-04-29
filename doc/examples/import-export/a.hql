@@ -4,7 +4,7 @@
 (b.hello "world")
 (hello "world")
 
-(let numbers (new Array2))
+(let numbers (new Array))
 (numbers.push 1)
 (numbers.push 2)
 (numbers.push 3)

@@ -303,6 +303,7 @@ export async function handleFunctionCallError(
 
 /**
  * Handle a property access error with detailed source information
+ * Improved to find exact object property access patterns
  */
 export async function handlePropertyAccessError(
   objName: string,
@@ -321,14 +322,54 @@ export async function handlePropertyAccessError(
     try {
       const content = await readTextFile(filePath);
       const lines = content.split('\n');
-      const pattern = `${objName}.${propName}`;
       
-      for (let i = 0; i < lines.length; i++) {
-        const column = lines[i].indexOf(pattern);
-        if (column >= 0) {
-          location.line = i + 1;
-          location.column = column + objName.length + 1; // Position at the '.' character
-          break;
+      // Try different forms of property access patterns
+      const patterns = [
+        `${objName}.${propName}`,                  // Standard object.prop
+        `(${objName}.${propName}`,                 // Method call (object.method
+        `(${objName} "${propName}")`,              // Get with string (object "prop")
+        `(get ${objName} "${propName}")`,          // Explicit get form
+        `(${objName} .${propName}`                 // Dot notation method call
+      ];
+      
+      // Check each pattern in each line
+      let found = false;
+      for (let i = 0; i < lines.length && !found; i++) {
+        for (const pattern of patterns) {
+          const index = lines[i].indexOf(pattern);
+          if (index >= 0) {
+            // For normal patterns, point to the dot or space before property
+            let columnPos = index + objName.length;
+            
+            // Adjust based on pattern
+            if (pattern.startsWith('(')) {
+              // For patterns starting with '(', add 1 to account for the parenthesis
+              columnPos += 1;
+            }
+            
+            // Point to the dot or space before the property
+            columnPos += 1;
+            
+            location.line = i + 1;
+            location.column = columnPos;
+            found = true;
+            break;
+          }
+        }
+      }
+      
+      // If not found with direct patterns, try scanning for the object name only
+      if (!found) {
+        for (let i = 0; i < lines.length; i++) {
+          // Look for the object name with appropriate boundaries
+          const regex = new RegExp(`\\b${objName}\\b`);
+          const match = lines[i].match(regex);
+          
+          if (match) {
+            location.line = i + 1;
+            location.column = match.index + 1;
+            break;
+          }
         }
       }
     } catch (error) {
@@ -353,6 +394,7 @@ export async function handlePropertyAccessError(
 
 /**
  * Handle a variable not found error with detailed source information
+ * Improved to accurately find variable references in the code
  */
 export async function handleVariableNotFoundError(
   varName: string,
@@ -367,10 +409,64 @@ export async function handleVariableNotFoundError(
   
   // If we don't have position info, try to find it
   if (!location.line || !location.column) {
-    const symbolLocation = await findSymbolLocation(varName, filePath);
-    if (symbolLocation.line && symbolLocation.column) {
-      location.line = symbolLocation.line;
-      location.column = symbolLocation.column;
+    try {
+      const content = await readTextFile(filePath);
+      const lines = content.split('\n');
+      
+      // Look for patterns where the variable might be used
+      const patterns = [
+        // Variable as function: (varName args...)
+        new RegExp(`\\(\\s*${varName}\\s`),
+        
+        // Object property access: (varName.prop)
+        new RegExp(`\\(\\s*${varName}\\.`),
+        
+        // Let binding or assignment: (let varName...) or (set! varName...)
+        new RegExp(`\\(\\s*(let|set!)\\s+${varName}\\b`),
+        
+        // Simple reference: varName (surrounded by spaces, brackets, or other delimiters)
+        new RegExp(`[\\s\\(\\[{]${varName}[\\s\\)\\]}]`)
+      ];
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        
+        // Try each pattern
+        for (const pattern of patterns) {
+          const match = line.match(pattern);
+          if (match) {
+            // Find the actual position of the variable in this line
+            const startPos = match.index || 0;
+            // Adjust for any characters before the actual variable
+            const varPos = line.indexOf(varName, startPos);
+            
+            if (varPos >= 0) {
+              location.line = i + 1;
+              location.column = varPos + 1; // 1-based indexing
+              break;
+            }
+          }
+        }
+        
+        // If we found a location, break the outer loop too
+        if (location.line && location.column) {
+          break;
+        }
+      }
+      
+      // If still not found, do a less precise search
+      if (!location.line || !location.column) {
+        for (let i = 0; i < lines.length; i++) {
+          const varPos = lines[i].indexOf(varName);
+          if (varPos >= 0) {
+            location.line = i + 1;
+            location.column = varPos + 1;
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug(`Error finding variable location: ${error.message}`);
     }
   }
   
@@ -437,4 +533,166 @@ export async function handleTypeError(
   
   // Enrich with context and return
   return await enrichErrorWithContext(validationError, filePath);
+}
+
+/**
+ * Find the accurate source location for a syntax error
+ * Improved to use context before and after the error
+ */
+export async function findSyntaxErrorLocation(
+  errorMessage: string,
+  filePath: string,
+  approximateLine?: number
+): Promise<SourceLocation> {
+  const location: SourceLocation = {
+    filePath
+  };
+  
+  // First try extracting line/column from the error message
+  const { line, column } = extractLineColumnFromError(errorMessage);
+  if (line) {
+    location.line = line;
+    location.column = column;
+    
+    // If we have that, we're done
+    return location;
+  }
+  
+  // Otherwise, try to find syntax elements mentioned in the error
+  try {
+    const content = await readTextFile(filePath);
+    const lines = content.split('\n');
+    
+    // Extract common error patterns
+    const unclosedMatch = errorMessage.match(/Unclosed\s+([a-z]+)/i);
+    const unexpectedMatch = errorMessage.match(/Unexpected\s+([^\s]+)/i);
+    const expectedMatch = errorMessage.match(/Expected\s+([^\s]+)/i);
+    
+    // Unexpected token/symbol errors
+    if (unexpectedMatch) {
+      const unexpected = unexpectedMatch[1].replace(/['"(),.:;]/g, '');
+      
+      let searchStartLine = 0;
+      let searchEndLine = lines.length;
+      
+      // If we have an approximate line, search nearby
+      if (approximateLine) {
+        searchStartLine = Math.max(0, approximateLine - 5);
+        searchEndLine = Math.min(lines.length, approximateLine + 5);
+      }
+      
+      // Search in the vicinity of the approximate line
+      for (let i = searchStartLine; i < searchEndLine; i++) {
+        const line = lines[i];
+        const pos = line.indexOf(unexpected);
+        
+        if (pos >= 0) {
+          location.line = i + 1;
+          location.column = pos + 1;
+          return location;
+        }
+      }
+    }
+    
+    // Unclosed/missing delimiter errors (parens, brackets, quotes)
+    else if (unclosedMatch) {
+      const type = unclosedMatch[1].toLowerCase();
+      let startChar = '(';
+      let endChar = ')';
+      
+      switch(type) {
+        case 'list':
+          startChar = '(';
+          endChar = ')';
+          break;
+        case 'vector':
+          startChar = '[';
+          endChar = ']';
+          break;
+        case 'map':
+        case 'object':
+          startChar = '{';
+          endChar = '}';
+          break;
+        case 'string':
+          startChar = '"';
+          endChar = '"';
+          break;
+      }
+      
+      // Count nesting levels to find unbalanced delimiters
+      let maxNestLine = 0;
+      let maxNestCol = 0;
+      let maxNest = 0;
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        let nestLevel = 0;
+        
+        for (let j = 0; j < line.length; j++) {
+          if (line[j] === startChar) {
+            nestLevel++;
+            if (nestLevel > maxNest) {
+              maxNest = nestLevel;
+              maxNestLine = i;
+              maxNestCol = j;
+            }
+          } else if (line[j] === endChar) {
+            nestLevel--;
+          }
+        }
+      }
+      
+      // If we found significant nesting, use the deepest point
+      if (maxNest > 0) {
+        location.line = maxNestLine + 1;
+        location.column = maxNestCol + 1;
+        return location;
+      }
+    }
+    
+    // If still nothing, look for common syntax keywords near approximate line
+    const syntaxKeywords = [
+      'let', 'if', 'cond', 'fn', 'lambda', 'loop', 'recur', 'import',
+      'export', 'class', 'enum', 'set!', 'quote'
+    ];
+    
+    if (approximateLine) {
+      const searchStartLine = Math.max(0, approximateLine - 3);
+      const searchEndLine = Math.min(lines.length, approximateLine + 3);
+      
+      for (let i = searchStartLine; i < searchEndLine; i++) {
+        const line = lines[i];
+        
+        for (const keyword of syntaxKeywords) {
+          const keywordMatch = line.match(new RegExp(`\\(\\s*${keyword}\\b`));
+          if (keywordMatch) {
+            location.line = i + 1;
+            location.column = keywordMatch.index ? keywordMatch.index + keyword.length + 2 : 1;
+            return location;
+          }
+        }
+      }
+    }
+    
+    // Last resort: if we have an approximate line, just use it
+    if (approximateLine) {
+      location.line = approximateLine;
+      
+      // Try to find a non-whitespace character on that line
+      const lineContent = lines[approximateLine - 1] || "";
+      const firstNonWs = lineContent.search(/\S/);
+      location.column = firstNonWs >= 0 ? firstNonWs + 1 : 1;
+      
+      return location;
+    }
+  } catch (e) {
+    logger.debug(`Error finding syntax error location: ${e.message}`);
+  }
+  
+  // If all else fails, default to first line
+  location.line = 1;
+  location.column = 1;
+  
+  return location;
 }

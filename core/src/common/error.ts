@@ -54,12 +54,9 @@ export function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
-// core/src/common/error.ts - Enhanced formatHQLError function
-// Only showing the modified function - the rest of the file remains the same
-
 /**
  * Format HQL error with proper error message display
- * Now async to allow for file existence checks (Deno.stat).
+ * Improved with better context handling and more accurate error pointers
  */
 export async function formatHQLError(error: HQLError, isDebug = false): Promise<string> {
   const colors = createColorConfig();
@@ -67,7 +64,13 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
   
   // ALWAYS show the error message at the top - not just in debug mode
   const errorType = error.errorType || "Error";
-  const message = error.message || "An unknown error occurred";
+  let message = error.message || "An unknown error occurred";
+  
+  // Clean up the message by removing redundant file:line:column references
+  // that we'll show in a better format anyway
+  message = message.replace(/\s+at\s+\S+:\d+:\d+$/, '');
+  message = message.replace(/\s+\(\S+:\d+:\d+\)$/, '');
+  
   output.push(`${colors.red(colors.bold(`${errorType}:`))} ${message}`);
 
   // Display code context with line numbers and column pointer if available
@@ -86,9 +89,21 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
         // Error line (purple for SICP style)
         output.push(` ${colors.purple(lineNumStr)} │ ${text}`);
         
-        // Add pointer to the error position
+        // Add pointer to the error position - improved to handle Unicode and tabs
         if (column && column > 0) {
-          const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
+          // Calculate accurate column position accounting for tabs and Unicode
+          let effectiveColumn = column;
+          
+          // If text has tabs or Unicode chars before the error position,
+          // adjust the pointer position
+          const textBefore = text.substring(0, column - 1);
+          const tabCount = (textBefore.match(/\t/g) || []).length;
+          
+          // Each tab adds extra spaces (assume tab width is 4)
+          effectiveColumn += tabCount * 3; // 3 extra spaces per tab
+          
+          // Create the pointer
+          const pointer = ' '.repeat(lineNumPadding + 3) + ' '.repeat(effectiveColumn - 1) + colors.red(colors.bold('^'));
           output.push(pointer);
         }
       } else {
@@ -112,30 +127,42 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
       const fileLines = fileContent.split(/\r?\n/);
       const errorIdx = line - 1;
       
-      // Determine line number padding
-      const maxLine = Math.min(fileLines.length, errorIdx + 2);
-      const lineNumPadding = String(maxLine).length;
-      
-      // Add context lines before the error
-      for (let i = Math.max(0, errorIdx - 2); i < errorIdx; i++) {
-        const lineNumStr = String(i + 1).padStart(lineNumPadding, ' ');
-        output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(fileLines[i])}`);
-      }
-      
-      // Add error line
-      const lineNumStr = String(line).padStart(lineNumPadding, ' ');
-      output.push(` ${colors.purple(lineNumStr)} │ ${fileLines[errorIdx]}`);
-      
-      // Add pointer to the error position
-      if (column > 0) {
-        const pointer = ' '.repeat(lineNumPadding + 3 + column - 1) + colors.red(colors.bold('^'));
-        output.push(pointer);
-      }
-      
-      // Add context lines after the error
-      for (let i = errorIdx + 1; i <= Math.min(fileLines.length - 1, errorIdx + 2); i++) {
-        const lineNumStr = String(i + 1).padStart(lineNumPadding, ' ');
-        output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(fileLines[i])}`);
+      // Make sure we're in bounds
+      if (errorIdx >= 0 && errorIdx < fileLines.length) {
+        // Determine line number padding
+        const maxLine = Math.min(fileLines.length, errorIdx + 2);
+        const lineNumPadding = String(maxLine).length;
+        
+        // Add context lines before the error
+        for (let i = Math.max(0, errorIdx - 2); i < errorIdx; i++) {
+          const lineNumStr = String(i + 1).padStart(lineNumPadding, ' ');
+          output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(fileLines[i])}`);
+        }
+        
+        // Add error line
+        const lineNumStr = String(line).padStart(lineNumPadding, ' ');
+        output.push(` ${colors.purple(lineNumStr)} │ ${fileLines[errorIdx]}`);
+        
+        // Add pointer to the error position, accounting for tabs and Unicode
+        if (column > 0) {
+          const textBefore = fileLines[errorIdx].substring(0, column - 1);
+          const tabCount = (textBefore.match(/\t/g) || []).length;
+          
+          // Adjust column for tabs (assuming tab width is 4)
+          const effectiveColumn = column + (tabCount * 3);
+          
+          const pointer = ' '.repeat(lineNumPadding + 3) + ' '.repeat(effectiveColumn - 1) + colors.red(colors.bold('^'));
+          output.push(pointer);
+        }
+        
+        // Add context lines after the error
+        for (let i = errorIdx + 1; i <= Math.min(fileLines.length - 1, errorIdx + 2); i++) {
+          const lineNumStr = String(i + 1).padStart(lineNumPadding, ' ');
+          output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(fileLines[i])}`);
+        }
+      } else {
+        // Line number is out of bounds
+        output.push(`${colors.gray(`Line ${line} is outside the range of file (${fileLines.length} lines)`)}`);
       }
     } catch (readError) {
       // If file can't be read, add a note about the location without context

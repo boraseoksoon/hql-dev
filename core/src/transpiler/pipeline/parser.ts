@@ -511,6 +511,10 @@ function parseList(state: ParserState, listStartPos: SourcePosition): SList {
 /**
  * Match the next token from the input
  */
+/**
+ * Match the next token from the input string with enhanced error context
+ * Improves error messages and location tracking
+ */
 function matchNextToken(input: string, line: number, column: number, offset: number, filePath: string): Token {
   const position: SourcePosition = { line, column, offset, filePath };
   
@@ -543,7 +547,33 @@ function matchNextToken(input: string, line: number, column: number, offset: num
     return { type: TokenType.Symbol, value, position };
   }
   
-  throw new ParseError(`Unexpected character: ${input[0]}`, position, input);
+  // If we get here, there's an unexpected character
+  // Provide enhanced error context
+  let unexpectedChar = input[0] || "end of file";
+  let errorContext = "";
+  
+  // Get some context for a better error message
+  try {
+    if (filePath) {
+      const content = Deno.readTextFileSync(filePath);
+      const lines = content.split('\n');
+      
+      if (line > 0 && line <= lines.length) {
+        const lineContent = lines[line - 1];
+        // Create a pointer to the unexpected character
+        const pointer = ' '.repeat(column - 1) + '^';
+        errorContext = `\n${lineContent}\n${pointer}`;
+      }
+    }
+  } catch (_e) {
+    // If we can't read the file, continue without extra context
+  }
+  
+  throw new ParseError(
+    `Unexpected character: '${unexpectedChar}' at line ${line}, column ${column}${errorContext}`, 
+    position, 
+    input
+  );
 }
 
 function parseVector(state: ParserState, startPos: SourcePosition): SList {

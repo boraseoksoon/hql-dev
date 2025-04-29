@@ -1,4 +1,4 @@
 (fn hello (name)
-  (console.log (str "Hello, " name)))
+  console.log (str "Hello, " name)))
 
-(export [hello])
+(export [hello)  ;; errro intentionally made
