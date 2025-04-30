@@ -1,9 +1,6 @@
 // core/src/common/error-constants.ts
 // Centralized error constants for better maintainability
 
-/**
- * Error message patterns used for error detection and suggestion creation
- */
 export const ERROR_PATTERNS = {
     // Property/null errors
     CANNOT_READ: "cannot read",
@@ -28,7 +25,12 @@ export const ERROR_PATTERNS = {
     
     // Argument errors 
     TOO_MANY_ARGUMENTS: "too many",
+    TOO_FEW_ARGUMENTS: "too few",
     ARGUMENTS: "arguments",
+    POSITIONAL_ARGUMENTS: "positional arguments",
+    FUNCTION_CALL: "function call",
+    EXPECTED_ARGUMENTS: "expected",
+    RECEIVED_ARGUMENTS: "received",
     
     // Invalid form errors
     INVALID: "invalid",
@@ -39,12 +41,32 @@ export const ERROR_PATTERNS = {
     NULL_ACCESS_FAIL: "Cannot read properties of",
     TYPE_ERROR: "TypeError",
     REFERENCE_ERROR: "ReferenceError"
-  };
-  
-  /**
-   * Error suggestion messages
-   */
-  export const ERROR_SUGGESTIONS = {
+};
+
+export const ERROR_REGEX = {
+    // Extract variable name from "X is not defined"
+    UNDEFINED_VAR: /(?:variable |['"](.*?)['"] )?is not defined/,
+    
+    // Extract function name from "X is not a function"
+    NOT_FUNCTION: /([a-zA-Z0-9_$.]+) is not a function/,
+    
+    // Extract property from property errors
+    PROPERTY: /'([^']+)'/,
+    
+    // Extract unexpected token
+    TOKEN: /unexpected ['"]?([^'"]+)['"]?/i,
+    
+    // For import errors, extract the module and symbol
+    IMPORT_SYMBOL: /['"](.*?)['"] not found/,
+    MODULE_PATH: /['"]([^'"]+)['"]/,
+    
+    // Enhanced function arity errors
+    FUNCTION_ARITY: /(?:too many|too few|wrong number of) (?:positional )?arguments (?:in call )?to (?:function )?(["'])?([^\s"']+)\1?/i,
+    ARGS_COUNT: /(?:too many|too few|wrong number of) (?:positional )?arguments (?:in call )?to (?:function )?(["'])?([^\s"']+)\1?/i,
+    ARGS_EXPECTED: /expected (\d+).*received (\d+)/i
+};
+
+export const ERROR_SUGGESTIONS = {
     // Property access
     NULL_PROPERTY: "Check that the object is not null or undefined before accessing its properties.",
     
@@ -71,39 +93,17 @@ export const ERROR_PATTERNS = {
     SYNTAX_ERROR: "Check the syntax around this area for mismatched parentheses, brackets, or other syntax errors.",
     
     // Arguments
-    TOO_MANY_ARGS: "Check the function signature and make sure you're passing the correct number of arguments.",
+    TOO_MANY_ARGS: "This function was called with more arguments than it accepts. Check the function definition and make sure you're passing the correct number of arguments.",
+    TOO_FEW_ARGS: "This function was called with fewer arguments than it requires. Check the function definition and make sure you're providing all required arguments.",
+    WRONG_ARGS_COUNT: (expected: string, received: string) => 
+      `This function expects ${expected} argument(s) but received ${received}. Check the function definition and your function call.`,
     
     // Form
     INVALID_FORM: "Check the syntax of this form and make sure it follows the correct pattern.",
     
     // Default
     DEFAULT: "Check runtime type mismatches or invalid operations."
-  };
-  
-  /**
-   * Error message regular expressions for extracting information
-   */
-  export const ERROR_REGEX = {
-    // Extract variable name from "X is not defined"
-    UNDEFINED_VAR: /(?:variable |['"](.*?)['"] )?is not defined/,
-    
-    // Extract function name from "X is not a function"
-    NOT_FUNCTION: /([a-zA-Z0-9_$.]+) is not a function/,
-    
-    // Extract property from property errors
-    PROPERTY: /'([^']+)'/,
-    
-    // Extract unexpected token
-    TOKEN: /unexpected ['"]?([^'"]+)['"]?/i,
-    
-    // For import errors, extract the module and symbol
-    IMPORT_SYMBOL: /['"](.*?)['"] not found/,
-    MODULE_PATH: /['"]([^'"]+)['"]/,
-    
-    // Argument count errors
-    ARGS_COUNT: /too many (?:positional )?arguments in call to function ['"]([^'"]+)['"]/i
-  };
-  
+};
   /**
    * File path resolution constants
    */

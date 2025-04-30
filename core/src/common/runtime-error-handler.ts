@@ -346,197 +346,131 @@ function findImportErrorLocation(error: Error, hqlFile: string): {line: number, 
 }
 
 /**
- * Find HQL location for function call errors
+ * Enhanced function to find HQL location for function call errors with arity issues
  */
 function findFunctionCallErrorLocation(error: Error, hqlFile: string): {line: number, column: number, file: string} | null {
   try {
-    // Function errors often mention the function name
-    // Example: "hello is not a function" or "Cannot read property 'call' of undefined"
-    const functionMatch = error.message.match(ERROR_REGEX.NOT_FUNCTION);
-    const functionName = functionMatch ? functionMatch[1] : null;
+    // First check for arity errors (too many/few arguments)
+    const arityMatch = error.message.match(ERROR_REGEX.FUNCTION_ARITY);
+    
+    let functionName = null;
+    let isArityError = false;
+    
+    if (arityMatch && arityMatch[2]) {
+      functionName = arityMatch[2];
+      isArityError = true;
+    } else {
+      // Fall back to the standard is-not-a-function pattern
+      const functionMatch = error.message.match(ERROR_REGEX.NOT_FUNCTION);
+      functionName = functionMatch ? functionMatch[1] : null;
+    }
     
     if (!functionName) {
       return null;
     }
     
-    // First scan the main file
+    // Read the file content
     const fileContent = Deno.readTextFileSync(hqlFile);
     const lines = fileContent.split('\n');
     
-    // Also look for function definitions
-    let fnDefLine = -1;
-    let fnDefColumn = -1;
+    // First look for the function declaration to determine expected parameters
+    let fnDefinition = null;
+    let expectedArgs = 0;
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
-      // Look for function definition pattern
-      if ((line.includes('(fn ') || line.includes('(fx ')) && line.includes(functionName)) {
-        // This could be a function definition
-        const fnKeywordPos = line.indexOf('fn ');
-        const fxKeywordPos = line.indexOf('fx ');
-        const keywordPos = fnKeywordPos >= 0 ? fnKeywordPos : fxKeywordPos;
+      // Check for function definition patterns - (fn name (params...))
+      if ((line.includes(`(fn ${functionName}`) || line.includes(`(fx ${functionName}`)) &&
+          line.includes('(')) {
+        fnDefinition = {
+          line: i + 1,
+          text: line,
+          column: line.indexOf(functionName)
+        };
         
-        if (keywordPos >= 0) {
-          const afterKeyword = line.substring(keywordPos + 3); // "fn " or "fx " is 3 chars
-          const nameStartPos = afterKeyword.search(/\S/); // First non-whitespace
-          
-          if (nameStartPos >= 0 && afterKeyword.substring(nameStartPos).startsWith(functionName)) {
-            fnDefLine = i + 1;
-            fnDefColumn = keywordPos + 3 + nameStartPos + 1; // +1 for 1-based indexing
+        // Try to parse the parameter list to determine expected argument count
+        const openParenAfterName = line.indexOf('(', line.indexOf(functionName) + functionName.length);
+        if (openParenAfterName >= 0) {
+          const closeParenAfterParams = line.indexOf(')', openParenAfterName);
+          if (closeParenAfterParams > openParenAfterName) {
+            const paramList = line.substring(openParenAfterName + 1, closeParenAfterParams).trim();
+            expectedArgs = paramList ? paramList.split(/\s+/).length : 0;
           }
         }
+        
+        break;
+      }
+    }
+    
+    // Now look for the function call with incorrect arguments
+    let maxArgCount = 0;
+    let bestMatch = null;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Skip if this line contains the function definition
+      if (fnDefinition && i + 1 === fnDefinition.line) {
+        continue;
       }
       
-      // Look for function call pattern (name args...)
-      if (line.includes(functionName) && line.includes('(')) {
-        // Verify this is a function call and not a definition
-        // Simple heuristic: if it appears after ( and not after (fn or (fx
-        const openParenPos = line.indexOf('(');
-        const fnPos = line.indexOf('(fn ');
-        const fxPos = line.indexOf('(fx ');
-        
-        // Skip if this is a function definition
-        if ((fnPos === openParenPos || fxPos === openParenPos) && line.substring(fnPos + 4).includes(functionName)) {
-          continue;
-        }
-        
-        const callIndex = line.indexOf(functionName);
-        if (callIndex >= 0) {
-          // Check if this is likely a function call by looking for a pattern like (functionName ...
-          // This is a simple heuristic and might not catch all cases
-          let isLikelyCall = false;
+      // Look for function calls to our target function
+      if (line.includes(`(${functionName}`) || line.includes(`( ${functionName}`)) {
+        // Extract the call and count arguments
+        const callStartPos = line.indexOf(functionName);
+        if (callStartPos >= 0) {
+          const callText = line.substring(callStartPos);
           
-          for (let pos = callIndex - 1; pos >= 0; pos--) {
-            const char = line[pos];
-            if (char === '(') {
-              isLikelyCall = true;
-              break;
-            } else if (!/\s/.test(char)) {
-              // Non-whitespace before function name, not a simple call
+          // Rough estimate of argument count by counting spaces after the function name
+          // This is a simple heuristic that works for basic cases
+          const argMatches = callText.match(/\s+\S+/g);
+          const argCount = argMatches ? argMatches.length : 0;
+          
+          // If this is an arity error, we're looking for function calls with incorrect arg count
+          if (isArityError) {
+            // For "too many arguments" errors, look for the call with the most arguments
+            if (error.message.includes(ERROR_PATTERNS.TOO_MANY_ARGUMENTS) && argCount > maxArgCount) {
+              maxArgCount = argCount;
+              bestMatch = { line: i + 1, column: callStartPos + 1 };
+            }
+            // For "too few arguments" errors, look for calls with fewer args than expected
+            else if (error.message.includes(ERROR_PATTERNS.TOO_FEW_ARGUMENTS) && 
+                     expectedArgs > 0 && argCount < expectedArgs) {
+              bestMatch = { line: i + 1, column: callStartPos + 1 };
+              break; // Take the first match for too few arguments
+            }
+            // For other arity errors, just take any call to this function
+            else if (!error.message.includes(ERROR_PATTERNS.TOO_MANY_ARGUMENTS) && 
+                     !error.message.includes(ERROR_PATTERNS.TOO_FEW_ARGUMENTS)) {
+              bestMatch = { line: i + 1, column: callStartPos + 1 };
               break;
             }
-          }
-          
-          if (isLikelyCall) {
-            return {
-              file: hqlFile,
-              line: i + 1,
-              column: callIndex + 1 // Point to the function name
-            };
+          } else {
+            // For non-arity errors, just take the first function call we find
+            bestMatch = { line: i + 1, column: callStartPos + 1 };
+            break;
           }
         }
       }
     }
     
-    // If we found a function definition, return that as a fallback
-    if (fnDefLine >= 0) {
+    // If we found a matching function call location, return it
+    if (bestMatch) {
       return {
         file: hqlFile,
-        line: fnDefLine,
-        column: fnDefColumn
+        line: bestMatch.line,
+        column: bestMatch.column
       };
     }
     
-    // If not found in the main file, check for imports
-    // We'll scan for import statements to understand what modules are imported
-    const imports: { name: string, path: string }[] = [];
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.includes('import') && line.includes('from')) {
-        // Try to extract import path
-        const fromIndex = line.indexOf('from');
-        if (fromIndex >= 0) {
-          // Look for the quoted path after "from"
-          const afterFrom = line.substring(fromIndex + 4); // "from" is 4 chars
-          const quoteMatch = afterFrom.match(/["']([^"']+)["']/);
-          
-          if (quoteMatch) {
-            const importPath = quoteMatch[1];
-            
-            // For namespace import like "import b from './b.hql'"
-            if (line.includes('import') && !line.includes('[')) {
-              const importIndex = line.indexOf('import');
-              const betweenImportAndFrom = line.substring(importIndex + 6, fromIndex).trim();
-              // This is a rough approximation, might need more precise parsing
-              imports.push({ name: betweenImportAndFrom, path: importPath });
-            }
-            
-            // For vector imports like "import [hello] from './b.hql'"
-            if (line.includes('[') && line.includes(']')) {
-              const openBracket = line.indexOf('[');
-              const closeBracket = line.indexOf(']');
-              if (closeBracket > openBracket) {
-                const importedSymbols = line.substring(openBracket + 1, closeBracket)
-                  .split(/\s+/)
-                  .map(s => s.trim())
-                  .filter(s => s && s !== ',');
-                
-                for (const symbol of importedSymbols) {
-                  imports.push({ name: symbol, path: importPath });
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    // Process each imported file
-    for (const importInfo of imports) {
-      try {
-        // Resolve the import path relative to the current file
-        const dir = path.dirname(hqlFile);
-        const resolvedPath = path.resolve(dir, importInfo.path);
-        
-        // Skip if the imported file doesn't exist
-        try {
-          Deno.statSync(resolvedPath);
-        } catch {
-          continue; // File doesn't exist, skip
-        }
-        
-        // Read and scan the imported file
-        const importedContent = Deno.readTextFileSync(resolvedPath);
-        const importedLines = importedContent.split('\n');
-        
-        for (let i = 0; i < importedLines.length; i++) {
-          const line = importedLines[i];
-          
-          // Check for the function definition in the imported file
-          if ((line.includes('(fn ') || line.includes('(fx ')) && line.includes(functionName)) {
-            const fnKeywordPos = line.indexOf('fn ');
-            const fxKeywordPos = line.indexOf('fx ');
-            const keywordPos = fnKeywordPos >= 0 ? fnKeywordPos : fxKeywordPos;
-            
-            if (keywordPos >= 0) {
-              const afterKeyword = line.substring(keywordPos + 3);
-              const nameStartPos = afterKeyword.search(/\S/);
-              
-              if (nameStartPos >= 0 && afterKeyword.substring(nameStartPos).startsWith(functionName)) {
-                return {
-                  file: resolvedPath,
-                  line: i + 1,
-                  column: keywordPos + 3 + nameStartPos + 1
-                };
-              }
-            }
-          }
-          
-          // Also check for export statements
-          if (line.includes('export') && line.includes(functionName)) {
-            return {
-              file: resolvedPath,
-              line: i + 1,
-              column: line.indexOf(functionName) + 1
-            };
-          }
-        }
-      } catch (e) {
-        logger.debug(`Error scanning imported file: ${e instanceof Error ? e.message : String(e)}`);
-        // Continue with next import
-      }
+    // If we couldn't find a call but found the definition, return that as fallback
+    if (fnDefinition) {
+      return {
+        file: hqlFile,
+        line: fnDefinition.line,
+        column: fnDefinition.column + 1 // Point to the function name in definition
+      };
     }
   } catch (e) {
     logger.debug(`Error finding function call location: ${e instanceof Error ? e.message : String(e)}`);
@@ -1110,8 +1044,33 @@ async function findClosestHqlFiles(
 /**
  * Create a suggestion based on the error type and message
  */
+/**
+ * Create a suggestion based on the error type and message
+ */
 function createSuggestionForError(error: Error): string | undefined {
   const errorMessage = error.message.toLowerCase();
+  
+  // Check for function arity errors
+  if (errorMessage.includes(ERROR_PATTERNS.FUNCTION_CALL) && 
+      (errorMessage.includes(ERROR_PATTERNS.TOO_MANY_ARGUMENTS) || 
+       errorMessage.includes(ERROR_PATTERNS.TOO_FEW_ARGUMENTS) ||
+       errorMessage.includes(ERROR_PATTERNS.POSITIONAL_ARGUMENTS))) {
+       
+    // Check if we have expected vs. received argument counts
+    const expectedVsReceivedMatch = errorMessage.match(ERROR_REGEX.ARGS_EXPECTED);
+    if (expectedVsReceivedMatch && expectedVsReceivedMatch.length >= 3) {
+      const expected = expectedVsReceivedMatch[1];
+      const received = expectedVsReceivedMatch[2];
+      return ERROR_SUGGESTIONS.WRONG_ARGS_COUNT(expected, received);
+    }
+    
+    // Otherwise, provide a generic message based on too many vs. too few
+    if (errorMessage.includes(ERROR_PATTERNS.TOO_MANY_ARGUMENTS)) {
+      return ERROR_SUGGESTIONS.TOO_MANY_ARGS;
+    } else if (errorMessage.includes(ERROR_PATTERNS.TOO_FEW_ARGUMENTS)) {
+      return ERROR_SUGGESTIONS.TOO_FEW_ARGS;
+    }
+  }
   
   // Uncaught TypeError: Cannot read property/Cannot read properties of
   if (errorMessage.includes(ERROR_PATTERNS.CANNOT_READ) && 
@@ -1209,6 +1168,9 @@ export function installGlobalErrorHandler(): void {
 /**
  * Handle a runtime error by mapping it back to HQL source if possible
  */
+/**
+ * Handle a runtime error by mapping it back to HQL source if possible
+ */
 export async function handleRuntimeError(error: Error): Promise<void> {
   try {
     logger.debug(`Handling runtime error: ${error.message}`);
@@ -1226,26 +1188,121 @@ export async function handleRuntimeError(error: Error): Promise<void> {
     
     // If we have a current HQL file context, try to find specific error locations
     if (runtimeContext.currentHqlFile) {
-      // Use our error location finding algorithm
-      const possibleLocations = await findErrorLocation(error, runtimeContext.currentHqlFile);
-      
-      if (possibleLocations.length > 0) {
-        // Use the most likely location (first in the list)
-        hqlLocation = {
-          hqlFile: runtimeContext.currentHqlFile,
-          line: possibleLocations[0].line,
-          column: possibleLocations[0].column
-        };
+      // First check for function arity errors (high priority)
+      if (error.message.includes(ERROR_PATTERNS.FUNCTION_CALL) && 
+          (error.message.includes(ERROR_PATTERNS.TOO_MANY_ARGUMENTS) || 
+          error.message.includes(ERROR_PATTERNS.TOO_FEW_ARGUMENTS) ||
+          error.message.includes(ERROR_PATTERNS.POSITIONAL_ARGUMENTS))) {
         
-        // If we have multiple possible locations, enhance the error message
-        if (possibleLocations.length > 1) {
-          const locationStrings = possibleLocations
-            .map(loc => `line ${loc.line}, column ${loc.column}`)
-            .join("; ");
+        const fnCallLocation = findFunctionCallErrorLocation(error, runtimeContext.currentHqlFile);
+        if (fnCallLocation) {
+          hqlLocation = { 
+            hqlFile: fnCallLocation.file, 
+            line: fnCallLocation.line, 
+            column: fnCallLocation.column 
+          };
+        }
+      }
+      // Check for "is not defined" errors
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.IS_NOT_DEFINED)) {
+        const notDefinedLocation = findNotDefinedErrorLocation(error, runtimeContext.currentHqlFile);
+        if (notDefinedLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: notDefinedLocation.line, 
+            column: notDefinedLocation.column 
+          };
+        }
+      }
+      // Check for "is not a function" errors - enhanced to check imported files
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.IS_NOT_FUNCTION)) {
+        const fnCallLocation = findFunctionCallErrorLocation(error, runtimeContext.currentHqlFile);
+        if (fnCallLocation) {
+          hqlLocation = { 
+            hqlFile: fnCallLocation.file, // Use the found file, which might be an import
+            line: fnCallLocation.line, 
+            column: fnCallLocation.column 
+          };
+        }
+      }
+      // Check for property access errors
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.PROPERTY_OF) || error.message.match(/\..*is not/)) {
+        const propLocation = findPropertyAccessErrorLocation(error, runtimeContext.currentHqlFile);
+        if (propLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: propLocation.line, 
+            column: propLocation.column 
+          };
+        }
+      }
+      // Check for import-related errors
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.NOT_FOUND_IN_MODULE)) {
+        const importLocation = findImportErrorLocation(error, runtimeContext.currentHqlFile);
+        if (importLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: importLocation.line, 
+            column: importLocation.column 
+          };
+        }
+      }
+      // Check for too many arguments errors
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.TOO_MANY_ARGUMENTS) && error.message.toLowerCase().includes(ERROR_PATTERNS.ARGUMENTS)) {
+        const tooManyArgsLocation = findTooManyArgumentsErrorLocation(error, runtimeContext.currentHqlFile);
+        if (tooManyArgsLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: tooManyArgsLocation.line, 
+            column: tooManyArgsLocation.column 
+          };
+        }
+      }
+      // Check for invalid syntax form errors
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.INVALID) && error.message.toLowerCase().includes(ERROR_PATTERNS.FORM)) {
+        const invalidSyntaxLocation = findInvalidFormLocation(error, runtimeContext.currentHqlFile);
+        if (invalidSyntaxLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: invalidSyntaxLocation.line, 
+            column: invalidSyntaxLocation.column 
+          };
+        }
+      }
+      // Check for specific syntax errors
+      else if (error.message.includes("requires exactly") || 
+               error.message.toLowerCase().includes(ERROR_PATTERNS.UNEXPECTED_TOKEN) || 
+               error.message.includes("missing")) {
+        const specificSyntaxLocation = findSpecificSyntaxErrorLocation(error, runtimeContext.currentHqlFile);
+        if (specificSyntaxLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: specificSyntaxLocation.line, 
+            column: specificSyntaxLocation.column 
+          };
+        }
+      }
+      
+      // If nothing found yet, try getting all possible locations
+      if (!hqlLocation) {
+        const possibleLocations = await findErrorLocation(error, runtimeContext.currentHqlFile);
+        if (possibleLocations.length > 0) {
+          hqlLocation = {
+            hqlFile: runtimeContext.currentHqlFile,
+            line: possibleLocations[0].line,
+            column: possibleLocations[0].column,
+          };
           
-          // Only modify the message if it doesn't already contain location info
-          if (!error.message.includes("line") && !error.message.includes("column")) {
-            error.message = `${error.message} (Likely error locations: ${locationStrings})`;
+          // Create an enhanced error message with all likely locations
+          if (possibleLocations.length > 1) {
+            const locationStrings = possibleLocations
+              .map(loc => `line ${loc.line}, column ${loc.column}`)
+              .join("; ");
+            
+            // Only modify the message if it doesn't already contain location info
+            if (!error.message.includes("line") && !error.message.includes("column")) {
+              error.message = `${error.message} (Likely error locations: ${locationStrings})`;
+            }
           }
         }
       }
