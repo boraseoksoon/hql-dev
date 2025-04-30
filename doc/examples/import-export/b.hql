@@ -4,7 +4,7 @@
 (fn hey (name)
   (console.log (str "Hello, " name)))
 
-(hey "yo" "man")
+(hey "yo" "bro")
 
 (export [hello])
 (export [hey])

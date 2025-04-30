@@ -815,8 +815,8 @@ export async function findSyntaxErrorLocation(
       let tokenType = token.toLowerCase();
       let searchTokens: string[] = [];
       
-      if (tokens[tokenType]) {
-        searchTokens = tokens[tokenType];
+      if (tokens[tokenType as keyof typeof tokens]) {
+        searchTokens = tokens[tokenType as keyof typeof tokens];
       } else if (tokenType.includes("paren")) {
         searchTokens = tokens["parenthesis"];
       } else if (tokenType.includes("bracket")) {

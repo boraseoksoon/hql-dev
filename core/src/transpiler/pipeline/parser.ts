@@ -1,4 +1,4 @@
-// Modify core/src/transpiler/pipeline/parser.ts to track source location
+// core/src/transpiler/pipeline/parser.ts - Modified to track source location
 
 import {
   createList,

@@ -1,4 +1,4 @@
-// core/src/common/runtime-error-handler.ts
+// core/src/common/runtime-error-handler.ts - Fixed version
 // Maps JavaScript runtime errors back to HQL source locations with improved accuracy
 
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
@@ -29,6 +29,9 @@ interface RuntimeContext {
   currentJsFile?: string;
   isInHqlContext: boolean;
 }
+
+// Symbol for marking errors as reported to prevent double reporting
+const reportedSymbol = Symbol.for("__hql_error_reported__");
 
 // Global runtime context
 const runtimeContext: RuntimeContext = {
@@ -145,7 +148,7 @@ function findPropertyAccessErrorLocation(error: Error, hqlFile: string): {line: 
       }
     }
   } catch (e) {
-    logger.debug(`Error finding property access location: ${e.message}`);
+    logger.debug(`Error finding property access location: ${e instanceof Error ? e.message : String(e)}`);
   }
   
   return null;
@@ -208,7 +211,7 @@ function findImportErrorLocation(error: Error, hqlFile: string): {line: number, 
       }
     }
   } catch (e) {
-    logger.debug(`Error finding import error location: ${e.message}`);
+    logger.debug(`Error finding import error location: ${e instanceof Error ? e.message : String(e)}`);
   }
   
   return null;
@@ -287,12 +290,84 @@ function findFunctionCallErrorLocation(error: Error, hqlFile: string): {line: nu
           }
         }
       } catch (e) {
-        logger.debug(`Error scanning imported file: ${e.message}`);
+        logger.debug(`Error scanning imported file: ${e instanceof Error ? e.message : String(e)}`);
         // Continue with next import
       }
     }
   } catch (e) {
-    logger.debug(`Error finding function call location: ${e.message}`);
+    logger.debug(`Error finding function call location: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  
+  return null;
+}
+
+/**
+ * Find HQL location for "get" operation errors during transpilation
+ * This handles the special case of 'get is not defined' errors
+ */
+function findGetCallErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
+  try {
+    // Special case for 'get' function that is inserted by the transpiler
+    if (error.message.includes("get is not defined") || error.message.includes("get not defined")) {
+      // Read file and look for object property access patterns or function calls with namespacing
+      const fileContent = Deno.readTextFileSync(hqlFile);
+      const lines = fileContent.split('\n');
+
+      // Pattern: Look for unqualified names in call position like "bhello" instead of "b.hello"
+      const getCallRegex = /\([a-zA-Z0-9_$]+\s+[a-zA-Z0-9_$.]+/;
+      // Also look for import statements to correlate
+      const importRegex = /\(import\s+([a-zA-Z0-9_$]+)\s+from\s/;
+      
+      // Note imported names
+      const importedNames: string[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const importMatch = lines[i].match(importRegex);
+        if (importMatch) {
+          importedNames.push(importMatch[1]);
+        }
+      }
+      
+      // Find potential error locations
+      for (let i = 0; i < lines.length; i++) {
+        // Check for unqualified names first
+        const getCallMatch = lines[i].match(getCallRegex);
+        if (getCallMatch) {
+          const callStart = getCallMatch.index || 0;
+          // Verify this isn't an access of an imported name
+          const tokens = getCallMatch[0].trim().substring(1).split(/\s+/);
+          if (tokens.length >= 2) {
+            const potentialFnName = tokens[0];
+            const argName = tokens[1];
+            
+            // Check if this looks like a function call with a name that wasn't imported directly
+            if (importedNames.includes(potentialFnName) && !argName.includes('.')) {
+              return {
+                line: i + 1,
+                column: callStart + potentialFnName.length + 2 // Point to the argument
+              };
+            }
+          }
+        }
+        
+        // Also check for potential attempts to access attributes of imported modules without using dot
+        for (const importName of importedNames) {
+          // Look for pattern like (bhello...) instead of (b.hello...)
+          const errorPattern = new RegExp(`\\(${importName}[a-zA-Z0-9_$]+`);
+          const match = lines[i].match(errorPattern);
+          if (match) {
+            return {
+              line: i + 1,
+              column: match.index! + 1 // Point to the beginning of the incorrect reference
+            };
+          }
+        }
+      }
+      
+      // If we can't find a specific location, at least return line 1 as fallback
+      return { line: 1, column: 1 };
+    }
+  } catch (e) {
+    logger.debug(`Error finding get call location: ${e instanceof Error ? e.message : String(e)}`);
   }
   
   return null;
@@ -311,6 +386,11 @@ function findNotDefinedErrorLocation(error: Error, hqlFile: string): {line: numb
     }
     
     const varName = varMatch[1];
+    
+    // Special case: if the variable is "get", this might be from our transpiler
+    if (varName === "get") {
+      return findGetCallErrorLocation(error, hqlFile);
+    }
     
     // Read the file and scan for the variable usage
     const fileContent = Deno.readTextFileSync(hqlFile);
@@ -360,7 +440,185 @@ function findNotDefinedErrorLocation(error: Error, hqlFile: string): {line: numb
       }
     }
   } catch (e) {
-    logger.debug(`Error finding "not defined" location: ${e.message}`);
+    logger.debug(`Error finding "not defined" location: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  
+  return null;
+}
+
+/**
+ * Find HQL location for "too many arguments" errors in function calls
+ * This function analyzes the error message to locate the function call with too many arguments
+ */
+function findTooManyArgumentsErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
+  try {
+    // Pattern: "Too many positional arguments in call to function 'X'"
+    const fnMatch = error.message.match(/too many (?:positional )?arguments in call to function ['"]([^'"]+)['"]/i);
+    if (!fnMatch) {
+      return null;
+    }
+    
+    const functionName = fnMatch[1];
+    
+    // Read the file and scan for calls to this function
+    const fileContent = Deno.readTextFileSync(hqlFile);
+    const lines = fileContent.split('\n');
+    
+    // Search for function calls with the pattern (functionName arg1 arg2 ...)
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Look for function call patterns
+      const fnCallPattern = new RegExp(`\\(\\s*${functionName}\\s+[^\\)]+\\)`, 'g');
+      
+      if (fnCallPattern.test(line)) {
+        // Function call found, now find the starting position of the function name
+        const callStartPos = line.indexOf(`(${functionName}`);
+        if (callStartPos >= 0) {
+          return {
+            line: i + 1,
+            column: callStartPos + 2 // Point to the function name (after the opening parenthesis)
+          };
+        }
+        
+        // Alternative pattern with spaces: ( functionName
+        const altStartPos = line.indexOf(`( ${functionName}`);
+        if (altStartPos >= 0) {
+          return {
+            line: i + 1,
+            column: altStartPos + 2 // Point to the function name (after the opening parenthesis and space)
+          };
+        }
+      }
+    }
+  } catch (e) {
+    logger.debug(`Error finding too many arguments location: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  
+  return null;
+}
+
+/**
+ * Find HQL location for invalid syntax errors
+ * This function tries to locate syntax errors such as "Invalid X form"
+ */
+function findInvalidSyntaxErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
+  try {
+    // Pattern: "Invalid X form"
+    const syntaxMatch = error.message.match(/invalid\s+([a-zA-Z0-9_\-]+)\s+form/i);
+    if (!syntaxMatch) {
+      return null;
+    }
+    
+    const syntaxElement = syntaxMatch[1];
+    
+    // Read the file and scan for the syntax element
+    const fileContent = Deno.readTextFileSync(hqlFile);
+    const lines = fileContent.split('\n');
+    
+    // Search for occurrences of this syntax element
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].toLowerCase();
+      
+      // Look for patterns like (syntaxElement ...
+      if (line.includes(`(${syntaxElement.toLowerCase()}`) || 
+          line.includes(`( ${syntaxElement.toLowerCase()}`)) {
+        
+        // Find the position of the syntax element
+        const elPos = line.indexOf(syntaxElement.toLowerCase());
+        if (elPos >= 0) {
+          return {
+            line: i + 1,
+            column: elPos + 1 // Point to the start of the syntax element
+          };
+        }
+      }
+    }
+  } catch (e) {
+    logger.debug(`Error finding invalid syntax location: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  
+  return null;
+}
+
+/**
+ * Find HQL location for specific syntax errors with known patterns
+ */
+function findSpecificSyntaxErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
+  try {
+    // Read the file content
+    const fileContent = Deno.readTextFileSync(hqlFile);
+    const lines = fileContent.split('\n');
+    
+    // Check for "let requires exactly X arguments" error
+    const letArgsMatch = error.message.match(/let requires exactly (\d+) arguments/i);
+    if (letArgsMatch) {
+      // Search for let statements with incorrect number of arguments
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        
+        // Look for (let ...) pattern
+        if (line.includes('(let ')) {
+          // Find the position of "let"
+          const letPos = line.indexOf('let');
+          if (letPos >= 0) {
+            return {
+              line: i + 1,
+              column: letPos + 1 // Point to the "let" keyword
+            };
+          }
+        }
+      }
+    }
+    
+    // Check for "Unexpected token" errors
+    const tokenMatch = error.message.match(/unexpected token ['"]?([^'"]+)['"]?/i);
+    if (tokenMatch) {
+      const unexpectedToken = tokenMatch[1];
+      
+      // Search for the unexpected token
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        
+        if (line.includes(unexpectedToken)) {
+          // Find the position of the unexpected token
+          const tokenPos = line.indexOf(unexpectedToken);
+          if (tokenPos >= 0) {
+            return {
+              line: i + 1,
+              column: tokenPos + 1 // Point to the unexpected token
+            };
+          }
+        }
+      }
+    }
+    
+    // Check for "Missing X" errors
+    const missingMatch = error.message.match(/missing ([a-zA-Z0-9_\-]+)/i);
+    if (missingMatch) {
+      // Find a reasonable location based on keyword searches
+      const keywords = ['import', 'let', 'fn', 'if', 'cond', 'when', 'loop'];
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        
+        // Check for any of our keywords
+        for (const keyword of keywords) {
+          if (line.includes(`(${keyword} `)) {
+            // Find the position of the keyword
+            const keywordPos = line.indexOf(keyword);
+            if (keywordPos >= 0) {
+              return {
+                line: i + 1,
+                column: keywordPos + 1 // Point to the keyword
+              };
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    logger.debug(`Error finding specific syntax error location: ${e instanceof Error ? e.message : String(e)}`);
   }
   
   return null;
@@ -369,8 +627,6 @@ function findNotDefinedErrorLocation(error: Error, hqlFile: string): {line: numb
 /**
  * Get the HQL file path from a JavaScript file path
  */
-// getHqlFileFromJs now only returns mappings registered during execution.
-// All static/directory-guess logic has been removed for robustness.
 function getHqlFileFromJs(jsFile: string): string | undefined {
   // 1. Dynamic mapping (preferred)
   const mapping = fileMappings.get(jsFile);
@@ -417,13 +673,12 @@ function getHqlFileFromJs(jsFile: string): string | undefined {
       dir = parent;
     }
   } catch (e) {
-    logger.debug(`Error inferring HQL file from JS file: ${e instanceof Error ? e.message : e}`);
+    logger.debug(`Error inferring HQL file from JS file: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   logger.warn(`No HQL mapping found for JS file: ${jsFile}.`);
   return undefined;
 }
-
 
 /**
  * Map a JavaScript source location to an HQL source location
@@ -542,6 +797,20 @@ async function findPossibleErrorLocations(
     else if (error.message.includes("not found in module")) {
       exactLocation = findImportErrorLocation(error, hqlFile);
     }
+    // Check for too many arguments errors
+    else if (error.message.toLowerCase().includes("too many") && error.message.toLowerCase().includes("arguments")) {
+      exactLocation = findTooManyArgumentsErrorLocation(error, hqlFile);
+    }
+    // Check for invalid syntax errors
+    else if (error.message.toLowerCase().includes("invalid") && error.message.toLowerCase().includes("form")) {
+      exactLocation = findInvalidSyntaxErrorLocation(error, hqlFile);
+    }
+    // Check for specific syntax errors
+    else if (error.message.includes("requires exactly") || 
+             error.message.includes("unexpected token") || 
+             error.message.includes("missing")) {
+      exactLocation = findSpecificSyntaxErrorLocation(error, hqlFile);
+    }
     
     // If we found an exact location, use it
     if (exactLocation) {
@@ -612,7 +881,7 @@ async function findPossibleErrorLocations(
       }
     }
   } catch (e) {
-    logger.debug(`Error finding possible error locations: ${e.message}`);
+    logger.debug(`Error finding possible error locations: ${e instanceof Error ? e.message : String(e)}`);
   }
   
   // Deduplicate locations
@@ -656,7 +925,7 @@ async function readContextLines(
     
     return result;
   } catch (error) {
-    logger.debug(`Error reading context lines from ${filePath}: ${error.message}`);
+    logger.debug(`Error reading context lines from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
     return [];
   }
 }
@@ -750,6 +1019,10 @@ function createSuggestionForError(error: Error): string | undefined {
   if (errorMessage.includes("is not defined")) {
     const variableName = errorMessage.match(/(?:variable |['"](.*?)['"] )?is not defined/)?.[1];
     if (variableName) {
+      // Special case for "get"
+      if (variableName === "get") {
+        return "The 'get' function is used by the HQL transpiler for property access. Make sure your property access uses dot notation (e.g., 'b.hello' instead of 'bhello').";
+      }
       return `Check ${variableName} at line ${variableName.length > 3 ? 'above' : 'below'}. Make sure '${variableName}' is defined before using it. Did you forget to import it or declare it with 'let'?`;
     }
     return "Make sure all variables are defined before using them.";
@@ -775,8 +1048,38 @@ function createSuggestionForError(error: Error): string | undefined {
     return "Check the syntax around this area for mismatched parentheses, brackets, or other syntax errors.";
   }
   
+  // Too many arguments
+  if (errorMessage.includes("too many") && errorMessage.includes("arguments")) {
+    return "Check the function signature and make sure you're passing the correct number of arguments.";
+  }
+  
+  // Invalid form
+  if (errorMessage.includes("invalid") && errorMessage.includes("form")) {
+    return "Check the syntax of this form and make sure it follows the correct pattern.";
+  }
+  
   // Default suggestion
   return "Check runtime type mismatches or invalid operations.";
+}
+
+/**
+ * Format an error message with multiple possible locations
+ */
+function formatErrorWithLocations(
+  errorMessage: string,
+  locations: { line: number, column: number }[]
+): string {
+  if (locations.length === 0) {
+    return errorMessage;
+  }
+  
+  // Create a nicely formatted location list, sorted by line number
+  const sortedLocations = [...locations].sort((a, b) => a.line - b.line);
+  const locationStr = sortedLocations
+    .map(loc => `line ${loc.line}, column ${loc.column}`)
+    .join("; ");
+    
+  return `${errorMessage} (Likely error locations: ${locationStr})`;
 }
 
 /**
@@ -819,29 +1122,6 @@ export function installGlobalErrorHandler(): void {
   logger.debug("Global error handler installed");
 }
 
-/**
- * Format an error message with multiple possible locations
- */
-function formatErrorWithLocations(
-  errorMessage: string,
-  locations: { line: number, column: number }[]
-): string {
-  if (locations.length === 0) {
-    return errorMessage;
-  }
-  
-  // Create a nicely formatted location list, sorted by line number
-  const sortedLocations = [...locations].sort((a, b) => a.line - b.line);
-  const locationStr = sortedLocations
-    .map(loc => `line ${loc.line}, column ${loc.column}`)
-    .join("; ");
-    
-  return `${errorMessage} (Likely error locations: ${locationStr})`;
-}
-
-/**
- * Handle a runtime error by mapping it back to HQL source if possible
- */
 /**
  * Handle a runtime error by mapping it back to HQL source if possible
  */
@@ -908,6 +1188,41 @@ export async function handleRuntimeError(error: Error): Promise<void> {
           };
         }
       }
+      // Check for too many arguments errors
+      else if (error.message.toLowerCase().includes("too many") && error.message.toLowerCase().includes("arguments")) {
+        const tooManyArgsLocation = findTooManyArgumentsErrorLocation(error, runtimeContext.currentHqlFile);
+        if (tooManyArgsLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: tooManyArgsLocation.line, 
+            column: tooManyArgsLocation.column 
+          };
+        }
+      }
+      // Check for invalid syntax form errors
+      else if (error.message.toLowerCase().includes("invalid") && error.message.toLowerCase().includes("form")) {
+        const invalidSyntaxLocation = findInvalidSyntaxErrorLocation(error, runtimeContext.currentHqlFile);
+        if (invalidSyntaxLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: invalidSyntaxLocation.line, 
+            column: invalidSyntaxLocation.column 
+          };
+        }
+      }
+      // Check for specific syntax errors
+      else if (error.message.includes("requires exactly") || 
+                error.message.includes("unexpected token") || 
+                error.message.includes("missing")) {
+        const specificSyntaxLocation = findSpecificSyntaxErrorLocation(error, runtimeContext.currentHqlFile);
+        if (specificSyntaxLocation) {
+          hqlLocation = { 
+            hqlFile: runtimeContext.currentHqlFile, 
+            line: specificSyntaxLocation.line, 
+            column: specificSyntaxLocation.column 
+          };
+        }
+      }
       
       // If nothing found yet, try getting all possible locations
       if (!hqlLocation) {
@@ -945,18 +1260,18 @@ export async function handleRuntimeError(error: Error): Promise<void> {
       };
     }
     
-    // If we found a location, create a RuntimeError with it
     // Prevent double reporting: if already reported, skip
-    const reportedSymbol = Symbol.for("__hql_error_reported__");
-    if (typeof error === 'object' && error !== null && (error as Record<string, unknown>)[reportedSymbol]) {
+    if (Object.prototype.hasOwnProperty.call(error, reportedSymbol)) {
       return;
     }
 
     // Mark the original error as reported before any reporting
-    if (typeof error === 'object' && error !== null) {
-      (error as Record<string, unknown>)[reportedSymbol] = true;
-    }
+    Object.defineProperty(error, reportedSymbol, {
+      value: true,
+      enumerable: false
+    });
 
+    // If we found a location, create a RuntimeError with it
     if (hqlLocation) {
       // Read context lines from the HQL file
       const contextLines = await readContextLines(hqlLocation.hqlFile, hqlLocation.line);
@@ -987,19 +1302,19 @@ export async function handleRuntimeError(error: Error): Promise<void> {
         hqlError.getSuggestion = () => suggestion;
       }
       // Mark the enhanced error as reported as well (for completeness)
-      (hqlError as Record<string, unknown>)[reportedSymbol] = true;
+      Object.defineProperty(hqlError, reportedSymbol, {
+        value: true,
+        enumerable: false
+      });
       // Report the error with the enhanced HQL information
       await globalErrorReporter.reportError(hqlError, true);
     } else {
-      // If we couldn't enhance the error, only report if not already reported
-      if (typeof error === 'object' && error !== null && (error as Record<string, unknown>)[reportedSymbol]) {
-        return;
-      }
+      // If we couldn't enhance the error, report it as is
       await globalErrorReporter.reportError(error);
     }
   } catch (handlerError) {
     // If our error handler fails, log it and fallback to reporting the original error
-    logger.error(`Error in runtime error handler: ${handlerError.message}`);
+    logger.error(`Error in runtime error handler: ${handlerError instanceof Error ? handlerError.message : String(handlerError)}`);
     await globalErrorReporter.reportError(error);
   }
 }

@@ -1,5 +1,5 @@
 // core/src/transpiler/pipeline/syntax-transformer.ts
-// Modified version with user-level macro references removed and enhanced symbol table integration
+// Modified version with enhanced error reporting and source location support
 
 import {
   createLiteral,
@@ -175,47 +175,85 @@ export function transformSyntax(ast: SExp[]): SExp[] {
         
         // Process let binding (either global binding form or with a binding list)
         if (head === "let") {
-          // Global binding form: (let name value)
-          if (list.elements.length === 3 && isSymbol(list.elements[1])) {
-            const varName = (list.elements[1] as SSymbol).name;
-            const valueNode = list.elements[2];
-            
-            // Register variable and detect its type
-            const dataType = inferDataType(valueNode);
-            globalSymbolTable.set({ 
-              name: varName, 
-              kind: "variable", 
-              type: dataType,
-              scope: "local", 
-              definition: valueNode 
-            });
-            
-            logger.debug(`Registered let binding: ${varName} with type ${dataType}`);
-          }
-          // Binding list form: (let (name1 value1 name2 value2...) body...)
-          else if (list.elements.length > 1 && isList(list.elements[1])) {
-            const bindings = list.elements[1] as SList;
-            
-            // Process each binding pair
-            for (let i = 0; i < bindings.elements.length; i += 2) {
-              if (i + 1 < bindings.elements.length && isSymbol(bindings.elements[i])) {
-                const varName = (bindings.elements[i] as SSymbol).name;
-                const valueNode = bindings.elements[i + 1];
-                
-                // Register variable and detect its type
-                const dataType = inferDataType(valueNode);
-
-                globalSymbolTable.set({ 
-                  name: varName, 
-                  kind: "variable", 
-                  type: dataType,
-                  scope: "local", 
-                  definition: valueNode 
-                });
-                
-                logger.debug(`Registered let binding: ${varName} with type ${dataType}`);
-              }
+          try {
+            // Global binding form: (let name value)
+            if (list.elements.length === 3 && isSymbol(list.elements[1])) {
+              const varName = (list.elements[1] as SSymbol).name;
+              const valueNode = list.elements[2];
+              
+              // Register variable and detect its type
+              const dataType = inferDataType(valueNode);
+              globalSymbolTable.set({ 
+                name: varName, 
+                kind: "variable", 
+                type: dataType,
+                scope: "local", 
+                definition: valueNode 
+              });
+              
+              logger.debug(`Registered let binding: ${varName} with type ${dataType}`);
             }
+            // Binding list form: (let (name1 value1 name2 value2...) body...)
+            else if (list.elements.length > 1 && isList(list.elements[1])) {
+              const bindings = list.elements[1] as SList;
+              
+              // Validate bindings list has even number of elements
+              if (bindings.elements.length % 2 !== 0) {
+                const errorLoc = getLocationFromNode(bindings);
+                throw new TransformError(
+                  "Let bindings require an even number of forms (pairs of name and value)",
+                  "let bindings validation",
+                  withSourceLocationOpts(errorLoc, list)
+                );
+              }
+              
+              // Process each binding pair
+              for (let i = 0; i < bindings.elements.length; i += 2) {
+                if (i + 1 < bindings.elements.length && isSymbol(bindings.elements[i])) {
+                  const varName = (bindings.elements[i] as SSymbol).name;
+                  const valueNode = bindings.elements[i + 1];
+                  
+                  // Register variable and detect its type
+                  const dataType = inferDataType(valueNode);
+
+                  globalSymbolTable.set({ 
+                    name: varName, 
+                    kind: "variable", 
+                    type: dataType,
+                    scope: "local", 
+                    definition: valueNode 
+                  });
+                  
+                  logger.debug(`Registered let binding: ${varName} with type ${dataType}`);
+                } else if (i + 1 < bindings.elements.length) {
+                  // Error: Binding name is not a symbol
+                  const errorLoc = getLocationFromNode(bindings.elements[i]);
+                  throw new TransformError(
+                    "Let binding name must be a symbol",
+                    "let binding name validation",
+                    withSourceLocationOpts(errorLoc, bindings.elements[i])
+                  );
+                }
+              }
+            } else if (list.elements.length > 1) {
+              // Invalid form
+              const errorLoc = getLocationFromNode(list);
+              throw new TransformError(
+                "Invalid let form: must be either (let name value) or (let (bindings...) body...)",
+                "let form validation",
+                withSourceLocationOpts(errorLoc, list)
+              );
+            }
+          } catch (error) {
+            if (!(error instanceof TransformError)) {
+              const errorLoc = getLocationFromNode(list);
+              throw new TransformError(
+                `Invalid let form: ${error instanceof Error ? error.message : String(error)}`,
+                "let form validation",
+                withSourceLocationOpts(errorLoc, list)
+              );
+            }
+            throw error;
           }
         }
       }
@@ -249,10 +287,41 @@ export function transformSyntax(ast: SExp[]): SExp[] {
   // === Phase 6: Transform nodes with all the collected metadata ===
   const transformed: SExp[] = [];
   for (const node of ast) {
-    transformed.push(transformNode(node, enumDefinitions, logger));
+    try {
+      transformed.push(transformNode(node, enumDefinitions, logger));
+    } catch (error) {
+      // Enhance error with better source location information
+      if (error instanceof TransformError) {
+        // Error already has good info, just re-throw
+        throw error;
+      } else {
+        // Convert regular error to TransformError with source location
+        const errorLoc = getLocationFromNode(node);
+        throw new TransformError(
+          `Transformation error: ${error instanceof Error ? error.message : String(error)}`,
+          "node transformation",
+          withSourceLocationOpts(errorLoc, node)
+        );
+      }
+    }
   }
   logger.debug("=== FINAL Symbol Table ===\n" + JSON.stringify(globalSymbolTable.dump(), null, 2));
   return transformed;
+}
+
+/**
+ * Extract source location information from a node
+ */
+function getLocationFromNode(node: any): {filePath?: string, line?: number, column?: number} {
+  // Try to extract from node's metadata
+  if (node && node._meta) {
+    return {
+      filePath: node._meta.filePath,
+      line: node._meta.line,
+      column: node._meta.column
+    };
+  }
+  return {};
 }
 
 /**
@@ -444,6 +513,9 @@ export function transformNode(
         case "when":
         case "unless":
           return transformSpecialForm(list, enumDefinitions, logger);
+        // Enhanced let handling with better error reporting
+        case "let":
+          return transformLetExpr(list, enumDefinitions, logger);
         default:
           // Recursively transform elements for non-special forms
           return {
@@ -454,8 +526,111 @@ export function transformNode(
     },
     "transformNode",
     TransformError,
-    ["syntax transformation"],
+    withSourceLocationOpts({ phase: "syntax transformation" }, node),
   );
+}
+
+/**
+ * Transform a let expression with enhanced error checking
+ */
+function transformLetExpr(
+  list: SList,
+  enumDefinitions: Map<string, SList>,
+  logger: Logger
+): SExp {
+  try {
+    // Two valid forms:
+    // 1. (let name value)
+    // 2. (let (pair1 pair2...) body...)
+    
+    // Check for global binding form
+    if (list.elements.length === 3 && isSymbol(list.elements[1])) {
+      // (let name value) form
+      return {
+        ...list,
+        elements: [
+          list.elements[0],
+          list.elements[1],
+          transformNode(list.elements[2], enumDefinitions, logger)
+        ]
+      };
+    }
+    
+    // Check for local binding form with binding vector
+    if (list.elements.length >= 2 && isList(list.elements[1])) {
+      const bindingList = list.elements[1] as SList;
+      
+      // Validate that binding list has even number of elements
+      if (bindingList.elements.length % 2 !== 0) {
+        const errorLoc = getLocationFromNode(bindingList);
+        throw new TransformError(
+          "Let binding list must contain an even number of forms (pairs of name and value)",
+          "let binding list validation",
+          withSourceLocationOpts(errorLoc, bindingList)
+        );
+      }
+      
+      // Transform the binding values and body expressions
+      const transformedBindings = transformBindingList(bindingList, enumDefinitions, logger);
+      const transformedBody = list.elements.slice(2).map(expr => 
+        transformNode(expr, enumDefinitions, logger)
+      );
+      
+      return {
+        ...list,
+        elements: [
+          list.elements[0],   // 'let' symbol
+          transformedBindings, // transformed binding list
+          ...transformedBody   // transformed body expressions
+        ]
+      };
+    }
+    
+    // Invalid let form
+    const errorLoc = getLocationFromNode(list);
+    throw new TransformError(
+      "Invalid let form. Expected either (let name value) or (let (bindings...) body...)",
+      "let form validation",
+      withSourceLocationOpts(errorLoc, list)
+    );
+  } catch (error) {
+    if (error instanceof TransformError) {
+      throw error;
+    }
+    
+    // Convert regular error to TransformError with location info
+    const errorLoc = getLocationFromNode(list);
+    throw new TransformError(
+      `Invalid let form: ${error instanceof Error ? error.message : String(error)}`,
+      "let form validation",
+      withSourceLocationOpts(errorLoc, list)
+    );
+  }
+}
+
+/**
+ * Transform a binding list in a let expression
+ */
+function transformBindingList(
+  bindingList: SList,
+  enumDefinitions: Map<string, SList>,
+  logger: Logger
+): SList {
+  const transformedBindings: SExp[] = [];
+  
+  for (let i = 0; i < bindingList.elements.length; i += 2) {
+    // Keep the binding name unchanged
+    transformedBindings.push(bindingList.elements[i]);
+    
+    // Transform the binding value
+    const value = bindingList.elements[i + 1];
+    transformedBindings.push(transformNode(value, enumDefinitions, logger));
+  }
+  
+  return {
+    ...bindingList,
+    elements: transformedBindings
+  };
 }
 
 /**
@@ -774,7 +949,7 @@ function transformDotChainForm(list: SList, enumDefinitions: Map<string, SList>,
     },
     "transformDotChainForm",
     TransformError,
-    ["dot-chain form transformation"],
+    withSourceLocationOpts({ phase: "dot-chain form transformation" }, list),
   );
 }
 
@@ -843,7 +1018,7 @@ function transformFxSyntax(list: SList, enumDefinitions: Map<string, SList>, log
     },
     "transformFxSyntax",
     TransformError,
-    ["fx syntax transformation"],
+    withSourceLocationOpts({ phase: "fx syntax transformation" }, list),
   );
 }
 
@@ -862,8 +1037,7 @@ function transformFnSyntax(list: SList, enumDefinitions: Map<string, SList>, log
         throw new TransformError(
           "Invalid fn syntax: requires at least a name, parameter list, and body",
           "fn syntax transformation",
-          "valid fn form",
-          list,
+          withSourceLocationOpts({ phase: "valid fn form" }, list),
         );
       }
 
@@ -970,7 +1144,7 @@ function transformFnSyntax(list: SList, enumDefinitions: Map<string, SList>, log
     },
     "transformFnSyntax",
     TransformError,
-    ["fn syntax transformation"],
+    withSourceLocationOpts({ phase: "fn syntax transformation" }, list),
   );
 }
 

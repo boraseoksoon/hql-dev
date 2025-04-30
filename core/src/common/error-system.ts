@@ -211,10 +211,10 @@ export async function enrichErrorWithContext(error: Error | HQLError, filePath?:
             
             // Enhanced scanning: look for the entity in different forms
             const patterns = [
-              new RegExp(`\\b${entityName}\\b`),  // Exact match 
-              new RegExp(`\\.${entityName}\\b`),  // Property access
-              new RegExp(`\\(\\s*${entityName}\\s`), // Function call
-              new RegExp(`\\[['"]?${entityName}['"]?\\]`), // Array/Map access
+              new RegExp(`\\b${escapeRegExp(entityName)}\\b`),  // Exact match 
+              new RegExp(`\\.${escapeRegExp(entityName)}\\b`),  // Property access
+              new RegExp(`\\(\\s*${escapeRegExp(entityName)}\\s`), // Function call
+              new RegExp(`\\[['"]?${escapeRegExp(entityName)}['"]?\\]`), // Array/Map access
             ];
             
             // Scan the file for the entity name using different patterns
@@ -294,7 +294,7 @@ export async function enrichErrorWithContext(error: Error | HQLError, filePath?:
           // Scan for the variable reference
           for (let i = 0; i < lines.length; i++) {
             // Match the variable as a word boundary to avoid partial matches
-            const pattern = new RegExp(`\\b${varName}\\b`);
+            const pattern = new RegExp(`\\b${escapeRegExp(varName)}\\b`);
             if (pattern.test(lines[i])) {
               // Calculate the column position of the variable
               const column = lines[i].search(pattern) + 1;
@@ -463,6 +463,11 @@ export function extractErrorInfo(error: Error | HQLError): Record<string, unknow
   }
   
   return result;
+}
+
+// Helper function to escape special regex characters
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // Export error classes and utilities for easier access
