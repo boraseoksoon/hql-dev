@@ -6,12 +6,13 @@ import { globalLogger as logger } from "../src/logger.ts";
 import { parseCliOptions, applyCliOptions, CliOptions } from "./utils/cli-options.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
 
-// Import the new error handling system
+// Import the enhanced error handling system
 import {
   initializeErrorSystem,
   runWithErrorHandling,
   setErrorContext,
-  updateErrorConfig
+  updateErrorConfig,
+  enrichErrorWithContext
 } from "../src/common/error-system.ts";
 
 /**
@@ -75,7 +76,7 @@ function parsePaths(args: string[]): { inputPath: string; outputPath?: string } 
 /**
  * Invoke transpiler with error handling
  */
-function transpile(
+async function transpile(
   inputPath: string,
   outputPath: string | undefined,
   opts: CliOptions
@@ -89,12 +90,18 @@ function transpile(
     // Register context for error reporting
     setErrorContext(resolvedInputPath, outputPath);
 
-    // Use direct execution with error handling
-    return await transpileCLI(resolvedInputPath, outputPath, {
-      verbose: opts.verbose,
-      showTiming: opts.showTiming,
-      force: force
-    });
+    try {
+      // Use direct execution with error handling
+      return await transpileCLI(resolvedInputPath, outputPath, {
+        verbose: opts.verbose,
+        showTiming: opts.showTiming,
+        force: force
+      });
+    } catch (transpileError) {
+      // Enrich transpile errors with source context
+      const enrichedError = await enrichErrorWithContext(transpileError, resolvedInputPath);
+      throw enrichedError;
+    }
   });
 }
 
@@ -111,10 +118,17 @@ function printJS(bundledPath: string): Promise<void> {
 /**
  * Dynamically import and execute the JS file
  */
-function runJS(bundledPath: string): Promise<void> {
+async function runJS(bundledPath: string): Promise<void> {
   console.log(`Running: ${bundledPath}`);
   return timed("transpile", "Execute", async () => {
-    await import("file://" + resolve(bundledPath));
+    try {
+      await import("file://" + resolve(bundledPath));
+    } catch (runError) {
+      // In case of runtime errors, enrich them with source context
+      // This helps trace error back to the original HQL source
+      const enrichedError = await enrichErrorWithContext(runError, bundledPath);
+      throw enrichedError;
+    }
   });
 }
 
@@ -149,6 +163,7 @@ export async function main(): Promise<void> {
     if (args.includes("--debug")) {
       opts.debug = true;
       updateErrorConfig({ debug: true, showInternalErrors: true });
+      console.log("Debug mode enabled - showing detailed error information");
     }
     
     applyCliOptions(opts);
@@ -171,7 +186,11 @@ export async function main(): Promise<void> {
     }
   
     logger.logPerformance("transpile", inputPath.split("/").pop()!);
-  }, { debug: opts.debug, exitOnError: true });
+  }, { 
+    debug: opts.debug, 
+    exitOnError: true,
+    currentFile: inputPath // Pass the current file for context
+  });
 }
 
 if (import.meta.main) {

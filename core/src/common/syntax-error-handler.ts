@@ -9,6 +9,7 @@ import {
 } from "./error.ts";
 import { globalLogger as logger } from "../logger.ts";
 import { enrichErrorWithContext } from "./error-system.ts";
+import { ERROR_PATTERNS, ERROR_REGEX } from "./error-constants.ts";
 
 /**
  * Information about a source code location
@@ -344,7 +345,7 @@ export async function loadContextLines(
     
     return result;
   } catch (error) {
-    logger.debug(`Error loading context lines from ${filePath}: ${error.message}`);
+    logger.debug(`Error loading context lines from ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -379,7 +380,7 @@ export async function addContextLinesToError(
       }
     }
   } catch (e) {
-    logger.debug(`Failed to add context lines to error: ${e.message}`);
+    logger.debug(`Failed to add context lines to error: ${e instanceof Error ? e.message : String(e)}`);
   }
   
   return error;
@@ -455,15 +456,10 @@ export async function findSymbolLocation(
       }
     }
   } catch (error) {
-    logger.debug(`Error finding symbol location for ${symbolName}: ${error.message}`);
+    logger.debug(`Error finding symbol location for ${symbolName}: ${error instanceof Error ? error.message : String(error)}`);
   }
   
   return location;
-}
-
-// Helper to escape special regex characters
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -601,7 +597,7 @@ export async function handlePropertyAccessError(
         }
       }
     } catch (error) {
-      logger.debug(`Error finding property access location: ${error.message}`);
+      logger.debug(`Error finding property access location: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
@@ -708,7 +704,7 @@ export async function handleVariableNotFoundError(
         }
       }
     } catch (error) {
-      logger.debug(`Error finding variable location: ${error.message}`);
+      logger.debug(`Error finding variable location: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
@@ -752,7 +748,7 @@ export async function findSyntaxErrorLocation(
     // If we have that, we're done
     return location;
   }
-  
+
   // Otherwise, try to find syntax elements mentioned in the error
   try {
     if (!await exists(filePath)) {
@@ -991,7 +987,7 @@ export async function findSyntaxErrorLocation(
       return location;
     }
   } catch (e) {
-    logger.debug(`Error finding syntax error location: ${e.message}`);
+    logger.debug(`Error finding syntax error location: ${e instanceof Error ? e.message : String(e)}`);
   }
   
   // If all else fails, default to first line
@@ -1046,4 +1042,9 @@ export async function createErrorFromNode(
   }
   
   return error;
+}
+
+// Helper to escape special regex characters
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

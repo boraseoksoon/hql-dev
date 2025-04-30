@@ -52,9 +52,6 @@ function parseNonOptionArgs(args: string[]): string[] {
 }
 
 /**
- * Function to transpile and execute an HQL file
- */
-/**
  * Function to transpile and execute an HQL file with enhanced error handling
  */
 async function transpileAndExecute(
@@ -68,13 +65,20 @@ async function transpileAndExecute(
   
   const jsOutputPath = `${runDir}/${basename(inputPath)}.js`;
 
+  // Set error context to enable proper error location mapping
   setErrorContext(inputPath, jsOutputPath);
 
-  await transpileCLI(inputPath, jsOutputPath, {
-    verbose: options.verbose,
-    showTiming: options.showTiming,
-    force: true, // Always regenerate to ensure latest code is used
-  });
+  try {
+    await transpileCLI(inputPath, jsOutputPath, {
+      verbose: options.verbose,
+      showTiming: options.showTiming,
+      force: true, // Always regenerate to ensure latest code is used
+    });
+  } catch (transpileError) {
+    // Enrich transpile errors with source context
+    const enrichedError = await enrichErrorWithContext(transpileError, inputPath);
+    throw enrichedError;
+  }
   
   logger.debug(`Running transpiled code from: ${jsOutputPath}`);
   
@@ -92,7 +96,6 @@ async function transpileAndExecute(
     }
   } catch (runtimeError) {
     // This is likely a runtime error in the user's code
-    // Add better context and rethrow
     logger.debug(`Runtime error occurred: ${runtimeError.message}`);
     
     // Let the runtime error handler handle this - we enrich errors there

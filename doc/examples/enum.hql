@@ -114,7 +114,7 @@
 
 ;; Testing the functions
 (processPayment payment1)
-(processPayment payment2)
+(processPayent payment2)
 
 
 ;; type inference
@@ -209,7 +209,7 @@
 )
 
 ;; Missing closing parenthesis below - deliberate syntax error
-(let x 10 20)
+(let x 10)
 
 ;; This code should not execute
 (print "Value is" x)

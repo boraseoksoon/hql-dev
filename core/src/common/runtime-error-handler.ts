@@ -1,10 +1,11 @@
-// core/src/common/runtime-error-handler.ts - Fixed version
+// core/src/common/runtime-error-handler.ts - Enhanced version
 // Maps JavaScript runtime errors back to HQL source locations with improved accuracy
 
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import { RuntimeError, ValidationError } from "./error.ts";
 import { globalLogger as logger } from "../logger.ts";
 import { globalErrorReporter } from "./error.ts";
+import { ERROR_PATTERNS, ERROR_SUGGESTIONS, ERROR_REGEX, PATH_KEYS } from "./error-constants.ts";
 
 /**
  * Mapping from generated JS file to original HQL file
@@ -104,7 +105,7 @@ function findPropertyAccessErrorLocation(error: Error, hqlFile: string): {line: 
     // Property access errors often contain the property name
     // Example: "b.hell is not a function" or "Cannot read property 'hell' of undefined"
     const propertyMatch = error.message.match(/([a-zA-Z0-9_$]+)\.([a-zA-Z0-9_$]+)/);
-    if (!propertyMatch && !error.message.includes("property")) {
+    if (!propertyMatch && !error.message.toLowerCase().includes(ERROR_PATTERNS.PROPERTY_OF)) {
       return null;
     }
     
@@ -155,58 +156,281 @@ function findPropertyAccessErrorLocation(error: Error, hqlFile: string): {line: 
 }
 
 /**
- * Find HQL location for import errors
- * This function analyzes import statements to find the location of a symbol
+ * Verify the correctness of an import statement and detect errors
+ * Uses a generalized approach without hardcoding specific typos
+ */
+function verifyImportFormat(
+  list: SList,
+  currentFile?: string
+): { isValid: boolean; error?: ImportError } {
+  // For vector-based imports
+  if (list.elements.length >= 2 && 
+      list.elements[0].type === "symbol" && 
+      (list.elements[0] as SSymbol).name === "import" &&
+      list.elements[1].type === "list") {
+    
+    // Should have: (import [symbols...] from "path")
+    if (list.elements.length < 4) {
+      // Missing elements - likely missing 'from' and path
+      return {
+        isValid: false,
+        error: new ImportError(
+          "Incomplete vector import. Format should be: (import [symbols...] from \"path\")",
+          "syntax-error",
+          {
+            filePath: currentFile,
+            line: getNodeLine(list),
+            column: getNodeColumn(list)
+          }
+        )
+      };
+    }
+    
+    // Check for correct 'from' keyword
+    if (list.elements[2].type !== "symbol" || 
+        (list.elements[2] as SSymbol).name !== "from") {
+      
+      // Invalid or missing 'from' keyword
+      const actualKeyword = list.elements[2].type === "symbol" 
+        ? (list.elements[2] as SSymbol).name 
+        : "invalid-type";
+      
+      // General error for anything that's not 'from'
+      return {
+        isValid: false,
+        error: new ImportError(
+          `Invalid import format: expected 'from' but got '${actualKeyword}'`,
+          "syntax-error",
+          {
+            filePath: currentFile,
+            line: getNodeLine(list.elements[2]),
+            column: getNodeColumn(list.elements[2])
+          }
+        )
+      };
+    }
+    
+    // Check for valid path string
+    if (list.elements[3].type !== "literal" || 
+        typeof (list.elements[3] as SLiteral).value !== "string") {
+      
+      return {
+        isValid: false,
+        error: new ImportError(
+          "Import path must be a string literal",
+          "syntax-error",
+          {
+            filePath: currentFile,
+            line: getNodeLine(list.elements[3]),
+            column: getNodeColumn(list.elements[3])
+          }
+        )
+      };
+    }
+  }
+  
+  // For namespace imports
+  else if (list.elements.length >= 3 && 
+           list.elements[0].type === "symbol" && 
+           (list.elements[0] as SSymbol).name === "import" &&
+           list.elements[1].type === "symbol") {
+    
+    // Should have: (import name from "path")
+    if (list.elements.length < 4) {
+      // Missing elements - likely missing 'from' or path
+      return {
+        isValid: false,
+        error: new ImportError(
+          "Incomplete namespace import. Format should be: (import name from \"path\")",
+          "syntax-error",
+          {
+            filePath: currentFile,
+            line: getNodeLine(list), 
+            column: getNodeColumn(list)
+          }
+        )
+      };
+    }
+    
+    // Check for correct 'from' keyword
+    if (list.elements[2].type !== "symbol" || 
+        (list.elements[2] as SSymbol).name !== "from") {
+      
+      // Invalid or missing 'from' keyword
+      const actualKeyword = list.elements[2].type === "symbol" 
+        ? (list.elements[2] as SSymbol).name 
+        : "invalid-type";
+      
+      // Generic error for anything that's not 'from'
+      return {
+        isValid: false,
+        error: new ImportError(
+          `Invalid import format: expected 'from' but got '${actualKeyword}'`,
+          "syntax-error",
+          {
+            filePath: currentFile,
+            line: getNodeLine(list.elements[2]),
+            column: getNodeColumn(list.elements[2])
+          }
+        )
+      };
+    }
+    
+    // Check for valid path string
+    if (list.elements[3].type !== "literal" || 
+        typeof (list.elements[3] as SLiteral).value !== "string") {
+      
+      return {
+        isValid: false,
+        error: new ImportError(
+          "Import path must be a string literal",
+          "syntax-error",
+          {
+            filePath: currentFile,
+            line: getNodeLine(list.elements[3]),
+            column: getNodeColumn(list.elements[3])
+          }
+        )
+      };
+    }
+  }
+  
+  // All checks passed
+  return { isValid: true };
+}
+
+/**
+ * Check for incorrect keywords in import statements
+ * Uses a general approach - anything that's not "from" is an error
+ */
+function checkImportKeyword(list: SList, currentFile?: string): ImportError | null {
+  if (!list || !list.elements || list.elements.length < 4) {
+    return null;
+  }
+  
+  // Only process import statements
+  if (list.elements[0]?.type !== "symbol" || 
+      (list.elements[0] as SSymbol).name !== "import") {
+    return null;
+  }
+  
+  // Check if the third element should be 'from'
+  // For both vector imports and namespace imports
+  const thirdElement = list.elements[2];
+  if (thirdElement?.type === "symbol") {
+    const keywordName = (thirdElement as SSymbol).name;
+    
+    // Check if it's not "from" - any other value is an error
+    if (keywordName !== "from") {
+      // Get source location information
+      let line: number | undefined;
+      let column: number | undefined;
+      
+      // First try to get location from the node metadata
+      if (thirdElement._meta) {
+        line = thirdElement._meta.line;
+        column = thirdElement._meta.column;
+      } 
+      // If not available, try to find it in the source file
+      else if (currentFile) {
+        try {
+          const content = Deno.readTextFileSync(currentFile);
+          const lines = content.split('\n');
+          
+          // Look for the incorrect keyword in the file
+          for (let i = 0; i < lines.length; i++) {
+            const lineContent = lines[i];
+            
+            // Only check lines that have an import statement
+            if (lineContent.includes('import')) {
+              const keywordPos = lineContent.indexOf(keywordName);
+              if (keywordPos >= 0) {
+                line = i + 1;
+                column = keywordPos + 1;
+                break;
+              }
+            }
+          }
+        } catch (e) {
+          logger.debug(`Error reading file to find keyword location: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      
+      // Create a detailed error message
+      return new ImportError(
+        `Invalid import format: expected 'from' but got '${keywordName}'`,
+        "syntax-error",
+        {
+          filePath: currentFile,
+          line,
+          column
+        }
+      );
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Find import error locations using a generalized approach
+ * Specifically avoids hardcoding error patterns
  */
 function findImportErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
   try {
-    // Import errors often mention the symbol that wasn't found
-    // Example: "Symbol 'fuck' not found in module './b.hql'" 
-    const symbolMatch = error.message.match(/['"](.*?)['"] not found/);
-    const symbolName = symbolMatch ? symbolMatch[1] : null;
-    
-    if (!symbolName) {
-      return null;
-    }
-    
-    // Read the file and scan for import statements containing the symbol
+    // Import errors often mention issues with the format
     const fileContent = Deno.readTextFileSync(hqlFile);
     const lines = fileContent.split('\n');
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
-      // Look for vector imports like (import [xyz] from "./path.hql")
-      if (line.includes('import') && line.includes('[') && line.includes(symbolName)) {
-        const bracketStart = line.indexOf('[');
-        const bracketEnd = line.indexOf(']');
-        
-        if (bracketStart >= 0 && bracketEnd > bracketStart) {
-          // Search for the symbol within the brackets
-          const importVector = line.substring(bracketStart, bracketEnd);
-          const symbolPos = importVector.indexOf(symbolName);
+      // Look for import statements
+      if (line.includes('import')) {
+        // For vector imports like (import [xyz] from "./path.hql")
+        if (line.includes('[') && line.includes(']')) {
+          const bracketStart = line.indexOf('[');
+          const bracketEnd = line.indexOf(']');
           
-          if (symbolPos >= 0) {
-            return {
-              line: i + 1,
-              column: bracketStart + symbolPos + 1
-            };
+          // Check if the keyword after the brackets is not 'from'
+          const afterBracket = line.substring(bracketEnd + 1).trim();
+          if (!afterBracket.startsWith('from')) {
+            // The error is likely in the keyword that should be 'from'
+            const invalidKeywordPos = line.indexOf(afterBracket.split(' ')[0], bracketEnd);
+            if (invalidKeywordPos >= 0) {
+              return {
+                line: i + 1,
+                column: invalidKeywordPos + 1
+              };
+            }
           }
         }
         
-        // If we found an import line but couldn't pinpoint the symbol,
-        // at least return the line and approximate column
+        // For namespace imports: import name from "./path"
+        else if (line.includes('import') && !line.includes('[')) {
+          const importPos = line.indexOf('import');
+          const afterImport = line.substring(importPos + 6).trim(); // 'import' is 6 chars
+          
+          // Split by spaces to get tokens
+          const tokens = afterImport.split(/\s+/);
+          
+          // If we have at least 2 tokens, check if the second one is not 'from'
+          if (tokens.length >= 2 && tokens[1] !== 'from') {
+            // Find position of the incorrect keyword
+            const invalidKeywordPos = line.indexOf(tokens[1], importPos + 6);
+            if (invalidKeywordPos >= 0) {
+              return {
+                line: i + 1,
+                column: invalidKeywordPos + 1
+              };
+            }
+          }
+        }
+        
+        // If we couldn't pinpoint the exact error, just return the import line
         return {
           line: i + 1,
           column: line.indexOf('import') + 1
-        };
-      }
-      
-      // Look for namespace imports: import name from "./path"
-      if (line.includes('import') && line.includes('from') && line.includes(symbolName)) {
-        return {
-          line: i + 1,
-          column: line.indexOf(symbolName) + 1
         };
       }
     }
@@ -226,7 +450,7 @@ function findFunctionCallErrorLocation(error: Error, hqlFile: string): {line: nu
   try {
     // Function errors often mention the function name
     // Example: "hello is not a function" or "Cannot read property 'call' of undefined"
-    const functionMatch = error.message.match(/([a-zA-Z0-9_$\.]+) is not a function/);
+    const functionMatch = error.message.match(ERROR_REGEX.NOT_FUNCTION);
     const functionName = functionMatch ? functionMatch[1] : null;
     
     if (!functionName) {
@@ -237,37 +461,139 @@ function findFunctionCallErrorLocation(error: Error, hqlFile: string): {line: nu
     const fileContent = Deno.readTextFileSync(hqlFile);
     const lines = fileContent.split('\n');
     
+    // Also look for function definitions
+    let fnDefLine = -1;
+    let fnDefColumn = -1;
+    
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
+      // Look for function definition pattern
+      if ((line.includes('(fn ') || line.includes('(fx ')) && line.includes(functionName)) {
+        // This could be a function definition
+        const fnKeywordPos = line.indexOf('fn ');
+        const fxKeywordPos = line.indexOf('fx ');
+        const keywordPos = fnKeywordPos >= 0 ? fnKeywordPos : fxKeywordPos;
+        
+        if (keywordPos >= 0) {
+          const afterKeyword = line.substring(keywordPos + 3); // "fn " or "fx " is 3 chars
+          const nameStartPos = afterKeyword.search(/\S/); // First non-whitespace
+          
+          if (nameStartPos >= 0 && afterKeyword.substring(nameStartPos).startsWith(functionName)) {
+            fnDefLine = i + 1;
+            fnDefColumn = keywordPos + 3 + nameStartPos + 1; // +1 for 1-based indexing
+          }
+        }
+      }
+      
       // Look for function call pattern (name args...)
-      if (line.includes(functionName)) {
+      if (line.includes(functionName) && line.includes('(')) {
+        // Verify this is a function call and not a definition
+        // Simple heuristic: if it appears after ( and not after (fn or (fx
+        const openParenPos = line.indexOf('(');
+        const fnPos = line.indexOf('(fn ');
+        const fxPos = line.indexOf('(fx ');
+        
+        // Skip if this is a function definition
+        if ((fnPos === openParenPos || fxPos === openParenPos) && line.substring(fnPos + 4).includes(functionName)) {
+          continue;
+        }
+        
         const callIndex = line.indexOf(functionName);
         if (callIndex >= 0) {
-          return {
-            file: hqlFile,
-            line: i + 1,
-            column: callIndex + 1 // Point to the function name
-          };
+          // Check if this is likely a function call by looking for a pattern like (functionName ...
+          // This is a simple heuristic and might not catch all cases
+          let isLikelyCall = false;
+          
+          for (let pos = callIndex - 1; pos >= 0; pos--) {
+            const char = line[pos];
+            if (char === '(') {
+              isLikelyCall = true;
+              break;
+            } else if (!/\s/.test(char)) {
+              // Non-whitespace before function name, not a simple call
+              break;
+            }
+          }
+          
+          if (isLikelyCall) {
+            return {
+              file: hqlFile,
+              line: i + 1,
+              column: callIndex + 1 // Point to the function name
+            };
+          }
         }
       }
     }
     
-    // If not found in the main file, check for imports and try to scan those files
-    const importMatches = [];
-    const importRegex = /\(import\s+(?:\[.+?\]|[a-zA-Z0-9_$]+)\s+from\s+["'](.+?)["']\)/g;
-    let match;
+    // If we found a function definition, return that as a fallback
+    if (fnDefLine >= 0) {
+      return {
+        file: hqlFile,
+        line: fnDefLine,
+        column: fnDefColumn
+      };
+    }
     
-    while ((match = importRegex.exec(fileContent)) !== null) {
-      importMatches.push(match[1]);
+    // If not found in the main file, check for imports
+    // We'll scan for import statements to understand what modules are imported
+    const imports: { name: string, path: string }[] = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.includes('import') && line.includes('from')) {
+        // Try to extract import path
+        const fromIndex = line.indexOf('from');
+        if (fromIndex >= 0) {
+          // Look for the quoted path after "from"
+          const afterFrom = line.substring(fromIndex + 4); // "from" is 4 chars
+          const quoteMatch = afterFrom.match(/["']([^"']+)["']/);
+          
+          if (quoteMatch) {
+            const importPath = quoteMatch[1];
+            
+            // For namespace import like "import b from './b.hql'"
+            if (line.includes('import') && !line.includes('[')) {
+              const importIndex = line.indexOf('import');
+              const betweenImportAndFrom = line.substring(importIndex + 6, fromIndex).trim();
+              // This is a rough approximation, might need more precise parsing
+              imports.push({ name: betweenImportAndFrom, path: importPath });
+            }
+            
+            // For vector imports like "import [hello] from './b.hql'"
+            if (line.includes('[') && line.includes(']')) {
+              const openBracket = line.indexOf('[');
+              const closeBracket = line.indexOf(']');
+              if (closeBracket > openBracket) {
+                const importedSymbols = line.substring(openBracket + 1, closeBracket)
+                  .split(/\s+/)
+                  .map(s => s.trim())
+                  .filter(s => s && s !== ',');
+                
+                for (const symbol of importedSymbols) {
+                  imports.push({ name: symbol, path: importPath });
+                }
+              }
+            }
+          }
+        }
+      }
     }
     
     // Process each imported file
-    for (const importPath of importMatches) {
+    for (const importInfo of imports) {
       try {
         // Resolve the import path relative to the current file
         const dir = path.dirname(hqlFile);
-        const resolvedPath = path.resolve(dir, importPath);
+        const resolvedPath = path.resolve(dir, importInfo.path);
+        
+        // Skip if the imported file doesn't exist
+        try {
+          Deno.statSync(resolvedPath);
+        } catch {
+          continue; // File doesn't exist, skip
+        }
         
         // Read and scan the imported file
         const importedContent = Deno.readTextFileSync(resolvedPath);
@@ -276,17 +602,33 @@ function findFunctionCallErrorLocation(error: Error, hqlFile: string): {line: nu
         for (let i = 0; i < importedLines.length; i++) {
           const line = importedLines[i];
           
-          // Check for the function name or specific patterns like console.lo
-          if (line.includes(functionName) || 
-              (functionName === "console.lo" && line.includes("console.lo"))) {
-            const callIndex = line.indexOf(functionName);
-            if (callIndex >= 0) {
-              return {
-                file: resolvedPath,
-                line: i + 1,
-                column: callIndex + 1 // Point to the function name
-              };
+          // Check for the function definition in the imported file
+          if ((line.includes('(fn ') || line.includes('(fx ')) && line.includes(functionName)) {
+            const fnKeywordPos = line.indexOf('fn ');
+            const fxKeywordPos = line.indexOf('fx ');
+            const keywordPos = fnKeywordPos >= 0 ? fnKeywordPos : fxKeywordPos;
+            
+            if (keywordPos >= 0) {
+              const afterKeyword = line.substring(keywordPos + 3);
+              const nameStartPos = afterKeyword.search(/\S/);
+              
+              if (nameStartPos >= 0 && afterKeyword.substring(nameStartPos).startsWith(functionName)) {
+                return {
+                  file: resolvedPath,
+                  line: i + 1,
+                  column: keywordPos + 3 + nameStartPos + 1
+                };
+              }
             }
+          }
+          
+          // Also check for export statements
+          if (line.includes('export') && line.includes(functionName)) {
+            return {
+              file: resolvedPath,
+              line: i + 1,
+              column: line.indexOf(functionName) + 1
+            };
           }
         }
       } catch (e) {
@@ -380,7 +722,7 @@ function findGetCallErrorLocation(error: Error, hqlFile: string): {line: number,
 function findNotDefinedErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
   try {
     // Not defined errors usually have the format "X is not defined"
-    const varMatch = error.message.match(/([a-zA-Z0-9_$]+) is not defined/);
+    const varMatch = error.message.match(ERROR_REGEX.UNDEFINED_VAR);
     if (!varMatch) {
       return null;
     }
@@ -388,7 +730,7 @@ function findNotDefinedErrorLocation(error: Error, hqlFile: string): {line: numb
     const varName = varMatch[1];
     
     // Special case: if the variable is "get", this might be from our transpiler
-    if (varName === "get") {
+    if (varName === ERROR_PATTERNS.GET_FUNCTION) {
       return findGetCallErrorLocation(error, hqlFile);
     }
     
@@ -453,7 +795,7 @@ function findNotDefinedErrorLocation(error: Error, hqlFile: string): {line: numb
 function findTooManyArgumentsErrorLocation(error: Error, hqlFile: string): {line: number, column: number} | null {
   try {
     // Pattern: "Too many positional arguments in call to function 'X'"
-    const fnMatch = error.message.match(/too many (?:positional )?arguments in call to function ['"]([^'"]+)['"]/i);
+    const fnMatch = error.message.match(ERROR_REGEX.ARGS_COUNT);
     if (!fnMatch) {
       return null;
     }
@@ -468,26 +810,26 @@ function findTooManyArgumentsErrorLocation(error: Error, hqlFile: string): {line
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
-      // Look for function call patterns
-      const fnCallPattern = new RegExp(`\\(\\s*${functionName}\\s+[^\\)]+\\)`, 'g');
-      
-      if (fnCallPattern.test(line)) {
-        // Function call found, now find the starting position of the function name
-        const callStartPos = line.indexOf(`(${functionName}`);
-        if (callStartPos >= 0) {
-          return {
-            line: i + 1,
-            column: callStartPos + 2 // Point to the function name (after the opening parenthesis)
-          };
-        }
+      // Look for function call patterns, ensuring this is a call not a definition
+      if (line.includes(functionName) && !line.includes(`(fn ${functionName}`) && !line.includes(`(fx ${functionName}`)) {
+        // Find the position of the function name in a call context
+        let fnCallIndex = -1;
+        let openParenPos = -1;
         
-        // Alternative pattern with spaces: ( functionName
-        const altStartPos = line.indexOf(`( ${functionName}`);
-        if (altStartPos >= 0) {
-          return {
-            line: i + 1,
-            column: altStartPos + 2 // Point to the function name (after the opening parenthesis and space)
-          };
+        // Match any occurrence of the function being called
+        const fnCallRegex = new RegExp(`\\([\\s\\(]*${functionName}\\s+[^\\)]+`);
+        const fnCallMatch = line.match(fnCallRegex);
+        
+        if (fnCallMatch) {
+          openParenPos = fnCallMatch.index!;
+          fnCallIndex = line.indexOf(functionName, openParenPos);
+          
+          if (fnCallIndex >= 0) {
+            return {
+              line: i + 1,
+              column: fnCallIndex + 1 // Point to the function name
+            };
+          }
         }
       }
     }
@@ -572,7 +914,7 @@ function findSpecificSyntaxErrorLocation(error: Error, hqlFile: string): {line: 
     }
     
     // Check for "Unexpected token" errors
-    const tokenMatch = error.message.match(/unexpected token ['"]?([^'"]+)['"]?/i);
+    const tokenMatch = error.message.match(ERROR_REGEX.TOKEN);
     if (tokenMatch) {
       const unexpectedToken = tokenMatch[1];
       
@@ -638,14 +980,15 @@ function getHqlFileFromJs(jsFile: string): string | undefined {
   try {
     // Remove known transpilation suffixes
     let base = jsFile;
-    if (base.endsWith('.transpiled.js')) {
-      base = base.slice(0, -('.transpiled.js'.length)) + '.hql';
-    } else if (base.endsWith('.js')) {
-      base = base.slice(0, -('.js'.length)) + '.hql';
+    if (base.endsWith(PATH_KEYS.TRANSPILED_SUFFIX)) {
+      base = base.slice(0, -(PATH_KEYS.TRANSPILED_SUFFIX.length)) + PATH_KEYS.HQL_EXTENSION;
+    } else if (base.endsWith(PATH_KEYS.JS_EXTENSION)) {
+      base = base.slice(0, -(PATH_KEYS.JS_EXTENSION.length)) + PATH_KEYS.HQL_EXTENSION;
     }
 
     // Remove _hql_ or temp marker if present in path
-    base = base.replace(/_hql_\//g, '').replace(/hql-transpiled\//g, '');
+    base = base.replace(new RegExp(PATH_KEYS.TEMP_MARKER, 'g'), '')
+               .replace(new RegExp(PATH_KEYS.TRANSPILED_MARKER, 'g'), '');
 
     // Check if the inferred file exists
     try {
@@ -656,22 +999,18 @@ function getHqlFileFromJs(jsFile: string): string | undefined {
       }
     } catch { /* not found, continue */ }
 
-    // 3. Walk up directory tree to find a matching .hql file
-    let dir = path.dirname(jsFile);
-    const fileName = path.basename(base);
-    for (let i = 0; i < 3; ++i) { // Limit walk to 3 parent levels
-      const candidate = path.join(dir, fileName);
-      try {
-        const stat = Deno.statSync(candidate);
-        if (stat.isFile) {
-          logger.debug(`Found HQL file ${candidate} by walking up from JS file ${jsFile}`);
-          return candidate;
-        }
-      } catch { /* not found, continue */ }
-      const parent = path.dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
+    // 3. Check for the actual HQL file in the same directory
+    const dir = path.dirname(jsFile);
+    const baseWithoutExt = path.basename(jsFile, path.extname(jsFile));
+    const candidateInSameDir = path.join(dir, baseWithoutExt + PATH_KEYS.HQL_EXTENSION);
+    
+    try {
+      const stat = Deno.statSync(candidateInSameDir);
+      if (stat.isFile) {
+        logger.debug(`Found HQL file ${candidateInSameDir} next to JS file ${jsFile}`);
+        return candidateInSameDir;
+      }
+    } catch { /* not found, continue */ }
   } catch (e) {
     logger.debug(`Error inferring HQL file from JS file: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -782,32 +1121,35 @@ async function findPossibleErrorLocations(
     let exactLocation = null;
     
     // Check for "is not defined" errors
-    if (error.message.includes("is not defined")) {
+    if (error.message.toLowerCase().includes(ERROR_PATTERNS.IS_NOT_DEFINED)) {
       exactLocation = findNotDefinedErrorLocation(error, hqlFile);
     }
     // Check for property access errors
-    else if (error.message.includes("property") || error.message.match(/\..*is not/)) {
+    else if (error.message.toLowerCase().includes(ERROR_PATTERNS.PROPERTY_OF) || 
+            error.message.match(/\..*is not/)) {
       exactLocation = findPropertyAccessErrorLocation(error, hqlFile);
     }
     // Check for "is not a function" errors
-    else if (error.message.includes("is not a function")) {
+    else if (error.message.toLowerCase().includes(ERROR_PATTERNS.IS_NOT_FUNCTION)) {
       exactLocation = findFunctionCallErrorLocation(error, hqlFile);
     }
     // Check for import-related errors
-    else if (error.message.includes("not found in module")) {
+    else if (error.message.toLowerCase().includes(ERROR_PATTERNS.NOT_FOUND_IN_MODULE)) {
       exactLocation = findImportErrorLocation(error, hqlFile);
     }
     // Check for too many arguments errors
-    else if (error.message.toLowerCase().includes("too many") && error.message.toLowerCase().includes("arguments")) {
+    else if (error.message.toLowerCase().includes(ERROR_PATTERNS.TOO_MANY_ARGUMENTS) && 
+            error.message.toLowerCase().includes(ERROR_PATTERNS.ARGUMENTS)) {
       exactLocation = findTooManyArgumentsErrorLocation(error, hqlFile);
     }
     // Check for invalid syntax errors
-    else if (error.message.toLowerCase().includes("invalid") && error.message.toLowerCase().includes("form")) {
+    else if (error.message.toLowerCase().includes(ERROR_PATTERNS.INVALID) && 
+            error.message.toLowerCase().includes(ERROR_PATTERNS.FORM)) {
       exactLocation = findInvalidSyntaxErrorLocation(error, hqlFile);
     }
     // Check for specific syntax errors
     else if (error.message.includes("requires exactly") || 
-             error.message.includes("unexpected token") || 
+             error.message.toLowerCase().includes(ERROR_PATTERNS.UNEXPECTED_TOKEN) || 
              error.message.includes("missing")) {
       exactLocation = findSpecificSyntaxErrorLocation(error, hqlFile);
     }
@@ -960,44 +1302,43 @@ async function findClosestHqlFiles(
     });
   }
   
-  // Look in common directories for HQL files
-  const searchDirs = [
-    Deno.cwd(),
-    path.join(Deno.cwd(), "src"),
-    path.join(Deno.cwd(), "lib"),
-    path.join(Deno.cwd(), "doc", "examples")
-  ];
-  
-  for (const dir of searchDirs) {
-    try {
-      for await (const entry of Deno.readDir(dir)) {
-        if (entry.isFile && entry.name.endsWith(".hql")) {
-          candidates.push({
-            hqlFile: path.join(dir, entry.name),
-            line: errorLocation.line,
-            column: errorLocation.column
-          });
-        } else if (entry.isDirectory) {
-          // Also check subdirectories
-          try {
-            const subdir = path.join(dir, entry.name);
-            for await (const subEntry of Deno.readDir(subdir)) {
-              if (subEntry.isFile && subEntry.name.endsWith(".hql")) {
-                candidates.push({
-                  hqlFile: path.join(subdir, subEntry.name),
-                  line: errorLocation.line,
-                  column: errorLocation.column
-                });
-              }
-            }
-          } catch (_e) {
-            // Ignore errors in subdirectories
+  // Look in relevant directories for related HQL files
+  try {
+    if (errorLocation.file) {
+      // First check the directory where the JS file is located
+      const jsDir = path.dirname(errorLocation.file);
+      try {
+        for await (const entry of Deno.readDir(jsDir)) {
+          if (entry.isFile && entry.name.endsWith(PATH_KEYS.HQL_EXTENSION)) {
+            candidates.push({
+              hqlFile: path.join(jsDir, entry.name),
+              line: errorLocation.line,
+              column: errorLocation.column
+            });
           }
         }
+      } catch (_e) {
+        // Ignore errors reading the directory
       }
-    } catch (_e) {
-      // Directory doesn't exist or can't be read, skip it
+      
+      // Also check one level up
+      const parentDir = path.dirname(jsDir);
+      try {
+        for await (const entry of Deno.readDir(parentDir)) {
+          if (entry.isFile && entry.name.endsWith(PATH_KEYS.HQL_EXTENSION)) {
+            candidates.push({
+              hqlFile: path.join(parentDir, entry.name),
+              line: errorLocation.line,
+              column: errorLocation.column
+            });
+          }
+        }
+      } catch (_e) {
+        // Ignore errors reading the directory
+      }
     }
+  } catch (_e) {
+    // Ignore errors in the directory search process
   }
   
   return candidates;
@@ -1010,56 +1351,56 @@ function createSuggestionForError(error: Error): string | undefined {
   const errorMessage = error.message.toLowerCase();
   
   // Uncaught TypeError: Cannot read property/Cannot read properties of
-  if (errorMessage.includes("cannot read") && 
-      (errorMessage.includes("property") || errorMessage.includes("properties"))) {
-    return "Check that the object is not null or undefined before accessing its properties.";
+  if (errorMessage.includes(ERROR_PATTERNS.CANNOT_READ) && 
+      (errorMessage.includes(ERROR_PATTERNS.PROPERTY_OF) || errorMessage.includes(ERROR_PATTERNS.PROPERTIES_OF))) {
+    return ERROR_SUGGESTIONS.NULL_PROPERTY;
   }
   
   // Uncaught ReferenceError: X is not defined
-  if (errorMessage.includes("is not defined")) {
-    const variableName = errorMessage.match(/(?:variable |['"](.*?)['"] )?is not defined/)?.[1];
+  if (errorMessage.includes(ERROR_PATTERNS.IS_NOT_DEFINED)) {
+    const variableName = errorMessage.match(ERROR_REGEX.UNDEFINED_VAR)?.[1];
     if (variableName) {
       // Special case for "get"
-      if (variableName === "get") {
-        return "The 'get' function is used by the HQL transpiler for property access. Make sure your property access uses dot notation (e.g., 'b.hello' instead of 'bhello').";
+      if (variableName === ERROR_PATTERNS.GET_FUNCTION) {
+        return ERROR_SUGGESTIONS.GET_FUNCTION;
       }
-      return `Check ${variableName} at line ${variableName.length > 3 ? 'above' : 'below'}. Make sure '${variableName}' is defined before using it. Did you forget to import it or declare it with 'let'?`;
+      return ERROR_SUGGESTIONS.UNDEFINED_VAR(variableName);
     }
-    return "Make sure all variables are defined before using them.";
+    return ERROR_SUGGESTIONS.DEFINE_VARS;
   }
   
   // TypeError: X is not a function
-  if (errorMessage.includes("is not a function")) {
-    return "Verify that you're calling a valid function and check for typos in the function name or property name.";
+  if (errorMessage.includes(ERROR_PATTERNS.IS_NOT_FUNCTION)) {
+    return ERROR_SUGGESTIONS.NOT_FUNCTION;
   }
   
   // Import errors
-  if (errorMessage.includes("not found in module")) {
-    return "Check the imported file for exported symbols, or fix the property name.";
+  if (errorMessage.includes(ERROR_PATTERNS.NOT_FOUND_IN_MODULE)) {
+    return ERROR_SUGGESTIONS.IMPORT_SYMBOLS;
   }
   
   // Property doesn't exist
-  if (errorMessage.includes("property") && errorMessage.includes("not found")) {
-    return "Verify the property name and check if you have a typo or if the property exists on the object.";
+  if (errorMessage.includes(ERROR_PATTERNS.PROPERTY_OF) && errorMessage.includes(ERROR_PATTERNS.PROPERTY_NOT_FOUND)) {
+    return ERROR_SUGGESTIONS.MISSING_PROPERTY;
   }
   
   // SyntaxError: Unexpected token
-  if (errorMessage.includes("unexpected token")) {
-    return "Check the syntax around this area for mismatched parentheses, brackets, or other syntax errors.";
+  if (errorMessage.includes(ERROR_PATTERNS.UNEXPECTED_TOKEN)) {
+    return ERROR_SUGGESTIONS.SYNTAX_ERROR;
   }
   
   // Too many arguments
-  if (errorMessage.includes("too many") && errorMessage.includes("arguments")) {
-    return "Check the function signature and make sure you're passing the correct number of arguments.";
+  if (errorMessage.includes(ERROR_PATTERNS.TOO_MANY_ARGUMENTS) && errorMessage.includes(ERROR_PATTERNS.ARGUMENTS)) {
+    return ERROR_SUGGESTIONS.TOO_MANY_ARGS;
   }
   
   // Invalid form
-  if (errorMessage.includes("invalid") && errorMessage.includes("form")) {
-    return "Check the syntax of this form and make sure it follows the correct pattern.";
+  if (errorMessage.includes(ERROR_PATTERNS.INVALID) && errorMessage.includes(ERROR_PATTERNS.FORM)) {
+    return ERROR_SUGGESTIONS.INVALID_FORM;
   }
   
   // Default suggestion
-  return "Check runtime type mismatches or invalid operations.";
+  return ERROR_SUGGESTIONS.DEFAULT;
 }
 
 /**
@@ -1145,7 +1486,7 @@ export async function handleRuntimeError(error: Error): Promise<void> {
       // Try to find the specific location based on error type
       
       // Check for "is not defined" errors
-      if (error.message.includes("is not defined")) {
+      if (error.message.toLowerCase().includes(ERROR_PATTERNS.IS_NOT_DEFINED)) {
         const notDefinedLocation = findNotDefinedErrorLocation(error, runtimeContext.currentHqlFile);
         if (notDefinedLocation) {
           hqlLocation = { 
@@ -1156,7 +1497,7 @@ export async function handleRuntimeError(error: Error): Promise<void> {
         }
       }
       // Check for "is not a function" errors - enhanced to check imported files
-      else if (error.message.includes("is not a function")) {
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.IS_NOT_FUNCTION)) {
         const fnCallLocation = findFunctionCallErrorLocation(error, runtimeContext.currentHqlFile);
         if (fnCallLocation) {
           hqlLocation = { 
@@ -1167,7 +1508,7 @@ export async function handleRuntimeError(error: Error): Promise<void> {
         }
       }
       // Check for property access errors
-      else if (error.message.includes("property") || error.message.match(/\..*is not/)) {
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.PROPERTY_OF) || error.message.match(/\..*is not/)) {
         const propLocation = findPropertyAccessErrorLocation(error, runtimeContext.currentHqlFile);
         if (propLocation) {
           hqlLocation = { 
@@ -1178,7 +1519,7 @@ export async function handleRuntimeError(error: Error): Promise<void> {
         }
       }
       // Check for import-related errors
-      else if (error.message.includes("not found in module")) {
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.NOT_FOUND_IN_MODULE)) {
         const importLocation = findImportErrorLocation(error, runtimeContext.currentHqlFile);
         if (importLocation) {
           hqlLocation = { 
@@ -1189,7 +1530,7 @@ export async function handleRuntimeError(error: Error): Promise<void> {
         }
       }
       // Check for too many arguments errors
-      else if (error.message.toLowerCase().includes("too many") && error.message.toLowerCase().includes("arguments")) {
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.TOO_MANY_ARGUMENTS) && error.message.toLowerCase().includes(ERROR_PATTERNS.ARGUMENTS)) {
         const tooManyArgsLocation = findTooManyArgumentsErrorLocation(error, runtimeContext.currentHqlFile);
         if (tooManyArgsLocation) {
           hqlLocation = { 
@@ -1200,7 +1541,7 @@ export async function handleRuntimeError(error: Error): Promise<void> {
         }
       }
       // Check for invalid syntax form errors
-      else if (error.message.toLowerCase().includes("invalid") && error.message.toLowerCase().includes("form")) {
+      else if (error.message.toLowerCase().includes(ERROR_PATTERNS.INVALID) && error.message.toLowerCase().includes(ERROR_PATTERNS.FORM)) {
         const invalidSyntaxLocation = findInvalidSyntaxErrorLocation(error, runtimeContext.currentHqlFile);
         if (invalidSyntaxLocation) {
           hqlLocation = { 
@@ -1212,7 +1553,7 @@ export async function handleRuntimeError(error: Error): Promise<void> {
       }
       // Check for specific syntax errors
       else if (error.message.includes("requires exactly") || 
-                error.message.includes("unexpected token") || 
+                error.message.toLowerCase().includes(ERROR_PATTERNS.UNEXPECTED_TOKEN) || 
                 error.message.includes("missing")) {
         const specificSyntaxLocation = findSpecificSyntaxErrorLocation(error, runtimeContext.currentHqlFile);
         if (specificSyntaxLocation) {
@@ -1286,6 +1627,7 @@ export async function handleRuntimeError(error: Error): Promise<void> {
           filePath: hqlLocation.hqlFile,
           line: hqlLocation.line,
           column: hqlLocation.column,
+          originalError: error
         }
       );
       
@@ -1301,11 +1643,13 @@ export async function handleRuntimeError(error: Error): Promise<void> {
       if (suggestion) {
         hqlError.getSuggestion = () => suggestion;
       }
+      
       // Mark the enhanced error as reported as well (for completeness)
       Object.defineProperty(hqlError, reportedSymbol, {
         value: true,
         enumerable: false
       });
+      
       // Report the error with the enhanced HQL information
       await globalErrorReporter.reportError(hqlError, true);
     } else {
