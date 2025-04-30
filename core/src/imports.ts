@@ -963,7 +963,7 @@ async function loadModule(
       try {
         await loadTypeScriptModule(moduleName, modulePath, resolvedPath, env, processedFiles);
       } catch (_error) {
-        logger.error(`Error loading module: ${_error}`);
+        // Do not log here; let the centralized error handler report it.
         throw new ImportError(`Failed to load module: ${modulePath}\nDetails: ${_error}`);
       }
     } else {

@@ -103,9 +103,14 @@ export async function processHqlImportsInJs(
   try {
     return await processHqlImports(jsSource, jsFilePath, options, true);
   } catch (error) {
-    throw new TranspilerError(
+    const newError = new TranspilerError(
       `Processing HQL imports in JS file: ${error instanceof Error ? error.message : String(error)}`,
     );
+    const reportedSymbol = Symbol.for("__hql_error_reported__");
+    if (typeof error === 'object' && error !== null && (error as any)[reportedSymbol]) {
+      (newError as any)[reportedSymbol] = true;
+    }
+    throw newError;
   }
 }
 
@@ -196,9 +201,14 @@ async function processHqlImportsInTs(
   try {
     return await processHqlImports(tsSource, tsFilePath, options, false);
   } catch (error) {
-    throw new TranspilerError(
+    const newError = new TranspilerError(
       `Processing HQL imports in TypeScript file: ${error instanceof Error ? error.message : String(error)}`,
     );
+    const reportedSymbol = Symbol.for("__hql_error_reported__");
+    if (typeof error === 'object' && error !== null && (error as any)[reportedSymbol]) {
+      (newError as any)[reportedSymbol] = true;
+    }
+    throw newError;
   }
 }
 
@@ -225,6 +235,7 @@ async function processEntryFile(
       );
     }
   } catch (error) {
+    // Do not log here; let the centralized error handler report it.
     throw error;
   }
 }
@@ -289,11 +300,17 @@ async function processJsOrTsEntryFile(
       return outputPath;
     }
   } catch (error) {
-    throw new TranspilerError(
+    const newError = new TranspilerError(
       `Processing ${isTypeScriptFile(resolvedInputPath) ? 'TypeScript' : 'JavaScript'} entry file: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
+    // Preserve reported symbol if present
+    const reportedSymbol = Symbol.for("__hql_error_reported__");
+    if (typeof error === 'object' && error !== null && (error as any)[reportedSymbol]) {
+      (newError as any)[reportedSymbol] = true;
+    }
+    throw newError;
   }
 }
 
@@ -521,6 +538,7 @@ async function bundleWithEsbuild(
     
     return outputPath;
   } catch (error) {
+    // Do not log here; let the centralized error handler report it.
     throw error;
   }
 }
@@ -743,9 +761,14 @@ export async function transpileHqlFile(
 
     return result.code;
   } catch (error) {
-    throw new Error(`Error transpiling HQL for JS import ${hqlFilePath}: ${
+    const newError = new Error(`Error transpiling HQL for JS import ${hqlFilePath}: ${
       error instanceof Error ? error.message : String(error)
     }`);
+    const reportedSymbol = Symbol.for("__hql_error_reported__");
+    if (typeof error === 'object' && error !== null && (error as any)[reportedSymbol]) {
+      (newError as any)[reportedSymbol] = true;
+    }
+    throw newError;
   }
 }
 
