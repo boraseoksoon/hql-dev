@@ -1,10 +1,10 @@
 (fn hello (name)
-  (console.log (str "Hello, " name)))
+  (console.log (str "Hello, " name))
 
 (fn hey (name)
   (console.log (str "Hello, " name)))
 
-(hey "yo" "bro")
+(hey "yo")
 
 (export [hello])
 (export [hey])

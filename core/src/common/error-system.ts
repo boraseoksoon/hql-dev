@@ -6,7 +6,7 @@ import { globalErrorReporter, reportError } from "./error.ts";
 import { initializeErrorHandling, handleRuntimeError, setRuntimeContext } from "./runtime-error-handler.ts";
 import { dirname, readTextFile } from "../platform/platform.ts";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
-import { ERROR_PATTERNS, ERROR_REGEX } from "./error-constants.ts";
+import { ERROR_PATTERNS, ERROR_SUGGESTIONS, ERROR_REGEX } from "./error-constants.ts";
 
 /**
  * Error system configuration options
@@ -473,26 +473,26 @@ async function findImportErrorLocation(
     if (line.includes('import') && 
         (line.includes(modulePath || '') || symbolName && line.includes(symbolName))) {
       
-      // If we have a symbol name, try to find it in vector imports
+      // Find the specific symbol in the import vector
       if (symbolName && line.includes('[') && line.includes(']')) {
-        const bracketStart = line.indexOf('[');
-        const bracketEnd = line.indexOf(']');
+        const openBracketPos = line.indexOf('[');
+        const closeBracketPos = line.indexOf(']');
         
-        if (bracketStart >= 0 && bracketEnd > bracketStart) {
-          const importVector = line.substring(bracketStart, bracketEnd);
+        if (openBracketPos > 0 && closeBracketPos > openBracketPos) {
+          const importVector = line.substring(openBracketPos + 1, closeBracketPos);
           const symbolPos = importVector.indexOf(symbolName);
           
           if (symbolPos >= 0) {
             return {
               line: i + 1,
-              column: bracketStart + symbolPos + 1
+              column: openBracketPos + 1 + symbolPos
             };
           }
         }
       }
       
       // For 'from' in the wrong place or misspelled
-      if (line.includes('from') || line.includes('fom') || line.includes('form')) {
+      if (line.includes('from') || /\b(fom|form)\b/.test(line)) {
         const wrongWordPos = line.search(/\b(fom|form)\b/);
         if (wrongWordPos >= 0) {
           return {
@@ -781,7 +781,7 @@ export function extractErrorInfo(error: Error | HQLError): Record<string, unknow
 
 // Helper function to escape special regex characters
 function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\// core/src/common/error-system.ts -');
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // Export error classes and utilities for easier access

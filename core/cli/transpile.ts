@@ -3,7 +3,7 @@
 import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
 import { transpileCLI } from "../src/bundler.ts";
 import { globalLogger as logger } from "../src/logger.ts";
-import { parseCliOptions, applyCliOptions, CliOptions } from "./utils/cli-options.ts";
+import { parseCliOptions, applyCliOptions, CliOptions, parseNonOptionArgs } from "./utils/cli-options.ts";
 import { initializeRuntime } from "../src/common/runtime-initializer.ts";
 
 // Import the enhanced error handling system
@@ -188,8 +188,8 @@ export async function main(): Promise<void> {
     logger.logPerformance("transpile", inputPath.split("/").pop()!);
   }, { 
     debug: opts.debug, 
-    exitOnError: true,
-    currentFile: inputPath // Pass the current file for context
+    exitOnError: true, 
+    currentFile: parseNonOptionArgs(args)[0]
   });
 }
 

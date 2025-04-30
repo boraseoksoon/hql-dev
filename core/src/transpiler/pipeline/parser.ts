@@ -1,4 +1,4 @@
-// core/src/transpiler/pipeline/parser.ts - Modified to track source location
+// core/src/transpiler/pipeline/parser.ts
 
 import {
   createList,
@@ -227,9 +227,6 @@ function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
  * Enhanced Import Statement Processing - Detects and validates import statements
  * Uses a more general approach to check structure without hardcoding specific typos
  */
-/**
- * Enhanced Import Parsing - Detect and handle different import patterns
- */
 function parseImportStatement(elements: SExp[]): SList {
   // Check if we're parsing an import statement
   if (elements.length > 0 && 
@@ -243,15 +240,6 @@ function parseImportStatement(elements: SExp[]): SList {
       
       // Case 1: Named import with vector like (import [hello] from "./module.hql")
       if (secondElement.type === "list") {
-        // Check for 'fom' typo in the third element
-        if (elements.length >= 3 && isSymbol(elements[2]) && elements[2].name === "fom") {
-          // Add source location information if available
-          const errorMsg = `Invalid import format: expected 'from' but got 'fom'. Did you mean 'from'?`;
-          
-          // Create with original elements to preserve source locations
-          return createList(...elements);
-        }
-
         // This is a named import - it's already structured correctly
         return createList(...elements);
       }
@@ -260,13 +248,7 @@ function parseImportStatement(elements: SExp[]): SList {
       if (isSymbol(secondElement)) {
         const thirdElement = elements[2];
         
-        // Check for 'fom' typo
-        if (isSymbol(thirdElement) && thirdElement.name === "fom") {
-          // Still return the original elements to preserve source location
-          return createList(...elements);
-        }
-        
-        if (isSymbol(thirdElement) && thirdElement.name === "from") {
+        if (isSymbol(thirdElement)) {
           // Valid namespace import pattern
           return createList(...elements);
         }

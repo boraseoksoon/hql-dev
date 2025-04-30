@@ -11,6 +11,13 @@ export interface CliOptions {
 }
 
 /**
+ * Extract positional args (non-options)
+ */
+export function parseNonOptionArgs(args: string[]): string[] {
+  return args.filter(arg => !arg.startsWith("-"));
+}
+
+/**
  * Disable console output when --quiet is present or in production environment
  */
 export function setupConsoleLogging(args: string[]): void {

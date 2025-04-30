@@ -6,7 +6,7 @@
  */
 export const ERROR_PATTERNS = {
     // Property/null errors
-    CANNOT_READ_PROPERTY: "cannot read",
+    CANNOT_READ: "cannot read",
     PROPERTY_OF: "property",
     PROPERTIES_OF: "properties",
     

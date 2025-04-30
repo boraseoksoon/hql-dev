@@ -9,7 +9,8 @@ import {
   parseLogNamespaces,
   parseCliOptions,
   applyCliOptions,
-  CliOptions
+  CliOptions,
+  parseNonOptionArgs
 } from "./utils/cli-options.ts";
 import { handleRuntimeError } from "../src/common/runtime-error-handler.ts";
 
@@ -42,13 +43,6 @@ function printHelp(): void {
   console.error("  --print               Print final JS output without executing");
   console.error("  --debug               Show detailed debug information and stack traces");
   console.error("  --help, -h            Display this help message");
-}
-
-/**
- * Extract positional args (non-options)
- */
-function parseNonOptionArgs(args: string[]): string[] {
-  return args.filter(arg => !arg.startsWith("-"));
 }
 
 /**
