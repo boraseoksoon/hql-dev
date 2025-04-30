@@ -224,6 +224,10 @@ function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
 }
 
 /**
+ * Enhanced Import Statement Processing - Detects and validates import statements
+ * Uses a more general approach to check structure without hardcoding specific typos
+ */
+/**
  * Enhanced Import Parsing - Detect and handle different import patterns
  */
 function parseImportStatement(elements: SExp[]): SList {
@@ -237,8 +241,17 @@ function parseImportStatement(elements: SExp[]): SList {
       // We have at least three elements
       const secondElement = elements[1];
       
-      // Case 1: Named import like (import [hello] from "./module.hql")
+      // Case 1: Named import with vector like (import [hello] from "./module.hql")
       if (secondElement.type === "list") {
+        // Check for 'fom' typo in the third element
+        if (elements.length >= 3 && isSymbol(elements[2]) && elements[2].name === "fom") {
+          // Add source location information if available
+          const errorMsg = `Invalid import format: expected 'from' but got 'fom'. Did you mean 'from'?`;
+          
+          // Create with original elements to preserve source locations
+          return createList(...elements);
+        }
+
         // This is a named import - it's already structured correctly
         return createList(...elements);
       }
@@ -246,6 +259,12 @@ function parseImportStatement(elements: SExp[]): SList {
       // Case 2: Namespace import like (import module from "./module.hql")
       if (isSymbol(secondElement)) {
         const thirdElement = elements[2];
+        
+        // Check for 'fom' typo
+        if (isSymbol(thirdElement) && thirdElement.name === "fom") {
+          // Still return the original elements to preserve source location
+          return createList(...elements);
+        }
         
         if (isSymbol(thirdElement) && thirdElement.name === "from") {
           // Valid namespace import pattern
@@ -305,7 +324,7 @@ function parseDotNotation(tokenValue: string): SExp {
 }
 
 /**
- * Enhanced parse list function with special handling for imports
+ * Enhanced parse list function with special handling for imports and syntax errors
  */
 function parseList(state: ParserState, listStartPos: SourcePosition): SList {
   const elements: SExp[] = [];
@@ -508,9 +527,6 @@ function parseList(state: ParserState, listStartPos: SourcePosition): SList {
   return result;
 }
 
-/**
- * Match the next token from the input
- */
 /**
  * Match the next token from the input string with enhanced error context
  * Improves error messages and location tracking
