@@ -72,7 +72,7 @@ export const ERROR_SUGGESTIONS = {
     
     // Variable definition
     UNDEFINED_VAR: (varName: string) => 
-      `Check ${varName} at line ${varName.length > 3 ? 'above' : 'below'}. Make sure '${varName}' is defined before using it. Did you forget to import it or declare it with 'let'?`,
+      `Check that '${varName}' is defined before using it. Did you forget to import it or declare it with 'let'?`,
     
     // Special case for "get" function
     GET_FUNCTION: "The 'get' function is used by the HQL transpiler for property access. Make sure your property access uses dot notation (e.g., 'b.hello' instead of 'bhello').",

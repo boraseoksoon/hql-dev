@@ -175,19 +175,20 @@ export async function enrichErrorWithContext(error: Error | HQLError, filePath?:
         
         error.contextLines = contextLines;
       } else {
-        // If we don't have line info, infer from error message patterns
-        error = await inferErrorLocationFromMessage(error, lines, sourcePath);
+        // If we don't have line info, try to infer from error message
+        error = await inferErrorLocationFromMessage(error, content, sourcePath);
       }
     } else {
-      // Convert regular Error to HQLError with context
-      const newError = new HQLError(error.message, {
+      // For standard errors, create an HQLError with context
+      const hqlError = new HQLError(error.message, {
         errorType: "Error",
         originalError: error,
         sourceLocation: { filePath: sourcePath }
       });
       
-      // Infer location from the error message
-      return await inferErrorLocationFromMessage(newError, lines, sourcePath);
+      // Try to infer location from the error message
+      const enhancedError = await inferErrorLocationFromMessage(hqlError, content, sourcePath);
+      return enhancedError;
     }
   } catch (readError) {
     logger.debug(`Failed to read source file for context: ${readError instanceof Error ? readError.message : String(readError)}`);
@@ -197,509 +198,103 @@ export async function enrichErrorWithContext(error: Error | HQLError, filePath?:
 }
 
 /**
- * Infer error location from specific error message patterns
+ * Infer error location from the error message
  */
 async function inferErrorLocationFromMessage(
   error: HQLError, 
-  lines: string[], 
+  fileContent: string,
   sourcePath: string
 ): Promise<HQLError> {
+  const lines = fileContent.split('\n');
   const errorMsg = error.message.toLowerCase();
   
-  // Check for property-related errors
-  if (errorMsg.includes(ERROR_PATTERNS.PROPERTY_OF)) {
-    const location = await findPropertyErrorLocation(error, lines, sourcePath);
-    if (location) {
-      updateErrorLocation(error, location, sourcePath);
+  // Look for specific error patterns
+  
+  // Import errors - check for import statements
+  if (errorMsg.includes("import")) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.includes('import')) {
+        // Check for common import typos
+        if (errorMsg.includes("invalid") && line.match(/\bfom\b/)) {
+          const pos = line.search(/\bfom\b/);
+          error.sourceLocation.line = i + 1;
+          error.sourceLocation.column = pos + 1;
+          
+          // Add suggestion
+          error.getSuggestion = () => "Did you mean 'from' instead of 'fom'?";
+          break;
+        } else {
+          error.sourceLocation.line = i + 1;
+          error.sourceLocation.column = line.indexOf('import') + 1;
+          break;
+        }
+      }
     }
   }
-  // Check for "is not defined" errors
-  else if (errorMsg.includes(ERROR_PATTERNS.IS_NOT_DEFINED)) {
-    const location = await findUndefinedVariableLocation(error, lines, sourcePath);
-    if (location) {
-      updateErrorLocation(error, location, sourcePath);
-    }
-  }
-  // Check for "is not a function" errors
-  else if (errorMsg.includes(ERROR_PATTERNS.IS_NOT_FUNCTION)) {
-    const location = await findNotAFunctionLocation(error, lines, sourcePath);
-    if (location) {
-      updateErrorLocation(error, location, sourcePath);
-    }
-  }
-  // Check for import errors
-  else if (errorMsg.includes(ERROR_PATTERNS.NOT_FOUND_IN_MODULE)) {
-    const location = await findImportErrorLocation(error, lines, sourcePath);
-    if (location) {
-      updateErrorLocation(error, location, sourcePath);
-    }
-  }
-  // Check for syntax errors
-  else if (errorMsg.includes(ERROR_PATTERNS.UNEXPECTED_TOKEN)) {
-    const location = await findSyntaxErrorLocation(error, lines, sourcePath);
-    if (location) {
-      updateErrorLocation(error, location, sourcePath);
-    }
-  }
-  // Check for "too many arguments" errors
-  else if (errorMsg.includes(ERROR_PATTERNS.TOO_MANY_ARGUMENTS)) {
-    const location = await findTooManyArgumentsLocation(error, lines, sourcePath);
-    if (location) {
-      updateErrorLocation(error, location, sourcePath);
-    }
-  }
-  // Check for syntax form errors
-  else if (errorMsg.includes(ERROR_PATTERNS.INVALID) && errorMsg.includes(ERROR_PATTERNS.FORM)) {
-    const location = await findInvalidFormLocation(error, lines, sourcePath);
-    if (location) {
-      updateErrorLocation(error, location, sourcePath);
-    }
-  }
-  // Fallback: scan for keywords in the error message
-  else {
-    const location = await findLocationByKeywords(error, lines, sourcePath);
-    if (location) {
-      updateErrorLocation(error, location, sourcePath);
+  // Undefined variables or function calls
+  else if (errorMsg.includes("is not defined") || errorMsg.includes("is not a function")) {
+    const match = errorMsg.match(/['"]?([a-zA-Z0-9_]+)['"]?\s+is\s+not/i);
+    if (match && match[1]) {
+      const name = match[1];
+      
+      // Look for the name in the file
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const pos = line.indexOf(name);
+        
+        if (pos >= 0 && (pos === 0 || !isAlphaNumeric(line[pos-1])) && 
+            (pos + name.length >= line.length || !isAlphaNumeric(line[pos + name.length]))) {
+          error.sourceLocation.line = i + 1;
+          error.sourceLocation.column = pos + 1;
+          break;
+        }
+      }
     }
   }
   
-  return error;
-}
-
-/**
- * Update an error with location information and add context lines
- */
-function updateErrorLocation(
-  error: HQLError,
-  location: { line: number; column: number },
-  sourcePath: string
-): void {
-  // Update the source location
-  error.sourceLocation.line = location.line;
-  error.sourceLocation.column = location.column;
-  error.sourceLocation.filePath = sourcePath;
-  
-  // Create context lines
-  const lines = sourcePath.split('\n');
-  const contextLines = [];
-  
-  // Add context lines before the error line
-  for (let i = Math.max(0, location.line - 2); i < location.line; i++) {
-    if (i < lines.length) {
+  // Add context lines if we found a line
+  if (error.sourceLocation.line) {
+    const line = error.sourceLocation.line;
+    const contextLines = [];
+    
+    // Add context lines before the error line
+    for (let i = Math.max(0, line - 2); i < line; i++) {
       contextLines.push({
         line: i + 1,
         content: lines[i] || "",
         isError: false
       });
     }
-  }
-  
-  // Add the error line
-  if (location.line > 0 && location.line <= lines.length) {
+    
+    // Add the error line
     contextLines.push({
-      line: location.line,
-      content: lines[location.line - 1] || "",
+      line: line,
+      content: lines[line - 1] || "",
       isError: true,
-      column: location.column
+      column: error.sourceLocation.column
     });
-  }
-  
-  // Add context lines after the error line
-  for (let i = location.line; i < Math.min(lines.length, location.line + 2); i++) {
-    contextLines.push({
-      line: i + 1,
-      content: lines[i] || "",
-      isError: false
-    });
-  }
-  
-  error.contextLines = contextLines;
-}
-
-/**
- * Find location for property-related errors
- */
-async function findPropertyErrorLocation(
-  error: HQLError,
-  lines: string[],
-  sourcePath: string
-): Promise<{ line: number; column: number } | null> {
-  // Extract property name from error message if available
-  const propertyMatch = error.message.match(ERROR_REGEX.PROPERTY);
-  const propertyName = propertyMatch ? propertyMatch[1] : null;
-  
-  // If we have a property name, look for it in property access expressions
-  if (propertyName) {
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      
-      // Look for the property name in dot notation or get calls
-      if (line.includes('.' + propertyName) || 
-          (line.includes('get') && line.includes(propertyName))) {
-        
-        // Try dot notation first
-        const dotNotationIndex = line.indexOf('.' + propertyName);
-        if (dotNotationIndex >= 0) {
-          return {
-            line: i + 1,
-            column: dotNotationIndex + 1
-          };
-        }
-        
-        // Try get calls
-        const getCallIndex = line.indexOf('get');
-        if (getCallIndex >= 0 && line.includes(propertyName, getCallIndex)) {
-          return {
-            line: i + 1,
-            column: line.indexOf(propertyName, getCallIndex) + 1
-          };
-        }
-      }
-    }
-  }
-  
-  return null;
-}
-
-/**
- * Find location for "is not defined" errors
- */
-async function findUndefinedVariableLocation(
-  error: HQLError,
-  lines: string[],
-  sourcePath: string
-): Promise<{ line: number; column: number } | null> {
-  // Extract variable name from error message
-  const match = error.message.match(ERROR_REGEX.UNDEFINED_VAR);
-  const varName = match ? match[1] : null;
-  
-  if (!varName) {
-    return null;
-  }
-  
-  // Look for the variable in the file
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
     
-    // Check for the variable but ensure it's a standalone identifier
-    // (not part of another word)
-    const varRegex = new RegExp(`\\b${escapeRegExp(varName)}\\b`);
-    if (varRegex.test(line)) {
-      const match = varRegex.exec(line);
-      const pos = match ? match.index : line.indexOf(varName);
-      
-      if (pos >= 0) {
-        return {
-          line: i + 1,
-          column: pos + 1
-        };
-      }
-    }
-  }
-  
-  return null;
-}
-
-/**
- * Find location for "is not a function" errors
- */
-async function findNotAFunctionLocation(
-  error: HQLError,
-  lines: string[],
-  sourcePath: string
-): Promise<{ line: number; column: number } | null> {
-  // Extract function name from error message
-  const match = error.message.match(ERROR_REGEX.NOT_FUNCTION);
-  const fnName = match ? match[1] : null;
-  
-  if (!fnName) {
-    return null;
-  }
-  
-  // Look for function calls
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    // Check for function call patterns - ignoring function definitions
-    if (line.includes(fnName) && 
-        !line.includes(`(fn ${fnName}`) && 
-        !line.includes(`(fx ${fnName}`)) {
-      
-      // Try to find the function in call position
-      const callPattern = new RegExp(`\\([\\s\\(]*${escapeRegExp(fnName)}\\s`);
-      const callMatch = callPattern.exec(line);
-      
-      if (callMatch) {
-        const pos = line.indexOf(fnName, callMatch.index);
-        return {
-          line: i + 1,
-          column: pos + 1
-        };
-      }
-      
-      // Regular variable or property occurrence
-      const pos = line.indexOf(fnName);
-      if (pos >= 0) {
-        return {
-          line: i + 1,
-          column: pos + 1
-        };
-      }
-    }
-  }
-  
-  return null;
-}
-
-/**
- * Find location for import-related errors
- */
-async function findImportErrorLocation(
-  error: HQLError,
-  lines: string[],
-  sourcePath: string
-): Promise<{ line: number; column: number } | null> {
-  // Extract symbol name and module path
-  const symbolMatch = error.message.match(ERROR_REGEX.IMPORT_SYMBOL);
-  const symbolName = symbolMatch ? symbolMatch[1] : null;
-  
-  const moduleMatch = error.message.match(ERROR_REGEX.MODULE_PATH);
-  const modulePath = moduleMatch ? moduleMatch[1] : null;
-  
-  // Look for relevant import statements
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    if (line.includes('import') && 
-        (line.includes(modulePath || '') || symbolName && line.includes(symbolName))) {
-      
-      // Find the specific symbol in the import vector
-      if (symbolName && line.includes('[') && line.includes(']')) {
-        const openBracketPos = line.indexOf('[');
-        const closeBracketPos = line.indexOf(']');
-        
-        if (openBracketPos > 0 && closeBracketPos > openBracketPos) {
-          const importVector = line.substring(openBracketPos + 1, closeBracketPos);
-          const symbolPos = importVector.indexOf(symbolName);
-          
-          if (symbolPos >= 0) {
-            return {
-              line: i + 1,
-              column: openBracketPos + 1 + symbolPos
-            };
-          }
-        }
-      }
-      
-      // For 'from' in the wrong place or misspelled
-      if (line.includes('from') || /\b(fom|form)\b/.test(line)) {
-        const wrongWordPos = line.search(/\b(fom|form)\b/);
-        if (wrongWordPos >= 0) {
-          return {
-            line: i + 1,
-            column: wrongWordPos + 1
-          };
-        }
-      }
-      
-      // Fallback to the import statement itself
-      return {
+    // Add context lines after the error line
+    for (let i = line; i < Math.min(lines.length, line + 2); i++) {
+      contextLines.push({
         line: i + 1,
-        column: line.indexOf('import') + 1
-      };
-    }
-  }
-  
-  return null;
-}
-
-/**
- * Find location for syntax errors
- */
-async function findSyntaxErrorLocation(
-  error: HQLError,
-  lines: string[],
-  sourcePath: string
-): Promise<{ line: number; column: number } | null> {
-  // Extract the unexpected token
-  const match = error.message.match(ERROR_REGEX.TOKEN);
-  const token = match ? match[1] : null;
-  
-  if (token) {
-    // Look for the token in the file
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const pos = line.indexOf(token);
-      
-      if (pos >= 0) {
-        return {
-          line: i + 1,
-          column: pos + 1
-        };
-      }
-    }
-  }
-  
-  return null;
-}
-
-/**
- * Find location for "too many arguments" errors
- */
-async function findTooManyArgumentsLocation(
-  error: HQLError,
-  lines: string[],
-  sourcePath: string
-): Promise<{ line: number; column: number } | null> {
-  // Extract function name from error message
-  const match = error.message.match(ERROR_REGEX.ARGS_COUNT);
-  const fnName = match ? match[1] : null;
-  
-  if (!fnName) {
-    return null;
-  }
-  
-  // Look for function calls
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    // Check for function call patterns (not function definitions)
-    if (line.includes(fnName) && 
-        !line.includes(`(fn ${fnName}`) && 
-        !line.includes(`(fx ${fnName}`)) {
-      
-      // Count the number of arguments by looking at whitespace-separated tokens after the function name
-      const fnCallPattern = new RegExp(`\\([\\s\\(]*${escapeRegExp(fnName)}\\s+[^\\)]+`);
-      const fnCallMatch = fnCallPattern.exec(line);
-      
-      if (fnCallMatch) {
-        const fnNamePos = line.indexOf(fnName, fnCallMatch.index);
-        
-        // Look for a call with multiple arguments
-        const afterFnName = line.substring(fnNamePos + fnName.length);
-        const argCount = afterFnName.trim().split(/\s+/).filter(s => s && s !== '').length;
-        
-        if (argCount > 1) {
-          return {
-            line: i + 1,
-            column: fnNamePos + 1
-          };
-        }
-      }
-    }
-  }
-  
-  return null;
-}
-
-/**
- * Find location for invalid form errors
- */
-async function findInvalidFormLocation(
-  error: HQLError,
-  lines: string[],
-  sourcePath: string
-): Promise<{ line: number; column: number } | null> {
-  // Look for form keywords that might be related to the error
-  const formKeywords = ['let', 'fn', 'fx', 'if', 'cond', 'vector', 'import', 'export'];
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    // Check for forms with these keywords
-    for (const keyword of formKeywords) {
-      if (line.includes(`(${keyword}`) || line.includes(`( ${keyword}`)) {
-        const keywordPos = line.indexOf(keyword);
-        
-        if (keywordPos >= 0) {
-          return {
-            line: i + 1,
-            column: keywordPos + 1
-          };
-        }
-      }
-    }
-  }
-  
-  return null;
-}
-
-/**
- * Find location by scanning for keywords from the error message
- */
-async function findLocationByKeywords(
-  error: HQLError,
-  lines: string[],
-  sourcePath: string
-): Promise<{ line: number; column: number } | null> {
-  // Extract keywords from the error message
-  const keywords = error.message
-    .toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
-    .split(/\s+/)
-    .filter(word => word.length > 3)
-    .map(word => word.trim());
-  
-  // Extract any quoted strings
-  const quotedStrings: string[] = [];
-  const quotedMatches = error.message.match(/'([^']+)'/g) || [];
-  
-  for (const match of quotedMatches) {
-    // Remove the quotes
-    const unquoted = match.substring(1, match.length - 1);
-    if (unquoted.length > 0) {
-      quotedStrings.push(unquoted);
-    }
-  }
-  
-  // Score each line based on keyword matches
-  const lineScores: Array<{ line: number; column: number; score: number }> = [];
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].toLowerCase();
-    let score = 0;
-    let bestPos = -1;
-    
-    // Check quoted strings first (highest priority)
-    for (const str of quotedStrings) {
-      if (lines[i].includes(str)) {
-        score += 10;
-        bestPos = lines[i].indexOf(str);
-      }
-    }
-    
-    // Check keywords
-    for (const keyword of keywords) {
-      if (line.includes(keyword)) {
-        score += 2;
-        
-        // If we don't have a position yet, use this keyword
-        if (bestPos === -1) {
-          bestPos = line.indexOf(keyword);
-        }
-      }
-    }
-    
-    // If this line has matches, add it to our scores
-    if (score > 0) {
-      lineScores.push({
-        line: i + 1,
-        column: bestPos >= 0 ? bestPos + 1 : 1,
-        score
+        content: lines[i] || "",
+        isError: false
       });
     }
+    
+    error.contextLines = contextLines;
   }
   
-  // Find the line with the highest score
-  if (lineScores.length > 0) {
-    lineScores.sort((a, b) => b.score - a.score);
-    return {
-      line: lineScores[0].line,
-      column: lineScores[0].column
-    };
-  }
-  
-  return null;
+  return error;
+}
+
+/**
+ * Check if a character is alphanumeric or underscore
+ */
+function isAlphaNumeric(char: string): boolean {
+  return /[a-zA-Z0-9_]/.test(char);
 }
 
 /**
@@ -717,7 +312,11 @@ export async function runWithErrorHandling(
     const debug = options.debug ?? errorConfig.debug;
     
     // Try to enrich the error with context
-    const enrichedError = await enrichErrorWithContext(error, options.currentFile);
+    let enrichedError = error;
+    
+    if (options.currentFile) {
+      enrichedError = await enrichErrorWithContext(error, options.currentFile);
+    }
     
     if (enrichedError instanceof Error) {
       await reportError(enrichedError, debug);
@@ -777,11 +376,6 @@ export function extractErrorInfo(error: Error | HQLError): Record<string, unknow
   }
   
   return result;
-}
-
-// Helper function to escape special regex characters
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // Export error classes and utilities for easier access

@@ -227,6 +227,13 @@ function parseExpressionByTokenType(token: Token, state: ParserState): SExp {
  * Enhanced Import Statement Processing - Detects and validates import statements
  * Uses a more general approach to check structure without hardcoding specific typos
  */
+// core/src/transpiler/pipeline/parser.ts
+// Only showing the key function that needs updating:
+
+/**
+ * Enhanced Import Statement Processing - Detects and validates import statements
+ * Uses a more general approach to check structure without hardcoding specific typos
+ */
 function parseImportStatement(elements: SExp[]): SList {
   // Check if we're parsing an import statement
   if (elements.length > 0 && 
@@ -240,6 +247,24 @@ function parseImportStatement(elements: SExp[]): SList {
       
       // Case 1: Named import with vector like (import [hello] from "./module.hql")
       if (secondElement.type === "list") {
+        // Check if we have the 'from' keyword at index 2
+        const thirdElement = elements[2];
+        if (isSymbol(thirdElement)) {
+          // Check if this is 'from' or a typo like 'fom'
+          const keyword = (thirdElement as SSymbol).name;
+          
+          if (keyword !== 'from') {
+            // This is a typo - throw a more specific error
+            throw new ParseError(
+              `Invalid import statement: expected 'from' but got '${keyword}'`,
+              {
+                line: (thirdElement._meta?.line || 1),
+                column: (thirdElement._meta?.column || 1),
+                filePath: (thirdElement._meta?.filePath || "")
+              }
+            );
+          }
+        }
         // This is a named import - it's already structured correctly
         return createList(...elements);
       }
@@ -249,11 +274,35 @@ function parseImportStatement(elements: SExp[]): SList {
         const thirdElement = elements[2];
         
         if (isSymbol(thirdElement)) {
+          const keyword = (thirdElement as SSymbol).name;
+          
+          if (keyword !== 'from') {
+            // This is a typo in the 'from' keyword
+            throw new ParseError(
+              `Invalid import statement: expected 'from' but got '${keyword}'`,
+              {
+                line: (thirdElement._meta?.line || 1),
+                column: (thirdElement._meta?.column || 1),
+                filePath: (thirdElement._meta?.filePath || "")
+              }
+            );
+          }
+          
           // Valid namespace import pattern
           return createList(...elements);
         }
       }
     }
+    
+    // If we get here, the import statement is malformed
+    throw new ParseError(
+      "Invalid import statement format. Expected either (import module from \"./path\") or (import [symbols] from \"./path\")",
+      {
+        line: (elements[0]._meta?.line || 1),
+        column: (elements[0]._meta?.column || 1),
+        filePath: (elements[0]._meta?.filePath || "")
+      }
+    );
   }
   
   // If we get here, it's not a special case or not an import, so just return a normal list
