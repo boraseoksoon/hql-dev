@@ -94,8 +94,7 @@ async function transpileAndExecute(
     
     // Let the runtime error handler handle this - we enrich errors there
     await handleRuntimeError(runtimeError);
-    // Prevent duplicate error reporting
-    return;
+    throw runtimeError; // Propagate error to ensure process exits on fatal error
   }
 }
 

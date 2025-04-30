@@ -114,7 +114,7 @@
 
 ;; Testing the functions
 (processPayment payment1)
-(processPayment payment2)
+(processayment payment2)
 
 
 ;; type inference
