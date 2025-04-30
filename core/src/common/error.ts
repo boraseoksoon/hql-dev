@@ -54,9 +54,12 @@ export function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
+// Enhancements to formatHQLError function in core/src/common/error.ts
+
 /**
  * Format HQL error with proper error message display
  * Improved with better context handling and more accurate error pointers
+ * Enhanced for function call errors
  */
 export async function formatHQLError(error: HQLError, isDebug = false): Promise<string> {
   const colors = createColorConfig();
@@ -70,6 +73,13 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
   // that we'll show in a better format anyway
   message = message.replace(/\s+at\s+\S+:\d+:\d+$/, '');
   message = message.replace(/\s+\(\S+:\d+:\d+\)$/, '');
+  
+  // Enhance messages for common function call errors
+  if (message.includes("Too many") && message.includes("arguments")) {
+    // Already enhanced in the improved error handling
+  } else if (message.includes("Missing required") && message.includes("parameter")) {
+    // Already enhanced in the improved error handling
+  }
   
   output.push(`${colors.red(colors.bold(`${errorType}:`))} ${message}`);
 
@@ -102,8 +112,22 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
           const textBefore = text.substring(0, column - 1);
           const tabCount = (textBefore.match(/\t/g) || []).length;
           effectiveColumn += tabCount * 3;
+          
+          // Create an indicator arrow that points to the exact position of the error
           const pointer = ' '.repeat(lineNumPadding + 3) + ' '.repeat(effectiveColumn - 1) + colors.red(colors.bold('^'));
           output.push(pointer);
+          
+          // For function call errors, add a second line with a more descriptive indicator
+          if (
+            (error.message.includes("Too many") && error.message.includes("arguments")) ||
+            (error.message.includes("Missing required") && error.message.includes("parameter"))
+          ) {
+            const errorIndicator = ' '.repeat(lineNumPadding + 3) + ' '.repeat(effectiveColumn - 1) + colors.red(colors.bold('⬆'));
+            const errorText = (error.message.includes("Too many")) 
+              ? colors.red("Extra argument")
+              : colors.red("Missing required argument");
+            output.push(`${errorIndicator} ${errorText}`);
+          }
         }
       } else {
         output.push(` ${colors.gray(lineNumStr)} │ ${colors.gray(text)}`);
@@ -151,6 +175,18 @@ export async function formatHQLError(error: HQLError, isDebug = false): Promise<
           
           const pointer = ' '.repeat(lineNumPadding + 3) + ' '.repeat(effectiveColumn - 1) + colors.red(colors.bold('^'));
           output.push(pointer);
+          
+          // For function call errors, add a more descriptive indicator
+          if (
+            (error.message.includes("Too many") && error.message.includes("arguments")) ||
+            (error.message.includes("Missing required") && error.message.includes("parameter"))
+          ) {
+            const errorIndicator = ' '.repeat(lineNumPadding + 3) + ' '.repeat(effectiveColumn - 1) + colors.red(colors.bold('⬆'));
+            const errorText = (error.message.includes("Too many")) 
+              ? colors.red("Extra argument")
+              : colors.red("Missing required argument");
+            output.push(`${errorIndicator} ${errorText}`);
+          }
         }
         
         // Add context lines after the error

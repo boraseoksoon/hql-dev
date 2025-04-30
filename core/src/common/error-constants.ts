@@ -1,5 +1,5 @@
-// core/src/common/error-constants.ts
-// Centralized error constants for better maintainability
+// Enhancements to core/src/common/error-constants.ts
+// Adding better patterns and suggestions for function call errors
 
 export const ERROR_PATTERNS = {
     // Property/null errors
@@ -23,14 +23,19 @@ export const ERROR_PATTERNS = {
     // Syntax errors
     UNEXPECTED_TOKEN: "unexpected token",
     
-    // Argument errors 
+    // Argument errors - Enhanced patterns for function call errors
     TOO_MANY_ARGUMENTS: "too many",
     TOO_FEW_ARGUMENTS: "too few",
+    WRONG_NUMBER_ARGUMENTS: "wrong number of",
     ARGUMENTS: "arguments",
     POSITIONAL_ARGUMENTS: "positional arguments",
     FUNCTION_CALL: "function call",
     EXPECTED_ARGUMENTS: "expected",
     RECEIVED_ARGUMENTS: "received",
+    REQUIRED_ARGUMENT: "required argument",
+    MISSING_ARGUMENT: "missing argument",
+    EXTRA_ARGUMENT: "extra argument",
+    FUNCTION_NAME: "function '",
     
     // Invalid form errors
     INVALID: "invalid",
@@ -60,10 +65,17 @@ export const ERROR_REGEX = {
     IMPORT_SYMBOL: /['"](.*?)['"] not found/,
     MODULE_PATH: /['"]([^'"]+)['"]/,
     
-    // Enhanced function arity errors
+    // Enhanced function arity errors - more patterns for better matching
     FUNCTION_ARITY: /(?:too many|too few|wrong number of) (?:positional )?arguments (?:in call )?to (?:function )?(["'])?([^\s"']+)\1?/i,
     ARGS_COUNT: /(?:too many|too few|wrong number of) (?:positional )?arguments (?:in call )?to (?:function )?(["'])?([^\s"']+)\1?/i,
-    ARGS_EXPECTED: /expected (\d+).*received (\d+)/i
+    ARGS_EXPECTED: /expected (\d+).*received (\d+)/i,
+    
+    // New patterns for better function call error detection
+    FUNCTION_NAME: /function ['"]?([^'"]+?)['"]?/,
+    EXPECTED_ARGS: /expected (\d+|at least \d+|at most \d+)/i,
+    ACTUAL_ARGS: /(?:got|but got|received) (\d+)/i,
+    MISSING_ARG: /missing (?:required )?argument for parameter ['"]?([^'"]+?)['"]?/i,
+    EXTRA_ARG: /extra arguments?: (.*)/i
 };
 
 export const ERROR_SUGGESTIONS = {
@@ -92,11 +104,21 @@ export const ERROR_SUGGESTIONS = {
     // Syntax
     SYNTAX_ERROR: "Check the syntax around this area for mismatched parentheses, brackets, or other syntax errors.",
     
-    // Arguments
-    TOO_MANY_ARGS: "This function was called with more arguments than it accepts. Check the function definition and make sure you're passing the correct number of arguments.",
-    TOO_FEW_ARGS: "This function was called with fewer arguments than it requires. Check the function definition and make sure you're providing all required arguments.",
-    WRONG_ARGS_COUNT: (expected: string, received: string) => 
-      `This function expects ${expected} argument(s) but received ${received}. Check the function definition and your function call.`,
+    // Enhanced argument error suggestions with more specific details
+    TOO_MANY_ARGS: (funcName?: string) => 
+      `This function ${funcName ? `'${funcName}' ` : ""}was called with more arguments than it accepts. Check the function definition and make sure you're passing the correct number of arguments.`,
+    
+    TOO_FEW_ARGS: (funcName?: string) => 
+      `This function ${funcName ? `'${funcName}' ` : ""}was called with fewer arguments than it requires. Check the function definition and make sure you're providing all required arguments.`,
+    
+    WRONG_ARGS_COUNT: (expected: string, received: string, funcName?: string) => 
+      `This function ${funcName ? `'${funcName}' ` : ""}expects ${expected} argument(s) but received ${received}. Check the function definition and your function call.`,
+    
+    MISSING_ARG: (paramName: string, funcName?: string) => 
+      `Missing required argument for parameter '${paramName}' in call to function ${funcName ? `'${funcName}'` : ""}. Make sure you provide all required arguments.`,
+    
+    EXTRA_ARG: (extraArgs: string, funcName?: string) => 
+      `Extra argument(s) in call to function ${funcName ? `'${funcName}'` : ""}: ${extraArgs}. Remove these extra arguments.`,
     
     // Form
     INVALID_FORM: "Check the syntax of this form and make sure it follows the correct pattern.",
@@ -104,6 +126,7 @@ export const ERROR_SUGGESTIONS = {
     // Default
     DEFAULT: "Check runtime type mismatches or invalid operations."
 };
+
   /**
    * File path resolution constants
    */
@@ -125,5 +148,6 @@ export const ERROR_SUGGESTIONS = {
     IMPORT: "import error",
     VALIDATION: "validation error",
     TRANSFORMATION: "transformation error",
-    RUNTIME: "runtime error"
+    RUNTIME: "runtime error",
+    FUNCTION_CALL: "function call error" // Added new error type for function calls
   };

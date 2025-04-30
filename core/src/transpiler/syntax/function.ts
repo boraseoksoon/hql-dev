@@ -10,6 +10,7 @@ import { registerPureFunction, verifyFunctionPurity } from "../fx/purity.ts";
 import { isValidType } from "../fx/purity.ts";
 import { execute, convertIdentifier, convertBlockStatement, convertIRExpr } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { transformNode } from "../pipeline/hql-ast-to-hql-ir.ts";
+import { SourceLocation } from "../../common/error.ts";
 
 const fnFunctionRegistry = new Map<string, IR.IRFnFunctionDeclaration>();
 const fxFunctionRegistry = new Map<string, IR.IRFxFunctionDeclaration>();
@@ -878,9 +879,13 @@ export function transformFx(
   }
 }
 
+// Enhancements to core/src/transpiler/syntax/function.ts
+// Adding better error location tracking and reporting
+
 /**
  * Process and transform a call to an fn function.
  * Handles both positional and named arguments.
+ * Now with enhanced error reporting.
  */
 export function processFnFunctionCall(
   funcName: string,
@@ -926,11 +931,13 @@ export function processFnFunctionCall(
           if (defaultValues.has(paramName)) {
             finalArgs.push(defaultValues.get(paramName)!);
           } else {
+            // Enhanced error message with more context
             throw new ValidationError(
               `Placeholder used for parameter '${paramName}' but no default value is defined`,
               "function call with placeholder",
               "parameter with default value",
               "parameter without default",
+              extractSourceLocation(arg) // Extract source location from the argument
             );
           }
         } else {
@@ -942,6 +949,7 @@ export function processFnFunctionCall(
               "function call",
               "valid expression",
               "null",
+              extractSourceLocation(arg) // Extract source location from the argument
             );
           }
           finalArgs.push(transformedArg);
@@ -950,11 +958,13 @@ export function processFnFunctionCall(
         // Use default value for missing arguments
         finalArgs.push(defaultValues.get(paramName)!);
       } else {
+        // Enhanced error message with the actual function name and parameter
         throw new ValidationError(
           `Missing required argument for parameter '${paramName}' in call to function '${funcName}'`,
           "function call",
-          "argument value",
+          `required parameter '${paramName}'`,
           "missing argument",
+          getCallLocation(args) // Get the call location from the arguments list
         );
       }
     }
@@ -970,12 +980,22 @@ export function processFnFunctionCall(
         }
       }
     } else if (args.length > paramNames.length) {
-      // Too many arguments without a rest parameter
+      // Too many arguments without a rest parameter - Enhanced error with more context
+      // Get the extra arguments to show in the error message
+      const extraArgs = args.slice(paramNames.length);
+      const extraArgStr = extraArgs.map(arg => {
+        if (arg.type === "symbol") return `'${(arg as SymbolNode).name}'`;
+        if (arg.type === "literal") return `'${(arg as LiteralNode).value}'`;
+        return `[${arg.type}]`;
+      }).join(", ");
+      
+      // Create an improved error with detailed information
       throw new ValidationError(
-        `Too many positional arguments in call to function '${funcName}'`,
+        `Too many arguments in call to function '${funcName}'. Expected ${paramNames.length} ${paramNames.length === 1 ? 'argument' : 'arguments'}, but got ${args.length}. Extra arguments: ${extraArgStr}`,
         "function call",
-        `${paramNames.length} arguments`,
+        `${paramNames.length} ${paramNames.length === 1 ? 'argument' : 'arguments'}`,
         `${args.length} arguments`,
+        getExtraArgumentLocation(args, paramNames.length) // Get the location of the first extra argument
       );
     }
 
@@ -989,15 +1009,87 @@ export function processFnFunctionCall(
       arguments: finalArgs,
     } as IR.IRCallExpression;
   } catch (error) {
+    // If this is already a ValidationError with location info, don't wrap it
+    if (error instanceof ValidationError && error.sourceLocation && 
+        (error.sourceLocation.filePath || error.sourceLocation.line)) {
+      throw error;
+    }
+    
+    // Otherwise enhance the error with location info
     throw new TransformError(
-      `Failed to process fn function call: ${
+      `Failed to process function call to '${funcName}': ${
         error instanceof Error ? error.message : String(error)
       }`,
-      "fn function call",
-      "transformation",
-      args,
+      "function call processing",
+      getCallLocation(args) // Get the call location
     );
   }
+}
+
+/**
+ * Helper function to extract source location from a node
+ */
+function extractSourceLocation(node: any): SourceLocation {
+  // Default empty location
+  const location: SourceLocation = {
+    filePath: "",
+  };
+  
+  // If the node has _meta information, extract it
+  if (node && node._meta) {
+    location.filePath = node._meta.filePath || "";
+    location.line = node._meta.line;
+    location.column = node._meta.column;
+  }
+  
+  return location;
+}
+
+/**
+ * Helper function to get the location of a function call from its arguments
+ */
+function getCallLocation(args: any[]): SourceLocation {
+  // Default empty location
+  const location: SourceLocation = {
+    filePath: "",
+  };
+  
+  // Try to get location from the first argument
+  if (args && args.length > 0) {
+    const firstArg = args[0];
+    if (firstArg && firstArg._meta) {
+      location.filePath = firstArg._meta.filePath || "";
+      location.line = firstArg._meta.line;
+      location.column = firstArg._meta.column;
+    }
+  }
+  
+  return location;
+}
+
+/**
+ * Helper function to get the location of an extra argument in a function call
+ */
+function getExtraArgumentLocation(args: any[], paramCount: number): SourceLocation {
+  // Default empty location
+  const location: SourceLocation = {
+    filePath: "",
+  };
+  
+  // Get the first extra argument's location if it exists
+  if (args && args.length > paramCount) {
+    const extraArg = args[paramCount]; // First extra argument
+    if (extraArg && extraArg._meta) {
+      location.filePath = extraArg._meta.filePath || "";
+      location.line = extraArg._meta.line;
+      location.column = extraArg._meta.column;
+    }
+  } else if (args && args.length > 0) {
+    // Fallback to getting location from the first argument
+    return getCallLocation(args);
+  }
+  
+  return location;
 }
 
 /**

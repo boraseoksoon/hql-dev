@@ -463,47 +463,6 @@ export async function findSymbolLocation(
 }
 
 /**
- * Handle an error from a function call with detailed source information
- */
-export async function handleFunctionCallError(
-  fnName: string,
-  error: Error,
-  args: any[],
-  filePath: string,
-  position?: { line?: number; column?: number }
-): Promise<Error> {
-  // Create a source location
-  const location: SourceLocation = {
-    filePath,
-    ...position
-  };
-  
-  // If we don't have position info, try to find it
-  if (!location.line || !location.column) {
-    const symbolLocation = await findSymbolLocation(fnName, filePath);
-    if (symbolLocation.line && symbolLocation.column) {
-      location.line = symbolLocation.line;
-      location.column = symbolLocation.column;
-    }
-  }
-  
-  // Create an enhanced error message
-  let message = `Error calling function '${fnName}': ${error.message}`;
-  
-  // Add argument information for better context
-  if (args.length > 0) {
-    message += `\nWith arguments: ${args.map(arg => 
-      typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-    ).join(', ')}`;
-  }
-  
-  const runtimeError = new RuntimeError(message, location);
-  
-  // Enrich with context and return
-  return await enrichErrorWithContext(runtimeError, filePath);
-}
-
-/**
  * Handle a property access error with detailed source information
  */
 export async function handlePropertyAccessError(
@@ -1047,4 +1006,308 @@ export async function createErrorFromNode(
 // Helper to escape special regex characters
 function escapeRegExp(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Handle a function call error with detailed source information
+ */
+export async function handleFunctionCallError(
+  fnName: string,
+  error: Error,
+  args: any[],
+  filePath: string,
+  position?: { line?: number; column?: number }
+): Promise<Error> {
+  // Create a source location
+  const location: SourceLocation = {
+    filePath,
+    ...position
+  };
+  
+  // If we don't have position info, try to find it
+  if (!location.line || !location.column) {
+    const symbolLocation = await findSymbolLocation(fnName, filePath);
+    if (symbolLocation.line && symbolLocation.column) {
+      location.line = symbolLocation.line;
+      location.column = symbolLocation.column;
+    }
+  }
+  
+  // Create an enhanced error message
+  let message = `Error calling function '${fnName}': ${error.message}`;
+  
+  // Add argument information for better context
+  if (args.length > 0) {
+    // Create a more readable representation of the arguments
+    const argStrings = args.map(arg => {
+      if (arg === null || arg === undefined) return "null";
+      if (typeof arg === 'object') {
+        if (arg.type === "symbol") return `'${arg.name}'`;
+        if (arg.type === "literal") {
+          const value = arg.value;
+          if (typeof value === 'string') return `"${value}"`;
+          return String(value);
+        }
+        return arg.type || "object";
+      }
+      return String(arg);
+    });
+    
+    message += `\nWith arguments: ${argStrings.join(', ')}`;
+  }
+  
+  // If this is a "too many arguments" error, add more specific information
+  if (error.message.includes("Too many") && error.message.includes("arguments")) {
+    // Try to infer the expected argument count from the error message
+    const expectedMatch = error.message.match(/(\d+) arguments?/);
+    const expectedCount = expectedMatch ? parseInt(expectedMatch[1], 10) : null;
+    
+    if (expectedCount !== null) {
+      message += `\nExpected ${expectedCount} argument(s) for function '${fnName}'`;
+      
+      // Get the extra arguments
+      const extraArgs = args.slice(expectedCount);
+      if (extraArgs.length > 0) {
+        const extraArgStrs = extraArgs.map(arg => {
+          if (arg.type === "symbol") return `'${arg.name}'`;
+          if (arg.type === "literal") {
+            const value = arg.value;
+            if (typeof value === 'string') return `"${value}"`;
+            return String(value);
+          }
+          return arg.type || "object";
+        });
+        
+        message += `\nExtra arguments: ${extraArgStrs.join(', ')}`;
+      }
+    }
+  }
+  
+  // Create a RuntimeError with detailed source location
+  const runtimeError = new RuntimeError(message, location);
+  
+  // Try to get context lines for the error location
+  if (location.line && location.filePath) {
+    try {
+      const contextLines = await loadContextLines(location.filePath, location.line);
+      if (contextLines) {
+        runtimeError.contextLines = contextLines;
+        
+        // Set the column in the error line if available
+        if (location.column) {
+          const errorLine = runtimeError.contextLines.find(line => line.line === location.line && line.isError);
+          if (errorLine) {
+            errorLine.column = location.column;
+          }
+        }
+      }
+    } catch (e) {
+      logger.debug(`Failed to load context lines: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  
+  // Add a suggestion for fixing the error
+  if (error.message.includes("Too many") && error.message.includes("arguments")) {
+    runtimeError.getSuggestion = () => 
+      `Check the number of arguments you're passing to function '${fnName}'. You might be passing more arguments than expected.`;
+  } else if (error.message.includes("Missing") && error.message.includes("argument")) {
+    runtimeError.getSuggestion = () => 
+      `Make sure you provide all required arguments to function '${fnName}'.`;
+  } else {
+    runtimeError.getSuggestion = () => 
+      `Check the function call syntax and argument types for '${fnName}'.`;
+  }
+  
+  // Enrich with context and return
+  return await enrichErrorWithContext(runtimeError, filePath);
+}
+
+/**
+ * Extract line and column information from a function call error message
+ */
+export function extractFunctionCallError(error: string): { 
+  functionName?: string; 
+  expectedArgs?: number; 
+  actualArgs?: number; 
+} {
+  const result: { functionName?: string; expectedArgs?: number; actualArgs?: number; } = {};
+  
+  // Extract function name
+  const functionMatch = error.match(/function ['"]?([^'"]+)['"]?/);
+  if (functionMatch) {
+    result.functionName = functionMatch[1];
+  }
+  
+  // Extract expected argument count
+  const expectedMatch = error.match(/expected (\d+)/i);
+  if (expectedMatch) {
+    result.expectedArgs = parseInt(expectedMatch[1], 10);
+  }
+  
+  // Extract actual argument count
+  const actualMatch = error.match(/got (\d+)/i);
+  if (actualMatch) {
+    result.actualArgs = parseInt(actualMatch[1], 10);
+  }
+  
+  return result;
+}
+
+/**
+ * Find the location of a function call with too many arguments
+ * This is an enhancement to findErrorLocation that specifically targets function calls
+ */
+export async function findFunctionCallLocation(
+  functionName: string,
+  filePath: string,
+  expectedArgs: number,
+  actualArgs: number
+): Promise<SourceLocation> {
+  const location: SourceLocation = {
+    filePath
+  };
+  
+  try {
+    if (!await exists(filePath)) {
+      logger.debug(`Cannot find function call: File does not exist: ${filePath}`);
+      return location;
+    }
+    
+    const content = await readTextFile(filePath);
+    const lines = content.split('\n');
+    
+    // Construct a regex pattern to find the function call
+    // This will look for patterns like (functionName arg1 arg2 ...)
+    const funcCallPattern = new RegExp(`\\(\\s*${escapeRegExp(functionName)}\\s+`);
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (funcCallPattern.test(line)) {
+        // Found a function call, now check if it has the right number of arguments
+        const openParenPos = line.indexOf('(');
+        const functionPos = line.indexOf(functionName, openParenPos);
+        
+        if (functionPos >= 0) {
+          // Count the arguments in this function call
+          const afterFunc = line.substring(functionPos + functionName.length);
+          const argCount = countArguments(afterFunc);
+          
+          // If this function call has too many arguments, it's likely the one we're looking for
+          if (argCount >= actualArgs) {
+            location.line = i + 1;
+            
+            // Calculate the position of the first extra argument
+            if (expectedArgs > 0) {
+              let argStartPos = functionPos + functionName.length;
+              let currentArgCount = 0;
+              
+              // Skip over the first expectedArgs arguments
+              while (currentArgCount < expectedArgs && argStartPos < line.length) {
+                // Skip whitespace
+                while (argStartPos < line.length && /\s/.test(line[argStartPos])) {
+                  argStartPos++;
+                }
+                
+                // Skip the argument
+                if (line[argStartPos] === '(') {
+                  // Skip balanced parentheses
+                  let depth = 1;
+                  argStartPos++;
+                  while (depth > 0 && argStartPos < line.length) {
+                    if (line[argStartPos] === '(') depth++;
+                    if (line[argStartPos] === ')') depth--;
+                    argStartPos++;
+                  }
+                } else if (line[argStartPos] === '"') {
+                  // Skip string literals
+                  argStartPos++;
+                  while (argStartPos < line.length && line[argStartPos] !== '"') {
+                    if (line[argStartPos] === '\\') argStartPos += 2;
+                    else argStartPos++;
+                  }
+                  if (argStartPos < line.length) argStartPos++; // Skip closing quote
+                } else {
+                  // Skip other arguments
+                  while (argStartPos < line.length && !/[\s)]/.test(line[argStartPos])) {
+                    argStartPos++;
+                  }
+                }
+                
+                currentArgCount++;
+              }
+              
+              // Skip remaining whitespace to position exactly at the extra argument
+              while (argStartPos < line.length && /\s/.test(line[argStartPos])) {
+                argStartPos++;
+              }
+              
+              // Set the column to point at the first extra argument
+              location.column = argStartPos + 1; // 1-based column index
+            } else {
+              // If expectedArgs is 0, point to the function name
+              location.column = functionPos + 1; // 1-based column index
+            }
+            
+            return location;
+          }
+        }
+      }
+    }
+    
+    // Fallback to finding just the function name if we couldn't find the specific call
+    return await findSymbolLocation(functionName, filePath);
+  } catch (error) {
+    logger.debug(`Error finding function call location: ${error instanceof Error ? error.message : String(error)}`);
+    return location;
+  }
+}
+
+/**
+ * Count the number of arguments in a function call text
+ */
+function countArguments(text: string): number {
+  let count = 0;
+  let i = 0;
+  
+  // Skip initial whitespace
+  while (i < text.length && /\s/.test(text[i])) i++;
+  
+  while (i < text.length) {
+    if (text[i] === ")") break; // End of function call
+    
+    // Count this as an argument
+    count++;
+    
+    // Skip over this argument
+    if (text[i] === "(") {
+      // Skip a nested list/expression
+      let depth = 1;
+      i++;
+      while (depth > 0 && i < text.length) {
+        if (text[i] === "(") depth++;
+        if (text[i] === ")") depth--;
+        i++;
+      }
+    } else if (text[i] === '"') {
+      // Skip a string literal
+      i++;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === '\\') i += 2; // Skip escaped characters
+        else i++;
+      }
+      if (i < text.length) i++; // Skip closing quote
+    } else {
+      // Skip a symbol or other token
+      while (i < text.length && !/[\s)]/.test(text[i])) {
+        i++;
+      }
+    }
+    
+    // Skip whitespace between arguments
+    while (i < text.length && /\s/.test(text[i])) {
+      i++;
+    }
+  }
+  
+  return count;
 }
