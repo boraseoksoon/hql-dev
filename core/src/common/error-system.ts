@@ -5,7 +5,7 @@ import { globalLogger as logger } from "../logger.ts";
 import { globalErrorReporter, reportError } from "./error.ts";
 import { initializeErrorHandling, handleRuntimeError, setRuntimeContext } from "./runtime-error-handler.ts";
 import { dirname, readTextFile } from "../platform/platform.ts";
-import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import * as path from "jsr:@std/path@1";
 import { ERROR_PATTERNS, ERROR_SUGGESTIONS, ERROR_REGEX } from "./error-constants.ts";
 
 /**

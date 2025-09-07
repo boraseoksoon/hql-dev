@@ -1,4 +1,4 @@
-import * as ts from "npm:typescript";
+import * as ts from "npm:typescript@^5.0.0";
 import * as IR from "../type/hql_ir.ts";
 import { sanitizeIdentifier } from "../../common/utils.ts";
 import { CodeGenError } from "../../common/error.ts";

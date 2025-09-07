@@ -1,7 +1,7 @@
 // src/transpiler/syntax/conditional.ts
 // Module for handling conditional expressions (if, cond, etc.)
 
-import * as ts from "npm:typescript";
+import * as ts from "npm:typescript@^5.0.0";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode } from "../type/hql_ast.ts";
 import { ValidationError, TransformError, perform } from "../../common/error.ts"

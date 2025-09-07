@@ -1,5 +1,5 @@
 // core/src/transpiler/hql-transpiler.ts - Modified to remove user-level macro support
-import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import * as path from "jsr:@std/path@1";
 import { parse } from "./pipeline/parser.ts";
 import { Environment } from "../environment.ts";
 import { expandMacros } from "../s-exp/macro.ts";
@@ -18,7 +18,8 @@ import { globalLogger as logger } from "../logger.ts";
 import { reportError } from "../common/error.ts";
 import { TranspileResult } from "./index.ts";
 import { globalSymbolTable } from "../transpiler/symbol_table.ts";
-import { HQLNode } from "@transpiler/type/hql_ast.ts";
+import { HQLNode } from "../transpiler/type/hql_ast.ts";
+import { EMBEDDED_MACROS } from "../lib/embedded-macros.ts";
 
 let globalEnv: Environment | null = null;
 let systemMacrosLoaded = false;
@@ -212,13 +213,11 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
   }
 
   try {
-    const macroPaths = getSystemMacroPaths();
+    const macroPaths = Object.keys(EMBEDDED_MACROS);
     for (const macroPath of macroPaths) {
       if (env.hasProcessedFile(macroPath)) continue;
 
-      const macroSource = await Deno.readTextFile(macroPath).catch(e => {
-        throw new ImportError(`Could not find macro file at ${macroPath}.`, macroPath, undefined, e);
-      });
+      const macroSource = EMBEDDED_MACROS[macroPath as keyof typeof EMBEDDED_MACROS];
       
       const macroExps = macroExpressionsCache.get(macroPath) || parse(macroSource);
       macroExpressionsCache.set(macroPath, macroExps);
@@ -227,7 +226,7 @@ export async function loadSystemMacros(env: Environment, options: ProcessOptions
 
       await processImports(transformed, env, {
         verbose: options.verbose || false,
-        baseDir: path.dirname(macroPath),
+        baseDir: ".",
         currentFile: macroPath,
       });
 
@@ -275,16 +274,3 @@ async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
   return globalEnv;
 }
 
-/**
- * Get the absolute paths for all system macro files
- */
-function getSystemMacroPaths(): string[] {
-  const SYSTEM_MACRO_PATHS = [
-    "core/lib/macro/core.hql",
-    "core/lib/macro/loop.hql"
-  ];
-
-  const systemMacrosDir = path.dirname(path.fromFileUrl(import.meta.url));
-  const projectRoot = path.resolve(systemMacrosDir, '../../..');
-  return SYSTEM_MACRO_PATHS.map(macroPath => path.join(projectRoot, macroPath));
-}

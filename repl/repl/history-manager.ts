@@ -1,7 +1,7 @@
 // src/repl/history-manager.ts
 // Manages REPL command history with persistence between sessions
 
-import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import * as path from "jsr:@std/path@1";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { globalLogger as logger } from "@core/logger.ts";
 import { formatErrorMessage } from "../../core/src/common/error.ts";

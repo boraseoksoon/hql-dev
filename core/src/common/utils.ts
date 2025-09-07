@@ -5,7 +5,7 @@ import {
   isJsFile as isJs, 
   isHqlFile as isHql 
 } from "./import-utils.ts";
-import * as path from "https://deno.land/std@0.203.0/path/mod.ts";
+import * as path from "jsr:@std/path@1";
 
 const REMOTE_PATH_PREFIXES = new Set(["npm:", "jsr:", "http:", "https:"]);
 

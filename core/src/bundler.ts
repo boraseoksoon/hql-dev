@@ -1,6 +1,6 @@
 // bundler.ts
-import * as esbuild from "https://deno.land/x/esbuild@v0.17.19/mod.js";
-import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import * as esbuild from "npm:esbuild@^0.17.0";
+import * as path from "jsr:@std/path@1";
 import { transpileToJavascript } from "./transpiler/hql-transpiler.ts";
 import { formatErrorMessage } from "./common/error.ts";
 import {

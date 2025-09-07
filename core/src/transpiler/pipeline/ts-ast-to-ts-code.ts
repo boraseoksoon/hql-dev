@@ -1,6 +1,6 @@
 // src/transpiler/ts-ast-to-ts-code.ts - Simplified version without perform utility or explicit error handling
 
-import * as ts from "npm:typescript";
+import * as ts from "npm:typescript@^5.0.0";
 import * as IR from "../type/hql_ir.ts";
 import { convertIRNode } from "../pipeline/hql-ir-to-ts-ast.ts";
 import { globalLogger as logger } from "../../logger.ts";

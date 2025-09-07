@@ -1,7 +1,7 @@
 // src/repl/persistent-state-manager.ts
 // Manages persistent state for the REPL across sessions
 
-import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import * as path from "jsr:@std/path@1";
 import { exists } from "https://deno.land/std@0.224.0/fs/exists.ts";
 import { ensureDir } from "https://deno.land/std@0.224.0/fs/ensure_dir.ts";
 import { formatErrorMessage } from "../../core/src/common/error.ts";

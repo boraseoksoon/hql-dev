@@ -1,7 +1,7 @@
 // core/src/common/runtime-error-handler.ts - Enhanced version
 // Maps JavaScript runtime errors back to HQL source locations with improved accuracy
 
-import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import * as path from "jsr:@std/path@1";
 import { RuntimeError, ValidationError } from "./error.ts";
 import { globalLogger as logger } from "../logger.ts";
 import { globalErrorReporter } from "./error.ts";

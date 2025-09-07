@@ -11,7 +11,7 @@
  * All logic from error-handler.ts has been merged into error.ts. See below for details.
  */
 
-import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import * as path from "jsr:@std/path@1";
 import { Logger, globalLogger as logger } from "../logger.ts";
 
 // -----------------------------------------------------------------------------

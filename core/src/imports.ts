@@ -1,6 +1,6 @@
 // core/src/imports.ts - Enhanced error handling for imports
 
-import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import * as path from "jsr:@std/path@1";
 import { globalLogger as logger } from "./logger.ts";
 import { Environment, Value } from "./environment.ts";
 import { evaluateForMacro } from "./s-exp/macro.ts";
@@ -1185,7 +1185,7 @@ async function transpileTypeScriptToJavaScript(
   jsPath: string
 ): Promise<void> {
   try {
-    const esbuild = await import("https://deno.land/x/esbuild@v0.17.19/mod.js");
+    const esbuild = await import("npm:esbuild@^0.17.0");
     
     await esbuild.build({
       entryPoints: [tsPath],

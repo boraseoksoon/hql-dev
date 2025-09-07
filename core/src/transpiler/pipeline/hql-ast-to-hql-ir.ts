@@ -26,7 +26,7 @@ import * as jsInteropModule from "../syntax/js-interop.ts";
 import * as loopRecurModule from "../syntax/loop-recur.ts";
 import * as primitiveModule from "../syntax/primitive.ts";
 import * as quoteModule from "../syntax/quote.ts";
-import { globalSymbolTable } from "@transpiler/symbol_table.ts";
+import { globalSymbolTable } from "../symbol_table.ts";
 
 /**
  * Transform factory to map operators to handler functions

@@ -7,7 +7,10 @@
       "Bash(./core/cli/run.ts doc/examples/fn.hql)",
       "Read(//tmp/**)",
       "Bash(deno bundle:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(deno publish:*)",
+      "Bash(chmod:*)",
+      "Bash(./fix-imports.sh)"
     ],
     "deny": [],
     "ask": []

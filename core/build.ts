@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-all
 
-import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
+import * as path from "jsr:@std/path@1";
 import { parseArgs } from "https://deno.land/std@0.224.0/cli/parse_args.ts";
 import { ensureDir } from "https://deno.land/std@0.224.0/fs/mod.ts";
 

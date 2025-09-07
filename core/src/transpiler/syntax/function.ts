@@ -1,6 +1,6 @@
 // src/transpiler/syntax/function.ts
 
-import * as ts from "npm:typescript";
+import * as ts from "npm:typescript@^5.0.0";
 import * as IR from "../type/hql_ir.ts";
 import { ListNode, SymbolNode, HQLNode } from "../type/hql_ast.ts";
 import { TransformError, ValidationError, perform } from "../../common/error.ts";

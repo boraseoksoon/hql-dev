@@ -1,6 +1,6 @@
 #!/usr/bin/env deno run -A
 
-import { resolve } from "https://deno.land/std@0.170.0/path/mod.ts";
+import { resolve } from "jsr:@std/path@1";
 import { transpileCLI } from "../src/bundler.ts";
 import { globalLogger as logger } from "../src/logger.ts";
 import { parseCliOptions, applyCliOptions, CliOptions, parseNonOptionArgs } from "./utils/cli-options.ts";

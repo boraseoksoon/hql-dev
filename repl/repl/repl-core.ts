@@ -1,7 +1,7 @@
 // src/repl/repl-core.ts
 // Core REPL functionality and evaluation loop
 
-import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import * as path from "jsr:@std/path@1";
 import { ModuleAwareEvaluator } from "./module-aware-evaluator.ts";
 import { ReplState, resetReplState, updateParenBalance } from "./repl-state.ts";
 import { Environment } from "@core/environment.ts";
