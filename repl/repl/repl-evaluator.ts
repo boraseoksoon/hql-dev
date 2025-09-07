@@ -87,15 +87,17 @@ export class REPLEvaluator {
     if (this.runtimeFunctionsInitialized) return;
     
     try {
-      // Extract the runtime functions - removing the function declarations
-      // that would cause redeclaration errors
-      const runtimeCode = RUNTIME_FUNCTIONS.trim();
-      
-      // Register all runtime functions in the environment
-      await this.evaluateJs(runtimeCode);
-      
+      // In older versions, runtime helper functions were injected once and reused.
+      // Newer code in the transpiler no longer relies on global runtime helpers.
+      // If a global RUNTIME_FUNCTIONS string is present, evaluate it once; otherwise skip.
+      const runtimeCode = (globalThis as any)?.RUNTIME_FUNCTIONS?.trim?.();
+      if (runtimeCode) {
+        await this.evaluateJs(runtimeCode);
+        this.logger.debug("Runtime functions initialized");
+      } else {
+        this.logger.debug("No runtime functions found; skipping initialization");
+      }
       this.runtimeFunctionsInitialized = true;
-      this.logger.debug("Runtime functions initialized");
     } catch (error) {
       this.logger.error(`Failed to initialize runtime functions: ${formatErrorMessage(error)}`);
       throw error;
@@ -284,13 +286,19 @@ export class REPLEvaluator {
       throw new Error("removeRuntimeFunctions was called with a Promise. This function expects a resolved string.");
     }
     
+    // If no global runtime functions are present, nothing to remove
+    const runtimeFunctions: string | undefined = (globalThis as any)?.RUNTIME_FUNCTIONS;
+    if (!runtimeFunctions) {
+      return code;
+    }
+    
     // If no runtime function names are cached, extract them
     if (!this.runtimeFunctionNames) {
       const functionRegex = /function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
       const runtimeFunctionNames: string[] = [];
       
-      let match;
-      while ((match = functionRegex.exec(RUNTIME_FUNCTIONS)) !== null) {
+      let match: RegExpExecArray | null;
+      while ((match = functionRegex.exec(runtimeFunctions)) !== null) {
         if (match[1]) runtimeFunctionNames.push(match[1]);
       }
       

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/seoksoonjang/Desktop/hlvm/**)",
+      "Bash(./hlvm --version)",
+      "Bash(deno run:*)",
+      "Bash(./core/cli/run.ts doc/examples/fn.hql)",
+      "Read(//tmp/**)",
+      "Bash(deno bundle:*)",
+      "Bash(cat:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
