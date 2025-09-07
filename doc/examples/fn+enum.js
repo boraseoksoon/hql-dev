@@ -1,0 +1,13 @@
+// .hql-cache/1/doc/examples/fn+enum.ts
+var OS = Object.freeze({
+  macOS: "macOS",
+  iOS: "iOS",
+  linux: "linux"
+});
+function install(os) {
+  return os === OS.macOS ? console.log("Installing on macOS") : os === OS.iOS ? console.log("Installing on iOS") : os === OS.linux ? console.log("Installing on Linux") : console.log("Unsupported OS");
+}
+install(OS.macOS);
+install(OS.iOS);
+install(OS.linux);
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9mbitlbnVtLnRzIl0sCiAgInNvdXJjZXNDb250ZW50IjogWyJjb25zdCBPUyA9IE9iamVjdC5mcmVlemUoe1xuICAgIG1hY09TOiBcIm1hY09TXCIsXG4gICAgaU9TOiBcImlPU1wiLFxuICAgIGxpbnV4OiBcImxpbnV4XCJcbn0pO1xuZnVuY3Rpb24gaW5zdGFsbChvcykge1xuICAgIHJldHVybiBvcyA9PT0gT1MubWFjT1MgPyBjb25zb2xlLmxvZyhcIkluc3RhbGxpbmcgb24gbWFjT1NcIikgOiBvcyA9PT0gT1MuaU9TID8gY29uc29sZS5sb2coXCJJbnN0YWxsaW5nIG9uIGlPU1wiKSA6IG9zID09PSBPUy5saW51eCA/IGNvbnNvbGUubG9nKFwiSW5zdGFsbGluZyBvbiBMaW51eFwiKSA6IGNvbnNvbGUubG9nKFwiVW5zdXBwb3J0ZWQgT1NcIik7XG59XG5pbnN0YWxsKE9TLm1hY09TKTtcbmluc3RhbGwoT1MuaU9TKTtcbmluc3RhbGwoT1MubGludXgpO1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUFBLElBQU0sS0FBSyxPQUFPLE9BQU87QUFBQSxFQUNyQixPQUFPO0FBQUEsRUFDUCxLQUFLO0FBQUEsRUFDTCxPQUFPO0FBQ1gsQ0FBQztBQUNELFNBQVMsUUFBUSxJQUFJO0FBQ2pCLFNBQU8sT0FBTyxHQUFHLFFBQVEsUUFBUSxJQUFJLHFCQUFxQixJQUFJLE9BQU8sR0FBRyxNQUFNLFFBQVEsSUFBSSxtQkFBbUIsSUFBSSxPQUFPLEdBQUcsUUFBUSxRQUFRLElBQUkscUJBQXFCLElBQUksUUFBUSxJQUFJLGdCQUFnQjtBQUN4TTtBQUNBLFFBQVEsR0FBRyxLQUFLO0FBQ2hCLFFBQVEsR0FBRyxHQUFHO0FBQ2QsUUFBUSxHQUFHLEtBQUs7IiwKICAibmFtZXMiOiBbXQp9Cg==

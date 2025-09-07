@@ -1,36 +1,16 @@
-function get(obj, key, notFound = null) {
-  // Handle null/undefined case
-  if (obj == null) return notFound;
-
-  // Handle function case: call the function with key as argument
-  if (typeof obj === "function") {
-    try {
-      return obj(key);
-    } catch (e) {
-      // If function call fails, fall back to property access
-      return (key in obj) ? obj[key] : notFound;
-    }
-  }
-
-  // Handle arrays (vectors)
-  if (Array.isArray(obj)) {
-    return (typeof key === "number" && key >= 0 && key < obj.length)
-      ? obj[key]
-      : notFound;
-  }
-
-  // Handle Sets
-  if (obj instanceof Set) {
-    return obj.has(key) ? key : notFound;
-  }
-
-  // Handle objects (maps) - includes handling of numeric keys
-  const propKey = typeof key === "number" ? String(key) : key;
-  return (propKey in obj) ? obj[propKey] : notFound;
+// .hql-cache/1/doc/examples/import/module1.ts
+function add(x, y) {
+  return x + y;
+}
+function multiply(x, y) {
+  return x * y;
+}
+function divide(x, y) {
+  return x / y;
 }
 
-import { add, multiply } from "./module1.js";
-import { divide as div } from "./module1.js";
-console["log"]("2 + 3 =", add(2, 3));
-console["log"]("4 * 5 =", multiply(4, 5));
-console["log"]("10 / 2 =", div(10, 2));
+// .hql-cache/1/doc/examples/import/module2.ts
+console.log("2 + 3 =", add(2, 3));
+console.log("4 * 5 =", multiply(4, 5));
+console.log("10 / 2 =", divide(10, 2));
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9pbXBvcnQvbW9kdWxlMS50cyIsICIuLi8uLi8uLi8uaHFsLWNhY2hlLzEvZG9jL2V4YW1wbGVzL2ltcG9ydC9tb2R1bGUyLnRzIl0sCiAgInNvdXJjZXNDb250ZW50IjogWyJmdW5jdGlvbiBhZGQoeCwgeSkge1xuICAgIHJldHVybiB4ICsgeTtcbn1cbmZ1bmN0aW9uIHN1YnRyYWN0KHgsIHkpIHtcbiAgICByZXR1cm4geCAtIHk7XG59XG5mdW5jdGlvbiBtdWx0aXBseSh4LCB5KSB7XG4gICAgcmV0dXJuIHggKiB5O1xufVxuZnVuY3Rpb24gZGl2aWRlKHgsIHkpIHtcbiAgICByZXR1cm4geCAvIHk7XG59XG5leHBvcnQgeyBhZGQsIHN1YnRyYWN0LCBtdWx0aXBseSwgZGl2aWRlIH07XG4iLCAiaW1wb3J0IHsgYWRkLCBtdWx0aXBseSB9IGZyb20gXCIvVXNlcnMvc2Vva3Nvb25qYW5nL0Rlc2t0b3AvaHFsLy5ocWwtY2FjaGUvMS9kb2MvZXhhbXBsZXMvaW1wb3J0L21vZHVsZTEudHNcIjtcbmltcG9ydCB7IGRpdmlkZSBhcyBkaXYgfSBmcm9tIFwiL1VzZXJzL3Nlb2tzb29uamFuZy9EZXNrdG9wL2hxbC8uaHFsLWNhY2hlLzEvZG9jL2V4YW1wbGVzL2ltcG9ydC9tb2R1bGUxLnRzXCI7XG5jb25zb2xlLmxvZyhcIjIgKyAzID1cIiwgYWRkKDIsIDMpKTtcbmNvbnNvbGUubG9nKFwiNCAqIDUgPVwiLCBtdWx0aXBseSg0LCA1KSk7XG5jb25zb2xlLmxvZyhcIjEwIC8gMiA9XCIsIGRpdigxMCwgMikpO1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUFBLFNBQVMsSUFBSSxHQUFHLEdBQUc7QUFDZixTQUFPLElBQUk7QUFDZjtBQUlBLFNBQVMsU0FBUyxHQUFHLEdBQUc7QUFDcEIsU0FBTyxJQUFJO0FBQ2Y7QUFDQSxTQUFTLE9BQU8sR0FBRyxHQUFHO0FBQ2xCLFNBQU8sSUFBSTtBQUNmOzs7QUNUQSxRQUFRLElBQUksV0FBVyxJQUFJLEdBQUcsQ0FBQyxDQUFDO0FBQ2hDLFFBQVEsSUFBSSxXQUFXLFNBQVMsR0FBRyxDQUFDLENBQUM7QUFDckMsUUFBUSxJQUFJLFlBQVksT0FBSSxJQUFJLENBQUMsQ0FBQzsiLAogICJuYW1lcyI6IFtdCn0K

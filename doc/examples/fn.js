@@ -1,0 +1,25 @@
+// .hql-cache/1/doc/examples/fn.ts
+console.log("============ fn test =============");
+function multiply(x, y) {
+  return x * y;
+}
+console.log(multiply(10, 20));
+function multiply2(x, y) {
+  return x * y;
+}
+console.log(multiply2(100, 200));
+console.log(multiply(5, 20));
+console.log(multiply(5, 7));
+console.log(multiply(5, 20));
+console.log(multiply(10, 15));
+console.log(multiply(5, 7));
+console.log(multiply(10, 7));
+function hello() {
+  return console.log("hello");
+}
+hello();
+function with_prefix(prefix, ...rest) {
+  return console.log(prefix, rest);
+}
+with_prefix("Numbers:", 1, 2, 3);
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9mbi50cyJdLAogICJzb3VyY2VzQ29udGVudCI6IFsiY29uc29sZS5sb2coXCI9PT09PT09PT09PT0gZm4gdGVzdCA9PT09PT09PT09PT09XCIpO1xuZnVuY3Rpb24gbXVsdGlwbHkoeCwgeSkge1xuICAgIHJldHVybiB4ICogeTtcbn1cbmNvbnNvbGUubG9nKG11bHRpcGx5KDEwLCAyMCkpO1xuZnVuY3Rpb24gbXVsdGlwbHkyKHgsIHkpIHtcbiAgICByZXR1cm4geCAqIHk7XG59XG5jb25zb2xlLmxvZyhtdWx0aXBseTIoMTAwLCAyMDApKTtcbmNvbnNvbGUubG9nKG11bHRpcGx5KDUsIDIwKSk7XG5jb25zb2xlLmxvZyhtdWx0aXBseSg1LCA3KSk7XG5jb25zb2xlLmxvZyhtdWx0aXBseSg1LCAyMCkpO1xuY29uc29sZS5sb2cobXVsdGlwbHkoMTAsIDE1KSk7XG5jb25zb2xlLmxvZyhtdWx0aXBseSg1LCA3KSk7XG5jb25zb2xlLmxvZyhtdWx0aXBseSgxMCwgNykpO1xuZnVuY3Rpb24gaGVsbG8oKSB7XG4gICAgcmV0dXJuIGNvbnNvbGUubG9nKFwiaGVsbG9cIik7XG59XG5oZWxsbygpO1xuZnVuY3Rpb24gd2l0aF9wcmVmaXgocHJlZml4LCAuLi5yZXN0KSB7XG4gICAgcmV0dXJuIGNvbnNvbGUubG9nKHByZWZpeCwgcmVzdCk7XG59XG53aXRoX3ByZWZpeChcIk51bWJlcnM6XCIsIDEsIDIsIDMpO1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUFBLFFBQVEsSUFBSSxvQ0FBb0M7QUFDaEQsU0FBUyxTQUFTLEdBQUcsR0FBRztBQUNwQixTQUFPLElBQUk7QUFDZjtBQUNBLFFBQVEsSUFBSSxTQUFTLElBQUksRUFBRSxDQUFDO0FBQzVCLFNBQVMsVUFBVSxHQUFHLEdBQUc7QUFDckIsU0FBTyxJQUFJO0FBQ2Y7QUFDQSxRQUFRLElBQUksVUFBVSxLQUFLLEdBQUcsQ0FBQztBQUMvQixRQUFRLElBQUksU0FBUyxHQUFHLEVBQUUsQ0FBQztBQUMzQixRQUFRLElBQUksU0FBUyxHQUFHLENBQUMsQ0FBQztBQUMxQixRQUFRLElBQUksU0FBUyxHQUFHLEVBQUUsQ0FBQztBQUMzQixRQUFRLElBQUksU0FBUyxJQUFJLEVBQUUsQ0FBQztBQUM1QixRQUFRLElBQUksU0FBUyxHQUFHLENBQUMsQ0FBQztBQUMxQixRQUFRLElBQUksU0FBUyxJQUFJLENBQUMsQ0FBQztBQUMzQixTQUFTLFFBQVE7QUFDYixTQUFPLFFBQVEsSUFBSSxPQUFPO0FBQzlCO0FBQ0EsTUFBTTtBQUNOLFNBQVMsWUFBWSxXQUFXLE1BQU07QUFDbEMsU0FBTyxRQUFRLElBQUksUUFBUSxJQUFJO0FBQ25DO0FBQ0EsWUFBWSxZQUFZLEdBQUcsR0FBRyxDQUFDOyIsCiAgIm5hbWVzIjogW10KfQo=

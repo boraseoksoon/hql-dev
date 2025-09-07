@@ -86,11 +86,20 @@ export function convertMemberExpression(node: IR.IRMemberExpression): ts.Express
     const object = convertIRExpr(node.object);
     
     if (node.property.type === IR.IRNodeType.Identifier) {
-      // For identifier properties, always use dot notation
-      return ts.factory.createPropertyAccessExpression(
-        object,
-        ts.factory.createIdentifier((node.property as IR.IRIdentifier).name)
-      );
+      // Check if this should be computed (bracket) access
+      if (node.computed) {
+        // Use bracket notation for computed access (e.g., arr[i])
+        return ts.factory.createElementAccessExpression(
+          object,
+          ts.factory.createIdentifier((node.property as IR.IRIdentifier).name)
+        );
+      } else {
+        // Use dot notation for property access (e.g., obj.prop)
+        return ts.factory.createPropertyAccessExpression(
+          object,
+          ts.factory.createIdentifier((node.property as IR.IRIdentifier).name)
+        );
+      }
     } else if (node.property.type === IR.IRNodeType.StringLiteral) {
       const propValue = (node.property as IR.IRStringLiteral).value;
       

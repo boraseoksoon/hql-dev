@@ -53,7 +53,7 @@ export async function transpileToJavascript(
     logger.startTiming("hql-process", "Total");
   }
 
-  const sourceFilename = path.basename(options.baseDir || "unknown");
+  const sourceFilename = path.basename(options.currentFile || options.baseDir || "unknown");
 
   const env = await setupEnvironment(options);
   const sexps = parseSource(hqlSource, options);
@@ -82,7 +82,11 @@ async function setupEnvironment(options: ProcessOptions): Promise<Environment> {
   if (options.showTiming) logger.startTiming("hql-process", "Environment setup");
   
   const env = await getGlobalEnv(options);
-  if (options.baseDir) env.setCurrentFile(options.baseDir);
+  if (options.currentFile) {
+    env.setCurrentFile(options.currentFile);
+  } else if (options.baseDir) {
+    env.setCurrentFile(options.baseDir);
+  }
   
   if (options.showTiming) logger.endTiming("hql-process", "Environment setup");
   return env;
@@ -123,7 +127,7 @@ async function handleImports(sexps: SExp[], env: Environment, options: ProcessOp
     verbose: options.verbose,
     baseDir: options.baseDir || Deno.cwd(),
     tempDir: options.tempDir,
-    currentFile: options.baseDir,
+    currentFile: options.currentFile,
   });
   
   if (options.showTiming) logger.endTiming("hql-process", "Import processing");
@@ -138,7 +142,7 @@ function expand(sexps: SExp[], env: Environment, options: ProcessOptions): SExp[
   try {
     const expanded = expandMacros(sexps, env, {
       verbose: options.verbose,
-      currentFile: options.baseDir,
+      currentFile: options.currentFile,
       useCache: true,
     });
     
@@ -273,4 +277,3 @@ async function getGlobalEnv(options: ProcessOptions): Promise<Environment> {
 
   return globalEnv;
 }
-

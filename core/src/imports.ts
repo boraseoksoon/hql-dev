@@ -858,17 +858,29 @@ function importSymbols(
         env.define(aliasName || symbolName, value);
         logger.debug(`Imported symbol: ${symbolName}${aliasName ? ` as ${aliasName}` : ""}`);
       } catch (lookupError) {
-        // Only throw for non-macros
-        if (!env.isSystemMacro(symbolName)) {
+        // Check if this is a deferred import (empty module)
+        const moduleExports = env.moduleExports.get(tempModuleName);
+        const isDeferredImport = moduleExports && Object.keys(moduleExports).length === 0;
+        
+        if (isDeferredImport) {
+          // For deferred imports, create a placeholder
+          // The actual implementation will come from the JS import
+          logger.debug(`Creating placeholder for deferred import: ${symbolName} from ${modulePath}`);
+          const placeholder = (...args: any[]) => {
+            // This will be replaced by the actual JS import
+            return undefined;
+          };
+          env.define(aliasName || symbolName, placeholder);
+        } else if (!env.isSystemMacro(symbolName)) {
+          // Only throw for non-deferred, non-macro imports
           logger.debug(`Symbol not found in module: ${symbolName}`);
           
           // Create a validation error with precise information
           let errorMessage = `Symbol '${symbolName}' not found in module '${modulePath}'`;
           
           // Try to get a list of available exports
-          const availableExports = env.moduleExports.get(tempModuleName);
-          if (availableExports) {
-            const exportsList = Object.keys(availableExports).join(", ");
+          if (moduleExports) {
+            const exportsList = Object.keys(moduleExports).join(", ");
             if (exportsList) {
               errorMessage += `\nAvailable exports: ${exportsList}`;
             }
@@ -1047,8 +1059,43 @@ async function loadHqlModule(
   const previousCurrentFile = env.getCurrentFile();
   try {
     // Read and parse the HQL file
-    const fileContent = await readFile(resolvedPath, options.currentFile);
-    const importedExprs = parse(fileContent, resolvedPath);
+    let fileContent: string;
+    let importedExprs: SExp[];
+    
+    // Check if this is an embedded macro file
+    const { isEmbeddedFile, getEmbeddedContent } = await import("./lib/embedded-macros.ts");
+    
+    if (isEmbeddedFile(resolvedPath)) {
+      const embeddedContent = getEmbeddedContent(resolvedPath);
+      if (embeddedContent) {
+        fileContent = embeddedContent;
+        importedExprs = parse(fileContent, resolvedPath);
+        logger.debug(`Using embedded content for ${resolvedPath}`);
+      } else {
+        // Fallback to reading from disk
+        fileContent = await readFile(resolvedPath, options.currentFile);
+        importedExprs = parse(fileContent, resolvedPath);
+      }
+    } else {
+      // Try to read the file normally
+      try {
+        fileContent = await readFile(resolvedPath, options.currentFile);
+        importedExprs = parse(fileContent, resolvedPath);
+      } catch (readError) {
+        // If file reading fails, generate deferred import
+        // This allows imports to work in JSR package context
+        logger.debug(`File not found, generating deferred import for ${resolvedPath}`);
+        
+        // Register empty module to prevent errors
+        // The transpiler will generate the import statement
+        // and the actual implementation will come from JS at runtime
+        const emptyModule = {};
+        env.importModule(moduleName, emptyModule);
+        
+        // Store this as a deferred import - the transpiler will handle it
+        return;
+      }
+    }
     
     // Set context for processing
     env.setCurrentFile(resolvedPath);

@@ -658,7 +658,20 @@ export function transformFn(
         paramListNode.type,
       );
     }
-    const paramList = paramListNode as ListNode;
+    let paramList = paramListNode as ListNode;
+    
+    // Handle vector notation for parameters: [x y] is parsed as (vector x y)
+    // We need to extract just the parameters, not the "vector" symbol
+    if (paramList.elements.length > 0 && 
+        paramList.elements[0].type === "symbol" && 
+        (paramList.elements[0] as SymbolNode).name === "vector") {
+      // This is a vector notation, skip the first "vector" element
+      paramList = {
+        ...paramList,
+        elements: paramList.elements.slice(1)
+      } as ListNode;
+    }
+    
 
     // Check if this is a typed fn with a return type
     let bodyStartIndex = 3;
@@ -766,7 +779,19 @@ export function transformFx(
         paramListNode.type,
       );
     }
-    const paramList = paramListNode as ListNode;
+    let paramList = paramListNode as ListNode;
+    
+    // Handle vector notation for parameters: [x y] is parsed as (vector x y)
+    // We need to extract just the parameters, not the "vector" symbol
+    if (paramList.elements.length > 0 && 
+        paramList.elements[0].type === "symbol" && 
+        (paramList.elements[0] as SymbolNode).name === "vector") {
+      // This is a vector notation, skip the first "vector" element
+      paramList = {
+        ...paramList,
+        elements: paramList.elements.slice(1)
+      } as ListNode;
+    }
 
     // Extract return type list: (-> Type)
     const returnTypeNode = list.elements[3];

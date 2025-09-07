@@ -1,0 +1,25 @@
+// .hql-cache/1/doc/examples/import-test/export-lib.ts
+function add_numbers(x, y) {
+  return x + y;
+}
+function multiply_numbers(x, y) {
+  return x * y;
+}
+function divide_numbers(x, y) {
+  return x / y;
+}
+function format_message(msg) {
+  return "MESSAGE: " + msg;
+}
+var secret_number = 42;
+var app_name = "HQLTester";
+console.log("export-lib.hql loaded");
+export {
+  add_numbers,
+  app_name,
+  divide_numbers,
+  format_message,
+  multiply_numbers,
+  secret_number
+};
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9pbXBvcnQtdGVzdC9leHBvcnQtbGliLnRzIl0sCiAgInNvdXJjZXNDb250ZW50IjogWyJmdW5jdGlvbiBhZGRfbnVtYmVycyh4LCB5KSB7XG4gICAgcmV0dXJuIHggKyB5O1xufVxuZnVuY3Rpb24gbXVsdGlwbHlfbnVtYmVycyh4LCB5KSB7XG4gICAgcmV0dXJuIHggKiB5O1xufVxuZnVuY3Rpb24gZGl2aWRlX251bWJlcnMoeCwgeSkge1xuICAgIHJldHVybiB4IC8geTtcbn1cbmZ1bmN0aW9uIGZvcm1hdF9tZXNzYWdlKG1zZykge1xuICAgIHJldHVybiBcIk1FU1NBR0U6IFwiICsgbXNnO1xufVxuY29uc3Qgc2VjcmV0X251bWJlciA9IDQyO1xuY29uc3QgYXBwX25hbWUgPSBcIkhRTFRlc3RlclwiO1xuZXhwb3J0IHsgYWRkX251bWJlcnMsIG11bHRpcGx5X251bWJlcnMgfTtcbmV4cG9ydCB7IGRpdmlkZV9udW1iZXJzIH07XG5leHBvcnQgeyBzZWNyZXRfbnVtYmVyLCBhcHBfbmFtZSwgZm9ybWF0X21lc3NhZ2UgfTtcbmNvbnNvbGUubG9nKFwiZXhwb3J0LWxpYi5ocWwgbG9hZGVkXCIpO1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUFBLFNBQVMsWUFBWSxHQUFHLEdBQUc7QUFDdkIsU0FBTyxJQUFJO0FBQ2Y7QUFDQSxTQUFTLGlCQUFpQixHQUFHLEdBQUc7QUFDNUIsU0FBTyxJQUFJO0FBQ2Y7QUFDQSxTQUFTLGVBQWUsR0FBRyxHQUFHO0FBQzFCLFNBQU8sSUFBSTtBQUNmO0FBQ0EsU0FBUyxlQUFlLEtBQUs7QUFDekIsU0FBTyxjQUFjO0FBQ3pCO0FBQ0EsSUFBTSxnQkFBZ0I7QUFDdEIsSUFBTSxXQUFXO0FBSWpCLFFBQVEsSUFBSSx1QkFBdUI7IiwKICAibmFtZXMiOiBbXQp9Cg==

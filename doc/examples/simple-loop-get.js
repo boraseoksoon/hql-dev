@@ -1,0 +1,15 @@
+// .hql-cache/1/doc/examples/simple-loop-get.ts
+var arr = [10, 20, 30];
+(function() {
+  function loop_15(i) {
+    if (i < 3)
+      return function() {
+        console.log("i=", i, "value=", arr[i]);
+        return (() => loop_15(i + 1))();
+      }();
+    else
+      return null;
+  }
+  return loop_15(0);
+})();
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9zaW1wbGUtbG9vcC1nZXQudHMiXSwKICAic291cmNlc0NvbnRlbnQiOiBbImxldCBhcnIgPSBbMTAsIDIwLCAzMF07XG4oZnVuY3Rpb24gKCkge1xuICAgIGZ1bmN0aW9uIGxvb3BfMTUoaSkge1xuICAgICAgICBpZiAoaSA8IDMpXG4gICAgICAgICAgICByZXR1cm4gZnVuY3Rpb24gKCkge1xuICAgICAgICAgICAgICAgIGNvbnNvbGUubG9nKFwiaT1cIiwgaSwgXCJ2YWx1ZT1cIiwgYXJyW2ldKTtcbiAgICAgICAgICAgICAgICByZXR1cm4gKCgpID0+IGxvb3BfMTUoaSArIDEpKSgpO1xuICAgICAgICAgICAgfSgpO1xuICAgICAgICBlbHNlXG4gICAgICAgICAgICByZXR1cm4gbnVsbDtcbiAgICB9XG4gICAgcmV0dXJuIGxvb3BfMTUoMCk7XG59KSgpO1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUFBLElBQUksTUFBTSxDQUFDLElBQUksSUFBSSxFQUFFO0FBQUEsQ0FDcEIsV0FBWTtBQUNULFdBQVMsUUFBUSxHQUFHO0FBQ2hCLFFBQUksSUFBSTtBQUNKLGFBQU8sV0FBWTtBQUNmLGdCQUFRLElBQUksTUFBTSxHQUFHLFVBQVUsSUFBSSxDQUFDLENBQUM7QUFDckMsZ0JBQVEsTUFBTSxRQUFRLElBQUksQ0FBQyxHQUFHO0FBQUEsTUFDbEMsRUFBRTtBQUFBO0FBRUYsYUFBTztBQUFBLEVBQ2Y7QUFDQSxTQUFPLFFBQVEsQ0FBQztBQUNwQixHQUFHOyIsCiAgIm5hbWVzIjogW10KfQo=

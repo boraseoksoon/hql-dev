@@ -1,0 +1,15 @@
+// .hql-cache/1/doc/examples/class.ts
+var Calculator = class {
+  constructor(baseValue) {
+    this.baseValue = baseValue;
+    return this;
+  }
+  multiply(x = 100, y = 2) {
+    return x * y;
+  }
+};
+var calc = new Calculator(10);
+console.log("fx method with both defaults: calc.multiply() =>", calc.multiply);
+console.log("fx method with one arg: calc.multiply(5) =>", calc.multiply(5));
+console.log("fx method with two args: calc.multiply(7, 3) =>", calc.multiply(7, 3));
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9jbGFzcy50cyJdLAogICJzb3VyY2VzQ29udGVudCI6IFsiY2xhc3MgQ2FsY3VsYXRvciB7XG4gICAgYmFzZVZhbHVlO1xuICAgIGNvbnN0cnVjdG9yKGJhc2VWYWx1ZSkge1xuICAgICAgICB0aGlzLmJhc2VWYWx1ZSA9IGJhc2VWYWx1ZTtcbiAgICAgICAgcmV0dXJuIHRoaXM7XG4gICAgfVxuICAgIG11bHRpcGx5KHggPSAxMDAsIHkgPSAyKSB7XG4gICAgICAgIHJldHVybiB4ICogeTtcbiAgICB9XG59XG5jb25zdCBjYWxjID0gbmV3IENhbGN1bGF0b3IoMTApO1xuY29uc29sZS5sb2coXCJmeCBtZXRob2Qgd2l0aCBib3RoIGRlZmF1bHRzOiBjYWxjLm11bHRpcGx5KCkgPT5cIiwgY2FsYy5tdWx0aXBseSk7XG5jb25zb2xlLmxvZyhcImZ4IG1ldGhvZCB3aXRoIG9uZSBhcmc6IGNhbGMubXVsdGlwbHkoNSkgPT5cIiwgY2FsYy5tdWx0aXBseSg1KSk7XG5jb25zb2xlLmxvZyhcImZ4IG1ldGhvZCB3aXRoIHR3byBhcmdzOiBjYWxjLm11bHRpcGx5KDcsIDMpID0+XCIsIGNhbGMubXVsdGlwbHkoNywgMykpO1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUFBLElBQU0sYUFBTixNQUFpQjtBQUFBLEVBRWIsWUFBWSxXQUFXO0FBQ25CLFNBQUssWUFBWTtBQUNqQixXQUFPO0FBQUEsRUFDWDtBQUFBLEVBQ0EsU0FBUyxJQUFJLEtBQUssSUFBSSxHQUFHO0FBQ3JCLFdBQU8sSUFBSTtBQUFBLEVBQ2Y7QUFDSjtBQUNBLElBQU0sT0FBTyxJQUFJLFdBQVcsRUFBRTtBQUM5QixRQUFRLElBQUksb0RBQW9ELEtBQUssUUFBUTtBQUM3RSxRQUFRLElBQUksK0NBQStDLEtBQUssU0FBUyxDQUFDLENBQUM7QUFDM0UsUUFBUSxJQUFJLG1EQUFtRCxLQUFLLFNBQVMsR0FBRyxDQUFDLENBQUM7IiwKICAibmFtZXMiOiBbXQp9Cg==

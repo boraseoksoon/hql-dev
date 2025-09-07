@@ -1,6 +1,9 @@
-// base.js - Basic JavaScript file
-export function baseJsFunction(x) {
-  return x * 3;
+// .hql-cache/1/doc/examples/import-test/base.ts
+function baseHqlFunction(x) {
+  return x * 2;
 }
-
-console.log("base.js loaded"); 
+console.log("base.hql loaded");
+export {
+  baseHqlFunction
+};
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9pbXBvcnQtdGVzdC9iYXNlLnRzIl0sCiAgInNvdXJjZXNDb250ZW50IjogWyJmdW5jdGlvbiBiYXNlSHFsRnVuY3Rpb24oeCkge1xuICAgIHJldHVybiB4ICogMjtcbn1cbmV4cG9ydCB7IGJhc2VIcWxGdW5jdGlvbiB9O1xuY29uc29sZS5sb2coXCJiYXNlLmhxbCBsb2FkZWRcIik7XG4iXSwKICAibWFwcGluZ3MiOiAiO0FBQUEsU0FBUyxnQkFBZ0IsR0FBRztBQUN4QixTQUFPLElBQUk7QUFDZjtBQUVBLFFBQVEsSUFBSSxpQkFBaUI7IiwKICAibmFtZXMiOiBbXQp9Cg==

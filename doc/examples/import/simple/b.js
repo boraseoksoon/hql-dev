@@ -1,32 +1,8 @@
-function get(obj, key, notFound = null) {
-  // Handle null/undefined case
-  if (obj == null) return notFound;
-
-  // Handle function case: call the function with key as argument
-  if (typeof obj === "function") {
-    try {
-      return obj(key);
-    } catch (e) {
-      // If function call fails, fall back to property access
-      return (key in obj) ? obj[key] : notFound;
-    }
-  }
-
-  // Handle arrays (vectors)
-  if (Array.isArray(obj)) {
-    return (typeof key === "number" && key >= 0 && key < obj.length)
-      ? obj[key]
-      : notFound;
-  }
-
-  // Handle Sets
-  if (obj instanceof Set) {
-    return obj.has(key) ? key : notFound;
-  }
-
-  // Handle objects (maps) - includes handling of numeric keys
-  const propKey = typeof key === "number" ? String(key) : key;
-  return (propKey in obj) ? obj[propKey] : notFound;
+// .hql-cache/1/doc/examples/import/simple/a.ts
+function hello(name) {
+  return console.log("Hello, " + name + "!");
 }
 
-console["log"]("Hello, " + "hql" + "!");
+// .hql-cache/1/doc/examples/import/simple/b.ts
+hello("hql");
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9pbXBvcnQvc2ltcGxlL2EudHMiLCAiLi4vLi4vLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9pbXBvcnQvc2ltcGxlL2IudHMiXSwKICAic291cmNlc0NvbnRlbnQiOiBbImZ1bmN0aW9uIGhlbGxvKG5hbWUpIHtcbiAgICByZXR1cm4gY29uc29sZS5sb2coXCJIZWxsbywgXCIgKyBuYW1lICsgXCIhXCIpO1xufVxuZXhwb3J0IHsgaGVsbG8gfTtcbiIsICJpbXBvcnQgeyBoZWxsbyBhcyBoZWxsbzIgfSBmcm9tIFwiL1VzZXJzL3Nlb2tzb29uamFuZy9EZXNrdG9wL2hxbC8uaHFsLWNhY2hlLzEvZG9jL2V4YW1wbGVzL2ltcG9ydC9zaW1wbGUvYS50c1wiO1xuaGVsbG8yKFwiaHFsXCIpO1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUFBLFNBQVMsTUFBTSxNQUFNO0FBQ2pCLFNBQU8sUUFBUSxJQUFJLFlBQVksT0FBTyxHQUFHO0FBQzdDOzs7QUNEQSxNQUFPLEtBQUs7IiwKICAibmFtZXMiOiBbXQp9Cg==

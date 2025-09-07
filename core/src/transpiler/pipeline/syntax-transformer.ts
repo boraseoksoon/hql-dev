@@ -195,7 +195,18 @@ export function transformSyntax(ast: SExp[]): SExp[] {
             }
             // Binding list form: (let (name1 value1 name2 value2...) body...)
             else if (list.elements.length > 1 && isList(list.elements[1])) {
-              const bindings = list.elements[1] as SList;
+              let bindings = list.elements[1] as SList;
+              
+              // Handle vector notation: [x 10 y 20] is parsed as (vector x 10 y 20)
+              // Skip the "vector" symbol if present
+              if (bindings.elements.length > 0 && 
+                  isSymbol(bindings.elements[0]) && 
+                  (bindings.elements[0] as SSymbol).name === "vector") {
+                bindings = {
+                  ...bindings,
+                  elements: bindings.elements.slice(1)
+                } as SList;
+              }
               
               // Validate bindings list has even number of elements
               if (bindings.elements.length % 2 !== 0) {
@@ -558,7 +569,18 @@ function transformLetExpr(
     
     // Check for local binding form with binding vector
     if (list.elements.length >= 2 && isList(list.elements[1])) {
-      const bindingList = list.elements[1] as SList;
+      let bindingList = list.elements[1] as SList;
+      
+      // Handle vector notation: [x 10 y 20] is parsed as (vector x 10 y 20)
+      // Skip the "vector" symbol if present
+      if (bindingList.elements.length > 0 && 
+          isSymbol(bindingList.elements[0]) && 
+          (bindingList.elements[0] as SSymbol).name === "vector") {
+        bindingList = {
+          ...bindingList,
+          elements: bindingList.elements.slice(1)
+        } as SList;
+      }
       
       // Validate that binding list has even number of elements
       if (bindingList.elements.length % 2 !== 0) {
@@ -618,12 +640,20 @@ function transformBindingList(
 ): SList {
   const transformedBindings: SExp[] = [];
   
-  for (let i = 0; i < bindingList.elements.length; i += 2) {
+  // Handle vector notation: skip "vector" symbol if present
+  let elements = bindingList.elements;
+  if (elements.length > 0 && 
+      isSymbol(elements[0]) && 
+      (elements[0] as SSymbol).name === "vector") {
+    elements = elements.slice(1);
+  }
+  
+  for (let i = 0; i < elements.length; i += 2) {
     // Keep the binding name unchanged
-    transformedBindings.push(bindingList.elements[i]);
+    transformedBindings.push(elements[i]);
     
     // Transform the binding value
-    const value = bindingList.elements[i + 1];
+    const value = elements[i + 1];
     transformedBindings.push(transformNode(value, enumDefinitions, logger));
   }
   

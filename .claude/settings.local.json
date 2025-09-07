@@ -10,7 +10,16 @@
       "Bash(cat:*)",
       "Bash(deno publish:*)",
       "Bash(chmod:*)",
-      "Bash(./fix-imports.sh)"
+      "Bash(./fix-imports.sh)",
+      "Bash(/Users/seoksoonjang/Desktop/hql/core/cli/transpile.ts take.hql /tmp/take-cli.js)",
+      "Bash(deno task:*)",
+      "Bash(find:*)",
+      "Bash(for:*)",
+      "Bash(/dev/null)",
+      "Bash(done)",
+      "Bash(do if ! deno run -A core/cli/run.ts \"$file\")",
+      "Bash(fi)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

@@ -100,7 +100,6 @@ export function createNumericAccessOperation(
 export function convertGetCallExpression(
     node: IR.IRCallExpression
   ): ts.Expression {
-    console.log("convertGetCallExpression!!")
     return execute(node, "get call expression", () => {
 
       // Make sure this is actually a get call
@@ -135,6 +134,11 @@ export function convertGetCallExpression(
         const keyValue = (keyArg as IR.IRNumericLiteral).value;
         return ts.factory.createElementAccessExpression(obj, ts.factory.createNumericLiteral(keyValue));
       }
+      
+      // For identifiers or any other expression, use element access with the converted expression
+      // This handles cases like (get coll i) where i is a variable
+      const key = convertIRExpr(keyArg);
+      return ts.factory.createElementAccessExpression(obj, key);
     });
   }
 

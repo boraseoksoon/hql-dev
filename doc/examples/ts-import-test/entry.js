@@ -1,0 +1,11 @@
+// doc/examples/ts-import-test/simple.js
+function jsFunction(x) {
+  return x * 2;
+}
+
+// .hql-cache/1/doc/examples/ts-import-test/entry.ts
+console.log("JS function result:", jsFunction(10));
+export {
+  jsFunction
+};
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsic2ltcGxlLmpzIiwgIi4uLy4uLy4uLy5ocWwtY2FjaGUvMS9kb2MvZXhhbXBsZXMvdHMtaW1wb3J0LXRlc3QvZW50cnkudHMiXSwKICAic291cmNlc0NvbnRlbnQiOiBbIi8vIFNpbXBsZSBKYXZhU2NyaXB0IG1vZHVsZVxuXG4vLyBFeHBvcnQgYSBmdW5jdGlvblxuZXhwb3J0IGZ1bmN0aW9uIGpzRnVuY3Rpb24oeCkge1xuICByZXR1cm4geCAqIDI7XG59ICIsICJpbXBvcnQgeyBqc0Z1bmN0aW9uIH0gZnJvbSBcIi4vc2ltcGxlLmpzXCI7XG5jb25zb2xlLmxvZyhcIkpTIGZ1bmN0aW9uIHJlc3VsdDpcIiwganNGdW5jdGlvbigxMCkpO1xuZXhwb3J0IHsganNGdW5jdGlvbiB9O1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUdPLFNBQVMsV0FBVyxHQUFHO0FBQzVCLFNBQU8sSUFBSTtBQUNiOzs7QUNKQSxRQUFRLElBQUksdUJBQXVCLFdBQVcsRUFBRSxDQUFDOyIsCiAgIm5hbWVzIjogW10KfQo=

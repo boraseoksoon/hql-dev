@@ -1,7 +1,10 @@
 {
   "name": "@boraseoksoon/hql",
-  "version": "7.7.9",
-  "exports": "./mod.ts",
+  "version": "7.8.7",
+  "exports": {
+    ".": "./mod.ts",
+    "./bundler": "./bundler.ts"
+  },
   "license": "MIT",
   "tasks": {
     "embed-macros": "deno run -A tools/embed_macros.ts",
@@ -9,4 +12,3 @@
     "publish": "deno task publish:prep && deno publish"
   }
 }
-

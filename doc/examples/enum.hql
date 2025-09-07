@@ -12,7 +12,7 @@
 )
 
 ;; Simple assignment
-(let heading Direction.north)
+(var heading Direction.north)
 
 ;; Value equality
 (if (= heading Direction.west)
@@ -114,7 +114,7 @@
 
 ;; Testing the functions
 (processPayment payment1)
-(processayment payment2)
+(processPayment payment2)
 
 
 ;; type inference
@@ -127,7 +127,7 @@
 )
 
 ;; With raw values
-(enum StatusCode: In
+(enum StatusCode: Int
   (case ok 200)
   (case notFound 404)
   (case serverError 500)
