@@ -40,13 +40,28 @@ export async function run(
     return await options.adapter(js);
   }
   
-  // Default: eval in isolated scope
+  // Check if code has imports - if so, use temp file + dynamic import
+  if (js.includes('import ') && js.match(/^import\s+/m)) {
+    // Create temp file and dynamically import it
+    const tempFile = await Deno.makeTempFile({ suffix: '.mjs' });
+    await Deno.writeTextFile(tempFile, js);
+    try {
+      // Use file:// URL to prevent JSR from rewriting the path
+      const fileUrl = new URL(`file://${tempFile}`).href;
+      const module = await import(fileUrl);
+      return module.default || module;
+    } finally {
+      await Deno.remove(tempFile).catch(() => {});
+    }
+  }
+  
+  // Default: eval in isolated scope (for code without imports)
   const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
   const fn = new AsyncFunction(js);
   return await fn();
 }
 
-export const version = "7.7.7";
+export const version = "7.7.9";
 
 const hql: HQLModule = { isHQL, transpile, run, version };
 export default hql;

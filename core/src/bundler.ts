@@ -524,7 +524,8 @@ async function bundleWithEsbuild(
 
     const result = await esbuild.build(buildOptions);
 
-    await esbuild.stop();
+    // esbuild.stop() doesn't exist in newer versions
+    // await esbuild.stop();
 
     // Post-process the output if needed
     if (result.metafile) {
