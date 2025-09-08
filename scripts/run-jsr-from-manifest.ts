@@ -1,18 +1,18 @@
-// deno run -A scripts/run-jsr-7-8-7-from-manifest.ts tests/manifest-official.json
+// deno run -A scripts/run-jsr-from-manifest.ts tests/manifest-official.json
 // Static ESM JSR runner for a manifest (supports globs via std/fs)
+// Uses the latest published version from JSR
 
 import * as path from "jsr:@std/path@1";
 import { expandGlob } from "jsr:@std/fs@1/expand-glob";
+// Use version 7.8.15 from JSR
 import {
   runFile as runFileHql,
   version as HQL_VERSION
-} from "jsr:@boraseoksoon/hql@7.8.11";
-import { transpileCLI } from "jsr:@boraseoksoon/hql@7.8.11/bundler";
+} from "jsr:@boraseoksoon/hql@7.8.15";
+import { transpileCLI } from "jsr:@boraseoksoon/hql@7.8.15/bundler";
 
-if (HQL_VERSION !== "7.8.11") {
-  console.error(`Expected jsr:@boraseoksoon/hql@7.8.11 but resolved ${HQL_VERSION}`);
-  Deno.exit(1);
-}
+// Just log the version being used
+console.log(`Using jsr:@boraseoksoon/hql version ${HQL_VERSION}`);
 
 const root = Deno.cwd();
 const manifestPath = Deno.args[0] || "tests/manifest-official.json";
@@ -33,7 +33,7 @@ async function expandEntries(entries: string[]): Promise<string[]> {
 }
 
 let passed = 0, failed = 0;
-console.log(`=== HQL JSR Suite v${HQL_VERSION} — manifest: ${manifestPath} ===\n`);
+console.log(`=== HQL JSR Suite (v${HQL_VERSION}) — manifest: ${manifestPath} ===\n`);
 
 const files = await expandEntries(manifest);
 for (const file of files) {

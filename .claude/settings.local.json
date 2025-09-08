@@ -20,7 +20,8 @@
       "Bash(do if ! deno run -A core/cli/run.ts \"$file\")",
       "Bash(fi)",
       "Bash(ls:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(timeout 5 deno run:*)"
     ],
     "deny": [],
     "ask": []

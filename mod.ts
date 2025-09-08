@@ -98,7 +98,7 @@ export async function runFile(filePath: string, options: { adapter?: (js: string
   }
 }
 
-export const version = "7.8.11";
+export const version = "7.8.15";
 
 const hql: HQLModule = { isHQL, transpile, run, runFile, version } as HQLModule;
 export default hql;

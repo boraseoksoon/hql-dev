@@ -1187,6 +1187,7 @@ async function loadJavaScriptModule(
     
     // Check if JS file contains HQL imports or needs processing
     const jsSource = await Deno.readTextFile(resolvedPath);
+    logger.debug(`Checking JS file ${resolvedPath} for imports...`);
     if (hasHqlImports(jsSource) || jsSource.includes('import') && jsSource.includes('from')) {
       logger.debug(`JS file ${resolvedPath} needs import processing.`);
       

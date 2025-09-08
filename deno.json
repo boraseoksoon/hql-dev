@@ -1,6 +1,6 @@
 {
   "name": "@boraseoksoon/hql",
-  "version": "7.8.11",
+  "version": "7.8.15",
   "exports": {
     ".": "./mod.ts",
     "./bundler": "./bundler.ts"
@@ -12,8 +12,8 @@
     "publish": "deno task publish:prep && deno publish",
     "test:local:official": "deno run -A scripts/run-local-from-manifest.ts tests/manifest-official.json",
     "test:local:examples": "deno run -A scripts/run-local-from-manifest.ts tests/manifest-examples-curated.json",
-    "test:jsr:official": "deno run -A scripts/run-jsr-7-8-7-from-manifest.ts tests/manifest-official.json",
-    "test:jsr:examples": "deno run -A scripts/run-jsr-7-8-7-from-manifest.ts tests/manifest-examples-curated.json",
+    "test:jsr:official": "deno run -A scripts/run-jsr-from-manifest.ts tests/manifest-official.json",
+    "test:jsr:examples": "deno run -A scripts/run-jsr-from-manifest.ts tests/manifest-examples-curated.json",
     "test:all": "deno task test:local:official && deno task test:jsr:official && deno task test:local:examples && deno task test:jsr:examples"
   }
 }
