@@ -4,12 +4,12 @@
 
 import * as path from "jsr:@std/path@1";
 import { expandGlob } from "jsr:@std/fs@1/expand-glob";
-// Use version 7.8.15 from JSR
+// Use version 7.8.17 from JSR
 import {
   runFile as runFileHql,
   version as HQL_VERSION
-} from "jsr:@boraseoksoon/hql@7.8.15";
-import { transpileCLI } from "jsr:@boraseoksoon/hql@7.8.15/bundler";
+} from "jsr:@boraseoksoon/hql@7.8.17";
+import { transpileCLI } from "jsr:@boraseoksoon/hql@7.8.17/bundler";
 
 // Just log the version being used
 console.log(`Using jsr:@boraseoksoon/hql version ${HQL_VERSION}`);

@@ -63,9 +63,19 @@ export function getImportMapping(original: string): string | undefined {
  * Get the cache directory path
  */
 export async function getCacheDir(): Promise<string> {
-  // Always resolve cache dir relative to the project root, not CWD
-  const projectRoot = join(dirname(fromFileUrl(import.meta.url)), '../../..');
-  const cacheRoot = join(projectRoot, HQL_CACHE_DIR, CACHE_VERSION);
+  // Allow host to override cache root (useful when packaged or running inside a larger platform like HLVM)
+  let cacheRootBase: string | null = null;
+  try {
+    // If HQL_CACHE_ROOT is set, use it as absolute base directory for the cache
+    cacheRootBase = Deno.env.get("HQL_CACHE_ROOT") || null;
+  } catch {
+    // Ignore if env access is not permitted
+  }
+
+  // Default: resolve cache dir relative to the project root (package location)
+  const defaultProjectRoot = join(dirname(fromFileUrl(import.meta.url)), '../../..');
+  const base = cacheRootBase || defaultProjectRoot;
+  const cacheRoot = join(base, HQL_CACHE_DIR, CACHE_VERSION);
   await ensureDir(cacheRoot);
   return cacheRoot;
 }
