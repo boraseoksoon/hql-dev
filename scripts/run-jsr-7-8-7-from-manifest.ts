@@ -6,11 +6,11 @@ import { expandGlob } from "jsr:@std/fs@1/expand-glob";
 import {
   runFile as runFileHql,
   version as HQL_VERSION
-} from "jsr:@boraseoksoon/hql@7.8.10";
-import { transpileCLI } from "jsr:@boraseoksoon/hql@7.8.10/bundler";
+} from "jsr:@boraseoksoon/hql@7.8.11";
+import { transpileCLI } from "jsr:@boraseoksoon/hql@7.8.11/bundler";
 
-if (HQL_VERSION !== "7.8.10") {
-  console.error(`Expected jsr:@boraseoksoon/hql@7.8.10 but resolved ${HQL_VERSION}`);
+if (HQL_VERSION !== "7.8.11") {
+  console.error(`Expected jsr:@boraseoksoon/hql@7.8.11 but resolved ${HQL_VERSION}`);
   Deno.exit(1);
 }
 
