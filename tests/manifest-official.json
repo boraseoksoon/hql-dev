@@ -26,6 +26,11 @@
   "doc/examples/import-test/export-test.hql",
   "doc/examples/import-test/hyphen-test.hql",
   "doc/examples/ts-import-test/entry2.hql",
-  "doc/examples/import-test/direct-js-import.hql"
+  "doc/examples/import-test/direct-js-import.hql",
+  "doc/examples/circular-basic/entry.hql",
+  "doc/examples/test-complex-imports/extreme-test-simple/entry.hql",
+  "doc/examples/test-complex-imports/extreme-test/entry.hql",
+  "doc/examples/circular-multihop/entry.hql",
+  "doc/examples/reexport-basic/entry.hql",
+  "doc/examples/circular-js-hql/entry.hql"
 ]
-

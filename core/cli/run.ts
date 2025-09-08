@@ -58,30 +58,25 @@ async function transpileAndExecute(
   }
   
   const jsOutputPath = `${runDir}/${basename(inputPath)}.js`;
-
-  // Set error context to enable proper error location mapping
   setErrorContext(inputPath, jsOutputPath);
 
   try {
+    const forceEnv = (Deno.env.get("HQL_FORCE_REBUILD") || "").toLowerCase();
+    const forceRebuild = forceEnv === "" ? true : !(forceEnv === "0" || forceEnv === "false" || forceEnv === "no");
     await transpileCLI(inputPath, jsOutputPath, {
       verbose: options.verbose,
       showTiming: options.showTiming,
-      force: true, // Always regenerate to ensure latest code is used
+      force: forceRebuild,
     });
   } catch (transpileError) {
-    // Enrich transpile errors with source context
     const enrichedError = await enrichErrorWithContext(transpileError, inputPath);
     throw enrichedError;
   }
-  
+
   logger.debug(`Running transpiled code from: ${jsOutputPath}`);
-  
   const importUrl = `file://${jsOutputPath}`;
-  
   try {
-    // Import and run with error handling
     const module = await import(importUrl);
-    
     if (module.default && typeof module.default === "function") {
       logger.debug("Found default export function, executing it");
       await module.default();
@@ -89,12 +84,9 @@ async function transpileAndExecute(
       logger.debug("Module imported successfully");
     }
   } catch (runtimeError) {
-    // This is likely a runtime error in the user's code
     logger.debug(`Runtime error occurred: ${runtimeError.message}`);
-    
-    // Let the runtime error handler handle this - we enrich errors there
     await handleRuntimeError(runtimeError);
-    throw runtimeError; // Propagate error to ensure process exits on fatal error
+    throw runtimeError;
   }
 }
 

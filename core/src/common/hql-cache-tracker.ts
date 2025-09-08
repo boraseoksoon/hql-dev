@@ -181,8 +181,17 @@ async function processCachedImports(
     const fullImport = match[0];
     const importPath = match[1];
     
-    // Skip if already an absolute path
+    // Normalize file URL imports to plain absolute paths to avoid leaking file:// into bundles
     if (importPath.startsWith('file://')) {
+      try {
+        const url = new URL(importPath);
+        const fsPath = url.pathname; // Absolute filesystem path
+        const newImport = fullImport.replace(importPath, fsPath);
+        modifiedContent = modifiedContent.replace(fullImport, newImport);
+        logger.debug(`Normalized file URL import: ${fullImport} -> ${newImport}`);
+      } catch {
+        // If parsing fails, leave as is
+      }
       continue;
     }
     
@@ -218,7 +227,7 @@ async function processCachedImports(
       // If we have a special mapping for this import, use it (for ANY file type)
       if (importPathMap.has(resolvedOriginalPath)) {
         const mappedPath = importPathMap.get(resolvedOriginalPath)!;
-        const newImport = fullImport.replace(importPath, `file://${mappedPath}`);
+        const newImport = fullImport.replace(importPath, mappedPath);
         modifiedContent = modifiedContent.replace(fullImport, newImport);
         logger.debug(`Rewritten import using mapping: ${fullImport} -> ${newImport}`);
         continue;
@@ -235,7 +244,7 @@ async function processCachedImports(
         
         // Register mapping and rewrite import
         registerImportMapping(resolvedOriginalPath, cachedJsPath);
-        const newImport = fullImport.replace(importPath, `file://${cachedJsPath}`);
+        const newImport = fullImport.replace(importPath, cachedJsPath);
         modifiedContent = modifiedContent.replace(fullImport, newImport);
         logger.debug(`Rewritten relative JS import: ${fullImport} -> ${newImport}`);
         continue;
@@ -283,7 +292,7 @@ async function processCachedImports(
         registerImportMapping(resolvedOriginalPath, foundCachedPath);
         
         // Update the import to use absolute path
-        const newImport = fullImport.replace(importPath, `file://${foundCachedPath}`);
+        const newImport = fullImport.replace(importPath, foundCachedPath);
         modifiedContent = modifiedContent.replace(fullImport, newImport);
         logger.debug(`Resolved import path: ${fullImport} -> ${newImport}`);
       }
@@ -835,8 +844,28 @@ async function processHqlImportsInJs(content: string, filePath: string): Promise
         // Use the processHqlFile function which handles nested imports properly
         const cachedTsPath = await processHqlFile(resolvedImportPath);
         
-        // CRITICAL: Use absolute path with file:// for cache references
-        const newImportPath = `file://${cachedTsPath}`;
+        // Additionally, produce a cached JS output to avoid TS/loader overhead in JS↔HQL cycles
+        const cachedJsPath = await getCachedPath(resolvedImportPath, '.js', { 
+          preserveRelative: true, 
+          createDir: true 
+        });
+        try {
+          const esbuild = await import('npm:esbuild@^0.17.0');
+          await esbuild.build({
+            entryPoints: [cachedTsPath],
+            outfile: cachedJsPath,
+            format: 'esm',
+            target: 'es2020',
+            bundle: false,
+            platform: 'neutral',
+          });
+          logger.debug(`Transpiled cached TS to JS for JS import: ${cachedTsPath} -> ${cachedJsPath}`);
+        } catch (e) {
+          logger.debug(`Failed TS->JS quick transpile for ${cachedTsPath}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        
+        // Prefer JS path for imports in JS files
+        const newImportPath = `file://${cachedJsPath}`;
         
         // Modify the import to use the new path
         const newImport = fullImport.replace(importPath, newImportPath);

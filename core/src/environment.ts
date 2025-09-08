@@ -330,9 +330,29 @@ export class Environment {
   importModule(moduleName: string, exports: Record<string, Value>): void {
     try {
       this.logger.debug(`Importing module: ${moduleName}`);
-      const moduleObj: Record<string, Value> = { ...exports };
-      this.define(moduleName, moduleObj);
-      this.moduleExports.set(moduleName, exports);
+      // Use a single stable object per module to support circular/live bindings
+      let targetObj: Record<string, Value> | undefined = undefined;
+      if (this.moduleExports.has(moduleName)) {
+        targetObj = this.moduleExports.get(moduleName)!;
+      } else {
+        // Check if already defined as a variable (from a prior pre-registration)
+        const existing = this.variables.get(moduleName);
+        if (existing && typeof existing === 'object' && existing !== null) {
+          targetObj = existing as Record<string, Value>;
+        } else {
+          targetObj = {} as Record<string, Value>;
+        }
+        // Ensure the environment maps point to the same object
+        this.moduleExports.set(moduleName, targetObj);
+        // Define the module symbol if not already defined
+        if (!existing) {
+          this.define(moduleName, targetObj);
+        }
+      }
+      // Merge/overwrite exports into the stable object (live binding semantics)
+      for (const [k, v] of Object.entries(exports)) {
+        (targetObj as Record<string, Value>)[k] = v;
+      }
       
       // Register module in symbol table
       globalSymbolTable.set({

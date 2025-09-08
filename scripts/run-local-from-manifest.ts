@@ -32,11 +32,13 @@ for (const file of files) {
   try {
     const cmd = new Deno.Command("deno", {
       args: ["run", "-A", path.resolve(root, "core/cli/run.ts"), file],
+      env: { HQL_FORCE_REBUILD: "0" },
       stdout: "inherit",
       stderr: "inherit",
     });
     const child = cmd.spawn();
-    const timer = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 60_000));
+    const perFileTimeoutMs = Number(Deno.env.get("HQL_TEST_TIMEOUT_MS") || "45000");
+    const timer = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), perFileTimeoutMs));
     let status;
     try {
       status = await Promise.race([child.status, timer]);
