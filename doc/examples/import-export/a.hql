@@ -1,10 +1,10 @@
 (import b from "./b.hql")
 (import [hello] from "./b.hql")
 
-(b.hello "world")
-(hello "world")
+(b.hello)
+(hello)
 
-(let numbers (new Array))
+(var numbers (new Array))
 (numbers.push 1)
 (numbers.push 2)
 (numbers.push 3)

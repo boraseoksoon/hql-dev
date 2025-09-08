@@ -11,6 +11,6 @@
   (reduce args (fn (acc x) (+ acc x)) 0))
 
 ;; Export all functions
-(export [multiplyByTwo, subtractFive, addValues])
+(export [multiplyByTwo subtractFive addValues])
 
 (console.log "utility.hql loaded") 
