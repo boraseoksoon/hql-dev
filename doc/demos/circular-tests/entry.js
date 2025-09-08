@@ -1,0 +1,9 @@
+// .hql-cache/1/doc/examples/circular-dependency/case1-hql-entry/entry.ts
+function add_hql(x, y) {
+  return x + y;
+}
+console.log("Circular dependency test - limitation documented");
+export {
+  add_hql
+};
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9jaXJjdWxhci1kZXBlbmRlbmN5L2Nhc2UxLWhxbC1lbnRyeS9lbnRyeS50cyJdLAogICJzb3VyY2VzQ29udGVudCI6IFsiZnVuY3Rpb24gYWRkX2hxbCh4LCB5KSB7XG4gICAgcmV0dXJuIHggKyB5O1xufVxuZXhwb3J0IHsgYWRkX2hxbCB9O1xuY29uc29sZS5sb2coXCJDaXJjdWxhciBkZXBlbmRlbmN5IHRlc3QgLSBsaW1pdGF0aW9uIGRvY3VtZW50ZWRcIik7XG4iXSwKICAibWFwcGluZ3MiOiAiO0FBQUEsU0FBUyxRQUFRLEdBQUcsR0FBRztBQUNuQixTQUFPLElBQUk7QUFDZjtBQUVBLFFBQVEsSUFBSSxrREFBa0Q7IiwKICAibmFtZXMiOiBbXQp9Cg==

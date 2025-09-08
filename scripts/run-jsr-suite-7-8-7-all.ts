@@ -3,11 +3,11 @@
 // and executes them using jsr:@boraseoksoon/hql@7.8.7.
 
 import * as path from "jsr:@std/path@1";
-import { runFile, version as HQL_VERSION } from "jsr:@boraseoksoon/hql@7.8.7";
-import { transpileCLI } from "jsr:@boraseoksoon/hql@7.8.7/bundler";
+import { runFile, version as HQL_VERSION } from "jsr:@boraseoksoon/hql@7.8.9";
+import { transpileCLI } from "jsr:@boraseoksoon/hql@7.8.9/bundler";
 
-if (HQL_VERSION !== "7.8.7") {
-  console.error(`Expected jsr:@boraseoksoon/hql@7.8.7 but resolved ${HQL_VERSION}`);
+if (HQL_VERSION !== "7.8.9") {
+  console.error(`Expected jsr:@boraseoksoon/hql@7.8.9 but resolved ${HQL_VERSION}`);
   Deno.exit(1);
 }
 
@@ -59,4 +59,3 @@ for (const file of files) {
 
 console.log(`\nResults: ${passed}/${passed + failed} passed`);
 if (failed) Deno.exit(1);
-

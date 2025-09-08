@@ -137,13 +137,19 @@ async function processHqlImports(
     if (await needsRegeneration(resolvedHqlPath, ".ts") || options.force) {
       logger.debug(`Transpiling HQL import: ${resolvedHqlPath}`);
       const hqlSource = await readFile(resolvedHqlPath);
-      const { code: tsCode } = await transpileToJavascript(hqlSource, {
+      let { code: tsCode } = await transpileToJavascript(hqlSource, {
         baseDir: dirname(resolvedHqlPath),
         verbose: options.verbose,
         tempDir: options.tempDir,
         sourceDir: options.sourceDir || dirname(resolvedHqlPath),
         currentFile: resolvedHqlPath,
       });
+      
+      // IMPORTANT: Recursively process any HQL imports in the transpiled TypeScript
+      if (checkForHqlImports(tsCode)) {
+        logger.debug(`Found nested HQL imports in ${resolvedHqlPath}, processing recursively`);
+        tsCode = await processHqlImports(tsCode, resolvedHqlPath, options, false);
+      }
 
       // Cache the transpiled file
       await cacheTranspiledFile(resolvedHqlPath, tsCode, ".ts", { preserveRelative: true });
@@ -528,9 +534,11 @@ async function bundleWithEsbuild(
     // await esbuild.stop();
 
     // Post-process the output if needed
-    if (result.metafile) {
-      await postProcessBundleOutput(outputPath);
-    }
+    // DISABLED: This breaks imports by replacing paths with "[BUNDLED]"
+    // The bundler should already resolve all imports when bundle: true
+    // if (result.metafile) {
+    //   await postProcessBundleOutput(outputPath);
+    // }
     
     logger.log({ 
       text: `Successfully bundled to ${outputPath}`, 

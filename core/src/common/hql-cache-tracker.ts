@@ -772,9 +772,9 @@ async function processTsImportsInJs(content: string, filePath: string): Promise<
       if (await exists(resolvedImportPath)) {
         logger.debug(`Found TS import in JS file: ${importPath}`);
         
-        // Copy the TypeScript file to cache
+        // Copy the TypeScript file to cache with .ts extension
         const tsContent = await readTextFile(resolvedImportPath);
-        const cachedTsPath = await writeToCachedPath(resolvedImportPath, tsContent, "", {
+        const cachedTsPath = await writeToCachedPath(resolvedImportPath, tsContent, ".ts", {
           preserveRelative: true
         });
         

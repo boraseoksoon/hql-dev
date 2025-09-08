@@ -1,3 +1,4 @@
+;; Demo import/export cases (moved from examples)
 (fn hello ()
   (console.log "Hello, world"))
 
@@ -8,3 +9,4 @@
 
 (export [hello])
 (export [hey])
+

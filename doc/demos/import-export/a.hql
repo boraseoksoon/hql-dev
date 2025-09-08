@@ -1,3 +1,4 @@
+;; Demo import/export cases (moved from examples)
 (import b from "./b.hql")
 (import [hello] from "./b.hql")
 
@@ -13,3 +14,15 @@
 (numbers.push 6)
 (numbers.push 7)
 (print numbers)
+
+(fn hello ()
+  (console.log "Hello, world"))
+
+(fn hey (name)
+  (console.log (str "Hello, " name)))
+
+(hey "yo")
+
+(export [hello])
+(export [hey])
+
