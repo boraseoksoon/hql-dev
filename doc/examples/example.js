@@ -1,0 +1,8 @@
+// .hql-cache/1/doc/examples/example.ts
+var number = 5;
+var result = number + 1;
+console.log("Number:", number);
+console.log("Result:", result);
+var a = 10;
+console.log("double man a yo: ", 20 * a);
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9leGFtcGxlLnRzIl0sCiAgInNvdXJjZXNDb250ZW50IjogWyJjb25zdCBudW1iZXIgPSA1O1xuY29uc3QgcmVzdWx0ID0gbnVtYmVyICsgMTtcbmNvbnNvbGUubG9nKFwiTnVtYmVyOlwiLCBudW1iZXIpO1xuY29uc29sZS5sb2coXCJSZXN1bHQ6XCIsIHJlc3VsdCk7XG5jb25zdCBhID0gMTA7XG5jb25zb2xlLmxvZyhcImRvdWJsZSBtYW4gYSB5bzogXCIsIDIwICogYSk7XG4iXSwKICAibWFwcGluZ3MiOiAiO0FBQUEsSUFBTSxTQUFTO0FBQ2YsSUFBTSxTQUFTLFNBQVM7QUFDeEIsUUFBUSxJQUFJLFdBQVcsTUFBTTtBQUM3QixRQUFRLElBQUksV0FBVyxNQUFNO0FBQzdCLElBQU0sSUFBSTtBQUNWLFFBQVEsSUFBSSxxQkFBcUIsS0FBSyxDQUFDOyIsCiAgIm5hbWVzIjogW10KfQo=

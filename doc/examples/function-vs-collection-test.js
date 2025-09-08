@@ -1,0 +1,41 @@
+// .hql-cache/1/doc/examples/function-vs-collection-test.ts
+function myFunction(x) {
+  return x + 10;
+}
+function getValueFromFunction(x) {
+  return myFunction(x);
+}
+var myArray = ["apple", "banana", "cherry"];
+var myMap = {
+  a: "apple",
+  b: "banana",
+  c: "cherry"
+};
+function getElement(collection, key) {
+  return collection[key];
+}
+console.log("===== Function call tests =====");
+console.log("Result of myFunction(5):", myFunction(5));
+console.log("Result of getValueFromFunction(5):", getValueFromFunction(5));
+console.log("===== Array access tests =====");
+console.log("Element 0 from array:", myArray[0]);
+console.log("Element 1 from array:", myArray[1]);
+console.log("Element 2 from array:", myArray[2]);
+console.log("===== Map access tests =====");
+console.log("Property 'a' from map:", myMap["a"]);
+console.log("Property 'b' from map:", myMap["b"]);
+console.log("Property 'c' from map:", myMap["c"]);
+console.log("===== Mixed case tests =====");
+console.log("Array access through function:", getElement(myArray, 2));
+console.log("Map access through function:", getElement(myMap, "c"));
+console.log("===== Multiple argument function call =====");
+function multiArgFunction(a, b, c) {
+  return a + b * c;
+}
+console.log("Result of multiArgFunction(1, 2, 3):", multiArgFunction(1, 2, 3));
+console.log("===== Function as argument test =====");
+function applyFunction(f, x) {
+  return f(x);
+}
+console.log("Result of applyFunction(myFunction, 5):", applyFunction(myFunction, 5));
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiLi4vLi4vLmhxbC1jYWNoZS8xL2RvYy9leGFtcGxlcy9mdW5jdGlvbi12cy1jb2xsZWN0aW9uLXRlc3QudHMiXSwKICAic291cmNlc0NvbnRlbnQiOiBbImZ1bmN0aW9uIG15RnVuY3Rpb24oeCkge1xuICAgIHJldHVybiB4ICsgMTA7XG59XG5mdW5jdGlvbiBnZXRWYWx1ZUZyb21GdW5jdGlvbih4KSB7XG4gICAgcmV0dXJuIG15RnVuY3Rpb24oeCk7XG59XG5sZXQgbXlBcnJheSA9IFtcImFwcGxlXCIsIFwiYmFuYW5hXCIsIFwiY2hlcnJ5XCJdO1xubGV0IG15TWFwID0ge1xuICAgIGE6IFwiYXBwbGVcIixcbiAgICBiOiBcImJhbmFuYVwiLFxuICAgIGM6IFwiY2hlcnJ5XCJcbn07XG5mdW5jdGlvbiBnZXRFbGVtZW50KGNvbGxlY3Rpb24sIGtleSkge1xuICAgIHJldHVybiBjb2xsZWN0aW9uW2tleV07XG59XG5jb25zb2xlLmxvZyhcIj09PT09IEZ1bmN0aW9uIGNhbGwgdGVzdHMgPT09PT1cIik7XG5jb25zb2xlLmxvZyhcIlJlc3VsdCBvZiBteUZ1bmN0aW9uKDUpOlwiLCBteUZ1bmN0aW9uKDUpKTtcbmNvbnNvbGUubG9nKFwiUmVzdWx0IG9mIGdldFZhbHVlRnJvbUZ1bmN0aW9uKDUpOlwiLCBnZXRWYWx1ZUZyb21GdW5jdGlvbig1KSk7XG5jb25zb2xlLmxvZyhcIj09PT09IEFycmF5IGFjY2VzcyB0ZXN0cyA9PT09PVwiKTtcbmNvbnNvbGUubG9nKFwiRWxlbWVudCAwIGZyb20gYXJyYXk6XCIsIG15QXJyYXlbMF0pO1xuY29uc29sZS5sb2coXCJFbGVtZW50IDEgZnJvbSBhcnJheTpcIiwgbXlBcnJheVsxXSk7XG5jb25zb2xlLmxvZyhcIkVsZW1lbnQgMiBmcm9tIGFycmF5OlwiLCBteUFycmF5WzJdKTtcbmNvbnNvbGUubG9nKFwiPT09PT0gTWFwIGFjY2VzcyB0ZXN0cyA9PT09PVwiKTtcbmNvbnNvbGUubG9nKFwiUHJvcGVydHkgJ2EnIGZyb20gbWFwOlwiLCBteU1hcFtcImFcIl0pO1xuY29uc29sZS5sb2coXCJQcm9wZXJ0eSAnYicgZnJvbSBtYXA6XCIsIG15TWFwW1wiYlwiXSk7XG5jb25zb2xlLmxvZyhcIlByb3BlcnR5ICdjJyBmcm9tIG1hcDpcIiwgbXlNYXBbXCJjXCJdKTtcbmNvbnNvbGUubG9nKFwiPT09PT0gTWl4ZWQgY2FzZSB0ZXN0cyA9PT09PVwiKTtcbmNvbnNvbGUubG9nKFwiQXJyYXkgYWNjZXNzIHRocm91Z2ggZnVuY3Rpb246XCIsIGdldEVsZW1lbnQobXlBcnJheSwgMikpO1xuY29uc29sZS5sb2coXCJNYXAgYWNjZXNzIHRocm91Z2ggZnVuY3Rpb246XCIsIGdldEVsZW1lbnQobXlNYXAsIFwiY1wiKSk7XG5jb25zb2xlLmxvZyhcIj09PT09IE11bHRpcGxlIGFyZ3VtZW50IGZ1bmN0aW9uIGNhbGwgPT09PT1cIik7XG5mdW5jdGlvbiBtdWx0aUFyZ0Z1bmN0aW9uKGEsIGIsIGMpIHtcbiAgICByZXR1cm4gYSArIGIgKiBjO1xufVxuY29uc29sZS5sb2coXCJSZXN1bHQgb2YgbXVsdGlBcmdGdW5jdGlvbigxLCAyLCAzKTpcIiwgbXVsdGlBcmdGdW5jdGlvbigxLCAyLCAzKSk7XG5jb25zb2xlLmxvZyhcIj09PT09IEZ1bmN0aW9uIGFzIGFyZ3VtZW50IHRlc3QgPT09PT1cIik7XG5mdW5jdGlvbiBhcHBseUZ1bmN0aW9uKGYsIHgpIHtcbiAgICByZXR1cm4gZih4KTtcbn1cbmNvbnNvbGUubG9nKFwiUmVzdWx0IG9mIGFwcGx5RnVuY3Rpb24obXlGdW5jdGlvbiwgNSk6XCIsIGFwcGx5RnVuY3Rpb24obXlGdW5jdGlvbiwgNSkpO1xuIl0sCiAgIm1hcHBpbmdzIjogIjtBQUFBLFNBQVMsV0FBVyxHQUFHO0FBQ25CLFNBQU8sSUFBSTtBQUNmO0FBQ0EsU0FBUyxxQkFBcUIsR0FBRztBQUM3QixTQUFPLFdBQVcsQ0FBQztBQUN2QjtBQUNBLElBQUksVUFBVSxDQUFDLFNBQVMsVUFBVSxRQUFRO0FBQzFDLElBQUksUUFBUTtBQUFBLEVBQ1IsR0FBRztBQUFBLEVBQ0gsR0FBRztBQUFBLEVBQ0gsR0FBRztBQUNQO0FBQ0EsU0FBUyxXQUFXLFlBQVksS0FBSztBQUNqQyxTQUFPLFdBQVcsR0FBRztBQUN6QjtBQUNBLFFBQVEsSUFBSSxpQ0FBaUM7QUFDN0MsUUFBUSxJQUFJLDRCQUE0QixXQUFXLENBQUMsQ0FBQztBQUNyRCxRQUFRLElBQUksc0NBQXNDLHFCQUFxQixDQUFDLENBQUM7QUFDekUsUUFBUSxJQUFJLGdDQUFnQztBQUM1QyxRQUFRLElBQUkseUJBQXlCLFFBQVEsQ0FBQyxDQUFDO0FBQy9DLFFBQVEsSUFBSSx5QkFBeUIsUUFBUSxDQUFDLENBQUM7QUFDL0MsUUFBUSxJQUFJLHlCQUF5QixRQUFRLENBQUMsQ0FBQztBQUMvQyxRQUFRLElBQUksOEJBQThCO0FBQzFDLFFBQVEsSUFBSSwwQkFBMEIsTUFBTSxHQUFHLENBQUM7QUFDaEQsUUFBUSxJQUFJLDBCQUEwQixNQUFNLEdBQUcsQ0FBQztBQUNoRCxRQUFRLElBQUksMEJBQTBCLE1BQU0sR0FBRyxDQUFDO0FBQ2hELFFBQVEsSUFBSSw4QkFBOEI7QUFDMUMsUUFBUSxJQUFJLGtDQUFrQyxXQUFXLFNBQVMsQ0FBQyxDQUFDO0FBQ3BFLFFBQVEsSUFBSSxnQ0FBZ0MsV0FBVyxPQUFPLEdBQUcsQ0FBQztBQUNsRSxRQUFRLElBQUksNkNBQTZDO0FBQ3pELFNBQVMsaUJBQWlCLEdBQUcsR0FBRyxHQUFHO0FBQy9CLFNBQU8sSUFBSSxJQUFJO0FBQ25CO0FBQ0EsUUFBUSxJQUFJLHdDQUF3QyxpQkFBaUIsR0FBRyxHQUFHLENBQUMsQ0FBQztBQUM3RSxRQUFRLElBQUksdUNBQXVDO0FBQ25ELFNBQVMsY0FBYyxHQUFHLEdBQUc7QUFDekIsU0FBTyxFQUFFLENBQUM7QUFDZDtBQUNBLFFBQVEsSUFBSSwyQ0FBMkMsY0FBYyxZQUFZLENBQUMsQ0FBQzsiLAogICJuYW1lcyI6IFtdCn0K

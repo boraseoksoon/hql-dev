@@ -1,6 +1,6 @@
 {
   "name": "@boraseoksoon/hql",
-  "version": "7.8.15",
+  "version": "7.8.17",
   "exports": {
     ".": "./mod.ts",
     "./bundler": "./bundler.ts"

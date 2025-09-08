@@ -38,22 +38,25 @@ console.log(`=== HQL JSR Suite (v${HQL_VERSION}) — manifest: ${manifestPath} =
 const files = await expandEntries(manifest);
 for (const file of files) {
   const rel = path.relative(root, file);
+  // Prefer bundling/transpiling first to avoid any runtime-side
+  // diagnostics being printed on failure (noise in CI output).
   try {
-    // Try simple run first (runtime HTTP/jsr/npm)
+    const out = await transpileCLI(file);
+    await import("file://" + out);
+    console.log("OK ", rel);
+    passed++;
+    continue;
+  } catch (_bundlerErr) {
+    // If bundling fails (e.g. unsupported import), fall back to direct run.
+  }
+
+  try {
     await runFileHql(file);
     console.log("OK ", rel);
     passed++;
-  } catch (_e) {
-    // Fallback to compile+run
-    try {
-      const out = await transpileCLI(file);
-      await import("file://" + out);
-      console.log("OK ", rel);
-      passed++;
-    } catch (e2) {
-      console.error("FAIL", rel, ":", e2?.message || e2);
-      failed++;
-    }
+  } catch (e2) {
+    console.error("FAIL", rel, ":", e2?.message || e2);
+    failed++;
   }
 }
 
