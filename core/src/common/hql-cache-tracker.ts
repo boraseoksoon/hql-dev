@@ -566,6 +566,9 @@ async function processJavaScriptImports(content: string, filePath: string): Prom
   // First process HQL imports
   let result = await processHqlImportsInJs(content, filePath);
   
+  // Then process TypeScript imports
+  result = await processTsImportsInJs(result, filePath);
+  
   // Then process JS imports to handle hyphenated filenames
   result = await processJsImportsInJs(result, filePath);
   
@@ -730,6 +733,66 @@ async function processJsImportsInJs(content: string, filePath: string): Promise<
       modifiedContent = modifiedContent.replace(idRegex, sanitized);
       
       logger.debug(`Sanitized namespace import: ${importName} -> ${sanitized}`);
+    }
+  }
+  
+  return modifiedContent;
+}
+
+/**
+ * Process TypeScript imports in a JavaScript file
+ */
+async function processTsImportsInJs(content: string, filePath: string): Promise<string> {
+  // Find TypeScript imports
+  const tsImportRegex = /import\s+.*\s+from\s+['"]([^'"]+\.ts)['"]/g;
+  let modifiedContent = content;
+  let match;
+  
+  // Reset lastIndex
+  tsImportRegex.lastIndex = 0;
+  
+  logger.debug(`Processing TS imports in JS file: ${filePath}`);
+  
+  while ((match = tsImportRegex.exec(content)) !== null) {
+    const fullImport = match[0];
+    const importPath = match[1];
+    
+    // Skip absolute imports
+    if (importPath.startsWith('file://') || importPath.startsWith('http') || 
+        importPath.startsWith('npm:') || importPath.startsWith('jsr:')) {
+      logger.debug(`Skipping absolute import: ${importPath}`);
+      continue;
+    }
+    
+    try {
+      // Resolve relative import path
+      const resolvedImportPath = path.resolve(dirname(filePath), importPath);
+      
+      // Check if the TS file exists
+      if (await exists(resolvedImportPath)) {
+        logger.debug(`Found TS import in JS file: ${importPath}`);
+        
+        // Copy the TypeScript file to cache
+        const tsContent = await readTextFile(resolvedImportPath);
+        const cachedTsPath = await writeToCachedPath(resolvedImportPath, tsContent, "", {
+          preserveRelative: true
+        });
+        
+        // Register the mapping
+        registerImportMapping(resolvedImportPath, cachedTsPath);
+        
+        // CRITICAL: Use absolute path with file:// for cache references
+        const newImportPath = `file://${cachedTsPath}`;
+        
+        // Modify the import to use the new path
+        const newImport = fullImport.replace(importPath, newImportPath);
+        modifiedContent = modifiedContent.replace(fullImport, newImport);
+        logger.debug(`Rewritten TS import in JS: ${importPath} -> ${newImportPath}`);
+      } else {
+        logger.debug(`Could not find TS file: ${resolvedImportPath}`);
+      }
+    } catch (error) {
+      logger.debug(`Error processing TS import in JS ${importPath}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   

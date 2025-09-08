@@ -19,7 +19,8 @@
       "Bash(done)",
       "Bash(do if ! deno run -A core/cli/run.ts \"$file\")",
       "Bash(fi)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(echo:*)"
     ],
     "deny": [],
     "ask": []

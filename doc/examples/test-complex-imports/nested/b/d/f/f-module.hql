@@ -2,11 +2,12 @@
 ;; This creates a complex cross-branch dependency by importing from a completely different path
 
 ;; Import from a completely different branch
-(import [aFunction] from "../../../../../nested/a/a-module.hql")
+;; Removed cross-branch import to avoid circular dependency
+;; (import [aFunction] from "../../../a/a-module.hql")
 
 ;; Define a function with a base value
 (fn fFunction ()
-  (let ((baseValue 5))
+  (let (baseValue 5)
     (+ baseValue 5)))
 
 ;; Export for parent

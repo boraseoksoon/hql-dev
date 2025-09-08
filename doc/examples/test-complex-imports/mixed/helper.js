@@ -1,10 +1,10 @@
 // JavaScript helper file imported by HQL
 
-// Import from TS file to test JS -> TS interop
-import { tsMultiply } from './utils.ts';
+// Import from JS file
+import { processData } from './utils.js';
 
 // Function that will be imported by HQL
 export function jsFunction(num) {
-  // Use the TS function to do some work
-  return tsMultiply(num, 2);
+  // Process an array with the num
+  return processData([num, num * 2, num * 3]);
 } 

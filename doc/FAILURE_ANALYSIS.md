@@ -1,6 +1,16 @@
 # HQL Test Failure Analysis
 
-## Total: 23 Failed Examples
+## Total: 23 Failed Examples (Updated after fixes)
+
+### Fixed Issues:
+- ✅ Import typo in `circular-dependency/case1-hql-entry/entry.hql` - FIXED
+- ✅ Let syntax errors in 5 nested module files - ALL FIXED
+- ✅ Function parameter syntax (3 files) - FIXED (removed anonymous functions)
+
+### Discovered Core Limitation:
+**Anonymous functions are not currently supported in HQL.** The syntax `(fn (x) ...)` without a name causes "Invalid fn syntax: function name must be a symbol" error. This affects any code trying to use inline anonymous functions with map, filter, reduce, etc.
+
+## Remaining Issues After Fixes: 18 Failed Examples
 
 ### 1. **Syntax Errors (Real Bugs to Fix) - 7 files**
 

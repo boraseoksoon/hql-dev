@@ -1,16 +1,8 @@
 function tsFunction(x) {
-  return x + 15;
+  return x * 10;
 }
-function tsUsingHqlFunction(x) {
-  return x * 2 + 5;
-}
-var ts_module_default = {
-  tsFunction,
-  tsUsingHqlFunction,
-  multiplyBy: (x, y) => x * y
-};
+const tsConstant = "TypeScript Module";
 export {
-  ts_module_default as default,
-  tsFunction,
-  tsUsingHqlFunction
+  tsConstant,
+  tsFunction
 };

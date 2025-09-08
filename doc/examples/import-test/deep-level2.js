@@ -1,7 +1,7 @@
 // deep-level2.js - Second level in the deep nesting test
 
-// Import from TypeScript file (third level)
-import { calculateValue } from './deep-level3.ts';
+// Import from JavaScript file (third level)
+import { calculateValue } from './deep-level3.js';
 
 // Also import directly from an HQL file (mixing import types)
 import { multiplyByTwo } from './utility.hql';

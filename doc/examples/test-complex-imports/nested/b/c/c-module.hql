@@ -6,7 +6,7 @@
 
 ;; Define a function that uses the import
 (fn cFunction ()
-  (let ((eValue (eFunction)))
+  (let (eValue (eFunction))
     (+ eValue 30)))
 
 ;; Export the function

@@ -7,8 +7,8 @@
 
 ;; Define a function that combines the imports
 (fn bFunction ()
-  (let ((cValue (cFunction))
-        (dValue (dFunction)))
+  (let (cValue (cFunction)
+        dValue (dFunction))
     (+ cValue dValue)))
 
 ;; Export for the entry

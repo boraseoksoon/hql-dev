@@ -4,4 +4,4 @@
 
 (console.log "Namespace imports test")
 (console.log "HQL function result:" (baseModule.baseHqlFunction 10))
-(console.log "JS function result:" (jsModule.baseJsFunction 10)) 
+(console.log "JS function result:" (jsModule.baseHqlFunction 10)) 

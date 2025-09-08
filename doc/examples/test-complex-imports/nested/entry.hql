@@ -7,8 +7,8 @@
 
 ;; Function that combines results from both paths
 (fn nestedFunction ()
-  (let ((aResult (aFunction))
-        (bResult (bFunction)))
+  (let (aResult (aFunction)
+        bResult (bFunction))
     (+ aResult bResult)))
 
 ;; Export for main entry
