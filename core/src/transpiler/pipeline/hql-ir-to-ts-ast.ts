@@ -36,9 +36,9 @@ export function convertIRExpr(node: IR.IRNode): ts.Expression {
         const callExpr = node as IR.IRCallExpression;
         if (callExpr.callee.type === IR.IRNodeType.Identifier) {
           const calleeName = (callExpr.callee as IR.IRIdentifier).name;
-          if (calleeName === "get") {
-            return convertGetCallExpression(callExpr);
-          } else if (calleeName === "getNumeric") {
+          // Don't convert get() calls - let them be runtime calls
+          // The runtime get() function will handle both property access and function calls
+          if (calleeName === "getNumeric") {
             return convertNumericCallExpression(callExpr);
           }
         }

@@ -457,7 +457,10 @@ function determineCallOrAccess(
 
   // Handle special patterns for (obj arg) expressions
   if (elements.length === 2) {
+    const firstSymbolName = elements[0].type === "symbol" ? (elements[0] as SymbolNode).name : null;
+    
     const symbolInfo = globalSymbolTable.get((firstTransformed as IR.IRIdentifier).name);
+    
     if (symbolInfo?.kind == "function") {
       return createCallExpression(list, currentDir, transformNode, firstTransformed);
     }

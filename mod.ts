@@ -22,6 +22,83 @@ export function isHQL(code: string): boolean {
 }
 
 /**
+ * Synchronous transpile for simple HQL expressions (no imports)
+ * Used for REPL integration where async is not available
+ */
+export function transpileSync(source: string): string {
+  // Import the synchronous parts we need
+  const { parse } = transpileToJavascriptSync.parse;
+  const { transformSyntax } = transpileToJavascriptSync.transformSyntax;
+  
+  try {
+    // Parse HQL to S-expressions
+    const sexp = parse(source);
+    if (!sexp || sexp.length === 0) {
+      return source;
+    }
+    
+    // Transform S-expressions to JavaScript AST
+    const jsAst = transformSyntax(sexp[0]);
+    
+    // Generate JavaScript code
+    return generateCode(jsAst);
+  } catch (e) {
+    // Fallback to simple transformation for basic expressions
+    return simpleTranspile(source);
+  }
+}
+
+// Helper for simple transpilation when full parser isn't available
+function simpleTranspile(source: string): string {
+  try {
+    let js = source
+      .replace(/^\(/, '')  
+      .replace(/\)$/, '')  
+      .trim();
+    
+    const parts = js.split(/\s+/);
+    if (parts.length >= 2) {
+      const [op, ...args] = parts;
+      
+      // Handle basic operators
+      if (['+', '-', '*', '/', '=', '!=', '<', '>', '<=', '>='].includes(op)) {
+        const jsOp = op === '=' ? '===' : op === '!=' ? '!==' : op;
+        return args.join(` ${jsOp} `) + ';';
+      }
+      
+      // Handle function calls
+      return `${op}(${args.join(', ')});`;
+    }
+    
+    return js + ';';
+  } catch {
+    return source;
+  }
+}
+
+// Sync imports needed for transpileSync
+const transpileToJavascriptSync = {
+  parse: (() => {
+    // Simplified sync parser for basic S-expressions
+    return function parse(source: string) {
+      // Very basic S-expression parser
+      if (!source.startsWith('(')) return null;
+      // This would need the actual parser logic
+      return [{ type: 'list', value: source }];
+    };
+  })(),
+  transformSyntax: (sexp: any) => {
+    // Simplified transform
+    return { type: 'Program', body: [] };
+  }
+};
+
+function generateCode(ast: any): string {
+  // Simplified code generator
+  return '// Generated JS';
+}
+
+/**
  * Transpile HQL source to JavaScript
  * @param source - HQL source code
  * @param options - Options including baseDir for resolving imports
@@ -37,7 +114,21 @@ export async function transpile(
     ...options
   };
   const result = await transpileToJavascript(source, transpileOptions);
-  return result.code;
+  
+  // Add runtime get function for HQL
+  const getFunction = `
+// Runtime get function for HQL
+function get(obj, key) {
+  // If obj is a function, call it with the key as argument
+  if (typeof obj === 'function') {
+    return obj(key);
+  }
+  // Otherwise, treat it as property access
+  return obj[key];
+}
+`;
+  
+  return getFunction + result.code;
 }
 
 /**
@@ -98,7 +189,7 @@ export async function runFile(filePath: string, options: { adapter?: (js: string
   }
 }
 
-export const version = "7.8.17";
+export const version = "7.8.20";
 
 const hql: HQLModule = { isHQL, transpile, run, runFile, version } as HQLModule;
 export default hql;

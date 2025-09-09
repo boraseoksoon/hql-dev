@@ -623,15 +623,35 @@ async function bundleWithEsbuild(
  */
 async function postProcessBundleOutput(outputPath: string): Promise<void> {
   try {
-    const content = await readFile(outputPath);
+    let content = await readFile(outputPath);
+    let modified = false;
     
     // Normalize file:// URLs inside string literals to plain absolute paths
     if (content.includes('file://')) {
-      const fixedContent = content.replace(/(["'])file:\/\/\/([^"']+)\1/g, (_m, q, p) => `${q}/${p}${q}`);
-      if (fixedContent !== content) {
-        await Deno.writeTextFile(outputPath, fixedContent);
-        logger.debug('Normalized file:// URLs in bundle output');
-      }
+      content = content.replace(/(["'])file:\/\/\/([^"']+)\1/g, (_m, q, p) => `${q}/${p}${q}`);
+      modified = true;
+      logger.debug('Normalized file:// URLs in bundle output');
+    }
+    
+    // Add the runtime get function if it's used but not defined
+    if (content.includes('get(') && !content.includes('function get(')) {
+      const runtimeGet = `// Runtime get function for HQL
+function get(obj, key) {
+  // If obj is a function, call it with the key as argument
+  if (typeof obj === 'function') {
+    return obj(key);
+  }
+  // Otherwise, treat it as property access
+  return obj[key];
+}
+
+`;
+      content = runtimeGet + content;
+      modified = true;
+    }
+    
+    if (modified) {
+      await Deno.writeTextFile(outputPath, content);
     }
   } catch (error) {
     logger.error(`Error post-processing bundle: ${formatErrorMessage(error)}`);
@@ -939,8 +959,20 @@ export async function transpileHqlInJs(hqlPath: string, basePath: string): Promi
       currentFile: hqlPath,
     });
 
+    // Prepend the runtime get function to handle both property access and function calls
+    const runtimeGet = `// Runtime get function for HQL
+function get(obj, key) {
+  // If obj is a function, call it with the key as argument
+  if (typeof obj === 'function') {
+    return obj(key);
+  }
+  // Otherwise, treat it as property access
+  return obj[key];
+}
+`;
+
     // Process identifiers with hyphens
-    let processedContent = tsContent;
+    let processedContent = runtimeGet + tsContent;
     
     // Process exported identifiers with hyphens
     const exportRegex = /export\s+(const|let|var|function)\s+([a-zA-Z0-9_-]+)/g;
